@@ -1,0 +1,60 @@
+services:
+  store-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: godwit
+      POSTGRES_PASSWORD: godwit
+      POSTGRES_DB: godwit_store
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U godwit -d godwit_store"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  target-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "15433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  godwit-1:
+    build: ..
+    command:
+      - serve
+      - --store-dsn=postgres://godwit:godwit@store-db:5432/godwit_store?sslmode=disable
+      - --listen=:8474
+    environment:
+      GODWIT_MASTER_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      GODWIT_TOKENS: demo-token
+    ports:
+      - "18474:8474"
+    depends_on:
+      store-db:
+        condition: service_healthy
+      target-db:
+        condition: service_healthy
+
+  godwit-2:
+    build: ..
+    command:
+      - serve
+      - --store-dsn=postgres://godwit:godwit@store-db:5432/godwit_store?sslmode=disable
+      - --listen=:8474
+    environment:
+      GODWIT_MASTER_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+      GODWIT_TOKENS: demo-token
+    ports:
+      - "18475:8474"
+    depends_on:
+      store-db:
+        condition: service_healthy
+      target-db:
+        condition: service_healthy
