@@ -1,0 +1,6 @@
+version: 2
+
+secret:
+  # Test files use throwaway credentials for ephemeral testcontainers.
+  ignored-paths:
+    - "**/*_test.go"
