@@ -17,7 +17,7 @@ func dropStoreTables(t *testing.T, storeDSN string) {
 	}
 	defer func() { _ = conn.Close(ctx) }()
 	if _, err := conn.Exec(ctx,
-		`DROP TABLE cp_leases, cp_run_files, cp_runs, cp_targets CASCADE`); err != nil {
+		`DROP TABLE cp_leases, cp_run_files, cp_runs, cp_drift_events, cp_snapshots, cp_targets CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 }

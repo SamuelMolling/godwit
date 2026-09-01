@@ -9,9 +9,11 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// Engine applies plans to a target database; each dialect implements it.
+// Engine applies plans to a target database and inspects its schema;
+// each dialect implements it.
 type Engine interface {
 	Apply(ctx context.Context, dsn string, plans []engine.Plan) error
+	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 }
 
 // PGEngine is the PostgreSQL Engine over godwit's crash-safe executor.
@@ -28,4 +30,15 @@ func (e PGEngine) Apply(ctx context.Context, dsn string, plans []engine.Plan) er
 	defer func() { _ = conn.Close(context.Background()) }()
 
 	return applyPlans(ctx, conn, e.Opts, plans)
+}
+
+// Snapshot implements Engine.
+func (PGEngine) Snapshot(ctx context.Context, dsn string) (string, string, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return "", "", fmt.Errorf("connect target: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	return engine.Snapshot(ctx, conn)
 }

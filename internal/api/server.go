@@ -4,7 +4,9 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing/fstest"
 	"time"
 
@@ -19,17 +21,37 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
+// DriftOps is the drift surface the API exposes (implemented by the monitor).
+type DriftOps interface {
+	Check(ctx context.Context, target string) (controlplane.Drift, error)
+	AcceptBaseline(ctx context.Context, target string) error
+}
+
+// Validator proves migrations run before admission (scratch database).
+type Validator interface {
+	Validate(ctx context.Context, target string, plans []engine.Plan) error
+}
+
 // Server implements godwit.v1.GodwitService over the control-plane store.
 type Server struct {
 	store         *controlplane.Store
+	drift         DriftOps
+	validator     Validator
 	masterKey     []byte
 	watchInterval time.Duration
 	newID         func() string
 }
 
-// NewServer wires a Server.
-func NewServer(store *controlplane.Store, masterKey []byte) *Server {
-	return &Server{store: store, masterKey: masterKey, watchInterval: 500 * time.Millisecond, newID: uuid.NewString}
+// NewServer wires a Server; drift and validator are optional (nil disables).
+func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, masterKey []byte) *Server {
+	return &Server{
+		store:         store,
+		drift:         drift,
+		validator:     validator,
+		masterKey:     masterKey,
+		watchInterval: 500 * time.Millisecond,
+		newID:         uuid.NewString,
+	}
 }
 
 // Handler mounts the connect service (gRPC and JSON) with bearer-token auth.
@@ -108,9 +130,25 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
+	plans := make([]engine.Plan, 0, len(migs))
 	for _, mig := range migs {
-		if _, err := engine.BuildPlan(mig, engine.DirectionUp); err != nil {
+		p, err := engine.BuildPlan(mig, engine.DirectionUp)
+		if err != nil {
 			return nil, invalid(err.Error())
+		}
+		plans = append(plans, p)
+	}
+
+	if err := checkHazards(plans, m.AcknowledgeHazards); err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if s.validator != nil && !m.SkipValidation {
+		if err := s.validator.Validate(ctx, m.Target, plans); err != nil {
+			if errors.Is(err, controlplane.ErrValidationFailed) {
+				return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			}
+
+			return nil, rpcErr(err)
 		}
 	}
 
@@ -220,4 +258,78 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 	}
 
 	return connect.NewResponse(&godwitv1.ParkRunResponse{}), nil
+}
+
+// checkHazards refuses plans carrying hazard codes the author did not accept.
+func checkHazards(plans []engine.Plan, acked []string) error {
+	ackSet := map[string]bool{}
+	for _, code := range acked {
+		ackSet[code] = true
+	}
+	var pending []string
+	for _, p := range plans {
+		for _, st := range p.Statements {
+			for _, h := range st.Hazards {
+				if !ackSet[h.Code] {
+					pending = append(pending, fmt.Sprintf("%s: %s", h.Code, h.Detail))
+				}
+			}
+		}
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("unacknowledged hazards (pass acknowledge_hazards to accept):\n%s",
+			strings.Join(pending, "\n"))
+	}
+
+	return nil
+}
+
+var errDriftDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("drift detection is not enabled"))
+
+// CheckDrift compares a target's live schema against its baseline now.
+func (s *Server) CheckDrift(ctx context.Context, req *connect.Request[godwitv1.CheckDriftRequest]) (*connect.Response[godwitv1.CheckDriftResponse], error) {
+	if s.drift == nil {
+		return nil, errDriftDisabled
+	}
+	d, err := s.drift.Check(ctx, req.Msg.Target)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+
+	return connect.NewResponse(&godwitv1.CheckDriftResponse{Drifted: d.Drifted, Diff: d.Diff}), nil
+}
+
+// ListDriftEvents returns recent drift events, optionally filtered by target.
+func (s *Server) ListDriftEvents(ctx context.Context, req *connect.Request[godwitv1.ListDriftEventsRequest]) (*connect.Response[godwitv1.ListDriftEventsResponse], error) {
+	events, err := s.store.ListDriftEvents(ctx, req.Msg.Target)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	resp := &godwitv1.ListDriftEventsResponse{}
+	for _, e := range events {
+		pb := &godwitv1.DriftEvent{
+			Id:         e.ID,
+			Target:     e.Target,
+			Diff:       e.Diff,
+			DetectedAt: timestamppb.New(e.DetectedAt),
+		}
+		if e.ResolvedAt != nil {
+			pb.ResolvedAt = timestamppb.New(*e.ResolvedAt)
+		}
+		resp.Events = append(resp.Events, pb)
+	}
+
+	return connect.NewResponse(resp), nil
+}
+
+// AcceptBaseline blesses the live schema as the new expected state.
+func (s *Server) AcceptBaseline(ctx context.Context, req *connect.Request[godwitv1.AcceptBaselineRequest]) (*connect.Response[godwitv1.AcceptBaselineResponse], error) {
+	if s.drift == nil {
+		return nil, errDriftDisabled
+	}
+	if err := s.drift.AcceptBaseline(ctx, req.Msg.Target); err != nil {
+		return nil, rpcErr(err)
+	}
+
+	return connect.NewResponse(&godwitv1.AcceptBaselineResponse{}), nil
 }

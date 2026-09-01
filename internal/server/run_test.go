@@ -28,9 +28,11 @@ func TestRunWithoutOnReadyShutsDownCleanly(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- Run(ctx, Config{
-			Listen:   "127.0.0.1:0",
-			StoreDSN: newDatabase(t, "st"),
-			Log:      testLog,
+			Listen:         "127.0.0.1:0",
+			StoreDSN:       newDatabase(t, "st"),
+			WebhookURL:     "http://127.0.0.1:1/hook",
+			SkipValidation: true,
+			Log:            testLog,
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)

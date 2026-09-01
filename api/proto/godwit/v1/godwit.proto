@@ -43,11 +43,47 @@ message RegisterTargetResponse {}
 message CreateRunRequest {
   string target = 1;
   repeated MigrationFile files = 2;
+  // Hazard codes (e.g. "H002") the author explicitly accepts. A run whose
+  // plan carries unacknowledged hazards is refused at admission.
+  repeated string acknowledge_hazards = 3;
+  // Skip the scratch-database validation (on by default when configured).
+  bool skip_validation = 4;
 }
 
 message CreateRunResponse {
   string run_id = 1;
 }
+
+message CheckDriftRequest {
+  string target = 1;
+}
+
+message CheckDriftResponse {
+  bool drifted = 1;
+  string diff = 2;
+}
+
+message ListDriftEventsRequest {
+  string target = 1;
+}
+
+message DriftEvent {
+  int64 id = 1;
+  string target = 2;
+  string diff = 3;
+  google.protobuf.Timestamp detected_at = 4;
+  google.protobuf.Timestamp resolved_at = 5;
+}
+
+message ListDriftEventsResponse {
+  repeated DriftEvent events = 1;
+}
+
+message AcceptBaselineRequest {
+  string target = 1;
+}
+
+message AcceptBaselineResponse {}
 
 message GetRunRequest {
   string run_id = 1;
@@ -94,4 +130,7 @@ service GodwitService {
   rpc WatchRun(WatchRunRequest) returns (stream WatchRunResponse);
   rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
   rpc ParkRun(ParkRunRequest) returns (ParkRunResponse);
+  rpc CheckDrift(CheckDriftRequest) returns (CheckDriftResponse);
+  rpc ListDriftEvents(ListDriftEventsRequest) returns (ListDriftEventsResponse);
+  rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);
 }

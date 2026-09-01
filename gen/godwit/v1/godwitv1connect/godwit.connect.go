@@ -48,6 +48,15 @@ const (
 	GodwitServiceResumeRunProcedure = "/godwit.v1.GodwitService/ResumeRun"
 	// GodwitServiceParkRunProcedure is the fully-qualified name of the GodwitService's ParkRun RPC.
 	GodwitServiceParkRunProcedure = "/godwit.v1.GodwitService/ParkRun"
+	// GodwitServiceCheckDriftProcedure is the fully-qualified name of the GodwitService's CheckDrift
+	// RPC.
+	GodwitServiceCheckDriftProcedure = "/godwit.v1.GodwitService/CheckDrift"
+	// GodwitServiceListDriftEventsProcedure is the fully-qualified name of the GodwitService's
+	// ListDriftEvents RPC.
+	GodwitServiceListDriftEventsProcedure = "/godwit.v1.GodwitService/ListDriftEvents"
+	// GodwitServiceAcceptBaselineProcedure is the fully-qualified name of the GodwitService's
+	// AcceptBaseline RPC.
+	GodwitServiceAcceptBaselineProcedure = "/godwit.v1.GodwitService/AcceptBaseline"
 )
 
 // GodwitServiceClient is a client for the godwit.v1.GodwitService service.
@@ -59,6 +68,9 @@ type GodwitServiceClient interface {
 	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest]) (*connect.ServerStreamForClient[v1.WatchRunResponse], error)
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error)
+	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
+	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
+	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
 }
 
 // NewGodwitServiceClient constructs a client for the godwit.v1.GodwitService service. By default,
@@ -114,18 +126,39 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("ParkRun")),
 			connect.WithClientOptions(opts...),
 		),
+		checkDrift: connect.NewClient[v1.CheckDriftRequest, v1.CheckDriftResponse](
+			httpClient,
+			baseURL+GodwitServiceCheckDriftProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("CheckDrift")),
+			connect.WithClientOptions(opts...),
+		),
+		listDriftEvents: connect.NewClient[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse](
+			httpClient,
+			baseURL+GodwitServiceListDriftEventsProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("ListDriftEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		acceptBaseline: connect.NewClient[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse](
+			httpClient,
+			baseURL+GodwitServiceAcceptBaselineProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("AcceptBaseline")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // godwitServiceClient implements GodwitServiceClient.
 type godwitServiceClient struct {
-	registerTarget *connect.Client[v1.RegisterTargetRequest, v1.RegisterTargetResponse]
-	createRun      *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
-	getRun         *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns       *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	watchRun       *connect.Client[v1.WatchRunRequest, v1.WatchRunResponse]
-	resumeRun      *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
-	parkRun        *connect.Client[v1.ParkRunRequest, v1.ParkRunResponse]
+	registerTarget  *connect.Client[v1.RegisterTargetRequest, v1.RegisterTargetResponse]
+	createRun       *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
+	getRun          *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns        *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	watchRun        *connect.Client[v1.WatchRunRequest, v1.WatchRunResponse]
+	resumeRun       *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	parkRun         *connect.Client[v1.ParkRunRequest, v1.ParkRunResponse]
+	checkDrift      *connect.Client[v1.CheckDriftRequest, v1.CheckDriftResponse]
+	listDriftEvents *connect.Client[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse]
+	acceptBaseline  *connect.Client[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse]
 }
 
 // RegisterTarget calls godwit.v1.GodwitService.RegisterTarget.
@@ -163,6 +196,21 @@ func (c *godwitServiceClient) ParkRun(ctx context.Context, req *connect.Request[
 	return c.parkRun.CallUnary(ctx, req)
 }
 
+// CheckDrift calls godwit.v1.GodwitService.CheckDrift.
+func (c *godwitServiceClient) CheckDrift(ctx context.Context, req *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error) {
+	return c.checkDrift.CallUnary(ctx, req)
+}
+
+// ListDriftEvents calls godwit.v1.GodwitService.ListDriftEvents.
+func (c *godwitServiceClient) ListDriftEvents(ctx context.Context, req *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error) {
+	return c.listDriftEvents.CallUnary(ctx, req)
+}
+
+// AcceptBaseline calls godwit.v1.GodwitService.AcceptBaseline.
+func (c *godwitServiceClient) AcceptBaseline(ctx context.Context, req *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error) {
+	return c.acceptBaseline.CallUnary(ctx, req)
+}
+
 // GodwitServiceHandler is an implementation of the godwit.v1.GodwitService service.
 type GodwitServiceHandler interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
@@ -172,6 +220,9 @@ type GodwitServiceHandler interface {
 	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest], *connect.ServerStream[v1.WatchRunResponse]) error
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error)
+	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
+	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
+	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
 }
 
 // NewGodwitServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -223,6 +274,24 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("ParkRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceCheckDriftHandler := connect.NewUnaryHandler(
+		GodwitServiceCheckDriftProcedure,
+		svc.CheckDrift,
+		connect.WithSchema(godwitServiceMethods.ByName("CheckDrift")),
+		connect.WithHandlerOptions(opts...),
+	)
+	godwitServiceListDriftEventsHandler := connect.NewUnaryHandler(
+		GodwitServiceListDriftEventsProcedure,
+		svc.ListDriftEvents,
+		connect.WithSchema(godwitServiceMethods.ByName("ListDriftEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	godwitServiceAcceptBaselineHandler := connect.NewUnaryHandler(
+		GodwitServiceAcceptBaselineProcedure,
+		svc.AcceptBaseline,
+		connect.WithSchema(godwitServiceMethods.ByName("AcceptBaseline")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/godwit.v1.GodwitService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case GodwitServiceRegisterTargetProcedure:
@@ -239,6 +308,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceResumeRunHandler.ServeHTTP(w, r)
 		case GodwitServiceParkRunProcedure:
 			godwitServiceParkRunHandler.ServeHTTP(w, r)
+		case GodwitServiceCheckDriftProcedure:
+			godwitServiceCheckDriftHandler.ServeHTTP(w, r)
+		case GodwitServiceListDriftEventsProcedure:
+			godwitServiceListDriftEventsHandler.ServeHTTP(w, r)
+		case GodwitServiceAcceptBaselineProcedure:
+			godwitServiceAcceptBaselineHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -274,4 +349,16 @@ func (UnimplementedGodwitServiceHandler) ResumeRun(context.Context, *connect.Req
 
 func (UnimplementedGodwitServiceHandler) ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ParkRun is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.CheckDrift is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ListDriftEvents is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.AcceptBaseline is not implemented"))
 }
