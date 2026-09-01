@@ -75,6 +75,23 @@ CREATE TABLE cp_drift_events (
 DROP TABLE cp_drift_events;
 DROP TABLE cp_snapshots;`,
 	},
+	{
+		Version:  20260901000002,
+		Name:     "rollout",
+		Checksum: "cp-rollout-v1",
+		UpSQL: `
+ALTER TABLE cp_runs
+	ADD COLUMN rollout text NOT NULL DEFAULT 'direct',
+	ADD COLUMN phase   text NOT NULL DEFAULT 'expand' CHECK (phase IN ('expand', 'contract')),
+	DROP CONSTRAINT cp_runs_state_check,
+	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention', 'awaiting_contract'));`,
+		DownSQL: `
+ALTER TABLE cp_runs
+	DROP CONSTRAINT cp_runs_state_check,
+	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention')),
+	DROP COLUMN phase,
+	DROP COLUMN rollout;`,
+	},
 }
 
 // buildPlans compiles migrations into up plans.

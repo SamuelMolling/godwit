@@ -48,6 +48,9 @@ const (
 	GodwitServiceResumeRunProcedure = "/godwit.v1.GodwitService/ResumeRun"
 	// GodwitServiceParkRunProcedure is the fully-qualified name of the GodwitService's ParkRun RPC.
 	GodwitServiceParkRunProcedure = "/godwit.v1.GodwitService/ParkRun"
+	// GodwitServiceConfirmRolloutProcedure is the fully-qualified name of the GodwitService's
+	// ConfirmRollout RPC.
+	GodwitServiceConfirmRolloutProcedure = "/godwit.v1.GodwitService/ConfirmRollout"
 	// GodwitServiceCheckDriftProcedure is the fully-qualified name of the GodwitService's CheckDrift
 	// RPC.
 	GodwitServiceCheckDriftProcedure = "/godwit.v1.GodwitService/CheckDrift"
@@ -68,6 +71,7 @@ type GodwitServiceClient interface {
 	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest]) (*connect.ServerStreamForClient[v1.WatchRunResponse], error)
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error)
+	ConfirmRollout(context.Context, *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error)
 	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
 	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
 	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
@@ -126,6 +130,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("ParkRun")),
 			connect.WithClientOptions(opts...),
 		),
+		confirmRollout: connect.NewClient[v1.ConfirmRolloutRequest, v1.ConfirmRolloutResponse](
+			httpClient,
+			baseURL+GodwitServiceConfirmRolloutProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("ConfirmRollout")),
+			connect.WithClientOptions(opts...),
+		),
 		checkDrift: connect.NewClient[v1.CheckDriftRequest, v1.CheckDriftResponse](
 			httpClient,
 			baseURL+GodwitServiceCheckDriftProcedure,
@@ -156,6 +166,7 @@ type godwitServiceClient struct {
 	watchRun        *connect.Client[v1.WatchRunRequest, v1.WatchRunResponse]
 	resumeRun       *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
 	parkRun         *connect.Client[v1.ParkRunRequest, v1.ParkRunResponse]
+	confirmRollout  *connect.Client[v1.ConfirmRolloutRequest, v1.ConfirmRolloutResponse]
 	checkDrift      *connect.Client[v1.CheckDriftRequest, v1.CheckDriftResponse]
 	listDriftEvents *connect.Client[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse]
 	acceptBaseline  *connect.Client[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse]
@@ -196,6 +207,11 @@ func (c *godwitServiceClient) ParkRun(ctx context.Context, req *connect.Request[
 	return c.parkRun.CallUnary(ctx, req)
 }
 
+// ConfirmRollout calls godwit.v1.GodwitService.ConfirmRollout.
+func (c *godwitServiceClient) ConfirmRollout(ctx context.Context, req *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error) {
+	return c.confirmRollout.CallUnary(ctx, req)
+}
+
 // CheckDrift calls godwit.v1.GodwitService.CheckDrift.
 func (c *godwitServiceClient) CheckDrift(ctx context.Context, req *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error) {
 	return c.checkDrift.CallUnary(ctx, req)
@@ -220,6 +236,7 @@ type GodwitServiceHandler interface {
 	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest], *connect.ServerStream[v1.WatchRunResponse]) error
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error)
+	ConfirmRollout(context.Context, *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error)
 	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
 	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
 	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
@@ -274,6 +291,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("ParkRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceConfirmRolloutHandler := connect.NewUnaryHandler(
+		GodwitServiceConfirmRolloutProcedure,
+		svc.ConfirmRollout,
+		connect.WithSchema(godwitServiceMethods.ByName("ConfirmRollout")),
+		connect.WithHandlerOptions(opts...),
+	)
 	godwitServiceCheckDriftHandler := connect.NewUnaryHandler(
 		GodwitServiceCheckDriftProcedure,
 		svc.CheckDrift,
@@ -308,6 +331,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceResumeRunHandler.ServeHTTP(w, r)
 		case GodwitServiceParkRunProcedure:
 			godwitServiceParkRunHandler.ServeHTTP(w, r)
+		case GodwitServiceConfirmRolloutProcedure:
+			godwitServiceConfirmRolloutHandler.ServeHTTP(w, r)
 		case GodwitServiceCheckDriftProcedure:
 			godwitServiceCheckDriftHandler.ServeHTTP(w, r)
 		case GodwitServiceListDriftEventsProcedure:
@@ -349,6 +374,10 @@ func (UnimplementedGodwitServiceHandler) ResumeRun(context.Context, *connect.Req
 
 func (UnimplementedGodwitServiceHandler) ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ParkRun is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) ConfirmRollout(context.Context, *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ConfirmRollout is not implemented"))
 }
 
 func (UnimplementedGodwitServiceHandler) CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error) {

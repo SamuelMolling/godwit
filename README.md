@@ -14,35 +14,40 @@ The 2025–2026 licensing landscape pushed every incumbent's safety features beh
 
 Meanwhile there is **no Backstage plugin for database migrations at all** — every org rebuilds the same glue. godwit is that glue, done once, as open source.
 
-## What's inside (Phase 1 — toolkit)
+## What's inside
 
-| Component | What it does | Built on |
-|---|---|---|
-| Execution engine | Applies plain-SQL migrations under a crash-safe statement-journal protocol | pgx + [libpg_query](https://github.com/pganalyze/pg_query_go) |
-| CI action | Lints unsafe DDL on pull requests, validates migration pairs | [squawk](https://squawkhq.com/) |
-| Drift check | Scheduled job that diffs live schema vs. desired state, fails on drift | [pg-schema-diff](https://github.com/stripe/pg-schema-diff) |
-| ArgoCD PreSync manifest | Kubernetes Job template that migrates before each rollout | ArgoCD hooks |
-| Backstage golden path | Scaffolder template + custom actions: form → migration file → PR with reviewers | Backstage Scaffolder |
+| Feature | What it does |
+|---|---|
+| Crash-safe engine | Plain-SQL migrations under a statement-level journal in the target database; DDL and progress commit atomically. Non-transactional statements (`CREATE INDEX CONCURRENTLY`, …) use write-ahead intents and verifiers. Survives `kill -9` at any point. |
+| Control plane | Runs are leased with heartbeats; a replica that dies mid-run is taken over by another and resumed from the journal. Failed runs park as `needs_attention` after a resume budget. |
+| Hazard gate | The planner ([libpg_query](https://github.com/pganalyze/pg_query_go)) tags unsafe DDL (`H001` non-concurrent index, `H002` `DROP TABLE`, `H003` `DROP COLUMN`, `H004` type rewrite, `H005` `NOT NULL` without default). Runs carrying unacknowledged hazards are refused. |
+| Pre-apply validation | Every run replays the target's history plus the new files on a scratch database before it is queued. |
+| Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
+| Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
+| Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store) and `kubernetes` (mounted secret). Vault next. |
+| API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
+
+## Rollout policies
+
+With `expand-contract`, put contract statements (drops) in their own migration file. The run stops in `awaiting_contract` once the expand phase is applied; the previous app version keeps working. Your deploy pipeline (or an ArgoCD PostSync hook) calls `ConfirmRollout` after the new version is healthy, and the contract phase runs.
+
+```
+CreateRun{rollout: "expand-contract"}  →  running  →  awaiting_contract  →  ConfirmRollout  →  running  →  succeeded
+```
 
 ## Engines
 
-| Engine | Migrations | Lint | Drift | Notes |
-|---|---|---|---|---|
-| PostgreSQL | ✅ SQL up/down | ✅ squawk | ✅ pg-schema-diff | Full support |
-| Cassandra | ✅ CQL up/down | — | — | No locking in driver; serialize Jobs |
-| MongoDB | ✅ JSON `runCommand` | — | — | Advisory locking + transactions (replica set) |
+| Engine | Status |
+|---|---|
+| PostgreSQL | v1 |
+| Cassandra, MongoDB | planned — the `Engine` interface is the seam |
 
 ## Design principles
 
-1. **Git is the state, GitOps does the apply.** godwit never holds production credentials in a long-lived service; the apply happens in your cluster, next to your app.
-2. **Plain SQL, language-agnostic.** Works identically for TypeScript, Go, or any other stack. ORMs (Prisma, Drizzle) can generate the SQL; godwit runs it.
-3. **Roll forward, not back.** Down migrations are required and CI-tested, but the production playbook is a corrective forward migration (expand → contract).
-4. **Safety is not a paid tier.** Lock timeouts, `CONCURRENTLY` enforcement, hazard linting and drift alerts ship free.
-
-## Roadmap
-
-- **Phase 1 (now)**: toolkit — runner image, CI action, PreSync manifests, Backstage template, drift cron.
-- **Phase 2 (if demand proves it)**: control plane — API + dashboard for fleet-wide migration state, audit trail and drift overview, consumed by a Backstage plugin.
+1. **The journal is the truth.** Progress lives in the target database, committed with the DDL. No "dirty" flag, no manual repair.
+2. **Plain SQL, language-agnostic.** Works identically for TypeScript, Go, or any other stack. ORMs can generate the SQL; godwit runs it.
+3. **Roll forward, not back.** Down migrations are required, but the production playbook is expand → contract, and godwit schedules the contract for you.
+4. **Safety is not a paid tier.** Lock timeouts, hazard gating, validation, drift alerts and rollout policies ship free.
 
 ## Try it
 

@@ -40,18 +40,18 @@ type Scheduler struct {
 	store     *Store
 	providers map[string]creds.Provider
 	engine    Engine
-	policy    RolloutPolicy
+	policies  map[string]RolloutPolicy
 	cfg       Config
 	log       *slog.Logger
 }
 
 // NewScheduler wires a Scheduler.
-func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine, policy RolloutPolicy, cfg Config, log *slog.Logger) *Scheduler {
+func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine, policies map[string]RolloutPolicy, cfg Config, log *slog.Logger) *Scheduler {
 	return &Scheduler{
 		store:     store,
 		providers: providers,
 		engine:    eng,
-		policy:    policy,
+		policies:  policies,
 		cfg:       cfg.withDefaults(),
 		log:       log,
 	}
@@ -99,15 +99,22 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	defer stopHB()
 	go s.heartbeat(hbCtx, run.ID)
 
-	if err := s.applyRun(ctx, run); err != nil {
+	held, err := s.applyRun(ctx, run)
+	if err != nil {
 		log.Error("run failed", "error", err)
 		_ = s.store.Finish(ctx, run.ID, StateFailed, err.Error())
 
 		return
 	}
-	log.Info("run succeeded")
-	// Baseline first: when watchers see 'succeeded' the snapshot must exist.
+	// Baseline first: when watchers see the final state the snapshot must exist.
 	s.baseline(ctx, run, log)
+	if held > 0 {
+		log.Info("expand phase applied; awaiting rollout confirmation", "held", held)
+		_ = s.store.Finish(ctx, run.ID, StateAwaitingContract, "")
+
+		return
+	}
+	log.Info("run succeeded")
 	_ = s.store.Finish(ctx, run.ID, StateSucceeded, "")
 }
 
@@ -130,10 +137,12 @@ func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
 	}
 }
 
-func (s *Scheduler) applyRun(ctx context.Context, run Run) error {
+// applyRun applies the run's plans for its current phase and reports how
+// many migrations the rollout policy held back for the contract phase.
+func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
 	files, err := s.store.RunFiles(ctx, run.ID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	fsys := fstest.MapFS{}
 	for name, body := range files {
@@ -141,24 +150,29 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) error {
 	}
 	migs, err := engine.LoadFS(fsys)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	plans, err := buildPlans(migs)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	for _, p := range plans {
-		if err := s.policy.Allow(p); err != nil {
-			return fmt.Errorf("rollout policy: %w", err)
+	held := 0
+	if run.Phase != PhaseContract {
+		policy, ok := s.policies[run.Rollout]
+		if !ok {
+			return 0, fmt.Errorf("unknown rollout policy %q", run.Rollout)
 		}
+		var contract []engine.Plan
+		plans, contract = policy.Split(plans)
+		held = len(contract)
 	}
 
 	dsn, err := s.targetDSN(ctx, run.Target)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return s.engine.Apply(ctx, dsn, plans)
+	return held, s.engine.Apply(ctx, dsn, plans)
 }
 
 func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error) {

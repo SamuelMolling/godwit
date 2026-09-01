@@ -18,6 +18,8 @@ enum RunState {
   RUN_STATE_SUCCEEDED = 3;
   RUN_STATE_FAILED = 4;
   RUN_STATE_NEEDS_ATTENTION = 5;
+  // Expand phase applied; the contract phase waits for ConfirmRollout.
+  RUN_STATE_AWAITING_CONTRACT = 6;
 }
 
 message Run {
@@ -28,6 +30,9 @@ message Run {
   int32 attempts = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp finished_at = 7;
+  string rollout = 8;
+  // "expand" or "contract".
+  string phase = 9;
 }
 
 message RegisterTargetRequest {
@@ -48,6 +53,9 @@ message CreateRunRequest {
   repeated string acknowledge_hazards = 3;
   // Skip the scratch-database validation (on by default when configured).
   bool skip_validation = 4;
+  // Rollout policy: "direct" (default, apply everything now) or
+  // "expand-contract" (hold destructive migrations until ConfirmRollout).
+  string rollout = 5;
 }
 
 message CreateRunResponse {
@@ -122,6 +130,12 @@ message ParkRunRequest {
 
 message ParkRunResponse {}
 
+message ConfirmRolloutRequest {
+  string run_id = 1;
+}
+
+message ConfirmRolloutResponse {}
+
 service GodwitService {
   rpc RegisterTarget(RegisterTargetRequest) returns (RegisterTargetResponse);
   rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
@@ -130,6 +144,7 @@ service GodwitService {
   rpc WatchRun(WatchRunRequest) returns (stream WatchRunResponse);
   rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
   rpc ParkRun(ParkRunRequest) returns (ParkRunResponse);
+  rpc ConfirmRollout(ConfirmRolloutRequest) returns (ConfirmRolloutResponse);
   rpc CheckDrift(CheckDriftRequest) returns (CheckDriftResponse);
   rpc ListDriftEvents(ListDriftEventsRequest) returns (ListDriftEventsResponse);
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);

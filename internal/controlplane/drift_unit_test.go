@@ -78,7 +78,7 @@ func TestBaselineErrorBranches(t *testing.T) {
 	t.Run("dsn resolution fails", func(t *testing.T) {
 		t.Parallel()
 		s, _ := newStore(t)
-		sched := NewScheduler(s, map[string]creds.Provider{}, PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
+		sched := NewScheduler(s, map[string]creds.Provider{}, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 		if err := s.RegisterTarget(ctx, "app", "ghost", map[string]string{}); err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,7 @@ func TestBaselineErrorBranches(t *testing.T) {
 		t.Parallel()
 		s, _ := newStore(t)
 		sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}},
-			PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
+			PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 		if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "postgres://bad:bad@127.0.0.1:1/x"}); err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +219,7 @@ func TestSchedulerBaselineAfterRunHasSnapshot(t *testing.T) {
 func TestNewDriftMonitorDefaultInterval(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)
-	sched := NewScheduler(s, nil, PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
+	sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 	mon := NewDriftMonitor(s, sched, PGEngine{}, notify.None{}, 0, testLog)
 	if mon.interval != 5*time.Minute {
 		t.Fatalf("interval = %v", mon.interval)

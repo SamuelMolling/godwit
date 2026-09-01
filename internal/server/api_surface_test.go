@@ -257,6 +257,9 @@ func TestAPIInternalErrors(t *testing.T) {
 	if _, err := client.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("list drift: %v", err)
 	}
+	if _, err := client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: "x"})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("confirm: %v", err)
+	}
 }
 
 func TestAPIAcceptBaselineUnknownTarget(t *testing.T) {

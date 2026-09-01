@@ -57,7 +57,7 @@ func TestDriftLifecycle(t *testing.T) {
 	notifier := &recordingNotifier{}
 	mon, targetDSN := newMonitor(t, s, notifier)
 	sched, _ := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}},
-		PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog), targetDSN
+		PGEngine{}, Policies(), Config{Holder: "h"}, testLog), targetDSN
 
 	// A successful run records the baseline snapshot.
 	queueRun(t, s, "d1111111-0000-0000-0000-000000000001", goodFiles())

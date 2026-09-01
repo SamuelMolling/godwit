@@ -23,18 +23,26 @@ type Pool interface {
 
 // Run states.
 const (
-	StateQueued         = "queued"
-	StateRunning        = "running"
-	StateSucceeded      = "succeeded"
-	StateFailed         = "failed"
-	StateNeedsAttention = "needs_attention"
+	StateQueued           = "queued"
+	StateRunning          = "running"
+	StateSucceeded        = "succeeded"
+	StateFailed           = "failed"
+	StateNeedsAttention   = "needs_attention"
+	StateAwaitingContract = "awaiting_contract"
+)
+
+// Run phases under a rollout policy.
+const (
+	PhaseExpand   = "expand"
+	PhaseContract = "contract"
 )
 
 // Sentinel errors callers can match on.
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrLeaseLost    = errors.New("lease lost")
-	ErrNotResumable = errors.New("run is not failed or parked")
+	ErrNotFound            = errors.New("not found")
+	ErrLeaseLost           = errors.New("lease lost")
+	ErrNotResumable        = errors.New("run is not failed or parked")
+	ErrNotAwaitingContract = errors.New("run is not awaiting contract")
 )
 
 // Run is one migration run tracked by the control plane.
@@ -44,6 +52,8 @@ type Run struct {
 	State      string
 	Error      string
 	Attempts   int
+	Rollout    string
+	Phase      string
 	CreatedAt  time.Time
 	FinishedAt *time.Time
 }
@@ -113,7 +123,7 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 }
 
 // CreateRun queues a run with its migration files (single atomic statement).
-func (s *Store) CreateRun(ctx context.Context, id, target string, files map[string]string) error {
+func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
 	for name, body := range files {
@@ -121,21 +131,25 @@ func (s *Store) CreateRun(ctx context.Context, id, target string, files map[stri
 		bodies = append(bodies, body)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		WITH r AS (INSERT INTO cp_runs (id, target, state) VALUES ($1, $2, 'queued'))
+		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout) VALUES ($1, $2, 'queued', $5))
 		INSERT INTO cp_run_files (run_id, name, body)
 		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
-		id, target, names, bodies); err != nil {
+		id, target, names, bodies, rollout); err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
 
 	return nil
 }
 
-const runColumns = `id, target, state, coalesce(error, ''), attempts, created_at, finished_at`
+const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, created_at, finished_at`
+
+func (r *Run) fields() []any {
+	return []any{&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.CreatedAt, &r.FinishedAt}
+}
 
 func scanRun(row pgx.Row) (Run, error) {
 	var r Run
-	err := row.Scan(&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.CreatedAt, &r.FinishedAt)
+	err := row.Scan(r.fields()...)
 
 	return r, err
 }
@@ -166,13 +180,11 @@ func (s *Store) ListRuns(ctx context.Context, target string) ([]Run, error) {
 
 	var out []Run
 	var r Run
-	if _, err := pgx.ForEachRow(rows,
-		[]any{&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.CreatedAt, &r.FinishedAt},
-		func() error {
-			out = append(out, r)
+	if _, err := pgx.ForEachRow(rows, r.fields(), func() error {
+		out = append(out, r)
 
-			return nil
-		}); err != nil {
+		return nil
+	}); err != nil {
 		return nil, fmt.Errorf("read runs: %w", err)
 	}
 
@@ -276,6 +288,21 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("run %q: %w", id, ErrNotResumable)
+	}
+
+	return nil
+}
+
+// Confirm releases the contract phase of a run that finished its expand phase.
+func (s *Store) Confirm(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, updated_at = now()
+		WHERE id = $1 AND state = 'awaiting_contract'`, id)
+	if err != nil {
+		return fmt.Errorf("confirm rollout: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run %q: %w", id, ErrNotAwaitingContract)
 	}
 
 	return nil

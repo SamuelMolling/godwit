@@ -14,7 +14,7 @@ func TestHeartbeatStopsOnLostLease(t *testing.T) {
 	s, _ := newStore(t)
 
 	// No lease exists, so the first beat reports ErrLeaseLost and returns.
-	sched := NewScheduler(s, nil, PGEngine{}, Immediate{}, Config{Holder: "h", TTL: 60 * time.Millisecond}, testLog)
+	sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h", TTL: 60 * time.Millisecond}, testLog)
 	done := make(chan struct{})
 	go func() {
 		sched.heartbeat(context.Background(), "99999999-9999-9999-9999-999999999999")
@@ -31,7 +31,7 @@ func TestHeartbeatStopsOnContext(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)
 
-	sched := NewScheduler(s, nil, PGEngine{}, Immediate{}, Config{Holder: "h", TTL: time.Hour}, testLog)
+	sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h", TTL: time.Hour}, testLog)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -49,10 +49,10 @@ func TestHeartbeatStopsOnContext(t *testing.T) {
 func TestApplyRunFilesError(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)
-	sched := NewScheduler(s, nil, PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
+	sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 
 	s.pool.(interface{ Close() }).Close()
-	if err := sched.applyRun(context.Background(), Run{ID: "id", Target: "app"}); err == nil {
+	if _, err := sched.applyRun(context.Background(), Run{ID: "id", Target: "app"}); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -66,8 +66,8 @@ func TestApplyRunUnknownTarget(t *testing.T) {
 	}
 	queueRun(t, s, "aaaaaaaa-0000-0000-0000-000000000001", goodFiles())
 
-	sched := NewScheduler(s, nil, PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
-	err := sched.applyRun(ctx, Run{ID: "aaaaaaaa-0000-0000-0000-000000000001", Target: "ghost"})
+	sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
+	_, err := sched.applyRun(ctx, Run{ID: "aaaaaaaa-0000-0000-0000-000000000001", Target: "ghost", Rollout: RolloutDirect})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v", err)
 	}

@@ -54,7 +54,7 @@ func TestRunLifecycle(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "11111111-1111-1111-1111-111111111111", "app", goodFiles()); err != nil {
+	if err := s.CreateRun(ctx, "11111111-1111-1111-1111-111111111111", "app", RolloutDirect, goodFiles()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,7 +62,7 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	r, err := s.Run(ctx, "11111111-1111-1111-1111-111111111111")
-	if err != nil || r.State != StateQueued || r.Target != "app" {
+	if err != nil || r.State != StateQueued || r.Target != "app" || r.Rollout != RolloutDirect || r.Phase != PhaseExpand {
 		t.Fatalf("run = %+v, err = %v", r, err)
 	}
 
@@ -116,6 +116,21 @@ func TestRunLifecycle(t *testing.T) {
 	if err := s.Resume(ctx, r.ID); !errors.Is(err, ErrNotResumable) {
 		t.Fatalf("resume queued: err = %v", err)
 	}
+
+	// Confirm only applies to runs awaiting their contract phase.
+	if err := s.Confirm(ctx, r.ID); !errors.Is(err, ErrNotAwaitingContract) {
+		t.Fatalf("confirm queued: err = %v", err)
+	}
+	if err := s.Finish(ctx, r.ID, StateAwaitingContract, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Confirm(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.Run(ctx, r.ID)
+	if r.State != StateQueued || r.Phase != PhaseContract || r.Attempts != 0 || r.FinishedAt != nil {
+		t.Fatalf("confirmed run = %+v", r)
+	}
 }
 
 func TestClaimRecoversExpiredLease(t *testing.T) {
@@ -126,7 +141,7 @@ func TestClaimRecoversExpiredLease(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "33333333-3333-3333-3333-333333333333", "app", goodFiles()); err != nil {
+	if err := s.CreateRun(ctx, "33333333-3333-3333-3333-333333333333", "app", RolloutDirect, goodFiles()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,7 +172,7 @@ func TestClaimSerializesPerTarget(t *testing.T) {
 		"66666666-6666-6666-6666-666666666666": "b",
 	}
 	for id, target := range ids {
-		if err := s.CreateRun(ctx, id, target, goodFiles()); err != nil {
+		if err := s.CreateRun(ctx, id, target, RolloutDirect, goodFiles()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -183,7 +198,7 @@ func TestCreateRunUnknownTarget(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStore(t)
-	err := s.CreateRun(context.Background(), "77777777-7777-7777-7777-777777777777", "ghost", goodFiles())
+	err := s.CreateRun(context.Background(), "77777777-7777-7777-7777-777777777777", "ghost", RolloutDirect, goodFiles())
 	if err == nil || !strings.Contains(err.Error(), "create run") {
 		t.Fatalf("err = %v", err)
 	}
@@ -203,7 +218,7 @@ func TestStoreQueryErrors(t *testing.T) {
 	if _, _, err := s.Target(ctx, "x"); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.CreateRun(ctx, "id", "x", nil); err == nil {
+	if err := s.CreateRun(ctx, "id", "x", RolloutDirect, nil); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := s.Run(ctx, "id"); err == nil {
@@ -225,6 +240,9 @@ func TestStoreQueryErrors(t *testing.T) {
 		t.Fatal("want error")
 	}
 	if err := s.Resume(ctx, "id"); err == nil {
+		t.Fatal("want error")
+	}
+	if err := s.Confirm(ctx, "id"); err == nil {
 		t.Fatal("want error")
 	}
 }

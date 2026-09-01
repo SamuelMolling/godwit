@@ -52,7 +52,7 @@ func Run(ctx context.Context, cfg Config) error {
 	cfg.Scheduler.Holder = cfg.Holder
 	eng := controlplane.PGEngine{}
 	sched := controlplane.NewScheduler(store, creds.Registry(cfg.MasterKey),
-		eng, controlplane.Immediate{}, cfg.Scheduler, cfg.Log)
+		eng, controlplane.Policies(), cfg.Scheduler, cfg.Log)
 	go sched.Run(ctx)
 
 	var notifier notify.Notifier = notify.None{}

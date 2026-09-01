@@ -68,7 +68,7 @@ func rpcErr(err error) *connect.Error {
 	switch {
 	case errors.Is(err, controlplane.ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, err)
-	case errors.Is(err, controlplane.ErrNotResumable):
+	case errors.Is(err, controlplane.ErrNotResumable), errors.Is(err, controlplane.ErrNotAwaitingContract):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
@@ -120,6 +120,13 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if len(m.Files) == 0 {
 		return nil, invalid("at least one migration file is required")
 	}
+	rollout := m.Rollout
+	if rollout == "" {
+		rollout = controlplane.RolloutDirect
+	}
+	if _, ok := controlplane.Policies()[rollout]; !ok {
+		return nil, invalid("unknown rollout policy " + rollout)
+	}
 	fsys := fstest.MapFS{}
 	files := map[string]string{}
 	for _, f := range m.Files {
@@ -153,7 +160,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 
 	id := s.newID()
-	if err := s.store.CreateRun(ctx, id, m.Target, files); err != nil {
+	if err := s.store.CreateRun(ctx, id, m.Target, rollout, files); err != nil {
 		return nil, rpcErr(err)
 	}
 
@@ -162,11 +169,12 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 
 func toProto(r controlplane.Run) *godwitv1.Run {
 	states := map[string]godwitv1.RunState{
-		controlplane.StateQueued:         godwitv1.RunState_RUN_STATE_QUEUED,
-		controlplane.StateRunning:        godwitv1.RunState_RUN_STATE_RUNNING,
-		controlplane.StateSucceeded:      godwitv1.RunState_RUN_STATE_SUCCEEDED,
-		controlplane.StateFailed:         godwitv1.RunState_RUN_STATE_FAILED,
-		controlplane.StateNeedsAttention: godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION,
+		controlplane.StateQueued:           godwitv1.RunState_RUN_STATE_QUEUED,
+		controlplane.StateRunning:          godwitv1.RunState_RUN_STATE_RUNNING,
+		controlplane.StateSucceeded:        godwitv1.RunState_RUN_STATE_SUCCEEDED,
+		controlplane.StateFailed:           godwitv1.RunState_RUN_STATE_FAILED,
+		controlplane.StateNeedsAttention:   godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION,
+		controlplane.StateAwaitingContract: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT,
 	}
 	out := &godwitv1.Run{
 		Id:        r.ID,
@@ -174,6 +182,8 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		State:     states[r.State],
 		Error:     r.Error,
 		Attempts:  int32(r.Attempts),
+		Rollout:   r.Rollout,
+		Phase:     r.Phase,
 		CreatedAt: timestamppb.New(r.CreatedAt),
 	}
 	if r.FinishedAt != nil {
@@ -207,13 +217,18 @@ func (s *Server) ListRuns(ctx context.Context, req *connect.Request[godwitv1.Lis
 	return connect.NewResponse(resp), nil
 }
 
-func terminal(state string) bool {
-	return state == controlplane.StateSucceeded ||
-		state == controlplane.StateFailed ||
-		state == controlplane.StateNeedsAttention
+// settled reports whether a run stopped moving on its own: terminal, or
+// waiting for a human (park) or a rollout confirmation.
+func settled(state string) bool {
+	switch state {
+	case controlplane.StateQueued, controlplane.StateRunning:
+		return false
+	default:
+		return true
+	}
 }
 
-// WatchRun streams run snapshots until the run reaches a terminal state.
+// WatchRun streams run snapshots until the run settles.
 func (s *Server) WatchRun(ctx context.Context, req *connect.Request[godwitv1.WatchRunRequest], stream *connect.ServerStream[godwitv1.WatchRunResponse]) error {
 	for {
 		r, err := s.store.Run(ctx, req.Msg.RunId)
@@ -222,7 +237,7 @@ func (s *Server) WatchRun(ctx context.Context, req *connect.Request[godwitv1.Wat
 		}
 		// A send failure surfaces as a ctx error on the next store read.
 		_ = stream.Send(&godwitv1.WatchRunResponse{Run: toProto(r)})
-		if terminal(r.State) {
+		if settled(r.State) {
 			return nil
 		}
 		if err := sleepCtx(ctx, s.watchInterval); err != nil {
@@ -258,6 +273,15 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 	}
 
 	return connect.NewResponse(&godwitv1.ParkRunResponse{}), nil
+}
+
+// ConfirmRollout releases the contract phase of an expand-contract run.
+func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwitv1.ConfirmRolloutRequest]) (*connect.Response[godwitv1.ConfirmRolloutResponse], error) {
+	if err := s.store.Confirm(ctx, req.Msg.RunId); err != nil {
+		return nil, rpcErr(err)
+	}
+
+	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }
 
 // checkHazards refuses plans carrying hazard codes the author did not accept.
