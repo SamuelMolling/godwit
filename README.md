@@ -18,7 +18,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 
 | Component | What it does | Built on |
 |---|---|---|
-| Runner image | One OCI image that applies plain-SQL/CQL/JSON migrations | [golang-migrate](https://github.com/golang-migrate/migrate) |
+| Execution engine | Applies plain-SQL migrations under a crash-safe statement-journal protocol | pgx + [libpg_query](https://github.com/pganalyze/pg_query_go) |
 | CI action | Lints unsafe DDL on pull requests, validates migration pairs | [squawk](https://squawkhq.com/) |
 | Drift check | Scheduled job that diffs live schema vs. desired state, fails on drift | [pg-schema-diff](https://github.com/stripe/pg-schema-diff) |
 | ArgoCD PreSync manifest | Kubernetes Job template that migrates before each rollout | ArgoCD hooks |

@@ -43,18 +43,15 @@ jobs:
         run: ./scripts/coverage.sh
 
   build:
-    runs-on: ubuntu-latest
+    # cgo (libpg_query) rules out cross-compilation; build on native runners.
     strategy:
       matrix:
-        goos: [linux, darwin]
-        goarch: [amd64, arm64]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: go build ./...
