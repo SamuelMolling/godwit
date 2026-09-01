@@ -13,5 +13,6 @@ echo "total coverage: ${total}"
 
 if [[ "${total}" != "100.0%" ]]; then
   echo "coverage gate failed: expected 100.0%, got ${total}" >&2
+  go tool cover -func="${profile}.filtered" | grep -v '100.0%' >&2
   exit 1
 fi
