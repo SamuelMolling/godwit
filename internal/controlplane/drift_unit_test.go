@@ -154,8 +154,10 @@ func TestValidatorCorruptHistory(t *testing.T) {
 	waitState(t, s, "cccccccc-0000-0000-0000-000000000001", StateSucceeded)
 
 	v := NewValidator(pool, s, func() string { return "hist" })
-	good, err := buildPlans([]engine.Migration{{Version: 2, Name: "next",
-		UpSQL: "CREATE TABLE n (id int);", DownSQL: "DROP TABLE n;"}})
+	good, err := buildPlans([]engine.Migration{{
+		Version: 2, Name: "next",
+		UpSQL: "CREATE TABLE n (id int);", DownSQL: "DROP TABLE n;",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +190,10 @@ func TestValidatorScratchConnectFails(t *testing.T) {
 	defer func() { connectScratch = orig }()
 
 	v := NewValidator(pool, s, func() string { return "connfail" })
-	good, err := buildPlans([]engine.Migration{{Version: 1, Name: "ok",
-		UpSQL: "SELECT 1;", DownSQL: "SELECT 1;"}})
+	good, err := buildPlans([]engine.Migration{{
+		Version: 1, Name: "ok",
+		UpSQL: "SELECT 1;", DownSQL: "SELECT 1;",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}

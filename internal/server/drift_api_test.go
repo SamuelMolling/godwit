@@ -22,7 +22,7 @@ func registerTarget(t *testing.T, client godwitv1connect.GodwitServiceClient, ds
 	}
 }
 
-func runToSuccess(t *testing.T, client godwitv1connect.GodwitServiceClient, files []*godwitv1.MigrationFile, ack []string) string {
+func runToSuccess(t *testing.T, client godwitv1connect.GodwitServiceClient, files []*godwitv1.MigrationFile, ack []string) {
 	t.Helper()
 	created, err := client.CreateRun(context.Background(), connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: files, AcknowledgeHazards: ack,
@@ -37,13 +37,11 @@ func runToSuccess(t *testing.T, client godwitv1connect.GodwitServiceClient, file
 			t.Fatal(err)
 		}
 		if r.Msg.Run.State == godwitv1.RunState_RUN_STATE_SUCCEEDED {
-			return created.Msg.RunId
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("run never succeeded")
-
-	return ""
 }
 
 func TestDriftEndToEnd(t *testing.T) {

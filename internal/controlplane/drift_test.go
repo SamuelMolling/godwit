@@ -220,8 +220,10 @@ func TestValidator(t *testing.T) {
 	s2, pool := newStore(t)
 	v := NewValidator(pool, s2, func() string { return strings.ReplaceAll(uuid.NewString(), "-", "") })
 
-	good, err := buildPlans([]engine.Migration{{Version: 1, Name: "ok",
-		UpSQL: "CREATE TABLE v (id int);", DownSQL: "DROP TABLE v;"}})
+	good, err := buildPlans([]engine.Migration{{
+		Version: 1, Name: "ok",
+		UpSQL: "CREATE TABLE v (id int);", DownSQL: "DROP TABLE v;",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,8 +231,10 @@ func TestValidator(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bad, err := buildPlans([]engine.Migration{{Version: 1, Name: "bad",
-		UpSQL: "SELECT 1/0;", DownSQL: "SELECT 1;"}})
+	bad, err := buildPlans([]engine.Migration{{
+		Version: 1, Name: "bad",
+		UpSQL: "SELECT 1/0;", DownSQL: "SELECT 1;",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
