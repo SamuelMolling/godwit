@@ -44,6 +44,14 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 - **Phase 1 (now)**: toolkit — runner image, CI action, PreSync manifests, Backstage template, drift cron.
 - **Phase 2 (if demand proves it)**: control plane — API + dashboard for fleet-wide migration state, audit trail and drift overview, consumed by a Backstage plugin.
 
+## Try it
+
+```bash
+cd demo && docker compose up -d --build && ./demo.sh
+```
+
+Two replicas, a store and a target database. The script kills the replica executing a slow migration; the other one recovers the lease and finishes the run from the journal. See [demo/README.md](demo/README.md).
+
 ## Status
 
 🚧 v1 in progress — **PostgreSQL only, API-first, no UI yet** (Backstage plugin or standalone UI arrive in v1.1 on top of the same API).
