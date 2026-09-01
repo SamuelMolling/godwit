@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 100% gate; cmd/godwit/main.go only wires os.Exit and cannot run under `go test`.
+# 100% gate; excluded: cmd/godwit/main.go (only wires os.Exit) and gen/ (generated).
 profile="${1:-coverage.out}"
 
-go test ./... -race -covermode=atomic -coverprofile="${profile}"
+go test ./... -race -covermode=atomic -coverpkg=./... -coverprofile="${profile}"
 
-grep -v "/cmd/godwit/main.go:" "${profile}" > "${profile}.filtered"
+grep -v -e "/cmd/godwit/main.go:" -e "/gen/" "${profile}" > "${profile}.filtered"
 
 total="$(go tool cover -func="${profile}.filtered" | awk '/^total:/ {print $3}')"
 echo "total coverage: ${total}"
