@@ -31,13 +31,13 @@ const (
 	StateAwaitingContract = "awaiting_contract"
 )
 
-// Run phases under a rollout policy.
+// Run phases.
 const (
 	PhaseExpand   = "expand"
 	PhaseContract = "contract"
 )
 
-// Sentinel errors callers can match on.
+// Sentinel errors.
 var (
 	ErrNotFound            = errors.New("not found")
 	ErrLeaseLost           = errors.New("lease lost")
@@ -68,8 +68,7 @@ func NewStore(pool Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// Migrate applies the control-plane schema using godwit's own engine.
-// It needs a dedicated session (advisory lock), not the pool.
+// Migrate applies the control-plane schema; the advisory lock needs a dedicated session.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -122,7 +121,7 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	return provider, config, nil
 }
 
-// CreateRun queues a run with its migration files (single atomic statement).
+// CreateRun queues a run with its migration files.
 func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
@@ -211,9 +210,7 @@ func (s *Store) RunFiles(ctx context.Context, id string) (map[string]string, err
 	return files, nil
 }
 
-// Claim atomically leases the next runnable run: a queued run, or a running
-// run whose executor's lease expired (the crash-recovery path). One live
-// lease per target at a time.
+// Claim leases the next queued run, or a running one whose lease expired; one lease per target.
 func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Run, bool, error) {
 	run, err := scanRun(s.pool.QueryRow(ctx, `
 		WITH candidate AS (
@@ -293,7 +290,7 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 	return nil
 }
 
-// Confirm releases the contract phase of a run that finished its expand phase.
+// Confirm requeues an awaiting_contract run for its contract phase.
 func (s *Store) Confirm(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, updated_at = now()

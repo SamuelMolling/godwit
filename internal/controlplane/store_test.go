@@ -80,7 +80,6 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("filtered runs = %v, err = %v", runs, err)
 	}
 
-	// Claim leases it; a second claim finds nothing (lease is live).
 	claimed, ok, err := s.Claim(ctx, "h1", time.Minute)
 	if err != nil || !ok || claimed.ID != r.ID || claimed.Attempts != 1 || claimed.State != StateRunning {
 		t.Fatalf("claimed = %+v, ok = %v, err = %v", claimed, ok, err)
@@ -117,7 +116,6 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("resume queued: err = %v", err)
 	}
 
-	// Confirm only applies to runs awaiting their contract phase.
 	if err := s.Confirm(ctx, r.ID); !errors.Is(err, ErrNotAwaitingContract) {
 		t.Fatalf("confirm queued: err = %v", err)
 	}
@@ -209,7 +207,6 @@ func TestStoreQueryErrors(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)
 
-	// Closed pool exercises every query error branch.
 	s.pool.(interface{ Close() }).Close()
 
 	if err := s.RegisterTarget(ctx, "x", "static", nil); err == nil {

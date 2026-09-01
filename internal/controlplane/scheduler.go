@@ -34,8 +34,6 @@ func (c Config) withDefaults() Config {
 }
 
 // Scheduler claims runnable runs and executes them under a heartbeated lease.
-// Crash recovery is the claim itself: a running run whose lease expired is
-// claimed again by any replica and resumed from the target's journal.
 type Scheduler struct {
 	store     *Store
 	providers map[string]creds.Provider
@@ -106,7 +104,7 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 
 		return
 	}
-	// Baseline first: when watchers see the final state the snapshot must exist.
+	// Watchers must find the snapshot once they see the final state.
 	s.baseline(ctx, run, log)
 	if held > 0 {
 		log.Info("expand phase applied; awaiting rollout confirmation", "held", held)
@@ -118,7 +116,6 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	_ = s.store.Finish(ctx, run.ID, StateSucceeded, "")
 }
 
-// baseline records the post-migration schema as the target's expected state.
 func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
 	dsn, err := s.targetDSN(ctx, run.Target)
 	if err != nil {
@@ -137,8 +134,7 @@ func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
 	}
 }
 
-// applyRun applies the run's plans for its current phase and reports how
-// many migrations the rollout policy held back for the contract phase.
+// applyRun applies the current phase and reports how many plans were held back.
 func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
 	files, err := s.store.RunFiles(ctx, run.ID)
 	if err != nil {

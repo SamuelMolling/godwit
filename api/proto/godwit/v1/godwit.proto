@@ -18,7 +18,7 @@ enum RunState {
   RUN_STATE_SUCCEEDED = 3;
   RUN_STATE_FAILED = 4;
   RUN_STATE_NEEDS_ATTENTION = 5;
-  // Expand phase applied; the contract phase waits for ConfirmRollout.
+  // Contract phase held until ConfirmRollout.
   RUN_STATE_AWAITING_CONTRACT = 6;
 }
 
@@ -48,13 +48,11 @@ message RegisterTargetResponse {}
 message CreateRunRequest {
   string target = 1;
   repeated MigrationFile files = 2;
-  // Hazard codes (e.g. "H002") the author explicitly accepts. A run whose
-  // plan carries unacknowledged hazards is refused at admission.
+  // Hazard codes the author accepts; unacknowledged hazards are refused.
   repeated string acknowledge_hazards = 3;
-  // Skip the scratch-database validation (on by default when configured).
+  // Skip the scratch-database validation.
   bool skip_validation = 4;
-  // Rollout policy: "direct" (default, apply everything now) or
-  // "expand-contract" (hold destructive migrations until ConfirmRollout).
+  // "direct" (default) or "expand-contract".
   string rollout = 5;
 }
 

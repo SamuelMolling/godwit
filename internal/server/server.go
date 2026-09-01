@@ -32,7 +32,7 @@ type Config struct {
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
 	Log            *slog.Logger
-	// OnReady receives the bound address once the listener is up (tests).
+	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
 
@@ -100,7 +100,7 @@ func serve(srv *http.Server, ln net.Listener) error {
 	return nil
 }
 
-// h2cProtocols enables unencrypted HTTP/2 alongside HTTP/1 (gRPC needs h2).
+// h2cProtocols enables unencrypted HTTP/2, which gRPC needs.
 func h2cProtocols() *http.Protocols {
 	p := new(http.Protocols)
 	p.SetHTTP1(true)

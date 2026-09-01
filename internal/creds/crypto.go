@@ -10,7 +10,7 @@ import (
 	"io"
 )
 
-// Injection points for the unreachable-in-practice error branches.
+// Injection points for otherwise unreachable error branches.
 var (
 	randReader io.Reader = rand.Reader
 	newAEAD              = cipher.NewGCM

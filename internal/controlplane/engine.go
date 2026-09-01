@@ -9,14 +9,13 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// Engine applies plans to a target database and inspects its schema;
-// each dialect implements it.
+// Engine applies plans to a target database and inspects its schema.
 type Engine interface {
 	Apply(ctx context.Context, dsn string, plans []engine.Plan) error
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 }
 
-// PGEngine is the PostgreSQL Engine over godwit's crash-safe executor.
+// PGEngine is the PostgreSQL Engine.
 type PGEngine struct {
 	Opts engine.Options
 }

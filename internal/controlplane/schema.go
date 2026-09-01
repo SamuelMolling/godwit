@@ -1,5 +1,4 @@
-// Package controlplane implements the godwit service brain: state store,
-// per-target scheduler with leases, and crash recovery by lease expiry.
+// Package controlplane holds the state store, the lease-based scheduler and drift monitoring.
 package controlplane
 
 import (
@@ -8,7 +7,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// storeMigrations is the control plane's own schema, applied by godwit's engine.
+// storeMigrations is the control plane's own schema.
 var storeMigrations = []engine.Migration{
 	{
 		Version:  20260901000000,
@@ -94,7 +93,6 @@ ALTER TABLE cp_runs
 	},
 }
 
-// buildPlans compiles migrations into up plans.
 func buildPlans(migs []engine.Migration) ([]engine.Plan, error) {
 	plans := make([]engine.Plan, 0, len(migs))
 	for _, m := range migs {
@@ -108,7 +106,6 @@ func buildPlans(migs []engine.Migration) ([]engine.Plan, error) {
 	return plans, nil
 }
 
-// applyPlans runs plans in order over one session.
 func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan) error {
 	exec := engine.New(db, opts)
 	for _, p := range plans {

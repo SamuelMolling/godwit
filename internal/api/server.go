@@ -27,7 +27,7 @@ type DriftOps interface {
 	AcceptBaseline(ctx context.Context, target string) error
 }
 
-// Validator proves migrations run before admission (scratch database).
+// Validator checks migrations before admission.
 type Validator interface {
 	Validate(ctx context.Context, target string, plans []engine.Plan) error
 }
@@ -54,8 +54,7 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 	}
 }
 
-// Handler mounts the connect service (gRPC and JSON) with bearer-token auth.
-// Serve it with an http.Server whose Protocols enable unencrypted HTTP/2.
+// Handler mounts the connect service with bearer-token auth; serve it with h2c enabled.
 func Handler(s *Server, tokens []string) http.Handler {
 	mux := http.NewServeMux()
 	path, h := godwitv1connect.NewGodwitServiceHandler(s, connect.WithInterceptors(newAuth(tokens)))
@@ -111,7 +110,7 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
 
-// CreateRun validates the migration files and queues a run.
+// CreateRun validates and queues a run.
 func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
 	m := req.Msg
 	if m.Target == "" {
@@ -217,8 +216,7 @@ func (s *Server) ListRuns(ctx context.Context, req *connect.Request[godwitv1.Lis
 	return connect.NewResponse(resp), nil
 }
 
-// settled reports whether a run stopped moving on its own: terminal, or
-// waiting for a human (park) or a rollout confirmation.
+// settled reports whether a run stopped moving on its own.
 func settled(state string) bool {
 	switch state {
 	case controlplane.StateQueued, controlplane.StateRunning:
@@ -275,7 +273,7 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 	return connect.NewResponse(&godwitv1.ParkRunResponse{}), nil
 }
 
-// ConfirmRollout releases the contract phase of an expand-contract run.
+// ConfirmRollout releases a run's contract phase.
 func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwitv1.ConfirmRolloutRequest]) (*connect.Response[godwitv1.ConfirmRolloutResponse], error) {
 	if err := s.store.Confirm(ctx, req.Msg.RunId); err != nil {
 		return nil, rpcErr(err)
@@ -346,7 +344,7 @@ func (s *Server) ListDriftEvents(ctx context.Context, req *connect.Request[godwi
 	return connect.NewResponse(resp), nil
 }
 
-// AcceptBaseline blesses the live schema as the new expected state.
+// AcceptBaseline records the live schema as the new expected state.
 func (s *Server) AcceptBaseline(ctx context.Context, req *connect.Request[godwitv1.AcceptBaselineRequest]) (*connect.Response[godwitv1.AcceptBaselineResponse], error) {
 	if s.drift == nil {
 		return nil, errDriftDisabled

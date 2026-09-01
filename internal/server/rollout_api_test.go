@@ -37,7 +37,6 @@ func TestExpandContractEndToEnd(t *testing.T) {
 	registerTarget(t, client, targetDSN)
 	runToSuccess(t, client, migrationFiles(), nil)
 
-	// Unknown policy is refused at admission.
 	_, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: migrationFiles(), Rollout: "canary",
 	}))
@@ -45,7 +44,6 @@ func TestExpandContractEndToEnd(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// Expand (rename via add) and contract (drop old column) in one run.
 	files := []*godwitv1.MigrationFile{
 		{Name: "20260901130000_add.up.sql", Body: "ALTER TABLE t ADD COLUMN new_id int;"},
 		{Name: "20260901130000_add.down.sql", Body: "ALTER TABLE t DROP COLUMN new_id;"},
@@ -60,7 +58,6 @@ func TestExpandContractEndToEnd(t *testing.T) {
 	}
 	runID := created.Msg.RunId
 
-	// WatchRun settles at awaiting_contract: the deploy may proceed.
 	stream, err := client.WatchRun(ctx, connect.NewRequest(&godwitv1.WatchRunRequest{RunId: runID}))
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +74,6 @@ func TestExpandContractEndToEnd(t *testing.T) {
 		t.Fatal("expand phase must add new_id and keep id")
 	}
 
-	// Confirming the rollout runs the contract phase.
 	if _, err := client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: runID})); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +91,6 @@ func TestExpandContractEndToEnd(t *testing.T) {
 		t.Fatal("contract phase must drop id")
 	}
 
-	// A second confirmation has nothing to release.
 	_, err = client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: runID}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("err = %v", err)

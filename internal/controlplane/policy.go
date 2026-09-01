@@ -2,26 +2,24 @@ package controlplane
 
 import "github.com/SamuelMolling/godwit/internal/engine"
 
-// Rollout policy names, chosen per run.
+// Rollout policy names.
 const (
 	RolloutDirect         = "direct"
 	RolloutExpandContract = "expand-contract"
 )
 
-// RolloutPolicy splits a run's plans into the expand phase (applied now)
-// and the contract phase (held until ConfirmRollout).
+// RolloutPolicy splits a run's plans into the expand and contract phases.
 type RolloutPolicy interface {
 	Split(plans []engine.Plan) (expand, contract []engine.Plan)
 }
 
-// Direct applies everything at once — the default.
+// Direct applies everything at once.
 type Direct struct{}
 
 // Split implements RolloutPolicy.
 func (Direct) Split(plans []engine.Plan) ([]engine.Plan, []engine.Plan) { return plans, nil }
 
-// ExpandContract holds the first destructive migration and everything after
-// it, so the previous app version keeps working until the rollout is confirmed.
+// ExpandContract holds the first destructive migration and everything after it.
 type ExpandContract struct{}
 
 var contractHazards = map[string]bool{"H002": true, "H003": true}
@@ -49,7 +47,7 @@ func destructive(p engine.Plan) bool {
 	return false
 }
 
-// Policies is the built-in registry keyed by rollout name.
+// Policies returns the built-in rollout policies.
 func Policies() map[string]RolloutPolicy {
 	return map[string]RolloutPolicy{
 		RolloutDirect:         Direct{},

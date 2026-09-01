@@ -12,16 +12,12 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// ErrValidationFailed marks a migration the author must fix, as opposed to
-// validator infrastructure trouble.
+// ErrValidationFailed marks a migration the author must fix.
 var ErrValidationFailed = errors.New("migration failed validation")
 
 var connectScratch = pgx.ConnectConfig
 
-// Validator proves a migration actually runs before it touches a real target:
-// it replays the target's succeeded-run history on a scratch database created
-// on the control-plane server, applies the new plans on top, and drops the
-// scratch (pg-schema-diff's temp-database validation idea, made incremental).
+// Validator replays a target's history on a scratch database and applies new plans on top.
 type Validator struct {
 	pool  *pgxpool.Pool
 	store *Store
@@ -33,8 +29,7 @@ func NewValidator(pool *pgxpool.Pool, store *Store, newID func() string) *Valida
 	return &Validator{pool: pool, store: store, newID: newID}
 }
 
-// Validate rebuilds the target's history on a scratch database and applies
-// plans on top, reporting the first failure.
+// Validate reports the first plan that fails on a scratch copy of the target.
 func (v *Validator) Validate(ctx context.Context, target string, plans []engine.Plan) error {
 	history, err := v.store.HistoryFiles(ctx, target)
 	if err != nil {

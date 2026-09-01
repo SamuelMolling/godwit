@@ -37,7 +37,6 @@ func TestMain(m *testing.M) {
 
 var dbSeq atomic.Int64
 
-// newTestDB creates an isolated database and returns a connector to it.
 func newTestDB(t *testing.T) func() *pgx.Conn {
 	t.Helper()
 	ctx := context.Background()

@@ -164,8 +164,7 @@ func TestSchedulerFailoverBetweenReplicas(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)
 
-	// Registers the target; replica 1 then claims with an immediately-expiring
-	// lease and "dies" without executing.
+	// Replica 1 claims with an immediately-expiring lease and dies.
 	newScheduler(t, s, Config{Holder: "replica-1"})
 	queueRun(t, s, "11111111-0000-0000-0000-000000000005", goodFiles())
 	if _, ok, err := s.Claim(ctx, "replica-1", -time.Second); err != nil || !ok {
@@ -295,7 +294,6 @@ func TestSchedulerExpandContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Expand phase: the table is created, the drop is held.
 	sched.Tick(ctx)
 	r := waitState(t, s, id, StateAwaitingContract)
 	if r.Phase != PhaseExpand || r.Error != "" {
@@ -308,7 +306,6 @@ func TestSchedulerExpandContract(t *testing.T) {
 		t.Fatalf("awaiting run must not be claimable: ok = %v, err = %v", ok, err)
 	}
 
-	// Contract phase runs only after confirmation.
 	if err := s.Confirm(ctx, id); err != nil {
 		t.Fatal(err)
 	}

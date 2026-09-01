@@ -59,7 +59,6 @@ func TestDriftLifecycle(t *testing.T) {
 	sched, _ := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}},
 		PGEngine{}, Policies(), Config{Holder: "h"}, testLog), targetDSN
 
-	// A successful run records the baseline snapshot.
 	queueRun(t, s, "d1111111-0000-0000-0000-000000000001", goodFiles())
 	sched.Tick(ctx)
 	waitState(t, s, "d1111111-0000-0000-0000-000000000001", StateSucceeded)
@@ -69,7 +68,6 @@ func TestDriftLifecycle(t *testing.T) {
 		t.Fatalf("snapshot = %+v, err = %v", snap, err)
 	}
 
-	// No drift yet.
 	d, err := mon.Check(ctx, "app")
 	if err != nil || d.Drifted {
 		t.Fatalf("drift = %+v, err = %v", d, err)

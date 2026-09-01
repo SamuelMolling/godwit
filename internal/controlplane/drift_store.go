@@ -80,8 +80,7 @@ func (s *Store) SnapshotTargets(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// RecordDrift opens a drift event unless an identical one is already open.
-// It reports whether a new event was created.
+// RecordDrift opens a drift event unless an identical one is open; reports whether it did.
 func (s *Store) RecordDrift(ctx context.Context, target, diff string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO cp_drift_events (target, diff)
@@ -107,8 +106,7 @@ func (s *Store) ResolveDrift(ctx context.Context, target string) error {
 	return nil
 }
 
-// HistoryFiles returns the migration files of every succeeded run for a
-// target, oldest run first — the replayable history of how the schema was built.
+// HistoryFiles returns the files of every succeeded run for a target, oldest first.
 func (s *Store) HistoryFiles(ctx context.Context, target string) ([]map[string]string, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.run_id, f.name, f.body

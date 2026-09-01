@@ -24,7 +24,6 @@ func mustPool(t *testing.T, dsn string) *pgxpool.Pool {
 	return pool
 }
 
-// countRows returns 0 when the table does not exist yet.
 func countRows(t *testing.T, dsn, table string) int {
 	t.Helper()
 	ctx := context.Background()
@@ -57,8 +56,7 @@ func TestServeClosedListener(t *testing.T) {
 func TestRunWithoutOnReadyShutsDownCleanly(t *testing.T) {
 	t.Parallel()
 
-	// Without OnReady the only readiness signal is the store schema being fully
-	// migrated (the last ctx-sensitive step before serving).
+	// Without OnReady, a fully migrated store is the only readiness signal.
 	ref := newDatabase(t, "ref")
 	if err := controlplane.Migrate(context.Background(), mustPool(t, ref)); err != nil {
 		t.Fatal(err)

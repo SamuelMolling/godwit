@@ -162,7 +162,6 @@ func TestValidatorCorruptHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Unloadable history file.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE cp_run_files SET name = 'garbage.txt' WHERE name = '20260901120000_t.up.sql'`); err != nil {
 		t.Fatal(err)
@@ -171,7 +170,6 @@ func TestValidatorCorruptHistory(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// Replayable but failing history.
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE cp_run_files SET name = '20260901120000_t.up.sql', body = 'SELECT 1/0;' WHERE name = 'garbage.txt'`); err != nil {
 		t.Fatal(err)

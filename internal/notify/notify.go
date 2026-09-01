@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-// Event is one thing worth telling a human about.
+// Event is one notification.
 type Event struct {
 	Type   string `json:"type"`
 	Target string `json:"target"`
 	Detail string `json:"detail"`
 }
 
-// Notifier delivers events; implementations are pluggable.
+// Notifier delivers events.
 type Notifier interface {
 	Notify(ctx context.Context, e Event) error
 }
@@ -28,7 +28,7 @@ type None struct{}
 // Notify implements Notifier.
 func (None) Notify(context.Context, Event) error { return nil }
 
-// Webhook POSTs events as JSON to a URL (Slack incoming webhooks accept it too).
+// Webhook POSTs events as JSON to a URL.
 type Webhook struct {
 	URL    string
 	Client *http.Client

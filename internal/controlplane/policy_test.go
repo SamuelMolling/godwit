@@ -23,7 +23,6 @@ func TestPolicies(t *testing.T) {
 		t.Fatalf("direct: expand = %d, contract = %d", len(expand), len(contract))
 	}
 
-	// The destructive migration and everything after it are held, in order.
 	expand, contract = Policies()[RolloutExpandContract].Split(plans)
 	if len(expand) != 1 || len(contract) != 2 || contract[0].Migration.Version != 2 {
 		t.Fatalf("expand-contract: expand = %d, contract = %+v", len(expand), contract)

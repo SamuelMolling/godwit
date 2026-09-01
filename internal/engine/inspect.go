@@ -11,13 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Snapshot renders a canonical, ordered description of the database schema
-// (tables, columns, constraints, indexes, views — godwit's own schema excluded)
-// plus its sha256 fingerprint. Equal schemas produce identical snapshots, so
-// drift detection is a string comparison.
+// Snapshot renders a canonical description of the schema plus its sha256 fingerprint.
 func Snapshot(ctx context.Context, db DB) (definition, fingerprint string, err error) {
-	// godwit's own bookkeeping tables are invisible to drift; everything else
-	// counts, whatever schema it lives in.
+	// godwit's own tables are invisible to drift.
 	const ownTables = `('migrations', 'runs', 'journal')`
 	queries := []struct {
 		kind string
@@ -72,9 +68,7 @@ func Snapshot(ctx context.Context, db DB) (definition, fingerprint string, err e
 	return definition, hex.EncodeToString(sum[:]), nil
 }
 
-// DiffSchemas reports the lines present in only one of two snapshots:
-// "- " prefixes what the expected schema has and the live one lost,
-// "+ " prefixes what the live schema has that was never migrated in.
+// DiffSchemas lists the lines present in only one snapshot ("- " expected, "+ " live).
 func DiffSchemas(expected, live string) []string {
 	count := map[string]int{}
 	for _, l := range strings.Split(expected, "\n") {

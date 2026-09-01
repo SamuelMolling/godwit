@@ -38,7 +38,6 @@ func TestMain(m *testing.M) {
 
 var dbSeq atomic.Int64
 
-// newTestDSN creates an isolated database and returns its DSN.
 func newTestDSN(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
