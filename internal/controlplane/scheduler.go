@@ -106,7 +106,28 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 		return
 	}
 	log.Info("run succeeded")
+	// Baseline first: when watchers see 'succeeded' the snapshot must exist.
+	s.baseline(ctx, run, log)
 	_ = s.store.Finish(ctx, run.ID, StateSucceeded, "")
+}
+
+// baseline records the post-migration schema as the target's expected state.
+func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
+	dsn, err := s.targetDSN(ctx, run.Target)
+	if err != nil {
+		log.Warn("baseline skipped", "error", err)
+
+		return
+	}
+	def, fp, err := s.engine.Snapshot(ctx, dsn)
+	if err != nil {
+		log.Warn("baseline snapshot failed", "error", err)
+
+		return
+	}
+	if err := s.store.SaveSnapshot(ctx, run.Target, fp, def, run.ID); err != nil {
+		log.Warn("baseline save failed", "error", err)
+	}
 }
 
 func (s *Scheduler) applyRun(ctx context.Context, run Run) error {
@@ -132,20 +153,25 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) error {
 		}
 	}
 
-	providerName, config, err := s.store.Target(ctx, run.Target)
-	if err != nil {
-		return err
-	}
-	provider, ok := s.providers[providerName]
-	if !ok {
-		return fmt.Errorf("unknown credential provider %q", providerName)
-	}
-	dsn, err := provider.DSN(ctx, config)
+	dsn, err := s.targetDSN(ctx, run.Target)
 	if err != nil {
 		return err
 	}
 
 	return s.engine.Apply(ctx, dsn, plans)
+}
+
+func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error) {
+	providerName, config, err := s.store.Target(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	provider, ok := s.providers[providerName]
+	if !ok {
+		return "", fmt.Errorf("unknown credential provider %q", providerName)
+	}
+
+	return provider.DSN(ctx, config)
 }
 
 func (s *Scheduler) heartbeat(ctx context.Context, runID string) {

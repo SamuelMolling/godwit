@@ -122,6 +122,7 @@ func TestAPIResumeAndParkFlow(t *testing.T) {
 			{Name: "20260901120000_bad.up.sql", Body: "SELECT 1/0;"},
 			{Name: "20260901120000_bad.down.sql", Body: "SELECT 1;"},
 		},
+		SkipValidation: true,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -243,9 +244,27 @@ func TestAPIInternalErrors(t *testing.T) {
 	if _, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: migrationFiles(),
 	})); connect.CodeOf(err) != connect.CodeInternal {
-		t.Fatalf("create: %v", err)
+		t.Fatalf("create via validator: %v", err)
+	}
+	if _, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
+		Target: "app", Files: migrationFiles(), SkipValidation: true,
+	})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("create via store: %v", err)
 	}
 	if _, err := client.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("list: %v", err)
+	}
+	if _, err := client.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("list drift: %v", err)
+	}
+}
+
+func TestAPIAcceptBaselineUnknownTarget(t *testing.T) {
+	t.Parallel()
+	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
+	_, err := client.AcceptBaseline(context.Background(),
+		connect.NewRequest(&godwitv1.AcceptBaselineRequest{Target: "ghost"}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("err = %v", err)
 	}
 }

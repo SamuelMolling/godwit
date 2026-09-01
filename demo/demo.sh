@@ -87,4 +87,40 @@ docker compose exec -T target-db psql -U app -d app \
 
 echo
 echo "✅ crash survived: godwit-1 died mid-migration, godwit-2 resumed from the journal."
+
+echo
+echo "==> hazard gate: DROP TABLE without acknowledgment is refused"
+rpc CreateRun '{
+  "target": "app",
+  "files": [
+    {"name": "20260901140000_drop.up.sql", "body": "DROP TABLE users;"},
+    {"name": "20260901140000_drop.down.sql", "body": "SELECT 1;"}
+  ]
+}' 18475
+echo
+echo "    (pass \"acknowledgeHazards\": [\"H002\"] to accept it)"
+
+echo
+echo "==> validation gate: SQL that parses but cannot run is refused at admission"
+rpc CreateRun '{
+  "target": "app",
+  "files": [
+    {"name": "20260901150000_broken.up.sql", "body": "ALTER TABLE nope ADD COLUMN x int;"},
+    {"name": "20260901150000_broken.down.sql", "body": "SELECT 1;"}
+  ]
+}' 18475
+echo
+
+echo
+echo "==> drift detection: a manual out-of-band ALTER TABLE"
+docker compose exec -T target-db psql -U app -d app -c "CREATE TABLE rogue_manual (id int);" > /dev/null
+rpc CheckDrift '{"target": "app"}' 18475
+echo
+echo "==> blessing the manual change as the new baseline"
+rpc AcceptBaseline '{"target": "app"}' 18475
+rpc CheckDrift '{"target": "app"}' 18475
+echo
+
+echo
+echo "✅ all four paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

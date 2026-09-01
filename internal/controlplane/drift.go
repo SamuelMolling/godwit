@@ -1,0 +1,128 @@
+package controlplane
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/notify"
+)
+
+// Drift is the outcome of comparing a target's live schema to its baseline.
+type Drift struct {
+	Target  string
+	Drifted bool
+	Diff    string
+}
+
+// DriftMonitor periodically compares each baselined target's live schema
+// against the expected state and records/notifies divergences.
+type DriftMonitor struct {
+	store    *Store
+	dsn      func(ctx context.Context, target string) (string, error)
+	engine   Engine
+	notifier notify.Notifier
+	interval time.Duration
+	log      *slog.Logger
+}
+
+// NewDriftMonitor wires a DriftMonitor; interval <= 0 defaults to 5 minutes.
+func NewDriftMonitor(store *Store, sched *Scheduler, eng Engine, notifier notify.Notifier, interval time.Duration, log *slog.Logger) *DriftMonitor {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+
+	return &DriftMonitor{
+		store:    store,
+		dsn:      sched.targetDSN,
+		engine:   eng,
+		notifier: notifier,
+		interval: interval,
+		log:      log,
+	}
+}
+
+// Run checks all targets on every interval until ctx is done.
+func (m *DriftMonitor) Run(ctx context.Context) {
+	ticker := time.NewTicker(m.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.Tick(ctx)
+		}
+	}
+}
+
+// Tick checks every baselined target once.
+func (m *DriftMonitor) Tick(ctx context.Context) {
+	targets, err := m.store.SnapshotTargets(ctx)
+	if err != nil {
+		m.log.Error("drift tick failed", "error", err)
+
+		return
+	}
+	for _, target := range targets {
+		if _, err := m.Check(ctx, target); err != nil {
+			m.log.Error("drift check failed", "target", target, "error", err)
+		}
+	}
+}
+
+// Check compares one target now and records the outcome.
+func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) {
+	expected, err := m.store.SnapshotFor(ctx, target)
+	if err != nil {
+		return Drift{}, err
+	}
+	dsn, err := m.dsn(ctx, target)
+	if err != nil {
+		return Drift{}, err
+	}
+	liveDef, liveFP, err := m.engine.Snapshot(ctx, dsn)
+	if err != nil {
+		return Drift{}, err
+	}
+
+	if liveFP == expected.Fingerprint {
+		if err := m.store.ResolveDrift(ctx, target); err != nil {
+			return Drift{}, err
+		}
+
+		return Drift{Target: target}, nil
+	}
+
+	diff := strings.Join(engine.DiffSchemas(expected.Definition, liveDef), "\n")
+	created, err := m.store.RecordDrift(ctx, target, diff)
+	if err != nil {
+		return Drift{}, err
+	}
+	if created {
+		m.log.Warn("schema drift detected", "target", target)
+		if err := m.notifier.Notify(ctx, notify.Event{Type: "drift", Target: target, Detail: diff}); err != nil {
+			m.log.Warn("drift notification failed", "target", target, "error", err)
+		}
+	}
+
+	return Drift{Target: target, Drifted: true, Diff: diff}, nil
+}
+
+// AcceptBaseline records the live schema as the new expected state,
+// resolving open drift — the "this manual change is legitimate" workflow.
+func (m *DriftMonitor) AcceptBaseline(ctx context.Context, target string) error {
+	dsn, err := m.dsn(ctx, target)
+	if err != nil {
+		return err
+	}
+	def, fp, err := m.engine.Snapshot(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("snapshot live schema: %w", err)
+	}
+
+	return m.store.SaveSnapshot(ctx, target, fp, def, "")
+}

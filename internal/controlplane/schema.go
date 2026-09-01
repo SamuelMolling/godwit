@@ -51,6 +51,30 @@ DROP TABLE cp_run_files;
 DROP TABLE cp_runs;
 DROP TABLE cp_targets;`,
 	},
+	{
+		Version:  20260901000001,
+		Name:     "drift",
+		Checksum: "cp-drift-v1",
+		UpSQL: `
+CREATE TABLE cp_snapshots (
+	target      text PRIMARY KEY REFERENCES cp_targets (name),
+	fingerprint text NOT NULL,
+	definition  text NOT NULL,
+	run_id      uuid,
+	taken_at    timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE cp_drift_events (
+	id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	target      text NOT NULL REFERENCES cp_targets (name),
+	diff        text NOT NULL,
+	detected_at timestamptz NOT NULL DEFAULT now(),
+	resolved_at timestamptz
+);`,
+		DownSQL: `
+DROP TABLE cp_drift_events;
+DROP TABLE cp_snapshots;`,
+	},
 }
 
 // buildPlans compiles migrations into up plans.
