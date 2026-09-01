@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"testing/fstest"
 	"time"
 
 	"connectrpc.com/connect"
@@ -67,7 +66,8 @@ func rpcErr(err error) *connect.Error {
 	switch {
 	case errors.Is(err, controlplane.ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, err)
-	case errors.Is(err, controlplane.ErrNotResumable), errors.Is(err, controlplane.ErrNotAwaitingContract):
+	case errors.Is(err, controlplane.ErrNotResumable), errors.Is(err, controlplane.ErrNotAwaitingContract),
+		errors.Is(err, controlplane.ErrNotRevertable):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
@@ -126,36 +126,16 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if _, ok := controlplane.Policies()[rollout]; !ok {
 		return nil, invalid("unknown rollout policy " + rollout)
 	}
-	fsys := fstest.MapFS{}
 	files := map[string]string{}
 	for _, f := range m.Files {
-		fsys[f.Name] = &fstest.MapFile{Data: []byte(f.Body)}
 		files[f.Name] = f.Body
 	}
-	migs, err := engine.LoadFS(fsys)
+	plans, err := controlplane.PlansFromFiles(files, engine.DirectionUp)
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
-	plans := make([]engine.Plan, 0, len(migs))
-	for _, mig := range migs {
-		p, err := engine.BuildPlan(mig, engine.DirectionUp)
-		if err != nil {
-			return nil, invalid(err.Error())
-		}
-		plans = append(plans, p)
-	}
-
-	if err := checkHazards(plans, m.AcknowledgeHazards); err != nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
-	}
-	if s.validator != nil && !m.SkipValidation {
-		if err := s.validator.Validate(ctx, m.Target, plans); err != nil {
-			if errors.Is(err, controlplane.ErrValidationFailed) {
-				return nil, connect.NewError(connect.CodeInvalidArgument, err)
-			}
-
-			return nil, rpcErr(err)
-		}
+	if err := s.admit(ctx, m.Target, plans, m.AcknowledgeHazards, m.SkipValidation); err != nil {
+		return nil, err
 	}
 
 	id := s.newID()
@@ -166,6 +146,52 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
 }
 
+// RevertRun queues a run applying the down side of an earlier run's migrations.
+func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
+	m := req.Msg
+	orig, err := s.store.Run(ctx, m.RunId)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	files, err := s.store.RunFiles(ctx, m.RunId)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	plans, err := controlplane.PlansFromFiles(files, engine.DirectionDown)
+	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	if err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation); err != nil {
+		return nil, err
+	}
+
+	id := s.newID()
+	if err := s.store.CreateRevert(ctx, id, m.RunId); err != nil {
+		return nil, rpcErr(err)
+	}
+
+	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
+}
+
+// admit refuses unacknowledged hazards and plans that fail on the scratch database.
+func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation bool) error {
+	if err := checkHazards(plans, acked); err != nil {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if s.validator == nil || skipValidation {
+		return nil
+	}
+	if err := s.validator.Validate(ctx, target, plans); err != nil {
+		if errors.Is(err, controlplane.ErrValidationFailed) {
+			return connect.NewError(connect.CodeInvalidArgument, err)
+		}
+
+		return rpcErr(err)
+	}
+
+	return nil
+}
+
 func toProto(r controlplane.Run) *godwitv1.Run {
 	states := map[string]godwitv1.RunState{
 		controlplane.StateQueued:           godwitv1.RunState_RUN_STATE_QUEUED,
@@ -174,6 +200,7 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		controlplane.StateFailed:           godwitv1.RunState_RUN_STATE_FAILED,
 		controlplane.StateNeedsAttention:   godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION,
 		controlplane.StateAwaitingContract: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT,
+		controlplane.StateReverted:         godwitv1.RunState_RUN_STATE_REVERTED,
 	}
 	out := &godwitv1.Run{
 		Id:        r.ID,
@@ -183,6 +210,7 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		Attempts:  int32(r.Attempts),
 		Rollout:   r.Rollout,
 		Phase:     r.Phase,
+		Reverts:   r.Reverts,
 		CreatedAt: timestamppb.New(r.CreatedAt),
 	}
 	if r.FinishedAt != nil {

@@ -24,6 +24,7 @@ func TestRPCErrMapping(t *testing.T) {
 		{controlplane.ErrNotFound, connect.CodeNotFound},
 		{controlplane.ErrNotResumable, connect.CodeFailedPrecondition},
 		{controlplane.ErrNotAwaitingContract, connect.CodeFailedPrecondition},
+		{controlplane.ErrNotRevertable, connect.CodeFailedPrecondition},
 		{errors.New("other"), connect.CodeInternal},
 	}
 	for _, tc := range cases {

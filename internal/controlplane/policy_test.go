@@ -13,7 +13,7 @@ func TestPolicies(t *testing.T) {
 		{Version: 1, Name: "a", UpSQL: "CREATE TABLE a (id int);", DownSQL: "DROP TABLE a;"},
 		{Version: 2, Name: "b", UpSQL: "ALTER TABLE a DROP COLUMN id;", DownSQL: "SELECT 1;"},
 		{Version: 3, Name: "c", UpSQL: "CREATE TABLE c (id int);", DownSQL: "DROP TABLE c;"},
-	})
+	}, engine.DirectionUp)
 	if err != nil {
 		t.Fatal(err)
 	}

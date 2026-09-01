@@ -93,6 +93,9 @@ func TestAPIValidationAndErrors(t *testing.T) {
 	if connect.CodeOf(stream.Err()) != connect.CodeNotFound {
 		t.Fatalf("watch ghost: %v", stream.Err())
 	}
+	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: ghost})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("revert ghost: %v", err)
+	}
 	if _, err := client.ParkRun(ctx, connect.NewRequest(&godwitv1.ParkRunRequest{RunId: ghost})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("park ghost: %v", err)
 	}
@@ -252,6 +255,9 @@ func TestAPIInternalErrors(t *testing.T) {
 	}
 	if _, err := client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: "x"})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("confirm: %v", err)
+	}
+	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: "x"})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("revert: %v", err)
 	}
 }
 

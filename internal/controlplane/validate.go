@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"testing/fstest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,7 +53,7 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 
 	for i, files := range history {
-		histPlans, err := plansFromFiles(files)
+		histPlans, err := PlansFromFiles(files, engine.DirectionUp)
 		if err != nil {
 			return fmt.Errorf("history run %d: %w", i, err)
 		}
@@ -68,17 +67,4 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	}
 
 	return nil
-}
-
-func plansFromFiles(files map[string]string) ([]engine.Plan, error) {
-	fsys := fstest.MapFS{}
-	for name, body := range files {
-		fsys[name] = &fstest.MapFile{Data: []byte(body)}
-	}
-	migs, err := engine.LoadFS(fsys)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildPlans(migs)
 }

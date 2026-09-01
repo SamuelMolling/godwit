@@ -221,7 +221,7 @@ func TestValidator(t *testing.T) {
 	good, err := buildPlans([]engine.Migration{{
 		Version: 1, Name: "ok",
 		UpSQL: "CREATE TABLE v (id int);", DownSQL: "DROP TABLE v;",
-	}})
+	}}, engine.DirectionUp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestValidator(t *testing.T) {
 	bad, err := buildPlans([]engine.Migration{{
 		Version: 1, Name: "bad",
 		UpSQL: "SELECT 1/0;", DownSQL: "SELECT 1;",
-	}})
+	}}, engine.DirectionUp)
 	if err != nil {
 		t.Fatal(err)
 	}

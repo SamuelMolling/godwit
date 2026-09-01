@@ -18,6 +18,7 @@ The script:
 6. Exercises the gates: a `DROP TABLE` refused without hazard acknowledgment, SQL that parses but cannot run refused at validation.
 7. Detects a manual out-of-band change (drift) and blesses it as the new baseline.
 8. Runs an `expand-contract` rollout: the added column lands, the drop waits in `awaiting_contract` until `ConfirmRollout`.
+9. Reverts that run with `RevertRun`: `plan` comes back, `plan_v2` goes, the original run is marked `reverted`.
 
 Poke around:
 

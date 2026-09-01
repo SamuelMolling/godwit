@@ -31,8 +31,10 @@ const (
 	RunState_RUN_STATE_SUCCEEDED       RunState = 3
 	RunState_RUN_STATE_FAILED          RunState = 4
 	RunState_RUN_STATE_NEEDS_ATTENTION RunState = 5
-	// Expand phase applied; the contract phase waits for ConfirmRollout.
+	// Contract phase held until ConfirmRollout.
 	RunState_RUN_STATE_AWAITING_CONTRACT RunState = 6
+	// Undone by a later RevertRun.
+	RunState_RUN_STATE_REVERTED RunState = 7
 )
 
 // Enum value maps for RunState.
@@ -45,6 +47,7 @@ var (
 		4: "RUN_STATE_FAILED",
 		5: "RUN_STATE_NEEDS_ATTENTION",
 		6: "RUN_STATE_AWAITING_CONTRACT",
+		7: "RUN_STATE_REVERTED",
 	}
 	RunState_value = map[string]int32{
 		"RUN_STATE_UNSPECIFIED":       0,
@@ -54,6 +57,7 @@ var (
 		"RUN_STATE_FAILED":            4,
 		"RUN_STATE_NEEDS_ATTENTION":   5,
 		"RUN_STATE_AWAITING_CONTRACT": 6,
+		"RUN_STATE_REVERTED":          7,
 	}
 )
 
@@ -147,7 +151,9 @@ type Run struct {
 	FinishedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	Rollout    string                 `protobuf:"bytes,8,opt,name=rollout,proto3" json:"rollout,omitempty"`
 	// "expand" or "contract".
-	Phase         string `protobuf:"bytes,9,opt,name=phase,proto3" json:"phase,omitempty"`
+	Phase string `protobuf:"bytes,9,opt,name=phase,proto3" json:"phase,omitempty"`
+	// Id of the run this one reverts, when it is a revert.
+	Reverts       string `protobuf:"bytes,10,opt,name=reverts,proto3" json:"reverts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -241,6 +247,13 @@ func (x *Run) GetRollout() string {
 func (x *Run) GetPhase() string {
 	if x != nil {
 		return x.Phase
+	}
+	return ""
+}
+
+func (x *Run) GetReverts() string {
+	if x != nil {
+		return x.Reverts
 	}
 	return ""
 }
@@ -354,13 +367,11 @@ type CreateRunRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Target string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
 	Files  []*MigrationFile       `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty"`
-	// Hazard codes (e.g. "H002") the author explicitly accepts. A run whose
-	// plan carries unacknowledged hazards is refused at admission.
+	// Hazard codes the author accepts; unacknowledged hazards are refused.
 	AcknowledgeHazards []string `protobuf:"bytes,3,rep,name=acknowledge_hazards,json=acknowledgeHazards,proto3" json:"acknowledge_hazards,omitempty"`
-	// Skip the scratch-database validation (on by default when configured).
+	// Skip the scratch-database validation.
 	SkipValidation bool `protobuf:"varint,4,opt,name=skip_validation,json=skipValidation,proto3" json:"skip_validation,omitempty"`
-	// Rollout policy: "direct" (default, apply everything now) or
-	// "expand-contract" (hold destructive migrations until ConfirmRollout).
+	// "direct" (default) or "expand-contract".
 	Rollout       string `protobuf:"bytes,5,opt,name=rollout,proto3" json:"rollout,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1327,6 +1338,111 @@ func (*ConfirmRolloutResponse) Descriptor() ([]byte, []int) {
 	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{24}
 }
 
+type RevertRunRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	RunId              string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AcknowledgeHazards []string               `protobuf:"bytes,2,rep,name=acknowledge_hazards,json=acknowledgeHazards,proto3" json:"acknowledge_hazards,omitempty"`
+	SkipValidation     bool                   `protobuf:"varint,3,opt,name=skip_validation,json=skipValidation,proto3" json:"skip_validation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *RevertRunRequest) Reset() {
+	*x = RevertRunRequest{}
+	mi := &file_godwit_v1_godwit_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevertRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevertRunRequest) ProtoMessage() {}
+
+func (x *RevertRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_godwit_v1_godwit_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevertRunRequest.ProtoReflect.Descriptor instead.
+func (*RevertRunRequest) Descriptor() ([]byte, []int) {
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *RevertRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *RevertRunRequest) GetAcknowledgeHazards() []string {
+	if x != nil {
+		return x.AcknowledgeHazards
+	}
+	return nil
+}
+
+func (x *RevertRunRequest) GetSkipValidation() bool {
+	if x != nil {
+		return x.SkipValidation
+	}
+	return false
+}
+
+type RevertRunResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Id of the new run applying the down migrations.
+	RunId         string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevertRunResponse) Reset() {
+	*x = RevertRunResponse{}
+	mi := &file_godwit_v1_godwit_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevertRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevertRunResponse) ProtoMessage() {}
+
+func (x *RevertRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_godwit_v1_godwit_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevertRunResponse.ProtoReflect.Descriptor instead.
+func (*RevertRunResponse) Descriptor() ([]byte, []int) {
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *RevertRunResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
 var File_godwit_v1_godwit_proto protoreflect.FileDescriptor
 
 const file_godwit_v1_godwit_proto_rawDesc = "" +
@@ -1334,7 +1450,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x16godwit/v1/godwit.proto\x12\tgodwit.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"7\n" +
 	"\rMigrationFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04body\x18\x02 \x01(\tR\x04body\"\xb2\x02\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body\"\xcc\x02\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06target\x18\x02 \x01(\tR\x06target\x12)\n" +
@@ -1346,7 +1462,9 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\vfinished_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12\x18\n" +
 	"\arollout\x18\b \x01(\tR\arollout\x12\x14\n" +
-	"\x05phase\x18\t \x01(\tR\x05phase\"z\n" +
+	"\x05phase\x18\t \x01(\tR\x05phase\x12\x18\n" +
+	"\areverts\x18\n" +
+	" \x01(\tR\areverts\"z\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -1404,7 +1522,13 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x0fParkRunResponse\".\n" +
 	"\x15ConfirmRolloutRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\x18\n" +
-	"\x16ConfirmRolloutResponse*\xc1\x01\n" +
+	"\x16ConfirmRolloutResponse\"\x83\x01\n" +
+	"\x10RevertRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12/\n" +
+	"\x13acknowledge_hazards\x18\x02 \x03(\tR\x12acknowledgeHazards\x12'\n" +
+	"\x0fskip_validation\x18\x03 \x01(\bR\x0eskipValidation\"*\n" +
+	"\x11RevertRunResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId*\xd9\x01\n" +
 	"\bRunState\x12\x19\n" +
 	"\x15RUN_STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10RUN_STATE_QUEUED\x10\x01\x12\x15\n" +
@@ -1412,7 +1536,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x13RUN_STATE_SUCCEEDED\x10\x03\x12\x14\n" +
 	"\x10RUN_STATE_FAILED\x10\x04\x12\x1d\n" +
 	"\x19RUN_STATE_NEEDS_ATTENTION\x10\x05\x12\x1f\n" +
-	"\x1bRUN_STATE_AWAITING_CONTRACT\x10\x062\xd6\x06\n" +
+	"\x1bRUN_STATE_AWAITING_CONTRACT\x10\x06\x12\x16\n" +
+	"\x12RUN_STATE_REVERTED\x10\a2\x9e\a\n" +
 	"\rGodwitService\x12U\n" +
 	"\x0eRegisterTarget\x12 .godwit.v1.RegisterTargetRequest\x1a!.godwit.v1.RegisterTargetResponse\x12F\n" +
 	"\tCreateRun\x12\x1b.godwit.v1.CreateRunRequest\x1a\x1c.godwit.v1.CreateRunResponse\x12=\n" +
@@ -1421,7 +1546,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\bWatchRun\x12\x1a.godwit.v1.WatchRunRequest\x1a\x1b.godwit.v1.WatchRunResponse0\x01\x12F\n" +
 	"\tResumeRun\x12\x1b.godwit.v1.ResumeRunRequest\x1a\x1c.godwit.v1.ResumeRunResponse\x12@\n" +
 	"\aParkRun\x12\x19.godwit.v1.ParkRunRequest\x1a\x1a.godwit.v1.ParkRunResponse\x12U\n" +
-	"\x0eConfirmRollout\x12 .godwit.v1.ConfirmRolloutRequest\x1a!.godwit.v1.ConfirmRolloutResponse\x12I\n" +
+	"\x0eConfirmRollout\x12 .godwit.v1.ConfirmRolloutRequest\x1a!.godwit.v1.ConfirmRolloutResponse\x12F\n" +
+	"\tRevertRun\x12\x1b.godwit.v1.RevertRunRequest\x1a\x1c.godwit.v1.RevertRunResponse\x12I\n" +
 	"\n" +
 	"CheckDrift\x12\x1c.godwit.v1.CheckDriftRequest\x1a\x1d.godwit.v1.CheckDriftResponse\x12X\n" +
 	"\x0fListDriftEvents\x12!.godwit.v1.ListDriftEventsRequest\x1a\".godwit.v1.ListDriftEventsResponse\x12U\n" +
@@ -1440,7 +1566,7 @@ func file_godwit_v1_godwit_proto_rawDescGZIP() []byte {
 }
 
 var file_godwit_v1_godwit_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_godwit_v1_godwit_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_godwit_v1_godwit_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_godwit_v1_godwit_proto_goTypes = []any{
 	(RunState)(0),                   // 0: godwit.v1.RunState
 	(*MigrationFile)(nil),           // 1: godwit.v1.MigrationFile
@@ -1468,15 +1594,17 @@ var file_godwit_v1_godwit_proto_goTypes = []any{
 	(*ParkRunResponse)(nil),         // 23: godwit.v1.ParkRunResponse
 	(*ConfirmRolloutRequest)(nil),   // 24: godwit.v1.ConfirmRolloutRequest
 	(*ConfirmRolloutResponse)(nil),  // 25: godwit.v1.ConfirmRolloutResponse
-	(*timestamppb.Timestamp)(nil),   // 26: google.protobuf.Timestamp
+	(*RevertRunRequest)(nil),        // 26: godwit.v1.RevertRunRequest
+	(*RevertRunResponse)(nil),       // 27: godwit.v1.RevertRunResponse
+	(*timestamppb.Timestamp)(nil),   // 28: google.protobuf.Timestamp
 }
 var file_godwit_v1_godwit_proto_depIdxs = []int32{
 	0,  // 0: godwit.v1.Run.state:type_name -> godwit.v1.RunState
-	26, // 1: godwit.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	26, // 2: godwit.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	28, // 1: godwit.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	28, // 2: godwit.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: godwit.v1.CreateRunRequest.files:type_name -> godwit.v1.MigrationFile
-	26, // 4: godwit.v1.DriftEvent.detected_at:type_name -> google.protobuf.Timestamp
-	26, // 5: godwit.v1.DriftEvent.resolved_at:type_name -> google.protobuf.Timestamp
+	28, // 4: godwit.v1.DriftEvent.detected_at:type_name -> google.protobuf.Timestamp
+	28, // 5: godwit.v1.DriftEvent.resolved_at:type_name -> google.protobuf.Timestamp
 	10, // 6: godwit.v1.ListDriftEventsResponse.events:type_name -> godwit.v1.DriftEvent
 	2,  // 7: godwit.v1.GetRunResponse.run:type_name -> godwit.v1.Run
 	2,  // 8: godwit.v1.ListRunsResponse.runs:type_name -> godwit.v1.Run
@@ -1489,22 +1617,24 @@ var file_godwit_v1_godwit_proto_depIdxs = []int32{
 	20, // 15: godwit.v1.GodwitService.ResumeRun:input_type -> godwit.v1.ResumeRunRequest
 	22, // 16: godwit.v1.GodwitService.ParkRun:input_type -> godwit.v1.ParkRunRequest
 	24, // 17: godwit.v1.GodwitService.ConfirmRollout:input_type -> godwit.v1.ConfirmRolloutRequest
-	7,  // 18: godwit.v1.GodwitService.CheckDrift:input_type -> godwit.v1.CheckDriftRequest
-	9,  // 19: godwit.v1.GodwitService.ListDriftEvents:input_type -> godwit.v1.ListDriftEventsRequest
-	12, // 20: godwit.v1.GodwitService.AcceptBaseline:input_type -> godwit.v1.AcceptBaselineRequest
-	4,  // 21: godwit.v1.GodwitService.RegisterTarget:output_type -> godwit.v1.RegisterTargetResponse
-	6,  // 22: godwit.v1.GodwitService.CreateRun:output_type -> godwit.v1.CreateRunResponse
-	15, // 23: godwit.v1.GodwitService.GetRun:output_type -> godwit.v1.GetRunResponse
-	17, // 24: godwit.v1.GodwitService.ListRuns:output_type -> godwit.v1.ListRunsResponse
-	19, // 25: godwit.v1.GodwitService.WatchRun:output_type -> godwit.v1.WatchRunResponse
-	21, // 26: godwit.v1.GodwitService.ResumeRun:output_type -> godwit.v1.ResumeRunResponse
-	23, // 27: godwit.v1.GodwitService.ParkRun:output_type -> godwit.v1.ParkRunResponse
-	25, // 28: godwit.v1.GodwitService.ConfirmRollout:output_type -> godwit.v1.ConfirmRolloutResponse
-	8,  // 29: godwit.v1.GodwitService.CheckDrift:output_type -> godwit.v1.CheckDriftResponse
-	11, // 30: godwit.v1.GodwitService.ListDriftEvents:output_type -> godwit.v1.ListDriftEventsResponse
-	13, // 31: godwit.v1.GodwitService.AcceptBaseline:output_type -> godwit.v1.AcceptBaselineResponse
-	21, // [21:32] is the sub-list for method output_type
-	10, // [10:21] is the sub-list for method input_type
+	26, // 18: godwit.v1.GodwitService.RevertRun:input_type -> godwit.v1.RevertRunRequest
+	7,  // 19: godwit.v1.GodwitService.CheckDrift:input_type -> godwit.v1.CheckDriftRequest
+	9,  // 20: godwit.v1.GodwitService.ListDriftEvents:input_type -> godwit.v1.ListDriftEventsRequest
+	12, // 21: godwit.v1.GodwitService.AcceptBaseline:input_type -> godwit.v1.AcceptBaselineRequest
+	4,  // 22: godwit.v1.GodwitService.RegisterTarget:output_type -> godwit.v1.RegisterTargetResponse
+	6,  // 23: godwit.v1.GodwitService.CreateRun:output_type -> godwit.v1.CreateRunResponse
+	15, // 24: godwit.v1.GodwitService.GetRun:output_type -> godwit.v1.GetRunResponse
+	17, // 25: godwit.v1.GodwitService.ListRuns:output_type -> godwit.v1.ListRunsResponse
+	19, // 26: godwit.v1.GodwitService.WatchRun:output_type -> godwit.v1.WatchRunResponse
+	21, // 27: godwit.v1.GodwitService.ResumeRun:output_type -> godwit.v1.ResumeRunResponse
+	23, // 28: godwit.v1.GodwitService.ParkRun:output_type -> godwit.v1.ParkRunResponse
+	25, // 29: godwit.v1.GodwitService.ConfirmRollout:output_type -> godwit.v1.ConfirmRolloutResponse
+	27, // 30: godwit.v1.GodwitService.RevertRun:output_type -> godwit.v1.RevertRunResponse
+	8,  // 31: godwit.v1.GodwitService.CheckDrift:output_type -> godwit.v1.CheckDriftResponse
+	11, // 32: godwit.v1.GodwitService.ListDriftEvents:output_type -> godwit.v1.ListDriftEventsResponse
+	13, // 33: godwit.v1.GodwitService.AcceptBaseline:output_type -> godwit.v1.AcceptBaselineResponse
+	22, // [22:34] is the sub-list for method output_type
+	10, // [10:22] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name
@@ -1521,7 +1651,7 @@ func file_godwit_v1_godwit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_godwit_v1_godwit_proto_rawDesc), len(file_godwit_v1_godwit_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   25,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

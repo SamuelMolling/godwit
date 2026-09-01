@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"testing/fstest"
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
@@ -136,24 +135,20 @@ func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
 
 // applyRun applies the current phase and reports how many plans were held back.
 func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
-	files, err := s.store.RunFiles(ctx, run.ID)
+	filesID, dir := run.ID, engine.DirectionUp
+	if run.Reverts != "" {
+		filesID, dir = run.Reverts, engine.DirectionDown
+	}
+	files, err := s.store.RunFiles(ctx, filesID)
 	if err != nil {
 		return 0, err
 	}
-	fsys := fstest.MapFS{}
-	for name, body := range files {
-		fsys[name] = &fstest.MapFile{Data: []byte(body)}
-	}
-	migs, err := engine.LoadFS(fsys)
-	if err != nil {
-		return 0, err
-	}
-	plans, err := buildPlans(migs)
+	plans, err := PlansFromFiles(files, dir)
 	if err != nil {
 		return 0, err
 	}
 	held := 0
-	if run.Phase != PhaseContract {
+	if run.Reverts == "" && run.Phase != PhaseContract {
 		policy, ok := s.policies[run.Rollout]
 		if !ok {
 			return 0, fmt.Errorf("unknown rollout policy %q", run.Rollout)
