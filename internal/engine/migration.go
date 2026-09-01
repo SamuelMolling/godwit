@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -26,7 +26,12 @@ var fileRe = regexp.MustCompile(`^(\d{14})_([a-z0-9_]+)\.(up|down)\.sql$`)
 // LoadDir reads a migration directory and returns migrations sorted by version.
 // Every version must have a non-empty up and down file.
 func LoadDir(dir string) ([]Migration, error) {
-	entries, err := os.ReadDir(dir)
+	return LoadFS(os.DirFS(dir))
+}
+
+// LoadFS is LoadDir over any filesystem root.
+func LoadFS(fsys fs.FS) ([]Migration, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, fmt.Errorf("read migration dir: %w", err)
 	}
@@ -41,7 +46,7 @@ func LoadDir(dir string) ([]Migration, error) {
 			return nil, fmt.Errorf("unexpected file %q: want <yyyymmddhhmmss>_<snake_name>.{up,down}.sql", e.Name())
 		}
 		version, _ := strconv.ParseInt(m[1], 10, 64) // regex guarantees 14 digits
-		body, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		body, err := fs.ReadFile(fsys, e.Name())
 		if err != nil {
 			return nil, fmt.Errorf("read %q: %w", e.Name(), err)
 		}

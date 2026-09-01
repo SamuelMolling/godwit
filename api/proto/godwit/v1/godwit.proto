@@ -1,3 +1,97 @@
 syntax = "proto3";
 
 package godwit.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/SamuelMolling/godwit/gen/godwit/v1;godwitv1";
+
+message MigrationFile {
+  string name = 1;
+  string body = 2;
+}
+
+enum RunState {
+  RUN_STATE_UNSPECIFIED = 0;
+  RUN_STATE_QUEUED = 1;
+  RUN_STATE_RUNNING = 2;
+  RUN_STATE_SUCCEEDED = 3;
+  RUN_STATE_FAILED = 4;
+  RUN_STATE_NEEDS_ATTENTION = 5;
+}
+
+message Run {
+  string id = 1;
+  string target = 2;
+  RunState state = 3;
+  string error = 4;
+  int32 attempts = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp finished_at = 7;
+}
+
+message RegisterTargetRequest {
+  string name = 1;
+  // Credential provider: "static" (dsn, encrypted at rest) or "kubernetes" (secret_path).
+  string provider = 2;
+  string dsn = 3;
+  string secret_path = 4;
+}
+
+message RegisterTargetResponse {}
+
+message CreateRunRequest {
+  string target = 1;
+  repeated MigrationFile files = 2;
+}
+
+message CreateRunResponse {
+  string run_id = 1;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message GetRunResponse {
+  Run run = 1;
+}
+
+message ListRunsRequest {
+  string target = 1;
+}
+
+message ListRunsResponse {
+  repeated Run runs = 1;
+}
+
+message WatchRunRequest {
+  string run_id = 1;
+}
+
+message WatchRunResponse {
+  Run run = 1;
+}
+
+message ResumeRunRequest {
+  string run_id = 1;
+}
+
+message ResumeRunResponse {}
+
+message ParkRunRequest {
+  string run_id = 1;
+  string reason = 2;
+}
+
+message ParkRunResponse {}
+
+service GodwitService {
+  rpc RegisterTarget(RegisterTargetRequest) returns (RegisterTargetResponse);
+  rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc WatchRun(WatchRunRequest) returns (stream WatchRunResponse);
+  rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
+  rpc ParkRun(ParkRunRequest) returns (ParkRunResponse);
+}
