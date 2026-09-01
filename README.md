@@ -46,4 +46,4 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 
 ## Status
 
-🚧 Early design. See [DESIGN.md](DESIGN.md) for the full architecture and the research behind each decision.
+🚧 v1 in progress — **PostgreSQL only, API-first, no UI yet** (Backstage plugin or standalone UI arrive in v1.1 on top of the same API).
