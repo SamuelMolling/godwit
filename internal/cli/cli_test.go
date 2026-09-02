@@ -31,6 +31,15 @@ func TestMainNoArgsPrintsHelp(t *testing.T) {
 	}
 }
 
+func TestRunNoArgsPrintsHelp(t *testing.T) {
+	t.Parallel()
+
+	code, out, errOut := runCLI("run")
+	if code != 0 || !strings.Contains(out, "confirm") {
+		t.Fatalf("run = %d, out %q, stderr %q", code, out, errOut)
+	}
+}
+
 func TestMainUnknownCommandFails(t *testing.T) {
 	t.Parallel()
 

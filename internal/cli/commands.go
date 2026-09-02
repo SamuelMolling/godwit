@@ -95,10 +95,10 @@ func firstLine(sql string) string {
 	return line
 }
 
-func newRunCmd() *cobra.Command {
+func newApplyCmd() *cobra.Command {
 	flags := &targetFlags{}
 	cmd := &cobra.Command{
-		Use:   "run",
+		Use:   "apply",
 		Short: "Apply all pending migrations",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			migs, err := engine.LoadDir(flags.dir)

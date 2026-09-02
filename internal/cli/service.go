@@ -181,8 +181,17 @@ func stamp(ts *timestamppb.Timestamp) string {
 	return ts.AsTime().UTC().Format(time.RFC3339)
 }
 
-func addRunSubcommands(run *cobra.Command) {
-	run.AddCommand(newRunGetCmd(), newRunWatchCmd(), newRunResumeCmd(), newRunConfirmCmd())
+func newRunCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Inspect and steer runs on the service",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	cmd.AddCommand(newRunGetCmd(), newRunWatchCmd(), newRunResumeCmd(), newRunConfirmCmd())
+
+	return cmd
 }
 
 func newRunGetCmd() *cobra.Command {
