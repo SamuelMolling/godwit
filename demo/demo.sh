@@ -104,6 +104,19 @@ echo
 echo "    (pass \"acknowledgeHazards\": [\"H002\"] to accept it)"
 
 echo
+echo "==> safe-DDL recipe: every hazard comes with the ready-to-copy alternative, real names included"
+rpc PlanRun '{
+  "target": "app",
+  "acknowledgeHazards": ["H004"],
+  "skipValidation": true,
+  "files": [
+    {"name": "20260901140001_users_id_bigint.up.sql", "body": "ALTER TABLE users ALTER COLUMN id TYPE bigint;"},
+    {"name": "20260901140001_users_id_bigint.down.sql", "body": "SELECT 1;"}
+  ]
+}' 18475 | sed -E 's/.*"recipe":"([^"]*)".*/\1/; s/\\n/\n    /g; s/^/    /'
+echo
+
+echo
 echo "==> validation gate: SQL that parses but cannot run is refused at admission"
 rpc CreateRun '{
   "target": "app",

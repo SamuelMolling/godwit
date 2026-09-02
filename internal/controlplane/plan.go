@@ -50,6 +50,7 @@ func (o Observation) HistoryHash() string {
 type PlanHazard struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail"`
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // PlanStatement is one classified statement of a stored plan.
@@ -164,7 +165,7 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied []int64) [
 		for _, st := range p.Statements {
 			ps := PlanStatement{SQL: st.SQL, NoTx: st.NoTx}
 			for _, h := range st.Hazards {
-				ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail})
+				ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 			}
 			pm.Statements = append(pm.Statements, ps)
 		}

@@ -110,7 +110,7 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 		for _, st := range m.Statements {
 			ps := &godwitv1.PlannedStatement{Sql: st.SQL, NoTx: st.NoTx}
 			for _, h := range st.Hazards {
-				ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail})
+				ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 			}
 			pm.Statements = append(pm.Statements, ps)
 		}
