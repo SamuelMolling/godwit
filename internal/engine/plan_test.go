@@ -97,8 +97,9 @@ func TestBuildPlanClassification(t *testing.T) {
 			index:    "idx",
 		},
 		{
-			name: "drop index plain",
-			sql:  "DROP INDEX idx;",
+			name:    "drop index plain",
+			sql:     "DROP INDEX idx;",
+			hazards: []string{"H009"},
 		},
 		{
 			name: "drop view ignored",
@@ -131,6 +132,69 @@ func TestBuildPlanClassification(t *testing.T) {
 		{
 			name: "validate constraint",
 			sql:  "ALTER TABLE users VALIDATE CONSTRAINT users_age_check;",
+		},
+		{
+			name:    "add foreign key",
+			sql:     "ALTER TABLE orders ADD CONSTRAINT orders_user_fk FOREIGN KEY (user_id) REFERENCES users (id);",
+			hazards: []string{"H006"},
+		},
+		{
+			name: "add foreign key not valid",
+			sql:  "ALTER TABLE orders ADD CONSTRAINT orders_user_fk FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID;",
+		},
+		{
+			name:    "add check",
+			sql:     "ALTER TABLE users ADD CHECK (age > 0);",
+			hazards: []string{"H006"},
+		},
+		{
+			name: "add check not valid",
+			sql:  "ALTER TABLE users ADD CONSTRAINT users_age_check CHECK (age > 0) NOT VALID;",
+		},
+		{
+			name: "add exclusion ignored",
+			sql:  "ALTER TABLE users ADD CONSTRAINT users_excl EXCLUDE USING gist (id WITH =);",
+		},
+		{
+			name:    "set not null",
+			sql:     "ALTER TABLE users ALTER COLUMN email SET NOT NULL;",
+			hazards: []string{"H007"},
+		},
+		{
+			name: "drop not null",
+			sql:  "ALTER TABLE users ALTER COLUMN email DROP NOT NULL;",
+		},
+		{
+			name:    "rename table",
+			sql:     "ALTER TABLE users RENAME TO accounts;",
+			hazards: []string{"H008"},
+		},
+		{
+			name:    "rename column",
+			sql:     "ALTER TABLE users RENAME COLUMN email TO mail;",
+			hazards: []string{"H008"},
+		},
+		{
+			name: "rename constraint ignored",
+			sql:  "ALTER TABLE users RENAME CONSTRAINT a TO b;",
+		},
+		{
+			name:    "add primary key",
+			sql:     "ALTER TABLE users ADD PRIMARY KEY (id);",
+			hazards: []string{"H010"},
+		},
+		{
+			name: "add primary key using index",
+			sql:  "ALTER TABLE users ADD CONSTRAINT users_pkey PRIMARY KEY USING INDEX users_id_uidx;",
+		},
+		{
+			name:    "add unique",
+			sql:     "ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);",
+			hazards: []string{"H010"},
+		},
+		{
+			name: "add unique using index",
+			sql:  "ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE USING INDEX users_email_uidx;",
 		},
 		{
 			name:     "vacuum",
@@ -177,6 +241,30 @@ func TestBuildPlanClassification(t *testing.T) {
 				if got[i] != tc.hazards[i] {
 					t.Fatalf("hazards = %v, want %v", got, tc.hazards)
 				}
+			}
+		})
+	}
+}
+
+func TestBuildPlanHazardDetails(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users (id);": "ADD CONSTRAINT FOREIGN KEY scans the whole table under lock; add it NOT VALID, then VALIDATE CONSTRAINT in a separate statement",
+		"ALTER TABLE users ADD CHECK (age > 0);":                                            "ADD CONSTRAINT CHECK scans the whole table under lock; add it NOT VALID, then VALIDATE CONSTRAINT in a separate statement",
+		"ALTER TABLE users ALTER COLUMN email SET NOT NULL;":                                "SET NOT NULL on email scans the table under an exclusive lock; add CHECK (email IS NOT NULL) NOT VALID, VALIDATE CONSTRAINT it, then SET NOT NULL is instant on PostgreSQL 12+",
+		"ALTER TABLE users RENAME TO accounts;":                                             "RENAME TABLE users breaks application versions still using the old name; add the new table, migrate readers and writers, then drop the old one",
+		"ALTER TABLE users RENAME COLUMN email TO mail;":                                    "RENAME COLUMN email breaks application versions still using the old name; add the new column, backfill, migrate readers and writers, then drop the old one",
+		"DROP INDEX idx;":                         "DROP INDEX without CONCURRENTLY blocks reads and writes on the table; use DROP INDEX CONCURRENTLY",
+		"ALTER TABLE users ADD PRIMARY KEY (id);": "ADD PRIMARY KEY builds its index under an exclusive lock; CREATE UNIQUE INDEX CONCURRENTLY first, then ADD CONSTRAINT ... USING INDEX",
+		"ALTER TABLE users ADD UNIQUE (email);":   "ADD UNIQUE builds its index under an exclusive lock; CREATE UNIQUE INDEX CONCURRENTLY first, then ADD CONSTRAINT ... USING INDEX",
+	}
+	for sql, want := range cases {
+		t.Run(sql, func(t *testing.T) {
+			t.Parallel()
+			st := planUp(t, sql).Statements[0]
+			if len(st.Hazards) != 1 || st.Hazards[0].Detail != want {
+				t.Fatalf("hazards = %+v, want detail %q", st.Hazards, want)
 			}
 		})
 	}

@@ -83,6 +83,29 @@ func TestCheckHazardsAndAck(t *testing.T) {
 	}
 }
 
+func TestCheckLockHazards(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeMigs(t, dir, map[string]string{
+		"20260901120000_fk.up.sql":   "ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users (id);\nALTER TABLE users RENAME COLUMN email TO mail;\nDROP INDEX i;",
+		"20260901120000_fk.down.sql": "DROP INDEX CONCURRENTLY j;",
+	})
+	rep := check(t, dir, nil, Options{})
+	want := "20260901120000_fk.up.sql:error:H006 20260901120000_fk.up.sql:error:H008 20260901120000_fk.up.sql:error:H009"
+	if got := codes(rep); got != want {
+		t.Fatalf("codes = %q, want %q", got, want)
+	}
+	if !strings.Contains(rep.Findings[0].Message, "NOT VALID") {
+		t.Fatalf("report = %+v", rep)
+	}
+
+	rep = check(t, dir, []string{"H006", "H008", "H009"}, Options{})
+	if rep.Blocking != 0 || len(rep.Findings) != 0 {
+		t.Fatalf("acked report = %+v", rep)
+	}
+}
+
 func TestCheckNoOpDown(t *testing.T) {
 	t.Parallel()
 
