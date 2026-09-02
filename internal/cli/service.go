@@ -209,7 +209,7 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 		for _, ps := range pm.Statements {
 			st := engine.Statement{SQL: ps.Sql, NoTx: ps.NoTx}
 			for _, h := range ps.Hazards {
-				st.Hazards = append(st.Hazards, engine.Hazard{Code: h.Code, Detail: h.Detail})
+				st.Hazards = append(st.Hazards, engine.Hazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 			}
 			p.Statements = append(p.Statements, st)
 		}

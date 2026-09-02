@@ -52,6 +52,7 @@ func newLintCmd() *cobra.Command {
 func writeLintText(w io.Writer, rep lint.Report) {
 	for _, f := range rep.Findings {
 		fmt.Fprintf(w, "%s: %s %s %s\n", f.File, f.Level, f.Code, f.Message)
+		writeRecipeText(w, "    ", f.Recipe)
 	}
 	fmt.Fprintf(w, "%d finding(s), %d blocking\n", len(rep.Findings), rep.Blocking)
 }
@@ -66,6 +67,9 @@ func writeLintMarkdown(w io.Writer, rep lint.Report) {
 			fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n", f.File, f.Level, f.Code, f.Message)
 		}
 		fmt.Fprintln(w)
+		for _, f := range rep.Findings {
+			writeRecipeDetails(w, fmt.Sprintf("recipe for %s in `%s`", f.Code, f.File), f.Recipe)
+		}
 	}
 	if rep.Blocking > 0 {
 		fmt.Fprintf(w, "❌ %d blocking finding(s)\n", rep.Blocking)

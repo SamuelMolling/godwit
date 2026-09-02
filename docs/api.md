@@ -101,7 +101,7 @@ Refusals:
 
 ### PlanRun — read
 
-Same admission as `CreateRun`, no run. Returns every migration with `applied`, `phase` (`expand` / `contract`, given `rollout`) and its statements with `noTx` and hazards; `validated` is true when the scratch replay ran. With `persist`, the plan is stored for a later `CreateRun` to bind to, and the response adds `planId`, `planKey`, `observed` (`historyHash`, `schemaFingerprint`, `appliedCount`, `newestApplied`, `at`) and `drift` (schema changes on the target that no run made, as `+`/`-` lines; empty without a baseline). `source` is free text stored with the plan. An applied migration whose body no longer matches its recorded checksum is `invalid_argument: <version>_<name> applied with different content`.
+Same admission as `CreateRun`, no run. Returns every migration with `applied`, `phase` (`expand` / `contract`, given `rollout`) and its statements with `noTx` and hazards (`code`, `detail`, `recipe`: the safe form as SQL with the statement's real names); `validated` is true when the scratch replay ran. With `persist`, the plan is stored for a later `CreateRun` to bind to, and the response adds `planId`, `planKey`, `observed` (`historyHash`, `schemaFingerprint`, `appliedCount`, `newestApplied`, `at`) and `drift` (schema changes on the target that no run made, as `+`/`-` lines; empty without a baseline). `source` is free text stored with the plan. An applied migration whose body no longer matches its recorded checksum is `invalid_argument: <version>_<name> applied with different content`.
 
 ```bash
 call PlanRun '{"target":"app","files":[...],"rollout":"expand-contract","persist":true,"source":"github.com/acme/app@9c1e2f"}'

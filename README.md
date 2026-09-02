@@ -31,6 +31,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | Crash-safe engine | Statement-level journal committed with the DDL; write-ahead intents and verifiers for `CREATE INDEX CONCURRENTLY` and friends; survives `kill -9` at any point. |
 | Leased service | Any replica claims a run; lost leases are taken over and resumed from the journal; `--max-attempts` parks a run as `needs_attention`. |
 | Hazard gate | `H001`–`H010` from a real PostgreSQL parser (`libpg_query`): non-concurrent indexes, destructive drops, rewrites, unvalidated constraints, renames. Refused unless acknowledged in the run. |
+| Safe-DDL recipes | Every hazard carries the safe form as ready-to-copy SQL with the real names from the statement (`CREATE INDEX CONCURRENTLY ...`, `CHECK ... NOT VALID` → `VALIDATE` → `SET NOT NULL`, add column → backfill → swap for a type change), in `lint`, `plan` and the API. |
 | Validation | Every run replays the target's recorded history plus the new files on a scratch database before it is queued. |
 | Rollout policies | `direct`, or `expand-contract`: destructive migrations wait in `awaiting_contract` until `ConfirmRollout`. |
 | Revert, baseline, status | `RevertRun` runs the down side through the same gate; `BaselineTarget` adopts an existing database; `GetTargetStatus` answers applied/pending/last run/drift in one call. |

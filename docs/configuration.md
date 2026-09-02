@@ -114,7 +114,7 @@ Global: `--config <path>`. Every service command: `--server`, `--token`, `--json
 | `godwit status` | `--dsn` (required), `--dir`, timeouts as above | `applied <ts>`, `pending`, `applied <ts> (checksum drift!)` per migration; bootstraps the `godwit` schema |
 | `godwit down` | `--dsn` (required), `--dir`, `--version` (required), `--yes` | applies one migration's down side; refuses without `--yes` |
 
-Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migration modified after merge (needs `--base`), `H001`–`H010` unacknowledged hazards on the up side, `W001` no-op down migration (warning, never blocking).
+Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migration modified after merge (needs `--base`), `H001`–`H010` unacknowledged hazards on the up side, `W001` no-op down migration (warning, never blocking). Hazard findings carry a `recipe` (the safe SQL, [concepts: hazards](concepts.md#hazards)): indented under the finding in text, a `<details>` block per finding in markdown, a field in JSON.
 
 ### Service
 

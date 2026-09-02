@@ -967,6 +967,7 @@ type PlannedHazard struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	Detail        string                 `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
+	Recipe        string                 `protobuf:"bytes,3,opt,name=recipe,proto3" json:"recipe,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1011,6 +1012,13 @@ func (x *PlannedHazard) GetCode() string {
 func (x *PlannedHazard) GetDetail() string {
 	if x != nil {
 		return x.Detail
+	}
+	return ""
+}
+
+func (x *PlannedHazard) GetRecipe() string {
+	if x != nil {
+		return x.Recipe
 	}
 	return ""
 }
@@ -2969,10 +2977,11 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x03key\x18\x02 \x01(\tR\x03key\x12(\n" +
 	"\x10nearest_plan_ids\x18\x03 \x03(\tR\x0enearestPlanIds\x12\x1d\n" +
 	"\n" +
-	"files_diff\x18\x04 \x01(\tR\tfilesDiff\";\n" +
+	"files_diff\x18\x04 \x01(\tR\tfilesDiff\"S\n" +
 	"\rPlannedHazard\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x16\n" +
-	"\x06detail\x18\x02 \x01(\tR\x06detail\"m\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\x12\x16\n" +
+	"\x06recipe\x18\x03 \x01(\tR\x06recipe\"m\n" +
 	"\x10PlannedStatement\x12\x10\n" +
 	"\x03sql\x18\x01 \x01(\tR\x03sql\x12\x13\n" +
 	"\x05no_tx\x18\x02 \x01(\bR\x04noTx\x122\n" +

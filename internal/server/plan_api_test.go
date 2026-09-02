@@ -39,6 +39,9 @@ func TestPlanRunEndToEnd(t *testing.T) {
 			t.Fatalf("migration %d = %+v", i, m)
 		}
 	}
+	if h := plan.Migrations[2].Statements[0].Hazards[0]; h.Code != "H003" || !strings.HasPrefix(h.Recipe, "-- expand then contract: ship the application version that no longer reads or writes t.a") {
+		t.Fatalf("hazard = %+v", h)
+	}
 	list, err := client.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{Target: "app"}))
 	if err != nil || len(list.Msg.Runs) != 0 {
 		t.Fatalf("runs after plan = %+v, err = %v", list, err)

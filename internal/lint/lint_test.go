@@ -96,7 +96,9 @@ func TestCheckLockHazards(t *testing.T) {
 	if got := codes(rep); got != want {
 		t.Fatalf("codes = %q, want %q", got, want)
 	}
-	if !strings.Contains(rep.Findings[0].Message, "NOT VALID") {
+	if !strings.Contains(rep.Findings[0].Message, "NOT VALID") ||
+		rep.Findings[0].Recipe != "ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT fk;" ||
+		rep.Findings[2].Recipe != "DROP INDEX CONCURRENTLY i;" {
 		t.Fatalf("report = %+v", rep)
 	}
 

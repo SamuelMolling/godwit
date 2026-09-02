@@ -139,6 +139,7 @@ message PlanRequired {
 message PlannedHazard {
   string code = 1;
   string detail = 2;
+  string recipe = 3;
 }
 
 message PlannedStatement {

@@ -128,22 +128,34 @@ One target executes one run at a time: the claim query hands out one lease per t
 
 ### Hazards
 
-The planner tags statements that hurt a live database. Each code names the safe form in its message.
+The planner tags statements that hurt a live database. Each code names the safe form in its message and carries a **recipe**: the safe form as ready-to-copy SQL, built from the parsed statement with its real table, column, type, index and constraint names (generated names where the statement had none, e.g. `users_email_idx`, `orders_user_id_fkey`, `users_pkey`). Recipes appear indented under the finding in `lint` and `plan` text output, in a `<details>` block per finding in markdown, as `recipe` in JSON, and as `PlannedHazard.recipe` on the API.
 
-| Code | Statement | Safe form | Phase under `expand-contract` |
+| Code | Statement | Recipe | Phase under `expand-contract` |
 |---|---|---|---|
-| H001 | `CREATE INDEX` without `CONCURRENTLY` | `CREATE INDEX CONCURRENTLY name ...` | expand |
-| H002 | `DROP TABLE` | expand → contract | contract |
-| H003 | `DROP COLUMN` | expand → contract | contract |
-| H004 | `ALTER COLUMN ... TYPE` | new column, backfill, swap | expand |
-| H005 | `ADD COLUMN ... NOT NULL` without `DEFAULT` | add nullable, backfill, `SET NOT NULL` | expand |
-| H006 | `ADD CONSTRAINT ... FOREIGN KEY` / `CHECK` without `NOT VALID` | `NOT VALID`, then `VALIDATE CONSTRAINT` | expand |
-| H007 | `ALTER COLUMN ... SET NOT NULL` | `CHECK (col IS NOT NULL) NOT VALID` → `VALIDATE` → `SET NOT NULL` | expand |
-| H008 | `RENAME` table or column | add the new one, migrate readers and writers, drop the old one | contract |
-| H009 | `DROP INDEX` without `CONCURRENTLY` | `DROP INDEX CONCURRENTLY` | expand |
-| H010 | `ADD PRIMARY KEY` / `UNIQUE` without `USING INDEX` | `CREATE UNIQUE INDEX CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX` | expand |
+| H001 | `CREATE INDEX` without `CONCURRENTLY` | `CREATE INDEX CONCURRENTLY <name> ON <t> ...;` with the same columns, method and predicate | expand |
+| H002 | `DROP TABLE` | text: ship the application version that no longer uses the table, then drop it in a contract migration | contract |
+| H003 | `DROP COLUMN` | text: ship the application version that no longer reads or writes the column, then drop it in a contract migration | contract |
+| H004 | `ALTER COLUMN ... TYPE` | `ADD COLUMN c_new <type>`, a trigger that keeps `c` and `c_new` in sync (honours the `USING` expression), a batched `UPDATE ... WHERE id BETWEEN $1 AND $2` backfill template, then in a later migration drop the trigger and `RENAME COLUMN c TO c_old` / `c_new TO c`, and `DROP COLUMN c_old` in a contract migration | expand |
+| H005 | `ADD COLUMN ... NOT NULL` without `DEFAULT` | `ADD COLUMN c <type>` nullable, backfill, then the H007 recipe; or `ADD COLUMN c <type> NOT NULL DEFAULT $1` when a constant default fits (PostgreSQL 11+, metadata-only) | expand |
+| H006 | `ADD CONSTRAINT ... FOREIGN KEY` / `CHECK` without `NOT VALID` | `ADD CONSTRAINT <n> ... NOT VALID;` then `VALIDATE CONSTRAINT <n>;` | expand |
+| H007 | `ALTER COLUMN ... SET NOT NULL` | `ADD CONSTRAINT c_not_null CHECK (c IS NOT NULL) NOT VALID;` / `VALIDATE CONSTRAINT c_not_null;` / `ALTER COLUMN c SET NOT NULL;` / `DROP CONSTRAINT c_not_null;` | expand |
+| H008 | `RENAME` table or column | text: add the new one, dual-write and backfill, ship the application version that uses it, drop the old one in a contract migration | contract |
+| H009 | `DROP INDEX` without `CONCURRENTLY` | one `DROP INDEX CONCURRENTLY <name>;` per index | expand |
+| H010 | `ADD PRIMARY KEY` / `UNIQUE` without `USING INDEX` | `CREATE UNIQUE INDEX CONCURRENTLY <n>_idx ON <t> (...);` then `ADD CONSTRAINT <n> PRIMARY KEY USING INDEX <n>_idx;` | expand |
 
-Contract hazards (H002, H003, H008) are the ones after which the previous application version stops working; the others block or fail while the statement runs and are covered by acknowledgement and timeouts. H007 fires even when the matching CHECK already exists: the planner is offline and has no catalog. `godwit lint` reports the up side only.
+Contract hazards (H002, H003, H008) are the ones after which the previous application version stops working; the others block or fail while the statement runs and are covered by acknowledgement and timeouts. H007 fires even when the matching CHECK already exists: the planner is offline and has no catalog. `godwit lint` reports the up side only. The recipe is a hint, never executed by godwit: the H004 backfill names `id` as the batching key because the planner has no catalog to read the primary key from, and the `$1` placeholders are yours to fill.
+
+```
+$ godwit lint --dir db/migrations
+20260901120000_users_email_idx.up.sql: error H001 CREATE INDEX without CONCURRENTLY blocks writes on users
+    CREATE INDEX CONCURRENTLY users_email_idx ON users USING btree (email);
+20260901120100_users_email_required.up.sql: error H007 SET NOT NULL on email scans the table under an exclusive lock; add CHECK (email IS NOT NULL) NOT VALID, VALIDATE CONSTRAINT it, then SET NOT NULL is instant on PostgreSQL 12+
+    ALTER TABLE users ADD CONSTRAINT email_not_null CHECK (email IS NOT NULL) NOT VALID;
+    ALTER TABLE users VALIDATE CONSTRAINT email_not_null;
+    ALTER TABLE users ALTER COLUMN email SET NOT NULL;
+    ALTER TABLE users DROP CONSTRAINT email_not_null;
+2 finding(s), 2 blocking
+```
 
 ## Rollout policies
 

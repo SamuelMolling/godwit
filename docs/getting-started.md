@@ -57,12 +57,13 @@ godwit plan --dir db/migrations
 20260901120000_create_orders (down): 1 statement(s)
   [0] tx    DROP TABLE orders
         hazard H002: DROP TABLE is destructive
+          -- expand then contract: ship the application version that no longer uses orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)
 20260901120500_orders_customer_idx (up): 1 statement(s)
   [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
 ...
 ```
 
-`tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge ([concepts: hazards](concepts.md#hazards)).
+`tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([concepts: hazards](concepts.md#hazards)).
 
 Lint the directory the way a pull request gate does, and apply against a local database:
 

@@ -379,7 +379,7 @@ func dryRunStub() *stubService {
 				{Sql: "CREATE INDEX CONCURRENTLY idx_users ON users (id)", NoTx: true},
 			}},
 			{Version: 20260901120001, Name: "drop_a", Checksum: "c2", Phase: "contract", Statements: []*godwitv1.PlannedStatement{
-				{Sql: "ALTER TABLE users DROP COLUMN a", Hazards: []*godwitv1.PlannedHazard{{Code: "H003", Detail: "DROP COLUMN is destructive"}}},
+				{Sql: "ALTER TABLE users DROP COLUMN a", Hazards: []*godwitv1.PlannedHazard{{Code: "H003", Detail: "DROP COLUMN is destructive", Recipe: "-- expand then contract:\n-- drop users.a later"}}},
 			}},
 		},
 	}}
@@ -401,7 +401,9 @@ func TestMigrateDryRun(t *testing.T) {
 		"  [1] no-tx CREATE INDEX CONCURRENTLY idx_users ON users (id)\n" +
 		"20260901120001_drop_a (up): 1 statement(s) [contract, pending]\n" +
 		"  [0] tx    ALTER TABLE users DROP COLUMN a\n" +
-		"        hazard H003: DROP COLUMN is destructive\n"
+		"        hazard H003: DROP COLUMN is destructive\n" +
+		"          -- expand then contract:\n" +
+		"          -- drop users.a later\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
@@ -430,8 +432,9 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 		"|---|---|---|---|---|---|---|---|\n" +
 		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users (id int)` |  | expand | applied |\n" +
 		"| `20260901120000_users` | up | 1 | no-tx | `CREATE INDEX CONCURRENTLY idx_users ON users (id)` |  | expand | applied |\n" +
-		"| `20260901120001_drop_a` | up | 0 | tx | `ALTER TABLE users DROP COLUMN a` | H003: DROP COLUMN is destructive | contract | pending |\n" +
-		"\n⚠️ 1 hazard(s); acknowledge them with `--ack`\n"
+		"| `20260901120001_drop_a` | up | 0 | tx | `ALTER TABLE users DROP COLUMN a` | H003: DROP COLUMN is destructive | contract | pending |\n\n" +
+		"<details><summary>recipe for H003 in `20260901120001_drop_a` (up) #0</summary>\n\n```sql\n-- expand then contract:\n-- drop users.a later\n```\n\n</details>\n\n" +
+		"⚠️ 1 hazard(s); acknowledge them with `--ack`\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
@@ -455,7 +458,8 @@ func TestMigrateDryRunJSON(t *testing.T) {
 	}
 	first, second := got.Migrations[0], got.Migrations[1]
 	if !first.Applied || first.Phase != "expand" || first.Direction != "up" || first.Statements[1].Mode != "no-tx" ||
-		second.Applied || second.Phase != "contract" || second.Statements[0].Hazards[0].Code != "H003" {
+		second.Applied || second.Phase != "contract" || second.Statements[0].Hazards[0].Code != "H003" ||
+		second.Statements[0].Hazards[0].Recipe != "-- expand then contract:\n-- drop users.a later" {
 		t.Fatalf("migrations = %+v", got.Migrations)
 	}
 

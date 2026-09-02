@@ -35,6 +35,7 @@ type Finding struct {
 	Level   string `json:"level"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Recipe  string `json:"recipe,omitempty"`
 }
 
 // Report is the outcome of Check; Blocking counts the error-level findings.
@@ -102,7 +103,7 @@ func (r *Report) checkMigration(m engine.Migration, acked map[string]bool) {
 	for _, st := range up.Statements {
 		for _, h := range st.Hazards {
 			if !acked[h.Code] {
-				r.add(Finding{File: upFile, Level: LevelError, Code: h.Code, Message: h.Detail})
+				r.add(Finding{File: upFile, Level: LevelError, Code: h.Code, Message: h.Detail, Recipe: h.Recipe})
 			}
 		}
 	}

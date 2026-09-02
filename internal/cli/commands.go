@@ -185,6 +185,7 @@ func writePlanText(w io.Writer, r planReport) {
 			fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(st), firstLine(st.SQL))
 			for _, h := range st.Hazards {
 				fmt.Fprintf(w, "        hazard %s: %s\n", h.Code, h.Detail)
+				writeRecipeText(w, "          ", h.Recipe)
 			}
 		}
 	}
@@ -225,6 +226,13 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	}
 	if len(r.items) > 0 {
 		fmt.Fprintln(w)
+	}
+	for _, p := range r.items {
+		for i, st := range p.Statements {
+			for _, h := range st.Hazards {
+				writeRecipeDetails(w, fmt.Sprintf("recipe for %s in `%d_%s` (%s) #%d", h.Code, p.Migration.Version, p.Migration.Name, p.Direction, i), h.Recipe)
+			}
+		}
 	}
 	if hazards > 0 {
 		fmt.Fprintf(w, "⚠️ %d hazard(s); acknowledge them with `--ack`\n", hazards)
@@ -319,6 +327,7 @@ type statementJSON struct {
 type hazardJSON struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail"`
+	Recipe string `json:"recipe,omitempty"`
 }
 
 type livePlanJSON struct {
@@ -343,7 +352,7 @@ func toPlanJSON(p engine.Plan) planJSON {
 	for _, st := range p.Statements {
 		hazards := make([]hazardJSON, 0, len(st.Hazards))
 		for _, h := range st.Hazards {
-			hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail})
+			hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 		}
 		pj.Statements = append(pj.Statements, statementJSON{SQL: st.SQL, Mode: statementMode(st), Hazards: hazards})
 	}
@@ -371,6 +380,22 @@ func writePlanJSON(w io.Writer, r planReport) {
 	}
 	data, _ := json.Marshal(out)
 	fmt.Fprintln(w, string(data))
+}
+
+func writeRecipeText(w io.Writer, indent, recipe string) {
+	if recipe == "" {
+		return
+	}
+	for _, line := range strings.Split(recipe, "\n") {
+		fmt.Fprintln(w, indent+line)
+	}
+}
+
+func writeRecipeDetails(w io.Writer, summary, recipe string) {
+	if recipe == "" {
+		return
+	}
+	fmt.Fprintf(w, "<details><summary>%s</summary>\n\n```sql\n%s\n```\n\n</details>\n\n", summary, recipe)
 }
 
 func statementMode(st engine.Statement) string {
