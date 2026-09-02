@@ -103,6 +103,8 @@ func classify(node *pgquery.Node, st *Statement) error {
 		classifyDrop(node.GetDropStmt(), st)
 	case node.GetAlterTableStmt() != nil:
 		classifyAlterTable(node.GetAlterTableStmt(), st)
+	case node.GetRenameStmt() != nil:
+		classifyRename(node.GetRenameStmt(), st)
 	case node.GetVacuumStmt() != nil:
 		st.NoTx = true
 		st.Verifier = VerifierRerun
@@ -121,12 +123,13 @@ func classify(node *pgquery.Node, st *Statement) error {
 	return nil
 }
 
+func (st *Statement) hazard(code, detail string) {
+	st.Hazards = append(st.Hazards, Hazard{Code: code, Detail: detail})
+}
+
 func classifyIndex(idx *pgquery.IndexStmt, st *Statement) error {
 	if !idx.Concurrent {
-		st.Hazards = append(st.Hazards, Hazard{
-			Code:   "H001",
-			Detail: "CREATE INDEX without CONCURRENTLY blocks writes on " + idx.Relation.Relname,
-		})
+		st.hazard("H001", "CREATE INDEX without CONCURRENTLY blocks writes on "+idx.Relation.Relname)
 
 		return nil
 	}
@@ -144,13 +147,16 @@ func classifyIndex(idx *pgquery.IndexStmt, st *Statement) error {
 func classifyDrop(d *pgquery.DropStmt, st *Statement) {
 	switch d.RemoveType {
 	case pgquery.ObjectType_OBJECT_TABLE:
-		st.Hazards = append(st.Hazards, Hazard{Code: "H002", Detail: "DROP TABLE is destructive"})
+		st.hazard("H002", "DROP TABLE is destructive")
 	case pgquery.ObjectType_OBJECT_INDEX:
-		if d.Concurrent {
-			st.NoTx = true
-			st.Verifier = VerifierDropIndexConcurrently
-			st.IndexSchema, st.IndexName = qualifiedName(d.Objects)
+		if !d.Concurrent {
+			st.hazard("H009", "DROP INDEX without CONCURRENTLY blocks reads and writes on the table; use DROP INDEX CONCURRENTLY")
+
+			return
 		}
+		st.NoTx = true
+		st.Verifier = VerifierDropIndexConcurrently
+		st.IndexSchema, st.IndexName = qualifiedName(d.Objects)
 	default:
 	}
 }
@@ -173,15 +179,56 @@ func classifyAlterTable(a *pgquery.AlterTableStmt, st *Statement) {
 		cmd := cmdNode.GetAlterTableCmd()
 		switch cmd.Subtype {
 		case pgquery.AlterTableType_AT_DropColumn:
-			st.Hazards = append(st.Hazards, Hazard{Code: "H003", Detail: "DROP COLUMN is destructive"})
+			st.hazard("H003", "DROP COLUMN is destructive")
 		case pgquery.AlterTableType_AT_AlterColumnType:
-			st.Hazards = append(st.Hazards, Hazard{Code: "H004", Detail: "ALTER COLUMN TYPE rewrites the table under an exclusive lock"})
+			st.hazard("H004", "ALTER COLUMN TYPE rewrites the table under an exclusive lock")
 		case pgquery.AlterTableType_AT_AddColumn:
 			if col := cmd.GetDef().GetColumnDef(); col != nil && notNullWithoutDefault(col) {
-				st.Hazards = append(st.Hazards, Hazard{Code: "H005", Detail: "ADD COLUMN NOT NULL without DEFAULT fails on non-empty tables"})
+				st.hazard("H005", "ADD COLUMN NOT NULL without DEFAULT fails on non-empty tables")
 			}
+		case pgquery.AlterTableType_AT_AddConstraint:
+			classifyAddConstraint(cmd.GetDef().GetConstraint(), st)
+		case pgquery.AlterTableType_AT_SetNotNull:
+			st.hazard("H007", "SET NOT NULL on "+cmd.Name+" scans the table under an exclusive lock; add CHECK ("+cmd.Name+" IS NOT NULL) NOT VALID, VALIDATE CONSTRAINT it, then SET NOT NULL is instant on PostgreSQL 12+")
 		default:
 		}
+	}
+}
+
+func classifyAddConstraint(cn *pgquery.Constraint, st *Statement) {
+	switch cn.Contype {
+	case pgquery.ConstrType_CONSTR_FOREIGN, pgquery.ConstrType_CONSTR_CHECK:
+		if !cn.SkipValidation {
+			st.hazard("H006", "ADD CONSTRAINT "+constraintKind(cn)+" scans the whole table under lock; add it NOT VALID, then VALIDATE CONSTRAINT in a separate statement")
+		}
+	case pgquery.ConstrType_CONSTR_PRIMARY, pgquery.ConstrType_CONSTR_UNIQUE:
+		if cn.Indexname == "" {
+			st.hazard("H010", "ADD "+constraintKind(cn)+" builds its index under an exclusive lock; CREATE UNIQUE INDEX CONCURRENTLY first, then ADD CONSTRAINT ... USING INDEX")
+		}
+	default:
+	}
+}
+
+func constraintKind(cn *pgquery.Constraint) string {
+	switch cn.Contype {
+	case pgquery.ConstrType_CONSTR_FOREIGN:
+		return "FOREIGN KEY"
+	case pgquery.ConstrType_CONSTR_CHECK:
+		return "CHECK"
+	case pgquery.ConstrType_CONSTR_PRIMARY:
+		return "PRIMARY KEY"
+	default:
+		return "UNIQUE"
+	}
+}
+
+func classifyRename(r *pgquery.RenameStmt, st *Statement) {
+	switch r.RenameType {
+	case pgquery.ObjectType_OBJECT_TABLE:
+		st.hazard("H008", "RENAME TABLE "+r.Relation.Relname+" breaks application versions still using the old name; add the new table, migrate readers and writers, then drop the old one")
+	case pgquery.ObjectType_OBJECT_COLUMN:
+		st.hazard("H008", "RENAME COLUMN "+r.Subname+" breaks application versions still using the old name; add the new column, backfill, migrate readers and writers, then drop the old one")
+	default:
 	}
 }
 

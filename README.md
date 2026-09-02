@@ -20,7 +20,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 |---|---|
 | Crash-safe engine | Plain-SQL migrations under a statement-level journal in the target database; DDL and progress commit atomically. Non-transactional statements (`CREATE INDEX CONCURRENTLY`, …) use write-ahead intents and verifiers. Survives `kill -9` at any point. |
 | Control plane | Runs are leased with heartbeats; a replica that dies mid-run is taken over by another and resumed from the journal. Failed runs park as `needs_attention` after a resume budget. |
-| Hazard gate | The planner ([libpg_query](https://github.com/pganalyze/pg_query_go)) tags unsafe DDL (`H001` non-concurrent index, `H002` `DROP TABLE`, `H003` `DROP COLUMN`, `H004` type rewrite, `H005` `NOT NULL` without default). Runs carrying unacknowledged hazards are refused. |
+| Hazard gate | The planner ([libpg_query](https://github.com/pganalyze/pg_query_go)) tags unsafe DDL with a code and the safe alternative (see [Hazards](#hazards)). Runs carrying unacknowledged hazards are refused. |
 | PR lint | `godwit lint` parses a migration directory offline and fails on unacknowledged hazards, parse errors and migrations modified after merge; a no-op `.down.sql` is a warning. Text, markdown (for `$GITHUB_STEP_SUMMARY`) and JSON output. |
 | Pre-apply validation | Every run replays the target's history plus the new files on a scratch database before it is queued. |
 | Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
@@ -30,6 +30,23 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
+
+## Hazards
+
+| Code | Statement | Why | Safe form |
+|---|---|---|---|
+| `H001` | `CREATE INDEX` without `CONCURRENTLY` | blocks writes while the index builds | `CREATE INDEX CONCURRENTLY` |
+| `H002` | `DROP TABLE` | destructive | contract phase, after every app version stopped using it |
+| `H003` | `DROP COLUMN` | destructive | contract phase, after every app version stopped using it |
+| `H004` | `ALTER COLUMN ... TYPE` | rewrites the table under an exclusive lock | new column, backfill, swap |
+| `H005` | `ADD COLUMN ... NOT NULL` without `DEFAULT` | fails on non-empty tables | add a `DEFAULT`, or add nullable and backfill |
+| `H006` | `ADD CONSTRAINT ... FOREIGN KEY` / `CHECK` without `NOT VALID` | scans the whole table under lock | `... NOT VALID`, then `VALIDATE CONSTRAINT` in a separate statement |
+| `H007` | `ALTER COLUMN ... SET NOT NULL` | scans the table under an exclusive lock | `ADD CHECK (col IS NOT NULL) NOT VALID`, `VALIDATE CONSTRAINT`, then `SET NOT NULL` (instant on PostgreSQL 12+) |
+| `H008` | `RENAME` table or column | breaks application versions still using the old name | add the new one, migrate readers and writers, drop the old one |
+| `H009` | `DROP INDEX` without `CONCURRENTLY` | blocks reads and writes on the table | `DROP INDEX CONCURRENTLY` |
+| `H010` | `ADD PRIMARY KEY` / `ADD CONSTRAINT ... UNIQUE` without `USING INDEX` | builds the index under an exclusive lock | `CREATE UNIQUE INDEX CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX` |
+
+Acknowledge a hazard you have reviewed with `--ack H006,H010` (`acknowledge_hazards` on the API); the gate still counts it in `godwit_hazards_total{acked="true"}`.
 
 ## Rollout policies
 
