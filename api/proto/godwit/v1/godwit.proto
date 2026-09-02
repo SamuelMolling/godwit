@@ -41,10 +41,14 @@ message Run {
 
 message RegisterTargetRequest {
   string name = 1;
-  // Credential provider: "static" (dsn, encrypted at rest) or "kubernetes" (secret_path).
+  // Credential provider: "static" (dsn, encrypted at rest), "kubernetes" (secret_path) or "vault" (vault_path).
   string provider = 2;
   string dsn = 3;
   string secret_path = 4;
+  // Vault secret path under /v1, e.g. secret/data/app or database/creds/app.
+  string vault_path = 5;
+  // Optional DSN template over the secret's fields, e.g. postgres://{{username}}:{{password}}@db/app; default {{dsn}}.
+  string vault_template = 6;
 }
 
 message RegisterTargetResponse {}

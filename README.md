@@ -25,7 +25,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
 | Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
 | Revert | `RevertRun` queues the down side of the latest run on a target — same journal, lease and hazard gate as the way up. The original is marked `reverted` and leaves the replayable history. |
-| Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store) and `kubernetes` (mounted secret). Vault next. |
+| Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 
 ## Rollout policies
@@ -43,6 +43,14 @@ CreateRun{rollout: "expand-contract"}  →  running  →  awaiting_contract  →
 ```
 RevertRun{run_id: A}  →  new run R (reverts: A)  →  succeeded  ⇒  A becomes reverted
 ```
+
+## Credentials
+
+Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
+
+- `static` — the DSN is AES-GCM-encrypted with `GODWIT_MASTER_KEY` and stored in the control plane.
+- `kubernetes` — `secret_path` points at a mounted secret file on the replica.
+- `vault` — `vault_path` is read from Vault at run time (`secret/data/app` for KV v2, `database/creds/app` for dynamic credentials). The DSN is the secret's `dsn` field, or `vault_template` rendered over its fields: `postgres://{{username}}:{{password}}@db/app`. The service authenticates with `VAULT_TOKEN` or, when unset, the Kubernetes auth method (`VAULT_K8S_ROLE`, `VAULT_K8S_MOUNT`, `VAULT_K8S_JWT`); `VAULT_ADDR` is required.
 
 ## Engines
 

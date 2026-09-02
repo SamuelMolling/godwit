@@ -25,6 +25,18 @@ services:
       timeout: 2s
       retries: 15
 
+  vault:
+    image: hashicorp/vault:1.18
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: demo-root
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8200/v1/sys/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
   godwit-1:
     build: ..
     command:
@@ -34,12 +46,16 @@ services:
     environment:
       GODWIT_MASTER_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
       GODWIT_TOKENS: demo-token
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: demo-root
     ports:
       - "18474:8474"
     depends_on:
       store-db:
         condition: service_healthy
       target-db:
+        condition: service_healthy
+      vault:
         condition: service_healthy
 
   godwit-2:
@@ -51,10 +67,14 @@ services:
     environment:
       GODWIT_MASTER_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
       GODWIT_TOKENS: demo-token
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: demo-root
     ports:
       - "18475:8474"
     depends_on:
       store-db:
         condition: service_healthy
       target-db:
+        condition: service_healthy
+      vault:
         condition: service_healthy

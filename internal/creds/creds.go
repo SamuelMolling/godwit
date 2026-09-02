@@ -13,5 +13,6 @@ func Registry(masterKey []byte) map[string]Provider {
 	return map[string]Provider{
 		"static":     Static{Key: masterKey},
 		"kubernetes": Kubernetes{},
+		"vault":      VaultFromEnv(),
 	}
 }

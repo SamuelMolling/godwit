@@ -22,7 +22,7 @@ func newServeCmd() *cobra.Command {
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
 			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated bearer tokens),\n" +
-			"GODWIT_WEBHOOK_URL (drift notifications).",
+			"GODWIT_WEBHOOK_URL (drift notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			key, err := hex.DecodeString(os.Getenv("GODWIT_MASTER_KEY"))
 			if err != nil || len(key) != 32 {

@@ -100,6 +100,14 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 			return nil, invalid("kubernetes provider requires secret_path")
 		}
 		config = map[string]string{"path": m.SecretPath}
+	case "vault":
+		if m.VaultPath == "" {
+			return nil, invalid("vault provider requires vault_path")
+		}
+		config = map[string]string{"path": m.VaultPath}
+		if m.VaultTemplate != "" {
+			config["template"] = m.VaultTemplate
+		}
 	default:
 		return nil, invalid("unknown provider " + m.Provider)
 	}

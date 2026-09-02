@@ -165,5 +165,29 @@ rpc GetRun "{\"runId\": \"$EC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/
 docker compose exec -T target-db psql -U app -d app -c "\d users"
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert."
+echo "==> vault: the same database registered through a Vault KV secret, no DSN in the control plane"
+docker compose exec -T -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=demo-root vault \
+  vault kv put -mount=secret app user=app password=app host=target-db > /dev/null
+rpc RegisterTarget '{
+  "name": "app-vault",
+  "provider": "vault",
+  "vaultPath": "secret/data/app",
+  "vaultTemplate": "postgres://{{user}}:{{password}}@{{host}}:5432/app?sslmode=disable"
+}' 18475
+VT_ID=$(rpc CreateRun '{
+  "target": "app-vault",
+  "files": [
+    {"name": "20260901170000_audit.up.sql", "body": "CREATE TABLE audit (id bigint PRIMARY KEY, note text);"},
+    {"name": "20260901170000_audit.down.sql", "body": "DROP TABLE audit;"}
+  ]
+}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$VT_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE (credentials resolved from Vault at claim time)"
+
+echo
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"
