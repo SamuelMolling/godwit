@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/pashagolub/pgxmock/v4"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
@@ -164,5 +166,41 @@ func TestHealthAndReadiness(t *testing.T) {
 	}
 	if body := get(up, "/metrics").Body.String(); strings.Contains(body, "healthz") || strings.Contains(body, "readyz") {
 		t.Fatal("probes must not appear in API metrics")
+	}
+}
+
+func TestWatchRunCancelledWhileSleeping(t *testing.T) {
+	t.Parallel()
+
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").
+		WillReturnRows(pgxmock.NewRows(
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "created_at", "finished_at"}).
+			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", time.Now(), (*time.Time)(nil)))
+
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s.watchInterval = time.Hour
+	srv := httptest.NewServer(Handler(s, nil))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := godwitv1connect.NewGodwitServiceClient(srv.Client(), srv.URL).
+		WatchRun(ctx, connect.NewRequest(&godwitv1.WatchRunRequest{RunId: "r1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("first snapshot missing: %v", stream.Err())
+	}
+	cancel()
+	for stream.Receive() {
+	}
+	if connect.CodeOf(stream.Err()) != connect.CodeCanceled {
+		t.Fatalf("stream err = %v", stream.Err())
 	}
 }
