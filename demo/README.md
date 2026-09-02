@@ -19,9 +19,10 @@ The script:
 7. Detects a manual out-of-band change (drift) and blesses it as the new baseline.
 8. Runs an `expand-contract` rollout: the added column lands, the drop waits in `awaiting_contract` until `ConfirmRollout`.
 9. Reverts that run with `RevertRun`: `plan` comes back, `plan_v2` goes, the original run is marked `reverted`.
-10. Registers the target again through a Vault KV secret (`vault` provider with a DSN template) and runs a migration with credentials resolved at claim time.
-11. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API.
-12. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
+10. Registers the target again through a Vault KV secret (`vault` provider with a DSN template, `lock_timeout: 2s`) and runs a migration with credentials resolved at claim time.
+11. Queues a run with a per-run `statement_timeout: 1s` over `SELECT pg_sleep(3)`: it fails fast with PostgreSQL's statement-timeout error, `run get` shows the effective timeouts, and `godwit_statement_failures_total{reason="statement_timeout"}` counts it.
+12. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API.
+13. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
 
 Poke around:
 

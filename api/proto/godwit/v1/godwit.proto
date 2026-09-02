@@ -37,6 +37,9 @@ message Run {
   string phase = 9;
   // Id of the run this one reverts, when it is a revert.
   string reverts = 10;
+  // Per-run timeout overrides as given at creation ("2s", "5m"); empty means the target's setting.
+  string lock_timeout = 11;
+  string statement_timeout = 12;
 }
 
 message RegisterTargetRequest {
@@ -49,6 +52,10 @@ message RegisterTargetRequest {
   string vault_path = 5;
   // Optional DSN template over the secret's fields, e.g. postgres://{{username}}:{{password}}@db/app; default {{dsn}}.
   string vault_template = 6;
+  // lock_timeout for every statement on this target ("5s", "2m"); default 5s.
+  string lock_timeout = 7;
+  // statement_timeout for every statement on this target; default 0 (disabled).
+  string statement_timeout = 8;
 }
 
 message RegisterTargetResponse {}
@@ -62,6 +69,10 @@ message CreateRunRequest {
   bool skip_validation = 4;
   // "direct" (default) or "expand-contract".
   string rollout = 5;
+  // Override the target's lock_timeout for this run ("5s", "2m").
+  string lock_timeout = 6;
+  // Override the target's statement_timeout for this run; "0" disables it.
+  string statement_timeout = 7;
 }
 
 message CreateRunResponse {
@@ -146,6 +157,10 @@ message RevertRunRequest {
   string run_id = 1;
   repeated string acknowledge_hazards = 2;
   bool skip_validation = 3;
+  // Override the target's lock_timeout for the revert run ("5s", "2m").
+  string lock_timeout = 4;
+  // Override the target's statement_timeout for the revert run; "0" disables it.
+  string statement_timeout = 5;
 }
 
 message RevertRunResponse {

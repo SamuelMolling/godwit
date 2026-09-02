@@ -42,13 +42,13 @@ func TestPGEngineObserverLogs(t *testing.T) {
 	t.Parallel()
 
 	sink, log := captureLog()
-	observe := PGEngine{Log: log}.observer("app")
+	observe := PGEngine{Log: log}.observer("run-1", "app")
 	observe(engine.StatementEvent{Version: 7, Index: 2, Statement: engine.Statement{SQL: "INSERT INTO people VALUES ('pii')"}})
 	observe(engine.StatementEvent{Version: 7, Index: 3, Statement: engine.Statement{SQL: "SELECT secret_column", NoTx: true}, Err: errors.New("boom")})
 
 	out := sink.String()
 	for _, want := range []string{
-		`"msg":"statement applied"`, `"version":7`, `"stmt":2`, `"kind":"tx"`, `"duration_ms":0`,
+		`"msg":"statement applied"`, `"run":"run-1"`, `"target":"app"`, `"version":7`, `"stmt":2`, `"kind":"tx"`, `"duration_ms":0`,
 		`"msg":"statement failed"`, `"stmt":3`, `"kind":"no_tx"`, `"error":"boom"`,
 	} {
 		if !strings.Contains(out, want) {

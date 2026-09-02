@@ -75,6 +75,17 @@ Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
 - `kubernetes` — `secret_path` points at a mounted secret file on the replica.
 - `vault` — `vault_path` is read from Vault at run time (`secret/data/app` for KV v2, `database/creds/app` for dynamic credentials). The DSN is the secret's `dsn` field, or `vault_template` rendered over its fields: `postgres://{{username}}:{{password}}@db/app`. The service authenticates with `VAULT_TOKEN` or, when unset, the Kubernetes auth method (`VAULT_K8S_ROLE`, `VAULT_K8S_MOUNT`, `VAULT_K8S_JWT`); `VAULT_ADDR` is required.
 
+## Timeouts
+
+Every statement runs under PostgreSQL's `lock_timeout` and `statement_timeout` (`SET LOCAL` inside the transaction, `SET`/`RESET` around no-tx statements), so a migration waiting on a lock fails fast instead of queueing the application behind it. Defaults are `lock_timeout: 5s` and `statement_timeout: 0` (disabled). Both are Go durations (`500ms`, `5s`, `2m`); the lock timeout must be at least `1ms`, the statement timeout may be `0`.
+
+| Scope | Where | Wins over |
+|---|---|---|
+| Target | `RegisterTarget{lock_timeout, statement_timeout}` / `target add --lock-timeout --statement-timeout`, stored in the target config | defaults |
+| Run | `CreateRun`/`RevertRun{lock_timeout, statement_timeout}` / `migrate` and `revert --lock-timeout --statement-timeout`, stored on the run and shown by `run get` | target |
+
+Unset fields inherit from the next scope, so `migrate --statement-timeout 10m` keeps the target's lock timeout. A timeout that fires is a `statement failed` log line and a `godwit_statement_failures_total{reason="lock_timeout"|"statement_timeout"}` sample; the run ends `failed` and can be resumed once the contention is gone.
+
 ## Configuration
 
 Put a `godwit.yaml` in your repo and the CLI stops needing repeated flags. The file is looked up from the working directory upwards until the repo root (`.git`); `--config path` points at a specific file. `dir` is resolved relative to the file.
@@ -84,8 +95,8 @@ dir: db/migrations          # plan, run, status, down, lint, migrate
 target: orders              # migrate
 rollout: expand-contract    # migrate
 server: http://godwit:8474  # every service command
-lock_timeout: 5s            # run, status, down
-statement_timeout: 0        # run, status, down (0 disables)
+lock_timeout: 5s            # apply, status, down (local commands only; the service uses the target's)
+statement_timeout: 0        # apply, status, down (0 disables)
 ```
 
 With that file a pipeline is `godwit lint --base origin/main` on the PR and `godwit migrate` on merge — both flagless.
@@ -98,9 +109,9 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
-| `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault` |
-| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
-| `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
+| `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault [--lock-timeout] [--statement-timeout]` |
+| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--lock-timeout] [--statement-timeout]` |
+| `status` — applied state per migration | `revert <run-id> [--lock-timeout] [--statement-timeout]`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
 
 `--server` and `--token` fall back to `GODWIT_SERVER` and `GODWIT_TOKEN`; `--json` prints the raw API response. `migrate` and `revert` stream the run until it settles and exit 0 on `succeeded`/`awaiting_contract`, 1 on `failed`/`needs_attention`. `run confirm --latest` confirms the newest run on the target still in `awaiting_contract` when no run id is at hand (a PostSync hook, a shell); it fails when there is none unless `--allow-none` makes that a no-op.
@@ -191,7 +202,7 @@ Probes live on the same listener, also unauthenticated: `GET /healthz` answers 2
 | Key | Meaning |
 |---|---|
 | `run`, `target`, `attempt`, `state` | Which run, on which target, which attempt, where it ended (`run claimed`, `run finished`). |
-| `version`, `stmt`, `kind`, `duration_ms` | Per-statement lines from the executor: migration version, statement index, `tx` / `no_tx`, wall time. The SQL text is never logged. |
+| `version`, `stmt`, `kind`, `duration_ms` | Per-statement lines from the executor (with `run` and `target`): migration version, statement index, `tx` / `no_tx`, wall time. The SQL text is never logged. |
 | `method`, `code`, `duration_ms` | Access log for every API call; `ok` at info, any other connect code at warn with the error text. |
 | `error` | Error text where something went wrong (the pgx connect error, the SQLSTATE, the refused hazard). |
 

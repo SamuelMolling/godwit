@@ -178,7 +178,8 @@ func TestTargetAdd(t *testing.T) {
 	url := startStub(t, stub)
 
 	code, out, errOut := runCLI("target", "add", "app", "--server", url, "--token", "tok",
-		"--provider", "vault", "--dsn", "d", "--secret-path", "s", "--vault-path", "v", "--vault-template", "tpl")
+		"--provider", "vault", "--dsn", "d", "--secret-path", "s", "--vault-path", "v", "--vault-template", "tpl",
+		"--lock-timeout", "2s", "--statement-timeout", "1m")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -189,7 +190,8 @@ func TestTargetAdd(t *testing.T) {
 		t.Fatalf("auth = %q", stub.auth)
 	}
 	r := stub.registered
-	if r.Name != "app" || r.Provider != "vault" || r.Dsn != "d" || r.SecretPath != "s" || r.VaultPath != "v" || r.VaultTemplate != "tpl" {
+	if r.Name != "app" || r.Provider != "vault" || r.Dsn != "d" || r.SecretPath != "s" || r.VaultPath != "v" || r.VaultTemplate != "tpl" ||
+		r.LockTimeout != "2s" || r.StatementTimeout != "1m" {
 		t.Fatalf("request = %v", r)
 	}
 }
@@ -263,7 +265,7 @@ func TestMigrate(t *testing.T) {
 	url := startStub(t, stub)
 
 	code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t),
-		"--rollout", "expand-contract", "--ack", "H001,H003", "--skip-validation")
+		"--rollout", "expand-contract", "--ack", "H001,H003", "--skip-validation", "--lock-timeout", "3s", "--statement-timeout", "0")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -272,7 +274,8 @@ func TestMigrate(t *testing.T) {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
 	c := stub.created
-	if c.Target != "app" || c.Rollout != "expand-contract" || !c.SkipValidation || strings.Join(c.AcknowledgeHazards, ",") != "H001,H003" {
+	if c.Target != "app" || c.Rollout != "expand-contract" || !c.SkipValidation || strings.Join(c.AcknowledgeHazards, ",") != "H001,H003" ||
+		c.LockTimeout != "3s" || c.StatementTimeout != "0" {
 		t.Fatalf("request = %v", c)
 	}
 	if len(c.Files) != 2 || c.Files[0].Name != "20260901120000_users.up.sql" || c.Files[1].Name != "20260901120000_users.down.sql" ||
@@ -372,7 +375,7 @@ func TestRevert(t *testing.T) {
 	}}
 	url := startStub(t, stub)
 
-	code, out, errOut := runCLI("revert", "r1", "--server", url, "--ack", "H003", "--skip-validation")
+	code, out, errOut := runCLI("revert", "r1", "--server", url, "--ack", "H003", "--skip-validation", "--lock-timeout", "1s", "--statement-timeout", "30s")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -380,7 +383,8 @@ func TestRevert(t *testing.T) {
 		t.Fatalf("out = %q", out)
 	}
 	rv := stub.reverted
-	if rv.RunId != "r1" || !rv.SkipValidation || strings.Join(rv.AcknowledgeHazards, ",") != "H003" || stub.watched != "r2" {
+	if rv.RunId != "r1" || !rv.SkipValidation || strings.Join(rv.AcknowledgeHazards, ",") != "H003" || stub.watched != "r2" ||
+		rv.LockTimeout != "1s" || rv.StatementTimeout != "30s" {
 		t.Fatalf("request = %v, watched = %q", rv, stub.watched)
 	}
 
@@ -396,7 +400,7 @@ func TestRunGet(t *testing.T) {
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	stub := &stubService{run: &godwitv1.Run{
 		Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1,
-		Rollout: "expand-contract", Phase: "contract", Reverts: "r0",
+		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", LockTimeout: "2s", StatementTimeout: "1m",
 		CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
 	}}
 	url := startStub(t, stub)
@@ -406,7 +410,7 @@ func TestRunGet(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "run r1: succeeded (attempt 1)\n  target: app\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
-		"  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
+		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
 	if out != want || stub.got != "r1" {
 		t.Fatalf("out = %q, got = %q", out, stub.got)
 	}

@@ -51,6 +51,7 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.SecretPath, "secret-path", "", "mounted secret file (kubernetes provider)")
 	cmd.Flags().StringVar(&req.VaultPath, "vault-path", "", "Vault secret path under /v1 (vault provider)")
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
+	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for runs on this target")
 	_ = cmd.MarkFlagRequired("provider")
 
 	return cmd
@@ -87,6 +88,7 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.Rollout, "rollout", "direct", "rollout policy: direct or expand-contract")
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
+	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout")
 
 	return cmd
@@ -128,8 +130,14 @@ func newRevertCmd() *cobra.Command {
 	flags.register(cmd)
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
+	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this revert, overriding the target's")
 
 	return cmd
+}
+
+func timeoutFlags(cmd *cobra.Command, lock, statement *string, scope string) {
+	cmd.Flags().StringVar(lock, "lock-timeout", "", "per-statement lock_timeout "+scope+" (e.g. 5s)")
+	cmd.Flags().StringVar(statement, "statement-timeout", "", "per-statement statement_timeout "+scope+" (e.g. 2m, 0 disables)")
 }
 
 func (f *clientFlags) watch(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, id string) error {
@@ -206,8 +214,8 @@ func newRunGetCmd() *cobra.Command {
 				return err
 			}
 			r := resp.Msg.Run
-			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  created: %s\n  finished: %s",
-				runLine(r), r.Target, r.Rollout, r.Phase, r.Reverts, stamp(r.CreatedAt), stamp(r.FinishedAt)))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created: %s\n  finished: %s",
+				runLine(r), r.Target, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, stamp(r.CreatedAt), stamp(r.FinishedAt)))
 
 			return nil
 		}),

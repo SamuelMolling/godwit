@@ -354,3 +354,41 @@ func TestReconcileRerunKind(t *testing.T) {
 		t.Fatalf("rerun reconcile = %v, %v", done, err)
 	}
 }
+
+func TestTimeoutsReachTheSession(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	connect := newTestDB(t)
+	conn := connect()
+
+	m := Migration{
+		Version: 1, Name: "settings", Checksum: "c",
+		UpSQL: "CREATE TABLE settings AS SELECT current_setting('lock_timeout') AS lock, current_setting('statement_timeout') AS statement;\n" +
+			"VACUUM settings;",
+		DownSQL: "DROP TABLE settings;",
+	}
+	exec := New(conn, Options{LockTimeout: 1500 * time.Millisecond, StatementTimeout: 2 * time.Minute})
+	if _, err := exec.Up(ctx, buildPlanT(t, m, DirectionUp)); err != nil {
+		t.Fatal(err)
+	}
+	var lock, statement string
+	if err := conn.QueryRow(ctx, "SELECT lock, statement FROM settings").Scan(&lock, &statement); err != nil {
+		t.Fatal(err)
+	}
+	if lock != "1500ms" || statement != "2min" {
+		t.Fatalf("lock_timeout = %q, statement_timeout = %q", lock, statement)
+	}
+	if err := conn.QueryRow(ctx, "SELECT current_setting('lock_timeout') || current_setting('statement_timeout')").Scan(&lock); err != nil {
+		t.Fatal(err)
+	}
+	if lock != "00" {
+		t.Fatalf("session timeouts not reset after no-tx statement: %q", lock)
+	}
+
+	slow := Migration{Version: 2, Name: "slow", Checksum: "s", UpSQL: "SELECT pg_sleep(5);", DownSQL: "SELECT 1;"}
+	exec = New(conn, Options{StatementTimeout: 100 * time.Millisecond})
+	if _, err := exec.Up(ctx, buildPlanT(t, slow, DirectionUp)); err == nil ||
+		!strings.Contains(err.Error(), "canceling statement due to statement timeout") {
+		t.Fatalf("err = %v", err)
+	}
+}

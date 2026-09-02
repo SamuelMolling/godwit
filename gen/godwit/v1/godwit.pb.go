@@ -153,9 +153,12 @@ type Run struct {
 	// "expand" or "contract".
 	Phase string `protobuf:"bytes,9,opt,name=phase,proto3" json:"phase,omitempty"`
 	// Id of the run this one reverts, when it is a revert.
-	Reverts       string `protobuf:"bytes,10,opt,name=reverts,proto3" json:"reverts,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Reverts string `protobuf:"bytes,10,opt,name=reverts,proto3" json:"reverts,omitempty"`
+	// Per-run timeout overrides as given at creation ("2s", "5m"); empty means the target's setting.
+	LockTimeout      string `protobuf:"bytes,11,opt,name=lock_timeout,json=lockTimeout,proto3" json:"lock_timeout,omitempty"`
+	StatementTimeout string `protobuf:"bytes,12,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -258,6 +261,20 @@ func (x *Run) GetReverts() string {
 	return ""
 }
 
+func (x *Run) GetLockTimeout() string {
+	if x != nil {
+		return x.LockTimeout
+	}
+	return ""
+}
+
+func (x *Run) GetStatementTimeout() string {
+	if x != nil {
+		return x.StatementTimeout
+	}
+	return ""
+}
+
 type RegisterTargetRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -269,8 +286,12 @@ type RegisterTargetRequest struct {
 	VaultPath string `protobuf:"bytes,5,opt,name=vault_path,json=vaultPath,proto3" json:"vault_path,omitempty"`
 	// Optional DSN template over the secret's fields, e.g. postgres://{{username}}:{{password}}@db/app; default {{dsn}}.
 	VaultTemplate string `protobuf:"bytes,6,opt,name=vault_template,json=vaultTemplate,proto3" json:"vault_template,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// lock_timeout for every statement on this target ("5s", "2m"); default 5s.
+	LockTimeout string `protobuf:"bytes,7,opt,name=lock_timeout,json=lockTimeout,proto3" json:"lock_timeout,omitempty"`
+	// statement_timeout for every statement on this target; default 0 (disabled).
+	StatementTimeout string `protobuf:"bytes,8,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RegisterTargetRequest) Reset() {
@@ -345,6 +366,20 @@ func (x *RegisterTargetRequest) GetVaultTemplate() string {
 	return ""
 }
 
+func (x *RegisterTargetRequest) GetLockTimeout() string {
+	if x != nil {
+		return x.LockTimeout
+	}
+	return ""
+}
+
+func (x *RegisterTargetRequest) GetStatementTimeout() string {
+	if x != nil {
+		return x.StatementTimeout
+	}
+	return ""
+}
+
 type RegisterTargetResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -390,9 +425,13 @@ type CreateRunRequest struct {
 	// Skip the scratch-database validation.
 	SkipValidation bool `protobuf:"varint,4,opt,name=skip_validation,json=skipValidation,proto3" json:"skip_validation,omitempty"`
 	// "direct" (default) or "expand-contract".
-	Rollout       string `protobuf:"bytes,5,opt,name=rollout,proto3" json:"rollout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Rollout string `protobuf:"bytes,5,opt,name=rollout,proto3" json:"rollout,omitempty"`
+	// Override the target's lock_timeout for this run ("5s", "2m").
+	LockTimeout string `protobuf:"bytes,6,opt,name=lock_timeout,json=lockTimeout,proto3" json:"lock_timeout,omitempty"`
+	// Override the target's statement_timeout for this run; "0" disables it.
+	StatementTimeout string `protobuf:"bytes,7,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CreateRunRequest) Reset() {
@@ -456,6 +495,20 @@ func (x *CreateRunRequest) GetSkipValidation() bool {
 func (x *CreateRunRequest) GetRollout() string {
 	if x != nil {
 		return x.Rollout
+	}
+	return ""
+}
+
+func (x *CreateRunRequest) GetLockTimeout() string {
+	if x != nil {
+		return x.LockTimeout
+	}
+	return ""
+}
+
+func (x *CreateRunRequest) GetStatementTimeout() string {
+	if x != nil {
+		return x.StatementTimeout
 	}
 	return ""
 }
@@ -1361,8 +1414,12 @@ type RevertRunRequest struct {
 	RunId              string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	AcknowledgeHazards []string               `protobuf:"bytes,2,rep,name=acknowledge_hazards,json=acknowledgeHazards,proto3" json:"acknowledge_hazards,omitempty"`
 	SkipValidation     bool                   `protobuf:"varint,3,opt,name=skip_validation,json=skipValidation,proto3" json:"skip_validation,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Override the target's lock_timeout for the revert run ("5s", "2m").
+	LockTimeout string `protobuf:"bytes,4,opt,name=lock_timeout,json=lockTimeout,proto3" json:"lock_timeout,omitempty"`
+	// Override the target's statement_timeout for the revert run; "0" disables it.
+	StatementTimeout string `protobuf:"bytes,5,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RevertRunRequest) Reset() {
@@ -1414,6 +1471,20 @@ func (x *RevertRunRequest) GetSkipValidation() bool {
 		return x.SkipValidation
 	}
 	return false
+}
+
+func (x *RevertRunRequest) GetLockTimeout() string {
+	if x != nil {
+		return x.LockTimeout
+	}
+	return ""
+}
+
+func (x *RevertRunRequest) GetStatementTimeout() string {
+	if x != nil {
+		return x.StatementTimeout
+	}
+	return ""
 }
 
 type RevertRunResponse struct {
@@ -1468,7 +1539,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x16godwit/v1/godwit.proto\x12\tgodwit.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"7\n" +
 	"\rMigrationFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04body\x18\x02 \x01(\tR\x04body\"\xcc\x02\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body\"\x9c\x03\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06target\x18\x02 \x01(\tR\x06target\x12)\n" +
@@ -1482,7 +1553,9 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\arollout\x18\b \x01(\tR\arollout\x12\x14\n" +
 	"\x05phase\x18\t \x01(\tR\x05phase\x12\x18\n" +
 	"\areverts\x18\n" +
-	" \x01(\tR\areverts\"\xc0\x01\n" +
+	" \x01(\tR\areverts\x12!\n" +
+	"\flock_timeout\x18\v \x01(\tR\vlockTimeout\x12+\n" +
+	"\x11statement_timeout\x18\f \x01(\tR\x10statementTimeout\"\x90\x02\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -1491,14 +1564,18 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"secretPath\x12\x1d\n" +
 	"\n" +
 	"vault_path\x18\x05 \x01(\tR\tvaultPath\x12%\n" +
-	"\x0evault_template\x18\x06 \x01(\tR\rvaultTemplate\"\x18\n" +
-	"\x16RegisterTargetResponse\"\xce\x01\n" +
+	"\x0evault_template\x18\x06 \x01(\tR\rvaultTemplate\x12!\n" +
+	"\flock_timeout\x18\a \x01(\tR\vlockTimeout\x12+\n" +
+	"\x11statement_timeout\x18\b \x01(\tR\x10statementTimeout\"\x18\n" +
+	"\x16RegisterTargetResponse\"\x9e\x02\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
 	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\x12/\n" +
 	"\x13acknowledge_hazards\x18\x03 \x03(\tR\x12acknowledgeHazards\x12'\n" +
 	"\x0fskip_validation\x18\x04 \x01(\bR\x0eskipValidation\x12\x18\n" +
-	"\arollout\x18\x05 \x01(\tR\arollout\"*\n" +
+	"\arollout\x18\x05 \x01(\tR\arollout\x12!\n" +
+	"\flock_timeout\x18\x06 \x01(\tR\vlockTimeout\x12+\n" +
+	"\x11statement_timeout\x18\a \x01(\tR\x10statementTimeout\"*\n" +
 	"\x11CreateRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"+\n" +
 	"\x11CheckDriftRequest\x12\x16\n" +
@@ -1543,11 +1620,13 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x0fParkRunResponse\".\n" +
 	"\x15ConfirmRolloutRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\x18\n" +
-	"\x16ConfirmRolloutResponse\"\x83\x01\n" +
+	"\x16ConfirmRolloutResponse\"\xd3\x01\n" +
 	"\x10RevertRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12/\n" +
 	"\x13acknowledge_hazards\x18\x02 \x03(\tR\x12acknowledgeHazards\x12'\n" +
-	"\x0fskip_validation\x18\x03 \x01(\bR\x0eskipValidation\"*\n" +
+	"\x0fskip_validation\x18\x03 \x01(\bR\x0eskipValidation\x12!\n" +
+	"\flock_timeout\x18\x04 \x01(\tR\vlockTimeout\x12+\n" +
+	"\x11statement_timeout\x18\x05 \x01(\tR\x10statementTimeout\"*\n" +
 	"\x11RevertRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId*\xd9\x01\n" +
 	"\bRunState\x12\x19\n" +
