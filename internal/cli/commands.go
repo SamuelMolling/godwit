@@ -66,6 +66,39 @@ type planObservation struct {
 	At                string `json:"at"`
 }
 
+type storedPlan struct {
+	State           string   `json:"state"`
+	RunID           string   `json:"run_id,omitempty"`
+	SupersededBy    string   `json:"superseded_by,omitempty"`
+	CreatedBy       string   `json:"created_by"`
+	CreatedAt       string   `json:"created_at"`
+	Source          string   `json:"source,omitempty"`
+	Acked           []string `json:"acknowledged_hazards,omitempty"`
+	AllowOutOfOrder bool     `json:"allow_out_of_order,omitempty"`
+}
+
+func (p storedPlan) lines() []string {
+	state := "state: " + p.State
+	switch {
+	case p.RunID != "":
+		state += " (run " + p.RunID + ")"
+	case p.SupersededBy != "":
+		state += " (by " + p.SupersededBy + ")"
+	}
+	by := "by: " + p.CreatedBy + " at " + p.CreatedAt
+	if p.Source != "" {
+		by += ", source " + p.Source
+	}
+	if len(p.Acked) > 0 {
+		by += ", acked " + strings.Join(p.Acked, ",")
+	}
+	if p.AllowOutOfOrder {
+		by += ", out-of-order allowed"
+	}
+
+	return []string{state, by}
+}
+
 type planReport struct {
 	live      bool
 	target    string
@@ -75,6 +108,7 @@ type planReport struct {
 	planKey   string
 	observed  *planObservation
 	drift     string
+	stored    *storedPlan
 	items     []planItem
 }
 
@@ -91,6 +125,9 @@ func (r planReport) contract() []string {
 		return nil
 	}
 	lines := []string{"key: " + r.planKey}
+	if r.stored != nil {
+		lines = append(lines, r.stored.lines()...)
+	}
 	if o := r.observed; o != nil {
 		lines = append(lines, fmt.Sprintf("observed: %d applied, newest %d, history %s, schema %s, at %s",
 			o.AppliedCount, o.NewestApplied, o.HistoryHash, o.SchemaFingerprint, o.At))
@@ -160,6 +197,7 @@ func newPlanCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.AddCommand(newPlanShowCmd())
 	flags.register(cmd, false)
 	remote.register(cmd)
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
@@ -369,6 +407,7 @@ type dryRunJSON struct {
 	PlanKey    string           `json:"plan_key,omitempty"`
 	Observed   *planObservation `json:"observed,omitempty"`
 	Drift      string           `json:"drift,omitempty"`
+	Stored     *storedPlan      `json:"stored,omitempty"`
 	Migrations []livePlanJSON   `json:"migrations"`
 }
 
@@ -390,7 +429,7 @@ func writePlanJSON(w io.Writer, r planReport) {
 	if r.live {
 		live := dryRunJSON{
 			Target: r.target, Rollout: r.rollout, Validated: r.validated, Migrations: []livePlanJSON{},
-			PlanID: r.planID, PlanKey: r.planKey, Observed: r.observed, Drift: r.drift,
+			PlanID: r.planID, PlanKey: r.planKey, Observed: r.observed, Drift: r.drift, Stored: r.stored,
 		}
 		for _, p := range r.items {
 			live.Migrations = append(live.Migrations, livePlanJSON{

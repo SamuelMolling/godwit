@@ -24,6 +24,7 @@ func TestTargetStatus(t *testing.T) {
 		Pending:       []*godwitv1.PendingMigration{{Version: 3, Name: "next"}},
 		LastRun:       &godwitv1.Run{Id: "r1", Kind: "migrate", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, FinishedAt: at},
 		DriftBaseline: &godwitv1.DriftBaseline{TakenAt: at, RunId: "r1", UnresolvedDrift: true},
+		ReadyPlans:    2,
 	}}
 	url := startStub(t, stub)
 
@@ -39,6 +40,7 @@ func TestTargetStatus(t *testing.T) {
 		"pending (1):",
 		"  3  next",
 		"last run: r1 migrate succeeded finished 2026-09-01T12:00:00Z",
+		"ready plans: 2",
 		"drift baseline: taken 2026-09-01T12:00:00Z by run r1, unresolved drift",
 		"",
 	}, "\n")
@@ -51,7 +53,7 @@ func TestTargetStatus(t *testing.T) {
 
 	stub.status = &godwitv1.GetTargetStatusResponse{Target: "app", Provider: "static"}
 	code, out, _ = runCLI("target", "status", "app", "--server", url)
-	if code != 0 || !strings.Contains(out, "applied (0):\nlast run: none\ndrift baseline: none\n") || len(stub.statused.Files) != 0 {
+	if code != 0 || !strings.Contains(out, "applied (0):\nlast run: none\nready plans: 0\ndrift baseline: none\n") || len(stub.statused.Files) != 0 {
 		t.Fatalf("code = %d, out = %q, files = %v", code, out, stub.statused.Files)
 	}
 	code, out, _ = runCLI("target", "status", "app", "--server", url, "--json")

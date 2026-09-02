@@ -128,6 +128,37 @@ func TestPlanStoreLifecycle(t *testing.T) {
 	if plans, err = s.ListPlans(ctx, "other", 0); err != nil || len(plans) != 0 {
 		t.Fatalf("plans = %+v, err = %v", plans, err)
 	}
+
+	if files, err := s.PlanFiles(ctx, planC); err != nil || len(files) != 2 || files["20260901120000_t.down.sql"] != "DROP TABLE t;" {
+		t.Fatalf("files = %v, err = %v", files, err)
+	}
+	if n, err := s.ReadyPlanCount(ctx, "app", time.Time{}); err != nil || n != 1 {
+		t.Fatalf("ready = %d, err = %v", n, err)
+	}
+	if n, err := s.ReadyPlanCount(ctx, "app", time.Now().Add(time.Hour)); err != nil || n != 0 {
+		t.Fatalf("ready = %d, err = %v", n, err)
+	}
+	if n, err := s.SweepPlans(ctx, time.Now().Add(-time.Hour)); err != nil || n != 0 {
+		t.Fatalf("swept = %d, err = %v", n, err)
+	}
+	if n, err := s.SweepPlans(ctx, time.Now().Add(time.Hour)); err != nil || n != 1 {
+		t.Fatalf("swept = %d, err = %v", n, err)
+	}
+	if err := s.Finish(ctx, runID, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.SweepPlans(ctx, time.Now().Add(time.Hour)); err != nil || n != 1 {
+		t.Fatalf("swept = %d, err = %v", n, err)
+	}
+	if plans, err = s.ListPlans(ctx, "app", 0); err != nil || len(plans) != 1 || plans[0].ID != planC {
+		t.Fatalf("plans = %+v, err = %v", plans, err)
+	}
+	if r, err := s.Run(ctx, runID); err != nil || r.PlanID != "" {
+		t.Fatalf("run = %+v, err = %v", r, err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM cp_plan_files`).Scan(&files); err != nil || files != 2 {
+		t.Fatalf("files = %d, err = %v", files, err)
+	}
 }
 
 func TestRunsApplying(t *testing.T) {
@@ -220,6 +251,24 @@ func TestPlanStoreErrors(t *testing.T) {
 	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(17)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec("UPDATE cp_plans SET superseded_by").WithArgs(planA, planB).WillReturnError(errBoom)
 	if err := s.SupersedePlan(ctx, planA, storedPlan(planB), nil); err == nil || !strings.Contains(err.Error(), "link superseded plan") {
+		t.Fatalf("err = %v", err)
+	}
+
+	mock.ExpectQuery("SELECT name, body FROM cp_plan_files").WithArgs(planA).WillReturnError(errBoom)
+	if _, err := s.PlanFiles(ctx, planA); err == nil || !strings.Contains(err.Error(), "list plan files") {
+		t.Fatalf("err = %v", err)
+	}
+	mock.ExpectQuery("SELECT name, body FROM cp_plan_files").WithArgs(planA).
+		WillReturnRows(pgxmock.NewRows([]string{"name", "body"}).AddRow("a", "b").RowError(0, errBoom))
+	if _, err := s.PlanFiles(ctx, planA); err == nil || !strings.Contains(err.Error(), "read plan files") {
+		t.Fatalf("row err = %v", err)
+	}
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM cp_plans").WithArgs("app", time.Time{}).WillReturnError(errBoom)
+	if _, err := s.ReadyPlanCount(ctx, "app", time.Time{}); err == nil || !strings.Contains(err.Error(), "count ready plans") {
+		t.Fatalf("err = %v", err)
+	}
+	mock.ExpectExec("DELETE FROM cp_plans").WithArgs(time.Time{}).WillReturnError(errBoom)
+	if _, err := s.SweepPlans(ctx, time.Time{}); err == nil || !strings.Contains(err.Error(), "sweep plans") {
 		t.Fatalf("err = %v", err)
 	}
 

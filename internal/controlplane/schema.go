@@ -216,6 +216,25 @@ ALTER TABLE cp_runs DROP COLUMN plan_id;
 DROP TABLE cp_plan_files;
 DROP TABLE cp_plans;`,
 	},
+	{
+		Version:  20260901000011,
+		Name:     "plan_retention",
+		Checksum: "cp-plan-retention-v1",
+		UpSQL: `
+ALTER TABLE cp_runs DROP CONSTRAINT cp_runs_plan_id_fkey,
+	ADD CONSTRAINT cp_runs_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES cp_plans (id) ON DELETE SET NULL;
+ALTER TABLE cp_plans DROP CONSTRAINT cp_plans_superseded_by_fkey,
+	ADD CONSTRAINT cp_plans_superseded_by_fkey FOREIGN KEY (superseded_by) REFERENCES cp_plans (id) ON UPDATE CASCADE ON DELETE SET NULL;
+ALTER TABLE cp_plan_files DROP CONSTRAINT cp_plan_files_plan_id_fkey,
+	ADD CONSTRAINT cp_plan_files_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES cp_plans (id) ON UPDATE CASCADE ON DELETE CASCADE;`,
+		DownSQL: `
+ALTER TABLE cp_plan_files DROP CONSTRAINT cp_plan_files_plan_id_fkey,
+	ADD CONSTRAINT cp_plan_files_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES cp_plans (id) ON UPDATE CASCADE;
+ALTER TABLE cp_plans DROP CONSTRAINT cp_plans_superseded_by_fkey,
+	ADD CONSTRAINT cp_plans_superseded_by_fkey FOREIGN KEY (superseded_by) REFERENCES cp_plans (id) ON UPDATE CASCADE;
+ALTER TABLE cp_runs DROP CONSTRAINT cp_runs_plan_id_fkey,
+	ADD CONSTRAINT cp_runs_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES cp_plans (id);`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

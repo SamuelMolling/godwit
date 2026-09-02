@@ -184,6 +184,18 @@ The checksum is the SHA-256 hex of the up file body: `sha256sum migrations/<N>_<
 | `N applied versions: target already has applied migrations` | failed_precondition | baseline on a non-empty target | see [baseline](concepts.md#baseline) |
 | `drift detection is not enabled` / `baselining is not enabled` | unimplemented | server built without the feature wired (tests only) | — |
 
+## Which plan did this run apply
+
+```bash
+godwit run get <run-id>            # read; the `plan:` line is the bound plan id (empty for an implicit plan)
+godwit plan show <plan-id>         # statements, hazards and recipes, observation, drift, state and the run
+godwit plans --target app          # every stored plan on the target, newest first, with state and run
+```
+
+`plan show` answers as long as the plan exists. Bound and superseded plans are deleted by the drift ticker once they are older than `--plan-retention` (90 days by default); after that `run get` shows an empty `plan:` and `godwit audit --run <run-id>` still carries `plan=<id>` on the `run.create` entry, which is the durable answer. Ready plans and the plans of runs that have not finished are never swept.
+
+To apply one specific stored plan instead of whatever `migrate` matches by key, `godwit migrate --plan <plan-id>` (pipeline): the plan supplies target, rollout and files; `--target`, `--rollout` or `--dir` given alongside must agree with it. It is refused when the plan is already bound, superseded or older than `--plan-ttl`, and it is subject to the same stale checks as a matched plan.
+
 ## Reverting a run
 
 ```bash

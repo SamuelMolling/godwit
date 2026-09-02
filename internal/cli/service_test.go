@@ -22,32 +22,36 @@ import (
 
 type stubService struct {
 	godwitv1connect.UnimplementedGodwitServiceHandler
-	mu         sync.Mutex
-	auth       string
-	registered *godwitv1.RegisterTargetRequest
-	baselined  *godwitv1.BaselineTargetRequest
-	statused   *godwitv1.GetTargetStatusRequest
-	status     *godwitv1.GetTargetStatusResponse
-	created    *godwitv1.CreateRunRequest
-	planned    *godwitv1.PlanRunRequest
-	plan       *godwitv1.PlanRunResponse
-	reverted   *godwitv1.RevertRunRequest
-	listed     *godwitv1.ListRunsRequest
-	got        string
-	watched    string
-	resumed    string
-	confirmed  string
-	checked    string
-	accepted   string
-	audited    *godwitv1.ListAuditRequest
-	entries    []*godwitv1.AuditEntry
-	run        *godwitv1.Run
-	runs       []*godwitv1.Run
-	events     []*godwitv1.Run
-	drift      *godwitv1.CheckDriftResponse
-	revertID   string
-	planID     string
-	err        error
+	mu          sync.Mutex
+	auth        string
+	registered  *godwitv1.RegisterTargetRequest
+	baselined   *godwitv1.BaselineTargetRequest
+	statused    *godwitv1.GetTargetStatusRequest
+	status      *godwitv1.GetTargetStatusResponse
+	created     *godwitv1.CreateRunRequest
+	planned     *godwitv1.PlanRunRequest
+	plan        *godwitv1.PlanRunResponse
+	reverted    *godwitv1.RevertRunRequest
+	listed      *godwitv1.ListRunsRequest
+	got         string
+	watched     string
+	resumed     string
+	confirmed   string
+	checked     string
+	accepted    string
+	audited     *godwitv1.ListAuditRequest
+	entries     []*godwitv1.AuditEntry
+	run         *godwitv1.Run
+	runs        []*godwitv1.Run
+	events      []*godwitv1.Run
+	drift       *godwitv1.CheckDriftResponse
+	revertID    string
+	planID      string
+	planGot     string
+	plansListed *godwitv1.ListPlansRequest
+	stored      *godwitv1.Plan
+	plans       []*godwitv1.Plan
+	err         error
 }
 
 func (s *stubService) record(h http.Header) error {
@@ -667,7 +671,7 @@ func TestRunGet(t *testing.T) {
 	stub := &stubService{run: &godwitv1.Run{
 		Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1,
 		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", Kind: "migrate", LockTimeout: "2s", StatementTimeout: "1m",
-		CreatedBy: "ci", Source: "github.com/org/repo@abc:db", CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
+		CreatedBy: "ci", Source: "github.com/org/repo@abc:db", PlanId: "p1", CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
 	}}
 	url := startStub(t, stub)
 
@@ -676,7 +680,7 @@ func TestRunGet(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "run r1: succeeded (attempt 1)\n  target: app\n  kind: migrate\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
-		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created_by: ci\n  source: github.com/org/repo@abc:db\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
+		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created_by: ci\n  source: github.com/org/repo@abc:db\n  plan: p1\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
 	if out != want || stub.got != "r1" {
 		t.Fatalf("out = %q, got = %q", out, stub.got)
 	}

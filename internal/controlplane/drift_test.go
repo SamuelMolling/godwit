@@ -208,6 +208,32 @@ func TestDriftErrorBranches(t *testing.T) {
 	})
 }
 
+func TestTick_SweepsPlans(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	mon, _ := newMonitor(t, s, notify.None{})
+	mon.PlanRetention = 24 * time.Hour
+	if err := s.SavePlan(ctx, storedPlan(planA), goodFiles()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SupersedePlan(ctx, planA, storedPlan(planB), goodFiles()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE cp_plans SET created_at = now() - interval '2 days'`); err != nil {
+		t.Fatal(err)
+	}
+
+	mon.Tick(ctx)
+	plans, err := s.ListPlans(ctx, "app", 0)
+	if err != nil || len(plans) != 1 || plans[0].ID != planB || plans[0].State != PlanReady {
+		t.Fatalf("plans = %+v, err = %v", plans, err)
+	}
+
+	s.pool.(interface{ Close() }).Close()
+	mon.Tick(ctx)
+}
+
 func TestDriftMonitorRunLoop(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)

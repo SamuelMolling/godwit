@@ -35,8 +35,14 @@ func (s *Server) GetTargetStatus(ctx context.Context, req *connect.Request[godwi
 	if err != nil {
 		return nil, rpcErr(err)
 	}
+	ready, err := s.store.ReadyPlanCount(ctx, m.Target, s.planSince())
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	out := statusToProto(st, migs)
+	out.ReadyPlans = int32(ready)
 
-	return connect.NewResponse(statusToProto(st, migs)), nil
+	return connect.NewResponse(out), nil
 }
 
 func statusToProto(st controlplane.TargetStatus, migs []engine.Migration) *godwitv1.GetTargetStatusResponse {

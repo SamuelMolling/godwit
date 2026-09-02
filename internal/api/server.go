@@ -193,6 +193,11 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 // CreateRun validates and queues a run.
 func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
 	m := req.Msg
+	if m.PlanId != "" {
+		if err := s.explicitPlan(ctx, m); err != nil {
+			return nil, err
+		}
+	}
 	spec, err := upSpec(m.Target, m.Rollout, m.Files)
 	if err != nil {
 		return nil, err

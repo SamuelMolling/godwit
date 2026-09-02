@@ -170,13 +170,9 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	if err != nil {
 		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{Plan: controlplane.Plan{Target: m.Target}, Reason: controlplane.StaleContent, Hint: err.Error()})
 	}
-	key := controlplane.PlanKey(m.Target, spec.rollout, pending)
-	plan, err := s.store.ReadyPlan(ctx, m.Target, key, s.planSince())
-	if errors.Is(err, controlplane.ErrNotFound) {
-		return b, s.noPlan(ctx, m.Target, key, pending)
-	}
-	if err != nil {
-		return b, rpcErr(err)
+	plan, err := s.lookup(ctx, m, spec, pending)
+	if err != nil || plan.ID == "" {
+		return b, err
 	}
 	b.planID = plan.ID
 	b.acked = union(plan.Acked, m.AcknowledgeHazards)

@@ -23,6 +23,8 @@ type Drift struct {
 type DriftMonitor struct {
 	// Metrics receives check outcomes; replace it before Run to share a registry.
 	Metrics *metrics.Metrics
+	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
+	PlanRetention time.Duration
 
 	store    *Store
 	dsn      func(ctx context.Context, target string) (string, error)
@@ -63,8 +65,9 @@ func (m *DriftMonitor) Run(ctx context.Context) {
 	}
 }
 
-// Tick checks every baselined target once.
+// Tick checks every baselined target once and sweeps plans past retention.
 func (m *DriftMonitor) Tick(ctx context.Context) {
+	m.sweepPlans(ctx)
 	targets, err := m.store.SnapshotTargets(ctx)
 	if err != nil {
 		m.log.Error("drift tick failed", "error", err)
@@ -75,6 +78,21 @@ func (m *DriftMonitor) Tick(ctx context.Context) {
 		if _, err := m.Check(ctx, target); err != nil {
 			m.log.Error("drift check failed", "target", target, "error", err)
 		}
+	}
+}
+
+func (m *DriftMonitor) sweepPlans(ctx context.Context) {
+	if m.PlanRetention <= 0 {
+		return
+	}
+	n, err := m.store.SweepPlans(ctx, time.Now().Add(-m.PlanRetention))
+	if err != nil {
+		m.log.Error("plan sweep failed", "error", err)
+
+		return
+	}
+	if n > 0 {
+		m.log.Info("plans swept", "deleted", n, "retention", m.PlanRetention)
 	}
 }
 

@@ -65,6 +65,8 @@ func TestTokenScopesEndToEnd(t *testing.T) {
 		"read plans":        call(bot.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: migrationFiles()}))),
 		"read lists drift":  call(bot.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{Target: "app"}))),
 		"read lists audit":  call(bot.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{}))),
+		"read lists plans":  call(bot.ListPlans(ctx, connect.NewRequest(&godwitv1.ListPlansRequest{Target: "app"}))),
+		"read gets plan":    call(bot.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: "missing"}))),
 		"pipeline confirms": call(deploy.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: created.Msg.RunId}))),
 	} {
 		if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeUnauthenticated {

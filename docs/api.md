@@ -35,7 +35,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 | Scope | RPCs |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
 | `admin` | + `RegisterTarget` |
@@ -50,7 +50,7 @@ Missing or unknown token: `unauthenticated: invalid or missing bearer token`. In
 | `unauthenticated` | 401 | bad bearer |
 | `permission_denied` | 403 | scope too low |
 | `not_found` | 404 | unknown target or run id |
-| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not the latest on its target or the target is busy`, `baseline runs cannot be reverted`, `target already has applied migrations`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`) |
+| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not the latest on its target or the target is busy`, `baseline runs cannot be reverted`, `target already has applied migrations`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`), `plan <id> is bound to run <r>`, `plan <id> was superseded by <id>`, `plan <id> expired ...` |
 | `unimplemented` | 501 | `drift detection is not enabled`, `baselining is not enabled`, `target status is not enabled`, `stored plans are not enabled` (server wired without those components; not the case for `godwit serve`) |
 | `internal` | 500 | store errors, credential provider errors, `replay history run N: ...` from validation |
 
@@ -73,6 +73,8 @@ call RegisterTarget '{"name":"app","provider":"vault","vaultPath":"secret/data/a
 Admits and queues a run. `files` are `{name, body}` pairs named `<version>_<name>.up.sql` / `.down.sql`; both sides of every version are required. Admission, in order: target exists → hazard gate (`acknowledgeHazards`) → out-of-order guard (`allowOutOfOrder`) → scratch validation (`skipValidation`). `rollout` is `direct` (default) or `expand-contract`. `source` is free text stored on the run.
 
 Before admission the set is matched against the plans stored by `PlanRun{persist}` (see [Plans](concepts.md#plans)): a fresh plan is bound (`planId` in the response and on the run), an explained one is re-planned and superseded, a stale one is refused with `failed_precondition` and a `godwit.v1.PlanStale` detail (`planId`, `reason`, `historyAdded`, `historyRemoved`, `schemaDiff`, `hint`); the message carries the same information as text. No matching plan means an implicit plan and an empty `planId`, unless the target or the service requires plans: then `failed_precondition` with a `godwit.v1.PlanRequired` detail (`target`, `key`, `nearestPlanIds`, `filesDiff`).
+
+`planId` binds one stored plan explicitly instead of matching by key. The plan supplies `target`, `rollout` and, when `files` is empty, the files it was planned with; a `target` or `rollout` that disagrees with the plan is `invalid_argument`, files whose pending set does not reproduce the plan's key are `invalid_argument: files do not match plan <id>`. The plan must be `ready` and younger than `--plan-ttl` (`failed_precondition: plan <id> is bound to run <r>` / `was superseded by <id>` / `expired`) and goes through the same fresh / explained / stale rules; an explicit plan never falls back to an implicit one.
 
 ```bash
 call CreateRun '{
@@ -195,10 +197,19 @@ call GetTargetStatus '{"target":"app","files":[...]}'
  "applied":[{"version":"20260901120000","name":"create_orders","checksum":"9f...","appliedAt":"..."}],
  "pending":[{"version":"20260901120500","name":"orders_customer_idx"}],
  "lastRun":{"id":"...","state":"RUN_STATE_SUCCEEDED"},
- "driftBaseline":{"takenAt":"...","runId":"...","unresolvedDrift":false}}
+ "driftBaseline":{"takenAt":"...","runId":"...","unresolvedDrift":false},
+ "readyPlans":1}
 ```
 
-`files` is optional; with it, `pending` lists versions in the files not yet applied and `applied[].checksumMismatch` marks versions whose file changed.
+`files` is optional; with it, `pending` lists versions in the files not yet applied and `applied[].checksumMismatch` marks versions whose file changed. `readyPlans` counts the stored plans still bindable (`ready` and younger than `--plan-ttl`).
+
+### GetPlan — read
+
+`{"planId":"..."}` returns one stored plan: `id`, `target`, `key`, `rollout`, `state` (`ready`, `bound`, `superseded`), `observed` (history hash, schema fingerprint, applied count, newest applied, time), `drift`, `migrations` (statements with hazards and recipes, phase, applied), `validated`, `acknowledgedHazards`, `allowOutOfOrder`, `createdBy`, `source`, `createdAt`, `runId` (the run that bound it) and `supersededBy`. `not_found` after `--plan-retention` deleted it; the `run.create` audit entry keeps `plan=<id>`.
+
+### ListPlans — read
+
+`{"target":"app","limit":20}`; `target` required, `limit` 0 means 100. Newest first, same shape as `GetPlan`.
 
 ### ListAudit — read
 

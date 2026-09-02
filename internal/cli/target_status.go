@@ -76,6 +76,7 @@ func statusText(st *godwitv1.GetTargetStatusResponse) string {
 		}
 	}
 	writeLastRun(&b, st.LastRun)
+	fmt.Fprintf(&b, "ready plans: %d\n", st.ReadyPlans)
 	writeBaseline(&b, st.DriftBaseline)
 
 	return strings.TrimSuffix(b.String(), "\n")
