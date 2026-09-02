@@ -78,7 +78,7 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
 | `plan` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault` |
-| `run` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
+| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
 | `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
 
