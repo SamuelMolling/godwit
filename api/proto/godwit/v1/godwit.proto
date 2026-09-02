@@ -75,6 +75,8 @@ message CreateRunRequest {
   string lock_timeout = 6;
   // Override the target's statement_timeout for this run; "0" disables it.
   string statement_timeout = 7;
+  // Apply pending versions older than the newest applied one instead of refusing them.
+  bool allow_out_of_order = 8;
 }
 
 message CreateRunResponse {

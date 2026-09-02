@@ -284,6 +284,30 @@ func (s *Store) RunFiles(ctx context.Context, id string) (map[string]string, err
 	return files, nil
 }
 
+// AppliedVersions returns the distinct migration versions held by a target's succeeded runs, ascending.
+func (s *Store) AppliedVersions(ctx context.Context, target string) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT left(f.name, 14)::bigint AS version
+		FROM cp_run_files f
+		JOIN cp_runs r ON r.id = f.run_id
+		WHERE r.target = $1 AND r.state = 'succeeded'
+		ORDER BY version`, target)
+	if err != nil {
+		return nil, fmt.Errorf("list applied versions: %w", err)
+	}
+	var out []int64
+	var v int64
+	if _, err := pgx.ForEachRow(rows, []any{&v}, func() error {
+		out = append(out, v)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read applied versions: %w", err)
+	}
+
+	return out, nil
+}
+
 // Claim leases the next queued run, or a running one whose lease expired; one lease per target.
 func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Run, bool, error) {
 	run, err := scanRun(s.pool.QueryRow(ctx, `

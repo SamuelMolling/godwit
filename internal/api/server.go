@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -202,7 +204,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
-	if err := s.admit(ctx, m.Target, plans, m.AcknowledgeHazards, m.SkipValidation); err != nil {
+	if err := s.admit(ctx, m.Target, plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder); err != nil {
 		return nil, err
 	}
 
@@ -211,7 +213,8 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", rollout,
-		"files", len(files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement)
+		"files", len(files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
+		"allow_out_of_order", m.AllowOutOfOrder)
 	s.emit(ctx, controlplane.Run{
 		ID: id, Target: m.Target, State: controlplane.StateQueued,
 		Rollout: rollout, Phase: controlplane.PhaseExpand, Timeouts: t,
@@ -242,7 +245,7 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
-	if err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation); err != nil {
+	if err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true); err != nil {
 		return nil, err
 	}
 
@@ -272,12 +275,15 @@ func (s *Server) emitLookup(ctx context.Context, id, typ, detail string) {
 	s.emit(ctx, run, typ, detail)
 }
 
-// admit refuses unacknowledged hazards and plans that fail on the scratch database.
-func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation bool) error {
+// admit refuses unacknowledged hazards, out-of-order versions and plans that fail on the scratch database.
+func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool) error {
 	if err := s.checkHazards(plans, acked); err != nil {
 		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
 
 		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if err := s.checkOrder(ctx, target, plans, allowOutOfOrder); err != nil {
+		return err
 	}
 	if s.validator == nil || skipValidation {
 		return nil
@@ -448,6 +454,38 @@ func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
 	}
 
 	return nil
+}
+
+// checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it logs them.
+func (s *Server) checkOrder(ctx context.Context, target string, plans []engine.Plan, allow bool) error {
+	applied, err := s.store.AppliedVersions(ctx, target)
+	if err != nil {
+		return rpcErr(err)
+	}
+	if len(applied) == 0 {
+		return nil
+	}
+	latest := applied[len(applied)-1]
+	var behind []string
+	for _, p := range plans {
+		v := p.Migration.Version
+		if v < latest && !slices.Contains(applied, v) {
+			behind = append(behind, strconv.FormatInt(v, 10))
+		}
+	}
+	if len(behind) == 0 {
+		return nil
+	}
+	if allow {
+		s.Log.Warn("out-of-order migrations admitted", "target", target, "versions", behind, "latest_applied", latest)
+
+		return nil
+	}
+	err = fmt.Errorf("out-of-order migrations %s: newest applied version on %s is %d (pass allow_out_of_order to apply them anyway)",
+		strings.Join(behind, ", "), target, latest)
+	s.Log.Warn("run refused by order guard", "target", target, "error", err.Error())
+
+	return connect.NewError(connect.CodeFailedPrecondition, err)
 }
 
 var (

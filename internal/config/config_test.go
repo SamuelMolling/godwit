@@ -15,6 +15,7 @@ rollout: canary
 server: http://godwit:8474
 lock_timeout: 3s
 statement_timeout: 1m
+allow_out_of_order: true
 `
 
 func write(t *testing.T, path, body string) {
@@ -31,6 +32,7 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"GODWIT_DIR", "GODWIT_TARGET", "GODWIT_ROLLOUT", "GODWIT_SERVER", "GODWIT_LOCK_TIMEOUT", "GODWIT_STATEMENT_TIMEOUT",
+		"GODWIT_ALLOW_OUT_OF_ORDER",
 	} {
 		t.Setenv(k, "")
 	}
@@ -61,6 +63,7 @@ func TestLoadExplicitPath(t *testing.T) {
 		Server:           "http://godwit:8474",
 		LockTimeout:      3 * time.Second,
 		StatementTimeout: time.Minute,
+		AllowOutOfOrder:  true,
 	}
 	if cfg != want {
 		t.Fatalf("Load() = %+v, want %+v", cfg, want)
@@ -187,6 +190,7 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("GODWIT_SERVER", "http://env:1")
 	t.Setenv("GODWIT_LOCK_TIMEOUT", "7s")
 	t.Setenv("GODWIT_STATEMENT_TIMEOUT", "2m")
+	t.Setenv("GODWIT_ALLOW_OUT_OF_ORDER", "false")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -205,12 +209,14 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestLoadEnvBadDuration(t *testing.T) {
-	clearEnv(t)
-	t.Chdir(t.TempDir())
-	t.Setenv("GODWIT_STATEMENT_TIMEOUT", "later")
+func TestLoadEnvBadValues(t *testing.T) {
+	for key, value := range map[string]string{"GODWIT_STATEMENT_TIMEOUT": "later", "GODWIT_ALLOW_OUT_OF_ORDER": "maybe"} {
+		clearEnv(t)
+		t.Chdir(t.TempDir())
+		t.Setenv(key, value)
 
-	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "GODWIT_STATEMENT_TIMEOUT") {
-		t.Fatalf("err = %v", err)
+		if _, err := Load(""); err == nil || !strings.Contains(err.Error(), key) {
+			t.Fatalf("%s: err = %v", key, err)
+		}
 	}
 }

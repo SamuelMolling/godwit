@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,7 @@ type Config struct {
 	Server           string        `yaml:"server"`
 	LockTimeout      time.Duration `yaml:"lock_timeout"`
 	StatementTimeout time.Duration `yaml:"statement_timeout"`
+	AllowOutOfOrder  bool          `yaml:"allow_out_of_order"`
 }
 
 var getwd = os.Getwd
@@ -113,6 +115,13 @@ func (c *Config) applyEnv() error {
 			return fmt.Errorf("%s: %w", e.key, err)
 		}
 		*e.dst = d
+	}
+	if v := os.Getenv("GODWIT_ALLOW_OUT_OF_ORDER"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("GODWIT_ALLOW_OUT_OF_ORDER: %w", err)
+		}
+		c.AllowOutOfOrder = b
 	}
 
 	return nil

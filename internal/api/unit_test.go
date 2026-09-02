@@ -245,3 +245,95 @@ func (r *recordingNotifier) Notify(_ context.Context, e notify.Event) error {
 
 	return nil
 }
+
+func TestCheckOrder(t *testing.T) {
+	t.Parallel()
+
+	plan := func(v int64) engine.Plan {
+		p, err := engine.BuildPlan(engine.Migration{Version: v, Name: "m", UpSQL: "SELECT 1;", DownSQL: "SELECT 1;"}, engine.DirectionUp)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return p
+	}
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	applied := func(versions ...int64) {
+		rows := pgxmock.NewRows([]string{"version"})
+		for _, v := range versions {
+			rows.AddRow(v)
+		}
+		mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(rows)
+	}
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	ctx := context.Background()
+
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnError(errors.New("down"))
+	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(2)}, false); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("store error: %v", err)
+	}
+	applied()
+	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(2)}, false); err != nil {
+		t.Fatalf("empty history: %v", err)
+	}
+	applied(1, 3)
+	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(1), plan(3), plan(4)}, false); err != nil {
+		t.Fatalf("applied and newer: %v", err)
+	}
+	applied(1, 3)
+	err = s.checkOrder(ctx, "app", []engine.Plan{plan(1), plan(2), plan(3)}, false)
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "out-of-order migrations 2: newest applied version on app is 3") {
+		t.Fatalf("behind: %v", err)
+	}
+	applied(1, 3)
+	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(2)}, true); err != nil {
+		t.Fatalf("allowed: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type failingValidator struct{ err error }
+
+func (f failingValidator) Validate(context.Context, string, []engine.Plan) error { return f.err }
+
+func TestCreateRunInternalErrors(t *testing.T) {
+	t.Parallel()
+
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	ctx := context.Background()
+	req := func() *connect.Request[godwitv1.CreateRunRequest] {
+		return connect.NewRequest(&godwitv1.CreateRunRequest{
+			Target: "app",
+			Files: []*godwitv1.MigrationFile{
+				{Name: "20260901120000_t.up.sql", Body: "SELECT 1;"},
+				{Name: "20260901120000_t.down.sql", Body: "SELECT 1;"},
+			},
+		})
+	}
+
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	s := NewServer(controlplane.NewStore(mock), nil, failingValidator{err: errors.New("scratch down")}, nil)
+	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("validator error: %v", err)
+	}
+
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "").WillReturnError(errors.New("insert down"))
+	s = NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("store error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

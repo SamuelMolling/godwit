@@ -296,3 +296,16 @@ func TestNewDriftMonitorDefaultInterval(t *testing.T) {
 		t.Fatalf("interval = %v", mon.interval)
 	}
 }
+
+func TestDriftAcceptBaselineSaveError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	mon, _ := newMonitor(t, s, notify.None{})
+	if _, err := s.pool.Exec(ctx, "DROP TABLE cp_snapshots CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mon.AcceptBaseline(ctx, "app"); err == nil {
+		t.Fatal("want error")
+	}
+}

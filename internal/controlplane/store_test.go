@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -335,5 +336,39 @@ func TestTargetBadConfigJSON(t *testing.T) {
 	}
 	if _, _, err := s.Target(ctx, "bad"); err == nil || !strings.Contains(err.Error(), "config") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAppliedVersions(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+
+	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AppliedVersions(ctx, "app"); err != nil || len(got) != 0 {
+		t.Fatalf("empty target = %v, err = %v", got, err)
+	}
+	first, second, third := "77777777-0000-0000-0000-000000000001", "77777777-0000-0000-0000-000000000002", "77777777-0000-0000-0000-000000000003"
+	queueRun(t, s, first, map[string]string{
+		"20260901120003_c.up.sql": upBody, "20260901120003_c.down.sql": "SELECT 1;",
+		"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;",
+	})
+	queueRun(t, s, second, map[string]string{"20260901120002_b.up.sql": upBody, "20260901120002_b.down.sql": "SELECT 1;"})
+	queueRun(t, s, third, map[string]string{"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;"})
+	if err := s.Finish(ctx, first, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(ctx, second, StateFailed, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(ctx, third, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.AppliedVersions(ctx, "app")
+	if err != nil || !slices.Equal(got, []int64{20260901120001, 20260901120003}) {
+		t.Fatalf("applied = %v, err = %v", got, err)
 	}
 }

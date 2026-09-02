@@ -11,7 +11,7 @@ import (
 )
 
 func TestConfigFileDrivesServiceCommands(t *testing.T) {
-	for _, k := range []string{"GODWIT_DIR", "GODWIT_TARGET", "GODWIT_ROLLOUT", "GODWIT_SERVER"} {
+	for _, k := range []string{"GODWIT_DIR", "GODWIT_TARGET", "GODWIT_ROLLOUT", "GODWIT_SERVER", "GODWIT_ALLOW_OUT_OF_ORDER"} {
 		t.Setenv(k, "")
 	}
 	stub := &stubService{events: []*godwitv1.Run{run("r1", godwitv1.RunState_RUN_STATE_SUCCEEDED, 1)}}
@@ -20,7 +20,7 @@ func TestConfigFileDrivesServiceCommands(t *testing.T) {
 	if err := os.Rename(goodMigs(t), filepath.Join(root, "db")); err != nil {
 		t.Fatal(err)
 	}
-	yaml := fmt.Sprintf("dir: db\ntarget: orders\nrollout: expand-contract\nserver: %s\n", url)
+	yaml := fmt.Sprintf("dir: db\ntarget: orders\nrollout: expand-contract\nserver: %s\nallow_out_of_order: true\n", url)
 	if err := os.WriteFile(filepath.Join(root, "godwit.yaml"), []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +30,11 @@ func TestConfigFileDrivesServiceCommands(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	c := stub.created
-	if c.Target != "orders" || c.Rollout != "expand-contract" || len(c.Files) != 2 {
+	if c.Target != "orders" || c.Rollout != "expand-contract" || !c.AllowOutOfOrder || len(c.Files) != 2 {
 		t.Fatalf("request = %v", c)
 	}
-	if code, _, errOut := runCLI("migrate", "--target", "other", "--rollout", "direct"); code != 0 || stub.created.Target != "other" || stub.created.Rollout != "direct" {
+	if code, _, errOut := runCLI("migrate", "--target", "other", "--rollout", "direct", "--allow-out-of-order=false"); code != 0 ||
+		stub.created.Target != "other" || stub.created.Rollout != "direct" || stub.created.AllowOutOfOrder {
 		t.Fatalf("flags must beat the file: code = %d, stderr = %s, request = %v", code, errOut, stub.created)
 	}
 	if code, _, errOut := runCLI("runs"); code != 0 || stub.listed.Target != "" {

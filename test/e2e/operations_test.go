@@ -227,3 +227,31 @@ func TestBaselineExistingDatabase(t *testing.T) {
 	}
 	expectContains(t, errOut, "baseline runs cannot be reverted")
 }
+
+func TestOutOfOrderRefusedUnlessAllowed(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("app")
+	r.mustMigrate(migrationDir(t, usersTable,
+		migration{v3, "plan", "ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;"}))
+
+	dir := migrationDir(t, usersTable,
+		migration{v2, "name", "ALTER TABLE users ADD COLUMN name text;", "ALTER TABLE users DROP COLUMN name;"},
+		migration{v3, "plan", "ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;"})
+	code, _, errOut := r.migrate(dir)
+	if code != 1 {
+		t.Fatalf("out-of-order migrate exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "out-of-order migrations 20260901120001", "newest applied version on app is 20260901120002")
+	if n := len(r.listRuns()); n != 1 {
+		t.Fatalf("runs after refusal = %d, want 1", n)
+	}
+
+	expectContains(t, r.mustMigrate(dir, "--allow-out-of-order"), "succeeded")
+	if !columnExists(t, r.appDSN, "users", "name") {
+		t.Fatal("column name missing after the allowed out-of-order run")
+	}
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 3 {
+		t.Fatalf("applied versions = %d, want 3", n)
+	}
+}
