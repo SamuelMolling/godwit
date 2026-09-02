@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,39 +46,148 @@ func TestRPCErrMapping(t *testing.T) {
 func TestAuthActor(t *testing.T) {
 	t.Parallel()
 
-	if name, ok := newAuth(nil).actor(""); !ok || name != AnonymousActor {
-		t.Fatalf("empty token set = %q %v, want anonymous", name, ok)
+	if p, ok := newAuth(nil).actor(""); !ok || p != anonymousAdmin {
+		t.Fatalf("empty token set = %+v %v, want anonymous admin", p, ok)
 	}
-	locked := newAuth([]Token{{Name: "ci", Secret: "t1"}})
+	locked := newAuth([]Token{{Name: "ci", Scope: ScopePipeline, Secret: "t1"}})
 	for _, h := range []string{"", "Bearer nope", "t1"} {
 		if _, ok := locked.actor(h); ok {
 			t.Fatalf("header %q must be rejected", h)
 		}
 	}
-	if name, ok := locked.actor("Bearer t1"); !ok || name != "ci" {
-		t.Fatalf("valid token = %q %v, want ci", name, ok)
+	if p, ok := locked.actor("Bearer t1"); !ok || p != (Principal{Name: "ci", Scope: ScopePipeline}) {
+		t.Fatalf("valid token = %+v %v, want ci/pipeline", p, ok)
 	}
-	if Actor(context.Background()) != AnonymousActor {
-		t.Fatal("bare context must be anonymous")
+	if Actor(context.Background()) != AnonymousActor || Caller(context.Background()) != anonymousAdmin {
+		t.Fatal("bare context must be an anonymous admin")
 	}
 }
 
 func TestParseTokens(t *testing.T) {
 	t.Parallel()
 
-	got, err := ParseTokens([]string{"ci:s1", " samuel:s2 ", "s3"})
+	got, err := ParseTokens([]string{"ci:s1", " samuel:s2 ", "s3", "bot:read:s4", "deploy:pipeline:s5", "ops:operator:s6", "root:admin:s7"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Token{{Name: "ci", Secret: "s1"}, {Name: "samuel", Secret: "s2"}, {Name: AnonymousActor, Secret: "s3"}}
+	want := []Token{
+		{Name: "ci", Scope: ScopeAdmin, Secret: "s1"},
+		{Name: "samuel", Scope: ScopeAdmin, Secret: "s2"},
+		{Name: AnonymousActor, Scope: ScopeAdmin, Secret: "s3"},
+		{Name: "bot", Scope: ScopeRead, Secret: "s4"},
+		{Name: "deploy", Scope: ScopePipeline, Secret: "s5"},
+		{Name: "ops", Scope: ScopeOperator, Secret: "s6"},
+		{Name: "root", Scope: ScopeAdmin, Secret: "s7"},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("tokens = %+v, want %+v", got, want)
 	}
-	for _, specs := range [][]string{{""}, {":s"}, {"ci:"}, {"ci:same", "ops:same"}} {
+	for _, specs := range [][]string{{""}, {":s"}, {"ci:"}, {"ci:read:"}, {"ci:same", "ops:same"}, {"ci:root:same"}, {"ci::same"}} {
 		_, err := ParseTokens(specs)
 		if err == nil || strings.Contains(err.Error(), "same") {
 			t.Fatalf("ParseTokens(%q) = %v, want an error without the secret", specs, err)
 		}
+	}
+	if _, err := ParseTokens([]string{"ci:root:s"}); err == nil || !strings.Contains(err.Error(), `unknown scope "root"`) {
+		t.Fatalf("unknown scope: %v", err)
+	}
+}
+
+func TestScopeTableCoversEveryProcedure(t *testing.T) {
+	t.Parallel()
+
+	svc := godwitv1.File_godwit_v1_godwit_proto.Services().ByName("GodwitService")
+	methods := svc.Methods()
+	if methods.Len() != len(procedureScopes) {
+		t.Fatalf("scope table has %d procedures, service has %d", len(procedureScopes), methods.Len())
+	}
+	for i := range methods.Len() {
+		procedure := "/" + string(svc.FullName()) + "/" + string(methods.Get(i).Name())
+		if _, ok := procedureScopes[procedure]; !ok {
+			t.Fatalf("%s has no scope in the auth table", procedure)
+		}
+	}
+}
+
+func TestScopeAllows(t *testing.T) {
+	t.Parallel()
+
+	ordered := []Scope{ScopeRead, ScopePipeline, ScopeOperator, ScopeAdmin}
+	for i, have := range ordered {
+		for j, need := range ordered {
+			if have.allows(need) != (i >= j) {
+				t.Fatalf("%s.allows(%s) = %v", have, need, i >= j)
+			}
+		}
+		if have.allows("") || have.allows("root") {
+			t.Fatalf("%s must not allow an unknown scope", have)
+		}
+	}
+}
+
+func TestAuthorizeByScope(t *testing.T) {
+	t.Parallel()
+
+	a := newAuth([]Token{
+		{Name: "bot", Scope: ScopeRead, Secret: "r"},
+		{Name: "deploy", Scope: ScopePipeline, Secret: "p"},
+		{Name: "ops", Scope: ScopeOperator, Secret: "o"},
+		{Name: "root", Scope: ScopeAdmin, Secret: "a"},
+	})
+	allowed := map[string][]Scope{
+		godwitv1connect.GodwitServiceListRunsProcedure:       {ScopeRead, ScopePipeline, ScopeOperator, ScopeAdmin},
+		godwitv1connect.GodwitServiceCreateRunProcedure:      {ScopePipeline, ScopeOperator, ScopeAdmin},
+		godwitv1connect.GodwitServiceResumeRunProcedure:      {ScopeOperator, ScopeAdmin},
+		godwitv1connect.GodwitServiceRegisterTargetProcedure: {ScopeAdmin},
+		"/godwit.v1.GodwitService/Unlisted":                  {},
+	}
+	for procedure, scopes := range allowed {
+		for secret, scope := range map[string]Scope{"r": ScopeRead, "p": ScopePipeline, "o": ScopeOperator, "a": ScopeAdmin} {
+			ctx, err := a.authorize(context.Background(), procedure, "Bearer "+secret)
+			if slices.Contains(scopes, scope) {
+				if err != nil || Caller(ctx).Scope != scope {
+					t.Fatalf("%s with %s: err = %v, caller = %+v", procedure, scope, err, Caller(ctx))
+				}
+
+				continue
+			}
+			if connect.CodeOf(err) != connect.CodePermissionDenied {
+				t.Fatalf("%s with %s: err = %v, want permission denied", procedure, scope, err)
+			}
+			if Caller(ctx) != anonymousAdmin {
+				t.Fatalf("denied call must not carry the principal: %+v", Caller(ctx))
+			}
+		}
+	}
+	_, err := a.authorize(context.Background(), godwitv1connect.GodwitServiceRegisterTargetProcedure, "Bearer p")
+	if err == nil || err.Error() != "permission_denied: RegisterTarget requires scope admin; token deploy has scope pipeline" {
+		t.Fatalf("denial message = %v", err)
+	}
+	if _, err := a.authorize(context.Background(), godwitv1connect.GodwitServiceListRunsProcedure, "Bearer nope"); connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("unknown secret: %v", err)
+	}
+}
+
+func TestAuthInterceptorDenies(t *testing.T) {
+	t.Parallel()
+
+	a := newAuth([]Token{{Name: "bot", Scope: ScopeRead, Secret: "r"}})
+	unary := a.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
+		t.Fatal("handler must not run")
+
+		return nil, nil
+	})
+	req := specRequest{procedure: godwitv1connect.GodwitServiceCreateRunProcedure, header: http.Header{"Authorization": {"Bearer r"}}}
+	if _, err := unary(context.Background(), req); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("unary: %v", err)
+	}
+	stream := a.WrapStreamingHandler(func(context.Context, connect.StreamingHandlerConn) error {
+		t.Fatal("handler must not run")
+
+		return nil
+	})
+	if err := stream(context.Background(), streamConn{}); connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("stream: %v", err)
 	}
 }
 

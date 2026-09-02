@@ -31,8 +31,8 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Out-of-order guard | A pending version older than the newest one already applied on the target is refused at admission; `allow_out_of_order` lets it through and is logged — see [Out-of-order migrations](#out-of-order-migrations). |
 | Dry run | `PlanRun` / `migrate --dry-run` puts the files through the same admission as a real run (hazard gate, order guard, scratch validation) against a live target and returns what it would do — applied or pending per migration, the expand/contract split, statements with hazards — without queueing anything. The Action posts it as a PR comment — see [Dry run](#dry-run). |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
-| API | gRPC and JSON over one connect endpoint, named bearer tokens, `WatchRun` streaming. |
-| Audit | Every token has a name; every mutation records who did it, and runs keep their creator and source (`repo@sha:dir`). `ListAudit` / `godwit audit` answer "who changed prod?" — see [Access and audit](#access-and-audit). |
+| API | gRPC and JSON over one connect endpoint, named and scoped bearer tokens (`read`, `pipeline`, `operator`, `admin`), `WatchRun` streaming. |
+| Audit | Every token has a name and a scope; every mutation records who did it, and runs keep their creator and source (`repo@sha:dir`). `ListAudit` / `godwit audit` answer "who changed prod?" — see [Access and audit](#access-and-audit). |
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target add`, `target baseline`, `target status`, `run`, `runs`, `revert`, `drift` and `audit` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
 | Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call with its actor, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
@@ -129,7 +129,32 @@ dry run on prod (rollout expand-contract, validated on a scratch database)
 
 ## Access and audit
 
-`GODWIT_TOKENS` names every bearer token the service accepts: `ci:<secret>,samuel:<secret>`. A call authenticates with the secret and acts as the name, so "who" is a property of the credential, not a claim in the request. A bare `<secret>` keeps working and acts as `anonymous`; a service with no tokens at all is open and everything is `anonymous`. Names are all the spec carries for now; scopes are not implemented.
+`GODWIT_TOKENS` names every bearer token the service accepts and says what it may do: `ci:pipeline:<secret>,samuel:admin:<secret>`. A call authenticates with the secret and acts as the name, so "who" is a property of the credential, not a claim in the request. The middle field is the scope; scopes are cumulative, each one includes everything below it:
+
+| Scope | Adds | Meant for |
+|---|---|---|
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `GetTargetStatus`, `PlanRun`, `ListDriftEvents`, `ListAudit` | dashboards, `migrate --dry-run` on a PR, anything that only looks |
+| `pipeline` | `CreateRun`, `RevertRun`, `ConfirmRollout` | CI on merge, the ArgoCD PreSync/PostSync hooks |
+| `operator` | `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` | the on-call DBA |
+| `admin` | `RegisterTarget` and every RPC added later | whoever sets targets up |
+
+A call outside the token's scope is refused with `permission_denied: RegisterTarget requires scope admin; token ci has scope pipeline` before the handler runs, so it leaves an access-log line (with `actor` and `scope`) and no audit row. Every procedure of the service has a row in the scope table, and a test fails when a new RPC is added without one — an unlisted procedure is denied to everyone.
+
+`name:<secret>` (no scope) and a bare `<secret>` keep working as `admin` — the former under its name, the latter as `anonymous` — so an existing deployment keeps its access when it upgrades; a service with no tokens at all is open and everything is an anonymous admin. Because the spec is split on `:`, a scoped secret cannot contain one, and a two-field spec whose secret contains `:` is rejected as an unknown scope.
+
+```
+# Helm: the Secret the chart reads
+kubectl create secret generic godwit \
+  --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
+  --from-literal=GODWIT_TOKENS=ci:pipeline:$(openssl rand -hex 24),oncall:operator:$(openssl rand -hex 24),samuel:admin:$(openssl rand -hex 24) \
+  --from-literal=GODWIT_STORE_DSN=postgres://godwit:...@store/godwit_store
+
+# docker compose / demo: one admin token
+GODWIT_TOKENS=demo:demo-token
+
+# a local service: an admin to register the target, a pipeline token for the run
+GODWIT_TOKENS=me:admin:local-token,deploy:pipeline:deploy-token
+```
 
 The actor follows every mutation:
 
@@ -294,7 +319,7 @@ Probes live on the same listener, also unauthenticated: `GET /healthz` answers 2
 |---|---|
 | `run`, `target`, `attempt`, `state` | Which run, on which target, which attempt, where it ended (`run claimed`, `run finished`). |
 | `version`, `stmt`, `kind`, `duration_ms` | Per-statement lines from the executor (with `run` and `target`): migration version, statement index, `tx` / `no_tx`, wall time. The SQL text is never logged. |
-| `method`, `actor`, `code`, `duration_ms` | Access log for every API call; `ok` at info, any other connect code at warn with the error text. `actor` is the token name (absent when the token was refused). |
+| `method`, `actor`, `scope`, `code`, `duration_ms` | Access log for every API call; `ok` at info, any other connect code at warn with the error text. `actor` and `scope` come from the token (absent when the token was refused). |
 | `error` | Error text where something went wrong (the pgx connect error, the SQLSTATE, the refused hazard). |
 
 What never reaches the log: DSNs, tokens, credential files, Vault responses, target config, migration bodies. Clean drift checks log at debug, so `--log-level debug` is the way to watch the monitor tick. `/metrics`, `/healthz` and `/readyz` are plain HTTP routes and stay out of the access log.

@@ -11,11 +11,11 @@ Runs `godwit serve` as a two-replica Deployment: the second replica is what turn
 ```bash
 kubectl -n godwit create secret generic godwit \
   --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
-  --from-literal=GODWIT_TOKENS=ci:orders-ci-token,ops:ops-token \
+  --from-literal=GODWIT_TOKENS=ci:pipeline:orders-ci-token,ops:operator:ops-token,admin:admin:admin-token \
   --from-literal=GODWIT_STORE_DSN='postgres://godwit:secret@store.internal:5432/godwit_store'
 ```
 
-`GODWIT_MASTER_KEY` encrypts the DSNs of `static` targets; losing it means re-registering those targets. `GODWIT_TOKENS` is the comma-separated list of `name:secret` bearer tokens the API accepts; the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
+`GODWIT_MASTER_KEY` encrypts the DSNs of `static` targets; losing it means re-registering those targets. `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; `name:secret` and a bare secret are admin); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
 
 ## Install
 

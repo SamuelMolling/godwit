@@ -7,89 +7,165 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+
+	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 )
 
 // AnonymousActor names calls made with an unnamed token or against a service without tokens.
 const AnonymousActor = "anonymous"
 
-// Token is one accepted bearer secret and the actor name it resolves to.
+// Scope is what a token may call; each scope includes everything below it.
+type Scope string
+
+// Scopes from least to most privileged.
+const (
+	ScopeRead     Scope = "read"
+	ScopePipeline Scope = "pipeline"
+	ScopeOperator Scope = "operator"
+	ScopeAdmin    Scope = "admin"
+)
+
+var scopeRank = map[Scope]int{ScopeRead: 1, ScopePipeline: 2, ScopeOperator: 3, ScopeAdmin: 4}
+
+func (s Scope) allows(required Scope) bool {
+	r, ok := scopeRank[required]
+
+	return ok && scopeRank[s] >= r
+}
+
+var procedureScopes = map[string]Scope{
+	godwitv1connect.GodwitServiceGetRunProcedure:          ScopeRead,
+	godwitv1connect.GodwitServiceListRunsProcedure:        ScopeRead,
+	godwitv1connect.GodwitServiceWatchRunProcedure:        ScopeRead,
+	godwitv1connect.GodwitServicePlanRunProcedure:         ScopeRead,
+	godwitv1connect.GodwitServiceGetTargetStatusProcedure: ScopeRead,
+	godwitv1connect.GodwitServiceListDriftEventsProcedure: ScopeRead,
+	godwitv1connect.GodwitServiceListAuditProcedure:       ScopeRead,
+	godwitv1connect.GodwitServiceCreateRunProcedure:       ScopePipeline,
+	godwitv1connect.GodwitServiceRevertRunProcedure:       ScopePipeline,
+	godwitv1connect.GodwitServiceConfirmRolloutProcedure:  ScopePipeline,
+	godwitv1connect.GodwitServiceResumeRunProcedure:       ScopeOperator,
+	godwitv1connect.GodwitServiceParkRunProcedure:         ScopeOperator,
+	godwitv1connect.GodwitServiceCheckDriftProcedure:      ScopeOperator,
+	godwitv1connect.GodwitServiceAcceptBaselineProcedure:  ScopeOperator,
+	godwitv1connect.GodwitServiceBaselineTargetProcedure:  ScopeOperator,
+	godwitv1connect.GodwitServiceRegisterTargetProcedure:  ScopeAdmin,
+}
+
+// Token is one accepted bearer secret with the actor name and scope it resolves to.
 type Token struct {
 	Name   string
+	Scope  Scope
 	Secret string
 }
 
-// ParseTokens reads token specs of the form "name:secret"; a bare "secret" is named anonymous.
+// ParseTokens reads token specs of the form "name:scope:secret"; "name:secret" is admin and a bare "secret" is an anonymous admin.
 func ParseTokens(specs []string) ([]Token, error) {
 	seen := map[string]string{}
 	out := make([]Token, 0, len(specs))
 	for i, spec := range specs {
-		name, secret, ok := strings.Cut(strings.TrimSpace(spec), ":")
-		if !ok {
-			name, secret = AnonymousActor, name
+		parts := strings.SplitN(strings.TrimSpace(spec), ":", 3)
+		t := Token{Name: AnonymousActor, Scope: ScopeAdmin, Secret: parts[len(parts)-1]}
+		if len(parts) > 1 {
+			t.Name = parts[0]
 		}
-		if name == "" || secret == "" {
-			return nil, fmt.Errorf("token #%d: want name:secret or a bare secret", i+1)
+		if len(parts) == 3 {
+			t.Scope = Scope(parts[1])
 		}
-		if other, dup := seen[secret]; dup {
-			return nil, fmt.Errorf("token #%d (%s): secret already used by %s", i+1, name, other)
+		if t.Name == "" || t.Secret == "" {
+			return nil, fmt.Errorf("token #%d: want name:scope:secret, name:secret or a bare secret", i+1)
 		}
-		seen[secret] = name
-		out = append(out, Token{Name: name, Secret: secret})
+		if _, ok := scopeRank[t.Scope]; !ok {
+			return nil, fmt.Errorf("token #%d (%s): unknown scope %q, want read, pipeline, operator or admin", i+1, t.Name, t.Scope)
+		}
+		if other, dup := seen[t.Secret]; dup {
+			return nil, fmt.Errorf("token #%d (%s): secret already used by %s", i+1, t.Name, other)
+		}
+		seen[t.Secret] = t.Name
+		out = append(out, t)
 	}
 
 	return out, nil
 }
 
-type actorKey struct{}
+// Principal is the identity behind a call: the token name and its scope.
+type Principal struct {
+	Name  string
+	Scope Scope
+}
+
+type principalKey struct{}
+
+var anonymousAdmin = Principal{Name: AnonymousActor, Scope: ScopeAdmin}
+
+// Caller returns the principal behind the call; outside an authenticated request it is an anonymous admin.
+func Caller(ctx context.Context) Principal {
+	if p, ok := ctx.Value(principalKey{}).(Principal); ok {
+		return p
+	}
+
+	return anonymousAdmin
+}
 
 // Actor returns the name of the token behind the call, or anonymous outside an authenticated request.
 func Actor(ctx context.Context) string {
-	if name, ok := ctx.Value(actorKey{}).(string); ok {
-		return name
-	}
-
-	return AnonymousActor
+	return Caller(ctx).Name
 }
 
-// auth checks bearer tokens against the allow-set and names the caller; an empty set disables auth.
+// auth checks bearer tokens against the allow-set, names the caller and enforces the per-procedure scope; an empty set disables auth.
 type auth struct {
-	names map[string]string
+	principals map[string]Principal
 }
 
 func newAuth(tokens []Token) *auth {
-	names := map[string]string{}
+	principals := map[string]Principal{}
 	for _, t := range tokens {
-		names[t.Secret] = t.Name
+		principals[t.Secret] = Principal{Name: t.Name, Scope: t.Scope}
 	}
 
-	return &auth{names: names}
+	return &auth{principals: principals}
 }
 
 var errUnauthenticated = connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token"))
 
-// actor resolves the Authorization header to an actor name; ok is false when the call must be refused.
-func (a *auth) actor(header string) (string, bool) {
-	if len(a.names) == 0 {
-		return AnonymousActor, true
+// actor resolves the Authorization header to a principal; ok is false when the call must be refused.
+func (a *auth) actor(header string) (Principal, bool) {
+	if len(a.principals) == 0 {
+		return anonymousAdmin, true
 	}
 	secret, ok := strings.CutPrefix(header, "Bearer ")
 	if !ok {
-		return "", false
+		return Principal{}, false
 	}
-	name, ok := a.names[secret]
+	p, ok := a.principals[secret]
 
-	return name, ok
+	return p, ok
+}
+
+func (a *auth) authorize(ctx context.Context, procedure, header string) (context.Context, error) {
+	p, ok := a.actor(header)
+	if !ok {
+		return ctx, errUnauthenticated
+	}
+	if required := procedureScopes[procedure]; !p.Scope.allows(required) {
+		method := procedure[strings.LastIndex(procedure, "/")+1:]
+
+		return ctx, connect.NewError(connect.CodePermissionDenied,
+			fmt.Errorf("%s requires scope %s; token %s has scope %s", method, required, p.Name, p.Scope))
+	}
+
+	return context.WithValue(ctx, principalKey{}, p), nil
 }
 
 // WrapUnary implements connect.Interceptor.
 func (a *auth) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		name, ok := a.actor(req.Header().Get("Authorization"))
-		if !ok {
-			return nil, errUnauthenticated
+		ctx, err := a.authorize(ctx, req.Spec().Procedure, req.Header().Get("Authorization"))
+		if err != nil {
+			return nil, err
 		}
 
-		return next(context.WithValue(ctx, actorKey{}, name), req)
+		return next(ctx, req)
 	}
 }
 
@@ -101,11 +177,11 @@ func (a *auth) WrapStreamingClient(next connect.StreamingClientFunc) connect.Str
 // WrapStreamingHandler implements connect.Interceptor.
 func (a *auth) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
-		name, ok := a.actor(conn.RequestHeader().Get("Authorization"))
-		if !ok {
-			return errUnauthenticated
+		ctx, err := a.authorize(ctx, conn.Spec().Procedure, conn.RequestHeader().Get("Authorization"))
+		if err != nil {
+			return err
 		}
 
-		return next(context.WithValue(ctx, actorKey{}, name), conn)
+		return next(ctx, conn)
 	}
 }

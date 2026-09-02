@@ -16,7 +16,7 @@ func TestAccessLogUnary(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	a := accessLog{log: slog.New(slog.NewJSONHandler(&buf, nil)), actor: newAuth([]Token{{Name: "ci", Secret: "t1"}}).actor}
+	a := accessLog{log: slog.New(slog.NewJSONHandler(&buf, nil)), actor: newAuth([]Token{{Name: "ci", Scope: ScopePipeline, Secret: "t1"}}).actor}
 	req := specRequest{procedure: "/godwit.v1.GodwitService/ListRuns", header: http.Header{"Authorization": {"Bearer t1"}}}
 
 	ok := a.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
@@ -27,7 +27,7 @@ func TestAccessLogUnary(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, `"level":"INFO"`) || !strings.Contains(out, `"method":"ListRuns"`) ||
 		!strings.Contains(out, `"code":"ok"`) || !strings.Contains(out, `"duration_ms":`) || !strings.Contains(out, `"actor":"ci"`) ||
-		strings.Contains(out, "t1") {
+		!strings.Contains(out, `"scope":"pipeline"`) || strings.Contains(out, "t1") {
 		t.Fatalf("ok line = %s", out)
 	}
 
@@ -67,7 +67,7 @@ func TestAccessLogStreaming(t *testing.T) {
 		t.Fatal("want error")
 	}
 	if out := buf.String(); !strings.Contains(out, `"method":"WatchRun"`) || !strings.Contains(out, `"code":"unknown"`) ||
-		!strings.Contains(out, `"actor":"anonymous"`) {
+		!strings.Contains(out, `"actor":"anonymous"`) || !strings.Contains(out, `"scope":"admin"`) {
 		t.Fatalf("stream line = %s", out)
 	}
 }

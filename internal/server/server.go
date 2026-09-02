@@ -27,7 +27,7 @@ type Config struct {
 	Listen    string
 	StoreDSN  string
 	MasterKey []byte
-	// Tokens are bearer token specs, "name:secret" or a bare secret (named anonymous).
+	// Tokens are bearer token specs, "name:scope:secret"; "name:secret" and a bare secret (named anonymous) are admin.
 	Tokens        []string
 	Holder        string
 	Scheduler     controlplane.Config

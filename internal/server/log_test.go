@@ -124,7 +124,8 @@ func TestServiceLogs(t *testing.T) {
 			}
 		}
 	}
-	if line := logLine(t, out, `"method":"RegisterTarget"`); !strings.Contains(line, `"level":"INFO"`) || !strings.Contains(line, `"code":"ok"`) {
+	if line := logLine(t, out, `"method":"RegisterTarget"`); !strings.Contains(line, `"level":"INFO"`) || !strings.Contains(line, `"code":"ok"`) ||
+		!strings.Contains(line, `"actor":"anonymous"`) || !strings.Contains(line, `"scope":"admin"`) {
 		t.Fatalf("access line = %s", line)
 	}
 	if line := logLine(t, out, `"method":"ListRuns"`); !strings.Contains(line, `"level":"WARN"`) || !strings.Contains(line, `"code":"unauthenticated"`) {

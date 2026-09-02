@@ -22,7 +22,7 @@ func newServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
-			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated name:secret bearer tokens; a bare secret is named anonymous),\n" +
+			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; name:secret and a bare secret are admin),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level).",
