@@ -10,6 +10,7 @@ existingSecret:
     masterKey: master-key
     tokens: tokens
     storeDSN: store-dsn
+    slackToken: slack-token
 serve:
   port: 9000
   driftInterval: 1m
@@ -26,6 +27,10 @@ vault:
     key: token
 notifications:
   webhookUrl: https://hooks.example.com/godwit
+  publicUrl: https://godwit.example.com
+  slack:
+    channel: "#dbre-migrations"
+    mode: edit
 extraEnv:
   - name: HTTPS_PROXY
     value: http://proxy:3128

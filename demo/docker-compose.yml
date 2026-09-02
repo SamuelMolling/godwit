@@ -49,6 +49,10 @@ services:
       GODWIT_LOG_FORMAT: text
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: demo-root
+      # GODWIT_SLACK_TOKEN: xoxb-...
+      # GODWIT_SLACK_CHANNEL: "#dbre-migrations"
+      # GODWIT_SLACK_MODE: thread
+      # GODWIT_PUBLIC_URL: http://localhost:18474
     ports:
       - "18474:8474"
     depends_on:
@@ -71,6 +75,10 @@ services:
       GODWIT_LOG_FORMAT: text
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: demo-root
+      # GODWIT_SLACK_TOKEN: xoxb-...
+      # GODWIT_SLACK_CHANNEL: "#dbre-migrations"
+      # GODWIT_SLACK_MODE: thread
+      # GODWIT_PUBLIC_URL: http://localhost:18474
     ports:
       - "18475:8474"
     depends_on:

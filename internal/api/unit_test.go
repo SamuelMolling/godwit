@@ -17,6 +17,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
+	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
 func TestRPCErrMapping(t *testing.T) {
@@ -203,4 +204,38 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 	if connect.CodeOf(stream.Err()) != connect.CodeCanceled {
 		t.Fatalf("stream err = %v", stream.Err())
 	}
+}
+
+func TestParkRunNotifiesWithoutLookup(t *testing.T) {
+	t.Parallel()
+
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	mock.ExpectExec("UPDATE cp_runs SET state").WithArgs("r1", controlplane.StateNeedsAttention, "why").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").WillReturnError(errors.New("gone"))
+
+	rec := &recordingNotifier{}
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s.Notifier = rec
+	if _, err := s.ParkRun(context.Background(), connect.NewRequest(&godwitv1.ParkRunRequest{RunId: "r1", Reason: "why"})); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.events) != 0 {
+		t.Fatalf("events = %+v", rec.events)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type recordingNotifier struct{ events []notify.Event }
+
+func (r *recordingNotifier) Notify(_ context.Context, e notify.Event) error {
+	r.events = append(r.events, e)
+
+	return nil
 }

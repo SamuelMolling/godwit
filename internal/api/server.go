@@ -20,6 +20,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
+	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
 // DriftOps is the drift surface the API exposes (implemented by the monitor).
@@ -39,6 +40,8 @@ type Server struct {
 	Metrics *metrics.Metrics
 	// Log receives admission and operator events plus the access log; replace it before Handler.
 	Log *slog.Logger
+	// Notifier receives operator-driven run events; replace it before Handler.
+	Notifier notify.Notifier
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -54,6 +57,7 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 	return &Server{
 		Metrics:       metrics.New(),
 		Log:           slog.New(slog.DiscardHandler),
+		Notifier:      notify.None{},
 		store:         store,
 		drift:         drift,
 		validator:     validator,
@@ -169,6 +173,10 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", rollout,
 		"files", len(files), "acked", m.AcknowledgeHazards)
+	s.emit(ctx, controlplane.Run{
+		ID: id, Target: m.Target, State: controlplane.StateQueued,
+		Rollout: rollout, Phase: controlplane.PhaseExpand,
+	}, notify.RunCreated, "")
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
 }
@@ -197,8 +205,24 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards)
+	s.emit(ctx, controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId},
+		notify.RunCreated, "reverts run "+notify.ShortID(m.RunId))
 
 	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
+}
+
+func (s *Server) emit(ctx context.Context, run controlplane.Run, typ, detail string) {
+	notify.Emit(ctx, s.Notifier, s.Log, controlplane.RunEvent(run, typ, detail))
+}
+
+func (s *Server) emitLookup(ctx context.Context, id, typ, detail string) {
+	run, err := s.store.Run(ctx, id)
+	if err != nil {
+		s.Log.Warn("notification skipped", "run", id, "type", typ, "error", err)
+
+		return
+	}
+	s.emit(ctx, run, typ, detail)
 }
 
 // admit refuses unacknowledged hazards and plans that fail on the scratch database.
@@ -324,6 +348,7 @@ func (s *Server) ResumeRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	}
 	s.Metrics.RunResumed(run.Target)
 	s.Log.Info("run resumed", "run", run.ID, "target", run.Target)
+	s.emit(ctx, run, notify.RunResumed, "")
 
 	return connect.NewResponse(&godwitv1.ResumeRunResponse{}), nil
 }
@@ -334,6 +359,7 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("run parked", "run", req.Msg.RunId, "reason", req.Msg.Reason)
+	s.emitLookup(ctx, req.Msg.RunId, notify.RunParked, req.Msg.Reason)
 
 	return connect.NewResponse(&godwitv1.ParkRunResponse{}), nil
 }
@@ -344,6 +370,7 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("rollout confirmed", "run", req.Msg.RunId)
+	s.emitLookup(ctx, req.Msg.RunId, notify.RunConfirmed, "")
 
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }

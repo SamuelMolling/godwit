@@ -86,22 +86,28 @@ func startServiceWithKey(t *testing.T, storeDSN string, key []byte) string {
 
 func startServiceOpts(t *testing.T, storeDSN, holder string, tokens []string, key []byte) string {
 	t.Helper()
+
+	return startServiceCfg(t, Config{
+		Listen:    "127.0.0.1:0",
+		StoreDSN:  storeDSN,
+		MasterKey: key,
+		Tokens:    tokens,
+		Holder:    holder,
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond},
+		Log:       testLog,
+	})
+}
+
+func startServiceCfg(t *testing.T, cfg Config) string {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	ready := make(chan net.Addr, 1)
 	errCh := make(chan error, 1)
+	cfg.OnReady = func(addr net.Addr) { ready <- addr }
 	go func() {
-		errCh <- Run(ctx, Config{
-			Listen:    "127.0.0.1:0",
-			StoreDSN:  storeDSN,
-			MasterKey: key,
-			Tokens:    tokens,
-			Holder:    holder,
-			Scheduler: controlplane.Config{Interval: 50 * time.Millisecond},
-			Log:       testLog,
-			OnReady:   func(addr net.Addr) { ready <- addr },
-		})
+		errCh <- Run(ctx, cfg)
 	}()
 	select {
 	case addr := <-ready:
@@ -322,5 +328,11 @@ func TestRunStartErrors(t *testing.T) {
 	}
 	if err := Run(ctx, Config{StoreDSN: newDatabase(t, "st"), Listen: "127.0.0.1:1", Log: testLog}); err == nil {
 		t.Fatal("privileged port must fail")
+	}
+	if err := Run(ctx, Config{SlackMode: "shout", Log: testLog}); err == nil || !strings.Contains(err.Error(), `slack mode "shout"`) {
+		t.Fatalf("bad slack mode: %v", err)
+	}
+	if err := Run(ctx, Config{SlackToken: "xoxb-1", Log: testLog}); err == nil || !strings.Contains(err.Error(), "slack channel is required") {
+		t.Fatalf("missing channel: %v", err)
 	}
 }

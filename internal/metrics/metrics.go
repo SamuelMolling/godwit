@@ -54,6 +54,7 @@ type Metrics struct {
 	driftChecks        *prometheus.CounterVec
 	apiRequests        *prometheus.CounterVec
 	apiDuration        *prometheus.HistogramVec
+	notifications      *prometheus.CounterVec
 }
 
 // New builds a Metrics set on its own registry.
@@ -101,6 +102,9 @@ func New() *Metrics {
 			Name: "godwit_api_request_duration_seconds", Help: "API call latency.",
 			Buckets: prometheus.ExponentialBuckets(0.001, 4, 8),
 		}, []string{"method"}),
+		notifications: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "godwit_notifications_total", Help: "Notifications handed to each provider, by outcome.",
+		}, []string{"provider", "result"}),
 	}
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "godwit_build_info", Help: "Build metadata; always 1.",
@@ -108,7 +112,7 @@ func New() *Metrics {
 	buildInfo.WithLabelValues(version.Version, version.Commit).Set(1)
 	m.registry.MustRegister(buildInfo, m.resumes, m.attempts, m.heartbeatFailures, m.runDuration,
 		m.statementDuration, m.statementFailures, m.hazards, m.validationFailures, m.driftChecks,
-		m.apiRequests, m.apiDuration)
+		m.apiRequests, m.apiDuration, m.notifications)
 
 	return m
 }
@@ -207,6 +211,11 @@ func (m *Metrics) ValidationFailed(target string) {
 // DriftChecked records one drift check outcome.
 func (m *Metrics) DriftChecked(target, result string) {
 	m.driftChecks.WithLabelValues(target, result).Inc()
+}
+
+// Notified records one notification outcome for a provider.
+func (m *Metrics) Notified(provider, result string) {
+	m.notifications.WithLabelValues(provider, result).Inc()
 }
 
 // Interceptor counts and times every API call.

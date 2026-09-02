@@ -108,6 +108,20 @@ ALTER TABLE cp_runs
 	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention', 'awaiting_contract')),
 	DROP COLUMN reverts;`,
 	},
+	{
+		Version:  20260901000004,
+		Name:     "notifications",
+		Checksum: "cp-notifications-v1",
+		UpSQL: `
+CREATE TABLE cp_notifications (
+	kind    text NOT NULL,
+	key     text NOT NULL,
+	channel text NOT NULL,
+	ts      text NOT NULL,
+	PRIMARY KEY (kind, key)
+);`,
+		DownSQL: `DROP TABLE cp_notifications;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

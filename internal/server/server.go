@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -31,6 +32,14 @@ type Config struct {
 	Scheduler     controlplane.Config
 	DriftInterval time.Duration
 	WebhookURL    string
+	SlackToken    string
+	SlackChannel  string
+	SlackMode     string
+	// SlackURL overrides the Slack API base (tests point it at a fake).
+	SlackURL  string
+	PublicURL string
+	// Notifier is an extra synchronous notifier called in-process (tests, embedding).
+	Notifier notify.Notifier
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
 	Log            *slog.Logger
@@ -40,6 +49,15 @@ type Config struct {
 
 // Run migrates the store, starts the scheduler and serves the API until ctx ends.
 func Run(ctx context.Context, cfg Config) error {
+	if cfg.SlackMode == "" {
+		cfg.SlackMode = notify.ModeThread
+	}
+	if cfg.SlackMode != notify.ModeThread && cfg.SlackMode != notify.ModeEdit {
+		return fmt.Errorf("slack mode %q: want %s or %s", cfg.SlackMode, notify.ModeThread, notify.ModeEdit)
+	}
+	if cfg.SlackToken != "" && cfg.SlackChannel == "" {
+		return errors.New("slack channel is required when a slack token is set")
+	}
 	pool, err := pgxpool.New(ctx, cfg.StoreDSN)
 	if err != nil {
 		return err
@@ -57,17 +75,17 @@ func Run(ctx context.Context, cfg Config) error {
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
+	notifier, closeNotifier := newNotifier(cfg, store, log, m.Notified)
+	defer closeNotifier()
+
 	cfg.Scheduler.Holder = cfg.Holder
 	eng := controlplane.PGEngine{Metrics: m, Log: log}
 	sched := controlplane.NewScheduler(store, creds.Registry(cfg.MasterKey),
 		eng, controlplane.Policies(), cfg.Scheduler, log)
 	sched.Metrics = m
+	sched.Notifier = notifier
 	go sched.Run(ctx)
 
-	var notifier notify.Notifier = notify.None{}
-	if cfg.WebhookURL != "" {
-		notifier = notify.Webhook{URL: cfg.WebhookURL}
-	}
 	drift := controlplane.NewDriftMonitor(store, sched, eng, notifier, cfg.DriftInterval, log)
 	go drift.Run(ctx)
 
@@ -90,6 +108,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv := api.NewServer(store, drift, validator, cfg.MasterKey)
 	apiSrv.Metrics = m
 	apiSrv.Log = log
+	apiSrv.Notifier = notifier
 	srv := &http.Server{
 		Handler:           api.Handler(apiSrv, cfg.Tokens),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -104,6 +123,33 @@ func Run(ctx context.Context, cfg Config) error {
 	}()
 
 	return serve(srv, ln)
+}
+
+func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func(provider, result string)) (notify.Notifier, func()) {
+	var all notify.Multi
+	var async []*notify.Async
+	if cfg.Notifier != nil {
+		all = append(all, cfg.Notifier)
+	}
+	if cfg.WebhookURL != "" {
+		a := notify.NewAsync("webhook", notify.Webhook{URL: cfg.WebhookURL}, log, record)
+		all, async = append(all, a), append(async, a)
+	}
+	if cfg.SlackToken != "" {
+		slack := notify.Slack{
+			Token: cfg.SlackToken, Channel: cfg.SlackChannel, Mode: cfg.SlackMode,
+			Store: store, BaseURL: cfg.SlackURL, PublicURL: cfg.PublicURL,
+		}
+		a := notify.NewAsync("slack", slack, log, record)
+		all, async = append(all, a), append(async, a)
+		log.Info("slack notifications enabled", "channel", cfg.SlackChannel, "mode", cfg.SlackMode)
+	}
+
+	return all, func() {
+		for _, a := range async {
+			a.Close()
+		}
+	}
 }
 
 func serve(srv *http.Server, ln net.Listener) error {
