@@ -45,6 +45,7 @@ type Statement struct {
 	IndexSchema string
 	IndexName   string
 	Hazards     []Hazard
+	Opaque      string
 }
 
 // Plan is the executable form of one migration direction.
@@ -52,6 +53,18 @@ type Plan struct {
 	Migration  Migration
 	Direction  Direction
 	Statements []Statement
+	MarkOnly   bool
+}
+
+// Opaque names why the plan's effect cannot be read back from a schema snapshot, or "" when it can.
+func (p Plan) Opaque() string {
+	for _, st := range p.Statements {
+		if st.Opaque != "" {
+			return st.Opaque
+		}
+	}
+
+	return ""
 }
 
 // BuildPlan parses one side of a migration into classified statements.
@@ -97,6 +110,7 @@ func hashSQL(s string) string {
 }
 
 func classify(node *pgquery.Node, st *Statement) error {
+	st.Opaque = opacity(node)
 	switch {
 	case node.GetIndexStmt() != nil:
 		return classifyIndex(node.GetIndexStmt(), st)

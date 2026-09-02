@@ -419,12 +419,12 @@ func TestAdmitStoreError(t *testing.T) {
 	t.Cleanup(mock.Close)
 	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("ghost").WillReturnError(pgx.ErrNoRows)
-	if _, err := s.admit(context.Background(), "ghost", nil, nil, false, false); connect.CodeOf(err) != connect.CodeNotFound {
+	if _, err := s.admit(context.Background(), "ghost", nil, nil, false, false, ""); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown target: %v", err)
 	}
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnError(errors.New("down"))
-	if _, err := s.admit(context.Background(), "app", nil, nil, false, false); connect.CodeOf(err) != connect.CodeInternal {
+	if _, err := s.admit(context.Background(), "app", nil, nil, false, false, ""); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("store error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -507,7 +507,9 @@ func expectTarget(mock pgxmock.PgxPoolIface) {
 
 type failingValidator struct{ err error }
 
-func (f failingValidator) Validate(context.Context, string, []engine.Plan) error { return f.err }
+func (f failingValidator) Validate(context.Context, string, []engine.Plan, string) (controlplane.Validation, error) {
+	return controlplane.Validation{}, f.err
+}
 
 func TestCreateRunInternalErrors(t *testing.T) {
 	t.Parallel()

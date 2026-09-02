@@ -287,6 +287,31 @@ rpc GetTargetStatus "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475
 echo
 
 echo
+echo "==> already applied by hand: someone adds the column a pending migration would add"
+docker compose exec -T target-db psql -U app -d legacy -c "ALTER TABLE orders ADD COLUMN note text;"
+NOTE_FILES='[
+    {"name": "00000000000001_baseline.up.sql", "body": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric);"},
+    {"name": "00000000000001_baseline.down.sql", "body": "DROP TABLE orders;"},
+    {"name": "20260901190000_orders_status.up.sql", "body": "ALTER TABLE orders ADD COLUMN status text;"},
+    {"name": "20260901190000_orders_status.down.sql", "body": "ALTER TABLE orders DROP COLUMN status;"},
+    {"name": "20260901190001_orders_note.up.sql", "body": "ALTER TABLE orders ADD COLUMN note text;"},
+    {"name": "20260901190001_orders_note.down.sql", "body": "ALTER TABLE orders DROP COLUMN note;"}
+  ]'
+echo "==> the plan sees the effect is already there (alreadyApplied, effect) instead of reporting drift"
+NOTE_PLAN=$(rpc PlanRun "{\"target\": \"legacy\", \"persist\": true, \"files\": $NOTE_FILES}" 18475)
+echo "$NOTE_PLAN" | sed -E 's/.*"alreadyApplied":true,"effect":"([^"]+)".*/alreadyApplied: \1/'
+echo "==> migrate binds to the plan and records the migration without running a statement"
+NOTE_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $NOTE_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$NOTE_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT r.version, m.name, r.stmt_count, r.state FROM godwit.runs r JOIN godwit.migrations m USING (version) ORDER BY r.version;"
+
+echo
 echo "==> the same API from the CLI: every run so far, with who created it"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
 

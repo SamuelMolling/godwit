@@ -108,6 +108,31 @@ func Snapshot(ctx context.Context, db DB) (definition, fingerprint string, err e
 	return definition, hex.EncodeToString(sum[:]), nil
 }
 
+// InvalidIndexes lists the indexes a failed CONCURRENTLY build left behind, schema-qualified and sorted.
+func InvalidIndexes(ctx context.Context, db DB) ([]string, error) {
+	rows, err := db.Query(ctx, `
+		SELECT n.nspname || '.' || c.relname
+		FROM pg_index i
+		JOIN pg_class c ON c.oid = i.indexrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE NOT i.indisvalid AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		ORDER BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("inspect invalid indexes: %w", err)
+	}
+	var out []string
+	var name string
+	if _, err := pgx.ForEachRow(rows, []any{&name}, func() error {
+		out = append(out, name)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read invalid indexes: %w", err)
+	}
+
+	return out, nil
+}
+
 // DiffSchemas lists the lines present in only one snapshot ("- " expected, "+ " live).
 func DiffSchemas(expected, live string) []string {
 	count := map[string]int{}
@@ -117,6 +142,7 @@ func DiffSchemas(expected, live string) []string {
 	for _, l := range strings.Split(live, "\n") {
 		count[l]--
 	}
+	delete(count, "")
 
 	var missing, unexpected []string
 	for l, c := range count {

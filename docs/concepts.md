@@ -124,7 +124,7 @@ One target executes one run at a time: the claim query hands out one lease per t
 1. **Target exists** — `not_found` otherwise.
 2. **Hazard gate** — every hazard code in the plans must be in `acknowledge_hazards`; otherwise `failed_precondition` listing them.
 3. **Out-of-order guard** — a pending version below the newest version in the target's history (files of `succeeded` runs, migrate and baseline) is refused with `failed_precondition` unless `allow_out_of_order`; allowed ones are logged. Reverts skip this check.
-4. **Scratch validation** — a database `godwit_validate_<id>` is created on the store server, the files of every succeeded run of the target are replayed in order, then the new plans; the database is dropped `WITH (FORCE)`. A failure in the new plans is `invalid_argument: migration failed validation: ...`; a failure in the history replay is `internal: replay history run i: ...`. Skipped with `skip_validation` or `serve --skip-validation`.
+4. **Scratch validation** — a database `godwit_validate_<id>` is created on the store server, the files of every succeeded run of the target are replayed in order, then the new plans one at a time, snapshotting the schema after the history and after each plan; the database is dropped `WITH (FORCE)`. A failure in the new plans is `invalid_argument: migration failed validation: ...`; a failure in the history replay is `internal: replay history run i: ...`. Skipped with `skip_validation` or `serve --skip-validation`. The snapshots feed [already-applied detection](#already-applied-migrations) when the plan is persisted.
 
 ### Hazards
 
@@ -195,6 +195,22 @@ Every statement runs under `lock_timeout` (default 5s) and `statement_timeout` (
 - **stale** — anything else: `failed_precondition` with a `PlanStale` detail (`reason` history / schema / order / validation / content, the added and removed versions, the `+`/`-` schema lines, a hint) before any row is written on the store or the target.
 
 With no matching plan the run is admitted as today (implicit plan, empty `plan_id`) unless the target was registered with `require_plan` or the service runs with `--require-plan`: then `failed_precondition` with a `PlanRequired` detail naming the nearest stored plans and the difference between their files and the set.
+
+### Already-applied migrations
+
+A persisted, validated plan compares the target with what the scratch database looked like after the history (`S_0`) and after each pending migration in turn (`S_1 … S_n`). When the target's fingerprint equals some `S_k`, migrations `1..k` had their effect applied by hand: each is reported with `already_applied` and its `effect` (the `+`/`-` snapshot lines it adds), and the run that binds to the plan **records** them in `godwit.migrations` with a `succeeded` run of `stmt_count 0` instead of executing them. Detection stops at the first migration it cannot vouch for, and a plan whose marks changed since it was taken is `PlanStale{history}` (re-plan). Before recording, the scheduler observes the target again: an unrecorded mark whose fingerprint no longer matches the plan fails the run with `target schema changed since plan ... was taken`, and any `INVALID` index (a `CREATE INDEX CONCURRENTLY` that failed halfway) fails it with `index ... exists but is INVALID`.
+
+Only what the snapshot sees can be matched: columns of base tables, constraints, indexes and the `md5` of view definitions. Everything else is refused, and the plan says why in `note`:
+
+| Situation | `note` | What to do |
+|---|---|---|
+| The migration has DML (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `COPY`, `TRUNCATE`, `SELECT`, `CALL`, `DO`) | `has DML, must execute` | Run it; data is never inferred from a schema. |
+| The migration creates or alters something the snapshot cannot see (functions, types, triggers, policies, grants, sequences, tablespaces, partitions, identity or generated columns, collations, unlogged or temporary tables, view options…) or has no effect on the scratch schema | `effect not inspectable` | Run it, or baseline it explicitly. |
+| The hand changes match the migration's effect but not as a prefix of the pending set (`S_k` never equals the target) | `effect is present but not as a prefix` and the difference in `drift` | Reorder or split the migrations so the hand-applied ones come first, or `godwit drift accept` and baseline them. |
+| An applied migration's body differs from its checksum | `invalid_argument: ... applied with different content` | Restore the file. |
+| `skip_validation` | no note; `drift` falls back to the last snapshot | Validate to detect. |
+
+`S_0` is the scratch database after the history, not the target's drift baseline: a hand change blessed with `AcceptBaseline` still shows as `drift` in the plan and blocks detection until it is captured in a migration or a baseline.
 
 ## Target status
 

@@ -31,7 +31,13 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	if m.Persist && s.Inspector == nil {
 		return nil, errPlanDisabled
 	}
-	adm, err := s.admit(ctx, m.Target, spec.plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder)
+	var obs controlplane.Observation
+	if m.Persist {
+		if obs, err = s.Inspector.Observe(ctx, m.Target); err != nil {
+			return nil, rpcErr(err)
+		}
+	}
+	adm, err := s.admit(ctx, m.Target, spec.plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder, obs.SearchPath)
 	if err != nil {
 		return nil, err
 	}
@@ -43,23 +49,23 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 
 		return connect.NewResponse(out), nil
 	}
-	obs, err := s.Inspector.Observe(ctx, m.Target)
-	if err != nil {
-		return nil, rpcErr(err)
-	}
 	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied)
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
 	p := controlplane.Plan{
 		ID: s.newID(), Target: m.Target, Key: controlplane.PlanKey(m.Target, spec.rollout, pending), Rollout: spec.rollout,
-		Migrations: migs, Validated: adm.validated, Acked: m.AcknowledgeHazards, AllowOutOfOrder: m.AllowOutOfOrder,
+		Validated: adm.validated, Acked: m.AcknowledgeHazards, AllowOutOfOrder: m.AllowOutOfOrder,
 		CreatedBy: Actor(ctx), Source: m.Source,
 	}
-	if p.Drift, err = s.driftSince(ctx, m.Target, obs); err != nil {
-		return nil, rpcErr(err)
+	var detected bool
+	if p.Migrations, p.Drift, detected = planMigrations(spec, adm, obs); !detected {
+		if p.Drift, err = s.driftSince(ctx, m.Target, obs); err != nil {
+			return nil, rpcErr(err)
+		}
 	}
 	p = observed(p, obs)
+	out.Migrations = migrationsToProto(p.Migrations)
 	if err := s.store.SavePlan(ctx, p, spec.files); err != nil {
 		return nil, rpcErr(err)
 	}
@@ -77,6 +83,15 @@ func observed(p controlplane.Plan, obs controlplane.Observation) controlplane.Pl
 	p.HistoryHash, p.Applied, p.SchemaFingerprint, p.SchemaDefinition = obs.HistoryHash(), obs.Applied, obs.Fingerprint, obs.Definition
 
 	return p
+}
+
+func planMigrations(spec runSpec, adm admission, obs controlplane.Observation) (migs []controlplane.PlanMigration, drift string, detected bool) {
+	migs = controlplane.BuildPlanMigrations(spec.rollout, spec.plans, adm.applied)
+	if adm.validation == nil {
+		return migs, "", false
+	}
+
+	return migs, controlplane.Detect(migs, spec.plans, *adm.validation, obs), true
 }
 
 func (s *Server) driftSince(ctx context.Context, target string, obs controlplane.Observation) (string, error) {
@@ -106,7 +121,10 @@ func migrations(plans []engine.Plan) []engine.Migration {
 func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMigration {
 	out := make([]*godwitv1.PlannedMigration, 0, len(migs))
 	for _, m := range migs {
-		pm := &godwitv1.PlannedMigration{Version: m.Version, Name: m.Name, Checksum: m.Checksum, Applied: m.Applied, Phase: m.Phase}
+		pm := &godwitv1.PlannedMigration{
+			Version: m.Version, Name: m.Name, Checksum: m.Checksum, Applied: m.Applied, Phase: m.Phase,
+			AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
+		}
 		for _, st := range m.Statements {
 			ps := &godwitv1.PlannedStatement{Sql: st.SQL, NoTx: st.NoTx}
 			for _, h := range st.Hazards {
@@ -177,13 +195,17 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	if !d.Explained(baseline, obs.Fingerprint) {
 		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{Plan: plan, Reason: d.Reason(), Diff: d, Hint: staleHint(d.Reason(), m.Target)})
 	}
-	adm, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder)
+	adm, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, obs.SearchPath)
 	if err != nil {
 		return b, s.replanFailure(ctx, plan, d, err)
 	}
 	next := observed(plan, obs)
 	next.ID, next.CreatedBy, next.Source, next.Validated = s.newID(), Actor(ctx), m.Source, adm.validated
-	next.Migrations = controlplane.BuildPlanMigrations(spec.rollout, spec.plans, adm.applied)
+	migs, drift, detected := planMigrations(spec, adm, obs)
+	next.Migrations = migs
+	if detected {
+		next.Drift = drift
+	}
 	if !controlplane.SameStatements(plan.Pending(), next.Pending()) {
 		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{
 			Plan: plan, Reason: controlplane.StaleHistory, Diff: d, Hint: "statements changed after re-plan; push to the pull request (re-plan)",

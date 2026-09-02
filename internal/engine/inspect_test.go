@@ -72,6 +72,20 @@ func TestSnapshotAndDiff(t *testing.T) {
 	}
 }
 
+func TestDiffSchemasIgnoresEmptyLines(t *testing.T) {
+	t.Parallel()
+
+	if diff := DiffSchemas("", "column public.rogue.id integer"); len(diff) != 1 || diff[0] != "+ column public.rogue.id integer" {
+		t.Fatalf("empty expected: %v", diff)
+	}
+	if diff := DiffSchemas("column public.rogue.id integer", ""); len(diff) != 1 || diff[0] != "- column public.rogue.id integer" {
+		t.Fatalf("empty live: %v", diff)
+	}
+	if diff := DiffSchemas("", ""); len(diff) != 0 {
+		t.Fatalf("both empty: %v", diff)
+	}
+}
+
 func TestSnapshotQueryErrors(t *testing.T) {
 	t.Parallel()
 

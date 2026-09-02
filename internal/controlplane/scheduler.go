@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
@@ -211,8 +212,46 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if run.Reverts == "" && run.PlanID != "" {
+		if plans, err = s.markOnly(ctx, run.PlanID, plans, tg.dsn); err != nil {
+			return 0, err
+		}
+	}
 
 	return held, s.engine.Apply(ctx, ApplyRequest{RunID: run.ID, Target: run.Target, DSN: tg.dsn, Plans: plans, Opts: opts})
+}
+
+func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.Plan, dsn string) ([]engine.Plan, error) {
+	plan, err := s.store.Plan(ctx, planID)
+	if err != nil {
+		return nil, fmt.Errorf("bound plan %s: %w", planID, err)
+	}
+	marked := map[int64]bool{}
+	for _, m := range plan.Migrations {
+		if m.AlreadyApplied {
+			marked[m.Version] = true
+		}
+	}
+	if len(marked) == 0 {
+		return plans, nil
+	}
+	obs, err := s.engine.Observe(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	pending := false
+	for i := range plans {
+		if !marked[plans[i].Migration.Version] {
+			continue
+		}
+		plans[i].MarkOnly = true
+		pending = pending || !slices.ContainsFunc(obs.Applied, func(a engine.Applied) bool { return a.Version == plans[i].Migration.Version })
+	}
+	if pending && obs.Fingerprint != plan.SchemaFingerprint {
+		return nil, fmt.Errorf("target schema changed since plan %s was taken; re-plan before recording %d migration(s) as already applied", planID, len(marked))
+	}
+
+	return plans, nil
 }
 
 func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error) {

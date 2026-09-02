@@ -117,7 +117,6 @@ func TestPlanRunPersistErrors(t *testing.T) {
 	}
 
 	s.Inspector = stubInspector{err: errors.New("target down")}
-	expectApplied(mock)
 	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("observe error: %v", err)
 	}
@@ -247,6 +246,65 @@ func TestBindReplanRefusals(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type stubValidator struct{ val controlplane.Validation }
+
+func (v stubValidator) Validate(context.Context, string, []engine.Plan, string) (controlplane.Validation, error) {
+	return v.val, nil
+}
+
+func TestPlanRunDetectsWithValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	obs := controlplane.Observation{Fingerprint: "f2", Definition: "table a\ntable b\n"}
+	val := controlplane.Validation{Base: "table a\n", Effects: [][]string{{"+ table b"}}, Fingerprints: []string{"f1", "f2"}}
+	s, mock := planServer(t, obs, stubValidator{val: val})
+	files := []*godwitv1.MigrationFile{
+		{Name: "20260901120000_t.up.sql", Body: "CREATE TABLE b (id int);"},
+		{Name: "20260901120000_t.down.sql", Body: "DROP TABLE b;"},
+	}
+
+	expectApplied(mock)
+	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
+	_, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files, Persist: true}))
+	if connect.CodeOf(err) != connect.CodeInternal || !strings.Contains(err.Error(), "save down") {
+		t.Fatalf("save error: %v", err)
+	}
+
+	expectReadyPlan(mock, "f1", nil, nil)
+	expectSnapshot(mock, "f2")
+	expectApplied(mock)
+	_, err = s.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: "app", Files: files}))
+	if stale := stalePlanDetail(t, err); stale.Reason != controlplane.StaleHistory {
+		t.Fatalf("re-plan marks changed: %+v", stale)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlanMigrationsDetects(t *testing.T) {
+	t.Parallel()
+	spec, err := upSpec("app", "", []*godwitv1.MigrationFile{
+		{Name: "20260901120000_t.up.sql", Body: "CREATE TABLE b (id int);"},
+		{Name: "20260901120000_t.down.sql", Body: "DROP TABLE b;"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := controlplane.Observation{Fingerprint: "f2", Definition: "table a\ntable b\n"}
+
+	migs, drift, detected := planMigrations(spec, admission{}, obs)
+	if detected || drift != "" || migs[0].AlreadyApplied {
+		t.Fatalf("no validation: %+v %q %t", migs, drift, detected)
+	}
+
+	val := controlplane.Validation{Base: "table a\n", Effects: [][]string{{"+ table b"}}, Fingerprints: []string{"f1", "f2"}}
+	migs, drift, detected = planMigrations(spec, admission{validation: &val}, obs)
+	if !detected || drift != "" || !migs[0].AlreadyApplied || migs[0].Effect != "+ table b" {
+		t.Fatalf("validation: %+v %q %t", migs, drift, detected)
 	}
 }
 

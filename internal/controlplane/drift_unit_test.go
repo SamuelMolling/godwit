@@ -401,7 +401,7 @@ func TestValidatorCorruptHistory(t *testing.T) {
 		`UPDATE cp_run_files SET name = 'garbage.txt' WHERE name = '20260901120000_t.up.sql'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Validate(ctx, "app", good); err == nil || !strings.Contains(err.Error(), "history run 0") {
+	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "history run 0") {
 		t.Fatalf("err = %v", err)
 	}
 
@@ -409,7 +409,7 @@ func TestValidatorCorruptHistory(t *testing.T) {
 		`UPDATE cp_run_files SET name = '20260901120000_t.up.sql', body = 'SELECT 1/0;' WHERE name = 'garbage.txt'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Validate(ctx, "app", good); err == nil || !strings.Contains(err.Error(), "replay history run 0") {
+	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "replay history run 0") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -430,7 +430,7 @@ func TestValidatorScratchConnectFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Validate(ctx, "app", good); err == nil || !strings.Contains(err.Error(), "connect scratch database") {
+	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "connect scratch database") {
 		t.Fatalf("err = %v", err)
 	}
 }

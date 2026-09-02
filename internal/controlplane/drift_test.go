@@ -248,7 +248,7 @@ func TestValidator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Validate(ctx, "app", good); err != nil {
+	if _, err := v.Validate(ctx, "app", good, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +259,7 @@ func TestValidator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.Validate(ctx, "app", bad); err == nil || !strings.Contains(err.Error(), "failed validation") {
+	if _, err := v.Validate(ctx, "app", bad, ""); err == nil || !strings.Contains(err.Error(), "failed validation") {
 		t.Fatalf("err = %v", err)
 	}
 
@@ -268,12 +268,12 @@ func TestValidator(t *testing.T) {
 	if _, err := pool.Exec(ctx, "CREATE DATABASE godwit_validate_dup"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dup.Validate(ctx, "app", good); err == nil || !strings.Contains(err.Error(), "create scratch database") {
+	if _, err := dup.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "create scratch database") {
 		t.Fatalf("err = %v", err)
 	}
 
 	pool.Close()
-	if err := v.Validate(ctx, "app", good); err == nil || !strings.Contains(err.Error(), "history files") {
+	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "history files") {
 		t.Fatalf("err = %v", err)
 	}
 }

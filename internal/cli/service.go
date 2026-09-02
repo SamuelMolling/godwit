@@ -213,7 +213,9 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 			}
 			p.Statements = append(p.Statements, st)
 		}
-		r.items = append(r.items, planItem{Plan: p, applied: pm.Applied, phase: pm.Phase})
+		r.items = append(r.items, planItem{
+			Plan: p, applied: pm.Applied, phase: pm.Phase, alreadyApplied: pm.AlreadyApplied, effect: pm.Effect, note: pm.Note,
+		})
 	}
 
 	return r
