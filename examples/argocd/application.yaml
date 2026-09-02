@@ -19,8 +19,8 @@ spec:
     helm:
       valuesObject:
         image:
-          repository: registry.example.com/platform/godwit   # your registry
-          tag: "0.0.1"
+          repository: ghcr.io/samuelmolling/godwit
+          tag: main
         existingSecret:
           name: godwit   # Secret with GODWIT_MASTER_KEY, GODWIT_TOKENS, GODWIT_STORE_DSN
   destination:
