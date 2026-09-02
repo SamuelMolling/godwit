@@ -74,14 +74,12 @@ func TestAPIValidationAndErrors(t *testing.T) {
 		}
 	}
 
-	// Kubernetes provider registration succeeds.
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
 		Name: "k8s-app", Provider: "kubernetes", SecretPath: "/var/run/secret/dsn",
 	})); err != nil {
 		t.Fatal(err)
 	}
 
-	// Not-found mappings.
 	ghost := "88888888-8888-8888-8888-888888888888"
 	if _, err := client.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: ghost})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("get ghost: %v", err)
@@ -116,7 +114,6 @@ func TestAPIResumeAndParkFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A failing migration; wait for failed, resume with... same files fail again, then park.
 	created, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: []*godwitv1.MigrationFile{
 			{Name: "20260901120000_bad.up.sql", Body: "SELECT 1/0;"},
@@ -166,7 +163,6 @@ func TestAPIStreamingAuthAndCancel(t *testing.T) {
 	storeDSN := newDatabase(t, "st")
 	baseURL := startService(t, storeDSN, "r1", []string{"tok1"})
 
-	// Streaming without a token is rejected by the streaming-handler interceptor.
 	noAuth := newClient(baseURL, "")
 	stream, err := noAuth.WatchRun(ctx, connect.NewRequest(&godwitv1.WatchRunRequest{RunId: "x"}))
 	if err != nil {
@@ -178,7 +174,6 @@ func TestAPIStreamingAuthAndCancel(t *testing.T) {
 		t.Fatalf("stream err = %v", stream.Err())
 	}
 
-	// Cancelling a watch of a non-terminal run surfaces the context error.
 	client := newClient(baseURL, "tok1")
 	targetDSN := newDatabase(t, "tg")
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
@@ -215,7 +210,6 @@ func TestAPIRegisterTargetEncryptFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// A service booted with a bad master key cannot encrypt static DSNs.
 	storeDSN := newDatabase(t, "st")
 	baseURL := startServiceWithKey(t, storeDSN, []byte("short"))
 	client := newClient(baseURL, "")
@@ -233,7 +227,6 @@ func TestAPIInternalErrors(t *testing.T) {
 	storeDSN := newDatabase(t, "st")
 	client := newClient(startService(t, storeDSN, "r1", nil), "")
 
-	// Breaking the store schema turns handler queries into internal errors.
 	dropStoreTables(t, storeDSN)
 
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
@@ -256,6 +249,9 @@ func TestAPIInternalErrors(t *testing.T) {
 	}
 	if _, err := client.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("list drift: %v", err)
+	}
+	if _, err := client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: "x"})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("confirm: %v", err)
 	}
 }
 

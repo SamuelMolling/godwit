@@ -18,6 +18,8 @@ enum RunState {
   RUN_STATE_SUCCEEDED = 3;
   RUN_STATE_FAILED = 4;
   RUN_STATE_NEEDS_ATTENTION = 5;
+  // Contract phase held until ConfirmRollout.
+  RUN_STATE_AWAITING_CONTRACT = 6;
 }
 
 message Run {
@@ -28,6 +30,9 @@ message Run {
   int32 attempts = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp finished_at = 7;
+  string rollout = 8;
+  // "expand" or "contract".
+  string phase = 9;
 }
 
 message RegisterTargetRequest {
@@ -43,11 +48,12 @@ message RegisterTargetResponse {}
 message CreateRunRequest {
   string target = 1;
   repeated MigrationFile files = 2;
-  // Hazard codes (e.g. "H002") the author explicitly accepts. A run whose
-  // plan carries unacknowledged hazards is refused at admission.
+  // Hazard codes the author accepts; unacknowledged hazards are refused.
   repeated string acknowledge_hazards = 3;
-  // Skip the scratch-database validation (on by default when configured).
+  // Skip the scratch-database validation.
   bool skip_validation = 4;
+  // "direct" (default) or "expand-contract".
+  string rollout = 5;
 }
 
 message CreateRunResponse {
@@ -122,6 +128,12 @@ message ParkRunRequest {
 
 message ParkRunResponse {}
 
+message ConfirmRolloutRequest {
+  string run_id = 1;
+}
+
+message ConfirmRolloutResponse {}
+
 service GodwitService {
   rpc RegisterTarget(RegisterTargetRequest) returns (RegisterTargetResponse);
   rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
@@ -130,6 +142,7 @@ service GodwitService {
   rpc WatchRun(WatchRunRequest) returns (stream WatchRunResponse);
   rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
   rpc ParkRun(ParkRunRequest) returns (ParkRunResponse);
+  rpc ConfirmRollout(ConfirmRolloutRequest) returns (ConfirmRolloutResponse);
   rpc CheckDrift(CheckDriftRequest) returns (CheckDriftResponse);
   rpc ListDriftEvents(ListDriftEventsRequest) returns (ListDriftEventsResponse);
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);

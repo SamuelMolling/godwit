@@ -55,7 +55,6 @@ func newDatabase(t *testing.T, prefix string) string {
 	return strings.Replace(testDSN, "/godwit?", "/"+name+"?", 1)
 }
 
-// newStore returns a migrated store on a fresh database.
 func newStore(t *testing.T) (*Store, *pgxpool.Pool) {
 	t.Helper()
 	pool, err := pgxpool.New(context.Background(), newDatabase(t, "cp"))

@@ -122,5 +122,36 @@ rpc CheckDrift '{"target": "app"}' 18475
 echo
 
 echo
-echo "✅ all four paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection."
+echo "==> expand-contract rollout: add a column now, drop the old one after the deploy is confirmed"
+EC_ID=$(rpc CreateRun '{
+  "target": "app",
+  "rollout": "expand-contract",
+  "acknowledgeHazards": ["H003"],
+  "files": [
+    {"name": "20260901160000_add_plan_v2.up.sql", "body": "ALTER TABLE users ADD COLUMN plan_v2 text;"},
+    {"name": "20260901160000_add_plan_v2.down.sql", "body": "ALTER TABLE users DROP COLUMN plan_v2;"},
+    {"name": "20260901160001_drop_plan.up.sql", "body": "ALTER TABLE users DROP COLUMN plan;"},
+    {"name": "20260901160001_drop_plan.down.sql", "body": "ALTER TABLE users ADD COLUMN plan text;"}
+  ]
+}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$EC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_AWAITING_CONTRACT" ] && break
+  sleep 1
+done
+echo "state: $STATE (plan_v2 added, plan still there — the old app version keeps working)"
+docker compose exec -T target-db psql -U app -d app -c "\d users"
+
+echo "==> deploy healthy; confirming the rollout releases the contract phase"
+rpc ConfirmRollout "{\"runId\": \"$EC_ID\"}" 18475
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$EC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+docker compose exec -T target-db psql -U app -d app -c "\d users"
+
+echo
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

@@ -8,9 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// reconcile inspects the target after a crash between intent and done.
-// It reports whether the statement already took full effect; when it did not,
-// it repairs partial effects so the statement can run again.
+// reconcile reports whether a crashed statement took effect, repairing partial effects otherwise.
 func reconcile(ctx context.Context, db DB, st Statement) (done bool, err error) {
 	switch st.Verifier {
 	case VerifierCreateIndexConcurrently:

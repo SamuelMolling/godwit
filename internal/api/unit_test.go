@@ -23,6 +23,7 @@ func TestRPCErrMapping(t *testing.T) {
 	}{
 		{controlplane.ErrNotFound, connect.CodeNotFound},
 		{controlplane.ErrNotResumable, connect.CodeFailedPrecondition},
+		{controlplane.ErrNotAwaitingContract, connect.CodeFailedPrecondition},
 		{errors.New("other"), connect.CodeInternal},
 	}
 	for _, tc := range cases {
@@ -115,18 +116,19 @@ func TestCheckHazards(t *testing.T) {
 	}
 }
 
-func TestTerminal(t *testing.T) {
+func TestSettled(t *testing.T) {
 	t.Parallel()
 
 	for state, want := range map[string]bool{
-		controlplane.StateQueued:         false,
-		controlplane.StateRunning:        false,
-		controlplane.StateSucceeded:      true,
-		controlplane.StateFailed:         true,
-		controlplane.StateNeedsAttention: true,
+		controlplane.StateQueued:           false,
+		controlplane.StateRunning:          false,
+		controlplane.StateSucceeded:        true,
+		controlplane.StateFailed:           true,
+		controlplane.StateNeedsAttention:   true,
+		controlplane.StateAwaitingContract: true,
 	} {
-		if terminal(state) != want {
-			t.Fatalf("terminal(%s) != %v", state, want)
+		if settled(state) != want {
+			t.Fatalf("settled(%s) != %v", state, want)
 		}
 	}
 }

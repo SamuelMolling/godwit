@@ -51,7 +51,6 @@ func TestDriftEndToEnd(t *testing.T) {
 	targetDSN := newDatabase(t, "tg")
 	registerTarget(t, client, targetDSN)
 
-	// Migration runs → baseline recorded → no drift.
 	runToSuccess(t, client, migrationFiles(), nil)
 	drift, err := client.CheckDrift(ctx, connect.NewRequest(&godwitv1.CheckDriftRequest{Target: "app"}))
 	if err != nil || drift.Msg.Drifted {
@@ -90,7 +89,6 @@ func TestDriftEndToEnd(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 
-	// Unknown target maps to NotFound.
 	if _, err := client.CheckDrift(ctx, connect.NewRequest(&godwitv1.CheckDriftRequest{Target: "ghost"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("ghost drift: %v", err)
 	}
@@ -109,7 +107,6 @@ func TestHazardAcknowledgment(t *testing.T) {
 		{Name: "20260901130000_drop.down.sql", Body: "CREATE TABLE t (id int);"},
 	}
 
-	// Refused without acknowledgment, naming the hazard.
 	_, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: hazardous,
 	}))
@@ -117,7 +114,6 @@ func TestHazardAcknowledgment(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// Accepted with the code acknowledged.
 	runToSuccess(t, client, hazardous, []string{"H002"})
 }
 

@@ -41,7 +41,6 @@ func TestSnapshotAndDiff(t *testing.T) {
 		t.Fatal("godwit's own schema must be excluded")
 	}
 
-	// Deterministic: same schema, same fingerprint.
 	_, fp2, err := Snapshot(ctx, conn)
 	if err != nil || fp2 != fp {
 		t.Fatalf("fingerprint unstable: %s vs %s (err %v)", fp, fp2, err)
@@ -60,7 +59,6 @@ func TestSnapshotAndDiff(t *testing.T) {
 		t.Fatalf("diff = %v", diff)
 	}
 
-	// Dropping shows as missing.
 	if _, err := conn.Exec(ctx, `ALTER TABLE users DROP COLUMN sneaky; DROP INDEX idx_users_email`); err != nil {
 		t.Fatal(err)
 	}

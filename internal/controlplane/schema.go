@@ -1,5 +1,4 @@
-// Package controlplane implements the godwit service brain: state store,
-// per-target scheduler with leases, and crash recovery by lease expiry.
+// Package controlplane holds the state store, the lease-based scheduler and drift monitoring.
 package controlplane
 
 import (
@@ -8,7 +7,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// storeMigrations is the control plane's own schema, applied by godwit's engine.
+// storeMigrations is the control plane's own schema.
 var storeMigrations = []engine.Migration{
 	{
 		Version:  20260901000000,
@@ -75,9 +74,25 @@ CREATE TABLE cp_drift_events (
 DROP TABLE cp_drift_events;
 DROP TABLE cp_snapshots;`,
 	},
+	{
+		Version:  20260901000002,
+		Name:     "rollout",
+		Checksum: "cp-rollout-v1",
+		UpSQL: `
+ALTER TABLE cp_runs
+	ADD COLUMN rollout text NOT NULL DEFAULT 'direct',
+	ADD COLUMN phase   text NOT NULL DEFAULT 'expand' CHECK (phase IN ('expand', 'contract')),
+	DROP CONSTRAINT cp_runs_state_check,
+	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention', 'awaiting_contract'));`,
+		DownSQL: `
+ALTER TABLE cp_runs
+	DROP CONSTRAINT cp_runs_state_check,
+	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention')),
+	DROP COLUMN phase,
+	DROP COLUMN rollout;`,
+	},
 }
 
-// buildPlans compiles migrations into up plans.
 func buildPlans(migs []engine.Migration) ([]engine.Plan, error) {
 	plans := make([]engine.Plan, 0, len(migs))
 	for _, m := range migs {
@@ -91,7 +106,6 @@ func buildPlans(migs []engine.Migration) ([]engine.Plan, error) {
 	return plans, nil
 }
 
-// applyPlans runs plans in order over one session.
 func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan) error {
 	exec := engine.New(db, opts)
 	for _, p := range plans {

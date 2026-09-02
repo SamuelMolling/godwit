@@ -32,7 +32,7 @@ type Config struct {
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
 	Log            *slog.Logger
-	// OnReady receives the bound address once the listener is up (tests).
+	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
 
@@ -52,7 +52,7 @@ func Run(ctx context.Context, cfg Config) error {
 	cfg.Scheduler.Holder = cfg.Holder
 	eng := controlplane.PGEngine{}
 	sched := controlplane.NewScheduler(store, creds.Registry(cfg.MasterKey),
-		eng, controlplane.Immediate{}, cfg.Scheduler, cfg.Log)
+		eng, controlplane.Policies(), cfg.Scheduler, cfg.Log)
 	go sched.Run(ctx)
 
 	var notifier notify.Notifier = notify.None{}
@@ -100,7 +100,7 @@ func serve(srv *http.Server, ln net.Listener) error {
 	return nil
 }
 
-// h2cProtocols enables unencrypted HTTP/2 alongside HTTP/1 (gRPC needs h2).
+// h2cProtocols enables unencrypted HTTP/2, which gRPC needs.
 func h2cProtocols() *http.Protocols {
 	p := new(http.Protocols)
 	p.SetHTTP1(true)

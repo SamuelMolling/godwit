@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
-	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
 var testLog = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -37,12 +36,12 @@ func newScheduler(t *testing.T, s *Store, cfg Config) (*Scheduler, string) {
 	}
 	providers := map[string]creds.Provider{"plain": plainProvider{}}
 
-	return NewScheduler(s, providers, PGEngine{}, Immediate{}, cfg, testLog), targetDSN
+	return NewScheduler(s, providers, PGEngine{}, Policies(), cfg, testLog), targetDSN
 }
 
 func queueRun(t *testing.T, s *Store, id string, files map[string]string) {
 	t.Helper()
-	if err := s.CreateRun(context.Background(), id, "app", files); err != nil {
+	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, files); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -165,8 +164,7 @@ func TestSchedulerFailoverBetweenReplicas(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)
 
-	// Registers the target; replica 1 then claims with an immediately-expiring
-	// lease and "dies" without executing.
+	// Replica 1 claims with an immediately-expiring lease and dies.
 	newScheduler(t, s, Config{Holder: "replica-1"})
 	queueRun(t, s, "11111111-0000-0000-0000-000000000005", goodFiles())
 	if _, ok, err := s.Claim(ctx, "replica-1", -time.Second); err != nil || !ok {
@@ -175,7 +173,7 @@ func TestSchedulerFailoverBetweenReplicas(t *testing.T) {
 
 	// Replica 2 recovers the abandoned run and finishes it.
 	providers := map[string]creds.Provider{"plain": plainProvider{}}
-	sched2 := NewScheduler(s, providers, PGEngine{}, Immediate{}, Config{Holder: "replica-2"}, testLog)
+	sched2 := NewScheduler(s, providers, PGEngine{}, Policies(), Config{Holder: "replica-2"}, testLog)
 	sched2.Tick(ctx)
 
 	r := waitState(t, s, "11111111-0000-0000-0000-000000000005", StateSucceeded)
@@ -191,7 +189,7 @@ func TestSchedulerErrorBranches(t *testing.T) {
 	t.Run("claim error", func(t *testing.T) {
 		t.Parallel()
 		s, _ := newStore(t)
-		sched := NewScheduler(s, nil, PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
+		sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 		s.pool.(interface{ Close() }).Close()
 		sched.Tick(ctx) // must not panic
 	})
@@ -248,7 +246,7 @@ func TestSchedulerErrorBranches(t *testing.T) {
 			}
 			id := "22222222-0000-0000-0000-00000000000" + string(rune('1'+i))
 			queueRun(t, s, id, tc.files)
-			sched := NewScheduler(s, tc.provs, PGEngine{}, Immediate{}, Config{Holder: "h"}, testLog)
+			sched := NewScheduler(s, tc.provs, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 			sched.Tick(ctx)
 			r := waitState(t, s, id, StateFailed)
 			if !strings.Contains(r.Error, tc.wantErr) {
@@ -258,27 +256,83 @@ func TestSchedulerErrorBranches(t *testing.T) {
 	}
 }
 
-type denyPolicy struct{}
-
-func (denyPolicy) Allow(engine.Plan) error { return errors.New("blocked by policy") }
-
-func TestSchedulerPolicyBlocks(t *testing.T) {
+func TestSchedulerUnknownRollout(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s, _ := newStore(t)
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "postgres://x"}); err != nil {
 		t.Fatal(err)
 	}
-	queueRun(t, s, "33333333-0000-0000-0000-000000000001", goodFiles())
+	if err := s.CreateRun(ctx, "33333333-0000-0000-0000-000000000001", "app", "canary", goodFiles()); err != nil {
+		t.Fatal(err)
+	}
 
 	sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}},
-		PGEngine{}, denyPolicy{}, Config{Holder: "h"}, testLog)
+		PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 	sched.Tick(ctx)
 
 	r := waitState(t, s, "33333333-0000-0000-0000-000000000001", StateFailed)
-	if !strings.Contains(r.Error, "rollout policy") {
+	if !strings.Contains(r.Error, `unknown rollout policy "canary"`) {
 		t.Fatalf("error = %q", r.Error)
 	}
+}
+
+func TestSchedulerExpandContract(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	sched, targetDSN := newScheduler(t, s, Config{Holder: "h1"})
+
+	files := map[string]string{
+		"20260901120000_t.up.sql":      upBody,
+		"20260901120000_t.down.sql":    "DROP TABLE t;",
+		"20260901120001_drop.up.sql":   "DROP TABLE t;",
+		"20260901120001_drop.down.sql": upBody,
+	}
+	id := "55555555-0000-0000-0000-000000000001"
+	if err := s.CreateRun(ctx, id, "app", RolloutExpandContract, files); err != nil {
+		t.Fatal(err)
+	}
+
+	sched.Tick(ctx)
+	r := waitState(t, s, id, StateAwaitingContract)
+	if r.Phase != PhaseExpand || r.Error != "" {
+		t.Fatalf("run = %+v", r)
+	}
+	if !tableExists(t, targetDSN, "t") {
+		t.Fatal("expand phase must have created t")
+	}
+	if _, ok, err := s.Claim(ctx, "h1", time.Minute); err != nil || ok {
+		t.Fatalf("awaiting run must not be claimable: ok = %v, err = %v", ok, err)
+	}
+
+	if err := s.Confirm(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	sched.Tick(ctx)
+	r = waitState(t, s, id, StateSucceeded)
+	if r.Phase != PhaseContract {
+		t.Fatalf("run = %+v", r)
+	}
+	if tableExists(t, targetDSN, "t") {
+		t.Fatal("contract phase must have dropped t")
+	}
+}
+
+func tableExists(t *testing.T, dsn, name string) bool {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var exists bool
+	if err := conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", name).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+
+	return exists
 }
 
 func TestSchedulerHeartbeatKeepsLease(t *testing.T) {

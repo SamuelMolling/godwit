@@ -129,7 +129,6 @@ func TestStatementFailureMarksRun(t *testing.T) {
 		t.Fatalf("run state = %s, error = %q", state, errText)
 	}
 
-	// Changing an already-journaled statement is refused.
 	tampered := m
 	tampered.UpSQL = "CREATE TABLE tampered (id int);\nSELECT 1/0;"
 	if _, err := exec.Up(ctx, buildPlanT(t, tampered, DirectionUp)); err == nil ||
@@ -137,8 +136,7 @@ func TestStatementFailureMarksRun(t *testing.T) {
 		t.Fatalf("tamper guard: err = %v", err)
 	}
 
-	// Fixing the statement that failed is the legitimate recovery flow:
-	// the run resumes from the failure point without re-running statement 0.
+	// Fixing the failed statement resumes from it without re-running statement 0.
 	fixed := m
 	fixed.UpSQL = "CREATE TABLE ok (id int);\nSELECT 1;"
 	res, err := exec.Up(ctx, buildPlanT(t, fixed, DirectionUp))

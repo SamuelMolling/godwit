@@ -18,8 +18,7 @@ type Drift struct {
 	Diff    string
 }
 
-// DriftMonitor periodically compares each baselined target's live schema
-// against the expected state and records/notifies divergences.
+// DriftMonitor periodically compares live schemas against their baselines.
 type DriftMonitor struct {
 	store    *Store
 	dsn      func(ctx context.Context, target string) (string, error)
@@ -112,8 +111,7 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 	return Drift{Target: target, Drifted: true, Diff: diff}, nil
 }
 
-// AcceptBaseline records the live schema as the new expected state,
-// resolving open drift — the "this manual change is legitimate" workflow.
+// AcceptBaseline records the live schema as the expected state and resolves open drift.
 func (m *DriftMonitor) AcceptBaseline(ctx context.Context, target string) error {
 	dsn, err := m.dsn(ctx, target)
 	if err != nil {

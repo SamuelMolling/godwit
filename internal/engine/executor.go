@@ -24,7 +24,7 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// HookPoint marks a crash-injection point; tests use it to kill the session.
+// HookPoint marks a crash-injection point.
 type HookPoint string
 
 // Crash-injection points.
@@ -78,7 +78,7 @@ type Result struct {
 	Applied int
 }
 
-// Up applies an up plan; already-applied versions are skipped after a checksum check.
+// Up applies an up plan; applied versions are checksum-checked and skipped.
 func (e *Executor) Up(ctx context.Context, p Plan) (Result, error) {
 	if p.Direction != DirectionUp {
 		return Result{}, fmt.Errorf("up requires an up plan, got %q", p.Direction)

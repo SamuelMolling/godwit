@@ -8,8 +8,7 @@ import (
 	"connectrpc.com/connect"
 )
 
-// auth rejects requests whose bearer token is not in the allow-set.
-// An empty set disables authentication (dev mode).
+// auth checks bearer tokens against the allow-set; an empty set disables auth.
 type auth struct {
 	tokens map[string]bool
 }

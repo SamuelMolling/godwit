@@ -24,7 +24,6 @@ type Migration struct {
 var fileRe = regexp.MustCompile(`^(\d{14})_([a-z0-9_]+)\.(up|down)\.sql$`)
 
 // LoadDir reads a migration directory and returns migrations sorted by version.
-// Every version must have a non-empty up and down file.
 func LoadDir(dir string) ([]Migration, error) {
 	return LoadFS(os.DirFS(dir))
 }

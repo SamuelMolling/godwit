@@ -175,14 +175,12 @@ func TestServiceEndToEnd(t *testing.T) {
 	baseURL := startService(t, newDatabase(t, "st"), "replica-1", []string{"tok1"})
 	client := newClient(baseURL, "tok1")
 
-	// Auth is enforced.
 	noAuth := newClient(baseURL, "")
 	_, err := noAuth.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{}))
 	if connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("unauthenticated err = %v", err)
 	}
 
-	// Register target with a real DSN (static provider encrypts it at rest).
 	targetDSN := newDatabase(t, "tg")
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
 		Name: "app", Provider: "static", Dsn: targetDSN,
@@ -190,7 +188,6 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a run and watch it to completion.
 	created, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: migrationFiles(),
 	}))
@@ -214,7 +211,6 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatalf("final state = %v", final)
 	}
 
-	// The migration really landed on the target.
 	conn, err := pgx.Connect(ctx, targetDSN)
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +221,6 @@ func TestServiceEndToEnd(t *testing.T) {
 		t.Fatalf("table t missing: %v", err)
 	}
 
-	// Get/List agree.
 	got, err := client.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: runID}))
 	if err != nil || got.Msg.Run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED || got.Msg.Run.FinishedAt == nil {
 		t.Fatalf("get = %+v, err = %v", got, err)
