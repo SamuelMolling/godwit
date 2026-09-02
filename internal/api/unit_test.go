@@ -3,15 +3,20 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/pashagolub/pgxmock/v4"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
 func TestRPCErrMapping(t *testing.T) {
@@ -131,5 +136,71 @@ func TestSettled(t *testing.T) {
 		if settled(state) != want {
 			t.Fatalf("settled(%s) != %v", state, want)
 		}
+	}
+}
+
+func TestHealthAndReadiness(t *testing.T) {
+	t.Parallel()
+
+	get := func(h http.Handler, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		return rec
+	}
+	up := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return nil }}, []string{"secret"})
+	down := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return errors.New("boom") }}, nil)
+
+	if rec := get(up, "/healthz"); rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("healthz = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get(up, "/readyz"); rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("readyz = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get(down, "/healthz"); rec.Code != http.StatusOK {
+		t.Fatalf("healthz with store down = %d", rec.Code)
+	}
+	if rec := get(down, "/readyz"); rec.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(rec.Body.String(), "store unavailable: boom") {
+		t.Fatalf("readyz with store down = %d %q", rec.Code, rec.Body.String())
+	}
+	if body := get(up, "/metrics").Body.String(); strings.Contains(body, "healthz") || strings.Contains(body, "readyz") {
+		t.Fatal("probes must not appear in API metrics")
+	}
+}
+
+func TestWatchRunCancelledWhileSleeping(t *testing.T) {
+	t.Parallel()
+
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	mock.MatchExpectationsInOrder(false)
+	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").
+		WillReturnRows(pgxmock.NewRows(
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "created_at", "finished_at"}).
+			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", time.Now(), (*time.Time)(nil)))
+
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s.watchInterval = time.Hour
+	srv := httptest.NewServer(Handler(s, nil))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := godwitv1connect.NewGodwitServiceClient(srv.Client(), srv.URL).
+		WatchRun(ctx, connect.NewRequest(&godwitv1.WatchRunRequest{RunId: "r1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("first snapshot missing: %v", stream.Err())
+	}
+	cancel()
+	for stream.Receive() {
+	}
+	if connect.CodeOf(stream.Err()) != connect.CodeCanceled {
+		t.Fatalf("stream err = %v", stream.Err())
 	}
 }

@@ -43,6 +43,7 @@ type Server struct {
 	masterKey     []byte
 	watchInterval time.Duration
 	newID         func() string
+	ready         func(context.Context) error
 }
 
 // NewServer wires a Server; drift and validator are optional (nil disables).
@@ -55,15 +56,19 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 		masterKey:     masterKey,
 		watchInterval: 500 * time.Millisecond,
 		newID:         uuid.NewString,
+		ready:         store.Ping,
 	}
 }
 
-// Handler mounts the connect service with bearer-token auth and /metrics; serve it with h2c enabled.
+// Handler mounts the connect service with bearer-token auth plus the unauthenticated
+// /metrics, /healthz and /readyz endpoints; serve it with h2c enabled.
 func Handler(s *Server, tokens []string) http.Handler {
 	mux := http.NewServeMux()
 	path, h := godwitv1connect.NewGodwitServiceHandler(s, connect.WithInterceptors(s.Metrics.Interceptor(), newAuth(tokens)))
 	mux.Handle(path, h)
 	mux.Handle("/metrics", s.Metrics.Handler())
+	mux.HandleFunc("GET /healthz", healthz)
+	mux.Handle("GET /readyz", readyz(s.ready))
 
 	return mux
 }
