@@ -1,0 +1,72 @@
+name: action-smoke
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - internal/cli/**
+      - testdata/action/**
+      - .github/workflows/action-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: lint without acknowledging H001
+        id: blocking
+        continue-on-error: true
+        uses: ./
+        with:
+          command: lint
+          dir: testdata/action/migrations
+          base: ""
+          comment: "false"
+
+      - name: lint with H001 acknowledged
+        id: lint
+        uses: ./
+        with:
+          command: lint
+          dir: testdata/action/migrations
+          base: ""
+          ack: H001
+          comment: "false"
+
+      - name: lint scoped to migrations added since origin/main
+        uses: ./
+        with:
+          command: lint
+          dir: testdata/action/migrations
+          ack: H001
+          comment: "false"
+
+      - name: plan
+        id: plan
+        uses: ./
+        with:
+          command: plan
+          dir: testdata/action/migrations
+          comment: "false"
+
+      - name: Check outputs
+        shell: bash
+        env:
+          BLOCKING_OUTCOME: ${{ steps.blocking.outcome }}
+          BLOCKING_COUNT: ${{ steps.blocking.outputs.blocking }}
+          LINT_COUNT: ${{ steps.lint.outputs.blocking }}
+          LINT_SUMMARY: ${{ steps.lint.outputs.summary-path }}
+          PLAN_SUMMARY: ${{ steps.plan.outputs.summary-path }}
+        run: |
+          set -euo pipefail
+          test "${BLOCKING_OUTCOME}" = "failure"
+          test "${BLOCKING_COUNT}" = "1"
+          test "${LINT_COUNT}" = "0"
+          grep -q '^## godwit lint$' "${LINT_SUMMARY}"
+          grep -q 'no unacknowledged hazards' "${LINT_SUMMARY}"
+          grep -q '^## godwit plan$' "${PLAN_SUMMARY}"
+          grep -q 'H001: CREATE INDEX without CONCURRENTLY' "${PLAN_SUMMARY}"
