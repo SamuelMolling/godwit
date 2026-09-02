@@ -21,6 +21,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Crash-safe engine | Plain-SQL migrations under a statement-level journal in the target database; DDL and progress commit atomically. Non-transactional statements (`CREATE INDEX CONCURRENTLY`, …) use write-ahead intents and verifiers. Survives `kill -9` at any point. |
 | Control plane | Runs are leased with heartbeats; a replica that dies mid-run is taken over by another and resumed from the journal. Failed runs park as `needs_attention` after a resume budget. |
 | Hazard gate | The planner ([libpg_query](https://github.com/pganalyze/pg_query_go)) tags unsafe DDL (`H001` non-concurrent index, `H002` `DROP TABLE`, `H003` `DROP COLUMN`, `H004` type rewrite, `H005` `NOT NULL` without default). Runs carrying unacknowledged hazards are refused. |
+| PR lint | `godwit lint` parses a migration directory offline and fails on unacknowledged hazards, parse errors and migrations modified after merge; a no-op `.down.sql` is a warning. Text, markdown (for `$GITHUB_STEP_SUMMARY`) and JSON output. |
 | Pre-apply validation | Every run replays the target's history plus the new files on a scratch database before it is queued. |
 | Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
 | Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
@@ -74,7 +75,7 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
-| `plan` — classify statements, show hazards | `target add <name> --provider static\|kubernetes\|vault` |
+| `plan` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault` |
 | `run` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
 | `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
@@ -86,6 +87,15 @@ export GODWIT_SERVER=https://godwit.internal GODWIT_TOKEN=$CI_TOKEN
 RUN_ID=$(godwit migrate --target prod --rollout expand-contract --json | tail -n1 | jq -r .run.id)
 kubectl rollout status deploy/app
 godwit run confirm "$RUN_ID"
+```
+
+## In your PR
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- run: go install github.com/SamuelMolling/godwit/cmd/godwit@latest
+- run: godwit lint --base origin/main --format markdown >> "$GITHUB_STEP_SUMMARY"
 ```
 
 ## Engines
