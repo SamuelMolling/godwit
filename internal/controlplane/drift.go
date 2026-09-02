@@ -111,7 +111,7 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 	m.log.Info("drift checked", "target", target, "result", metrics.DriftDrifted)
 
 	diff := strings.Join(engine.DiffSchemas(expected.Definition, liveDef), "\n")
-	created, err := m.store.RecordDrift(ctx, target, diff)
+	created, err := m.store.RecordDrift(ctx, target, expected.Fingerprint, diff)
 	if err != nil {
 		return Drift{}, err
 	}

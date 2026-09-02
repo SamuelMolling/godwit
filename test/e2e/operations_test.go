@@ -143,7 +143,7 @@ func TestDriftDetectAndAccept(t *testing.T) {
 			}
 		}
 
-		return len(events) > 0
+		return len(events) == 1
 	})
 }
 

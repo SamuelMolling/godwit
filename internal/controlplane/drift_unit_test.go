@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestDriftStoreClosedPool(t *testing.T) {
 	if _, err := s.SnapshotTargets(ctx); err == nil {
 		t.Fatal("want error")
 	}
-	if _, err := s.RecordDrift(ctx, "a", "d"); err == nil {
+	if _, err := s.RecordDrift(ctx, "a", "f", "d"); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := s.ResolveDrift(ctx, "a"); err == nil {
@@ -123,7 +124,6 @@ func TestDriftCheckResolveError(t *testing.T) {
 	if err := mon.AcceptBaseline(ctx, "app"); err != nil {
 		t.Fatal(err)
 	}
-	// Fingerprints match, but resolving drift fails: table dropped out from under it.
 	if _, err := s.pool.Exec(ctx, "DROP TABLE cp_drift_events CASCADE"); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +147,73 @@ func TestDriftCheckRecordError(t *testing.T) {
 	}
 	if _, err := mon.Check(ctx, "app"); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func TestRecordDriftRequiresCurrentBaseline(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	newScheduler(t, s, Config{Holder: "h"})
+	if err := s.SaveSnapshot(ctx, "app", "fp2", "def", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if created, err := s.RecordDrift(ctx, "app", "fp1", "diff"); err != nil || created {
+		t.Fatalf("stale baseline: created = %v, err = %v", created, err)
+	}
+	if created, err := s.RecordDrift(ctx, "app", "fp2", "diff"); err != nil || !created {
+		t.Fatalf("current baseline: created = %v, err = %v", created, err)
+	}
+	if created, err := s.RecordDrift(ctx, "app", "fp2", "diff"); err != nil || created {
+		t.Fatalf("duplicate: created = %v, err = %v", created, err)
+	}
+	if events, err := s.ListDriftEvents(ctx, "app"); err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+}
+
+type acceptBetween struct {
+	Engine
+	accept func()
+	once   sync.Once
+}
+
+func (e *acceptBetween) Snapshot(ctx context.Context, dsn string) (string, string, error) {
+	def, fp, err := e.Engine.Snapshot(ctx, dsn)
+	e.once.Do(e.accept)
+
+	return def, fp, err
+}
+
+func TestDriftCheckIgnoresBaselineAcceptedMidCheck(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	notifier := &recordingNotifier{}
+	accepting, targetDSN := newMonitor(t, s, notifier)
+	if err := accepting.AcceptBaseline(ctx, "app"); err != nil {
+		t.Fatal(err)
+	}
+	execTarget(t, targetDSN, "CREATE TABLE rogue (id int)")
+
+	racing := *accepting
+	racing.engine = &acceptBetween{Engine: PGEngine{}, accept: func() {
+		if err := accepting.AcceptBaseline(ctx, "app"); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	if _, err := racing.Check(ctx, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := s.ListDriftEvents(ctx, "app"); err != nil || len(events) != 0 {
+		t.Fatalf("events = %+v, err = %v", events, err)
+	}
+	if d, err := racing.Check(ctx, "app"); err != nil || d.Drifted {
+		t.Fatalf("drift = %+v, err = %v", d, err)
+	}
+	if got := notifier.types(); got != "drift:accepted drift:accepted" {
+		t.Fatalf("notifications = %q", got)
 	}
 }
 
