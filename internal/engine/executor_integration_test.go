@@ -120,7 +120,7 @@ func TestStatementFailureMarksRun(t *testing.T) {
 		!strings.Contains(err.Error(), "statement 1") {
 		t.Fatalf("err = %v", err)
 	}
-	if len(events) != 2 || events[0].Err != nil || events[1].Index != 1 || events[1].Err == nil {
+	if len(events) != 2 || events[0].Err != nil || events[0].Version != 1 || events[1].Index != 1 || events[1].Err == nil {
 		t.Fatalf("events = %+v", events)
 	}
 

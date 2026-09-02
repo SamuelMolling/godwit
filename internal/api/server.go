@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -36,6 +37,8 @@ type Validator interface {
 type Server struct {
 	// Metrics receives admission and API events; replace it before Handler to share a registry.
 	Metrics *metrics.Metrics
+	// Log receives admission and operator events plus the access log; replace it before Handler.
+	Log *slog.Logger
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -50,6 +53,7 @@ type Server struct {
 func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, masterKey []byte) *Server {
 	return &Server{
 		Metrics:       metrics.New(),
+		Log:           slog.New(slog.DiscardHandler),
 		store:         store,
 		drift:         drift,
 		validator:     validator,
@@ -64,7 +68,8 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 // /metrics, /healthz and /readyz endpoints; serve it with h2c enabled.
 func Handler(s *Server, tokens []string) http.Handler {
 	mux := http.NewServeMux()
-	path, h := godwitv1connect.NewGodwitServiceHandler(s, connect.WithInterceptors(s.Metrics.Interceptor(), newAuth(tokens)))
+	path, h := godwitv1connect.NewGodwitServiceHandler(s,
+		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log}, newAuth(tokens)))
 	mux.Handle(path, h)
 	mux.Handle("/metrics", s.Metrics.Handler())
 	mux.HandleFunc("GET /healthz", healthz)
@@ -125,6 +130,7 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
 		return nil, rpcErr(err)
 	}
+	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider)
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
@@ -161,6 +167,8 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if err := s.store.CreateRun(ctx, id, m.Target, rollout, files); err != nil {
 		return nil, rpcErr(err)
 	}
+	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", rollout,
+		"files", len(files), "acked", m.AcknowledgeHazards)
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
 }
@@ -188,6 +196,7 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err := s.store.CreateRevert(ctx, id, m.RunId); err != nil {
 		return nil, rpcErr(err)
 	}
+	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards)
 
 	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
 }
@@ -195,6 +204,8 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 // admit refuses unacknowledged hazards and plans that fail on the scratch database.
 func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation bool) error {
 	if err := s.checkHazards(plans, acked); err != nil {
+		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
+
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	if s.validator == nil || skipValidation {
@@ -203,6 +214,7 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	if err := s.validator.Validate(ctx, target, plans); err != nil {
 		if errors.Is(err, controlplane.ErrValidationFailed) {
 			s.Metrics.ValidationFailed(target)
+			s.Log.Warn("run refused by validation", "target", target, "error", err.Error())
 
 			return connect.NewError(connect.CodeInvalidArgument, err)
 		}
@@ -311,6 +323,7 @@ func (s *Server) ResumeRun(ctx context.Context, req *connect.Request[godwitv1.Re
 		return nil, rpcErr(err)
 	}
 	s.Metrics.RunResumed(run.Target)
+	s.Log.Info("run resumed", "run", run.ID, "target", run.Target)
 
 	return connect.NewResponse(&godwitv1.ResumeRunResponse{}), nil
 }
@@ -320,6 +333,7 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 	if err := s.store.Finish(ctx, req.Msg.RunId, controlplane.StateNeedsAttention, req.Msg.Reason); err != nil {
 		return nil, rpcErr(err)
 	}
+	s.Log.Info("run parked", "run", req.Msg.RunId, "reason", req.Msg.Reason)
 
 	return connect.NewResponse(&godwitv1.ParkRunResponse{}), nil
 }
@@ -329,6 +343,7 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 	if err := s.store.Confirm(ctx, req.Msg.RunId); err != nil {
 		return nil, rpcErr(err)
 	}
+	s.Log.Info("rollout confirmed", "run", req.Msg.RunId)
 
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }

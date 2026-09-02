@@ -58,7 +58,7 @@ func TestRunWithoutOnReadyShutsDownCleanly(t *testing.T) {
 
 	// Without OnReady, a fully migrated store is the only readiness signal.
 	ref := newDatabase(t, "ref")
-	if err := controlplane.Migrate(context.Background(), mustPool(t, ref)); err != nil {
+	if _, err := controlplane.Migrate(context.Background(), mustPool(t, ref)); err != nil {
 		t.Fatal(err)
 	}
 	want := countRows(t, ref, "godwit.migrations")

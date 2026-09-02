@@ -30,6 +30,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
+| Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
 
 ## Hazards
 
@@ -160,6 +161,19 @@ Until the repository goes public only the owner's repositories can `uses:` it; a
 Per-migration and per-statement series are deliberately absent — that detail lives in the run journal, not in label cardinality.
 
 Probes live on the same listener, also unauthenticated: `GET /healthz` answers 200 while the process is up; `GET /readyz` answers 200 when the store replies to `SELECT 1` within 2s and 503 otherwise.
+
+## Logging
+
+`godwit serve` logs to stderr through `log/slog`. `--log-format json|text` (`GODWIT_LOG_FORMAT`, default `json`) picks the handler; `--log-level debug|info|warn|error` (`GODWIT_LOG_LEVEL`, default `info`) filters. Every line carries `replica` and `build`; the rest uses one key set so a log query reads the same everywhere:
+
+| Key | Meaning |
+|---|---|
+| `run`, `target`, `attempt`, `state` | Which run, on which target, which attempt, where it ended (`run claimed`, `run finished`). |
+| `version`, `stmt`, `kind`, `duration_ms` | Per-statement lines from the executor: migration version, statement index, `tx` / `no_tx`, wall time. The SQL text is never logged. |
+| `method`, `code`, `duration_ms` | Access log for every API call; `ok` at info, any other connect code at warn with the error text. |
+| `error` | Error text where something went wrong (the pgx connect error, the SQLSTATE, the refused hazard). |
+
+What never reaches the log: DSNs, tokens, credential files, Vault responses, target config, migration bodies. Clean drift checks log at debug, so `--log-level debug` is the way to watch the monitor tick. `/metrics`, `/healthz` and `/readyz` are plain HTTP routes and stay out of the access log.
 
 ## Engines
 

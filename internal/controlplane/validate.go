@@ -57,12 +57,12 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 		if err != nil {
 			return fmt.Errorf("history run %d: %w", i, err)
 		}
-		if err := applyPlans(ctx, conn, engine.Options{}, histPlans); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, histPlans); err != nil {
 			return fmt.Errorf("replay history run %d: %w", i, err)
 		}
 	}
 
-	if err := applyPlans(ctx, conn, engine.Options{}, plans); err != nil {
+	if _, err := applyPlans(ctx, conn, engine.Options{}, plans); err != nil {
 		return fmt.Errorf("%w: %w", ErrValidationFailed, err)
 	}
 

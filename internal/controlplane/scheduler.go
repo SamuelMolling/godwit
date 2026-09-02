@@ -89,14 +89,22 @@ func (s *Scheduler) Tick(ctx context.Context) {
 
 func (s *Scheduler) execute(ctx context.Context, run Run) {
 	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
+	log.Info("run claimed", "rollout", run.Rollout, "phase", run.Phase, "reverts", run.Reverts)
 	s.Metrics.RunClaimed(run.Target, run.Attempts)
 	start := time.Now()
 	finish := func(state, errText string) {
 		_ = s.store.Finish(ctx, run.ID, state, errText)
-		s.Metrics.RunFinished(run.Target, state, run.Attempts, time.Since(start))
+		d := time.Since(start)
+		s.Metrics.RunFinished(run.Target, state, run.Attempts, d)
+		attrs := []any{"state", state, "duration_ms", d.Milliseconds()}
+		if errText != "" {
+			log.Error("run finished", append(attrs, "error", errText)...)
+
+			return
+		}
+		log.Info("run finished", attrs...)
 	}
 	if run.Attempts > s.cfg.MaxAttempts {
-		log.Error("resume budget exhausted; parking")
 		finish(StateNeedsAttention, fmt.Sprintf("gave up after %d attempts", run.Attempts-1))
 
 		return
@@ -108,7 +116,6 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 
 	held, err := s.applyRun(ctx, run)
 	if err != nil {
-		log.Error("run failed", "error", err)
 		finish(StateFailed, err.Error())
 
 		return
@@ -121,7 +128,6 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 
 		return
 	}
-	log.Info("run succeeded")
 	finish(StateSucceeded, "")
 }
 

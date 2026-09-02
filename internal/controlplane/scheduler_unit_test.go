@@ -76,7 +76,7 @@ func TestApplyRunUnknownTarget(t *testing.T) {
 func TestApplyMigrationsBadSQL(t *testing.T) {
 	t.Parallel()
 
-	err := applyMigrations(context.Background(), nil,
+	_, err := applyMigrations(context.Background(), nil,
 		[]engine.Migration{{Version: 1, Name: "bad", UpSQL: "NOT SQL", DownSQL: "SELECT 1;"}})
 	if err == nil || !strings.Contains(err.Error(), "parse") {
 		t.Fatalf("err = %v", err)
