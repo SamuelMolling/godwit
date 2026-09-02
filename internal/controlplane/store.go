@@ -72,21 +72,21 @@ func NewStore(pool Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// Migrate applies the control-plane schema; the advisory lock needs a dedicated session.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+// Migrate applies the control-plane schema and reports how many migrations ran; the advisory lock needs a dedicated session.
+func Migrate(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return fmt.Errorf("acquire store connection: %w", err)
+		return 0, fmt.Errorf("acquire store connection: %w", err)
 	}
 	defer conn.Release()
 
 	return applyMigrations(ctx, conn.Conn(), storeMigrations)
 }
 
-func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration) error {
+func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration) (int, error) {
 	plans, err := buildPlans(migs, engine.DirectionUp)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	return applyPlans(ctx, db, engine.Options{}, plans)

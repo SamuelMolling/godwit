@@ -98,10 +98,12 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 			return Drift{}, err
 		}
 		m.Metrics.DriftChecked(target, metrics.DriftClean)
+		m.log.Debug("drift checked", "target", target, "result", metrics.DriftClean)
 
 		return Drift{Target: target}, nil
 	}
 	m.Metrics.DriftChecked(target, metrics.DriftDrifted)
+	m.log.Info("drift checked", "target", target, "result", metrics.DriftDrifted)
 
 	diff := strings.Join(engine.DiffSchemas(expected.Definition, liveDef), "\n")
 	created, err := m.store.RecordDrift(ctx, target, diff)
@@ -129,6 +131,7 @@ func (m *DriftMonitor) AcceptBaseline(ctx context.Context, target string) error 
 		return fmt.Errorf("snapshot live schema: %w", err)
 	}
 	m.Metrics.DriftChecked(target, metrics.DriftAccepted)
+	m.log.Info("baseline accepted", "target", target)
 
 	return m.store.SaveSnapshot(ctx, target, fp, def, "")
 }

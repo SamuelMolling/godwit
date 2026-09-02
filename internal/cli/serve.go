@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -14,7 +13,7 @@ import (
 )
 
 func newServeCmd() *cobra.Command {
-	var listen, storeDSN string
+	var listen, storeDSN, logFormat, logLevel string
 	var driftInterval time.Duration
 	var skipValidation bool
 	cmd := &cobra.Command{
@@ -22,8 +21,13 @@ func newServeCmd() *cobra.Command {
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
 			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated bearer tokens),\n" +
-			"GODWIT_WEBHOOK_URL (drift notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider).",
+			"GODWIT_WEBHOOK_URL (drift notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
+			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			log, err := server.NewLogger(cmd.ErrOrStderr(), logFormat, logLevel)
+			if err != nil {
+				return err
+			}
 			key, err := hex.DecodeString(os.Getenv("GODWIT_MASTER_KEY"))
 			if err != nil || len(key) != 32 {
 				return fmt.Errorf("GODWIT_MASTER_KEY must be 64 hex chars (32 bytes)")
@@ -43,7 +47,7 @@ func newServeCmd() *cobra.Command {
 				DriftInterval:  driftInterval,
 				WebhookURL:     os.Getenv("GODWIT_WEBHOOK_URL"),
 				SkipValidation: skipValidation,
-				Log:            slog.New(slog.NewJSONHandler(cmd.ErrOrStderr(), nil)),
+				Log:            log,
 			})
 		},
 	}
@@ -51,7 +55,17 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&storeDSN, "store-dsn", "", "control-plane database DSN")
 	cmd.Flags().DurationVar(&driftInterval, "drift-interval", 5*time.Minute, "how often to check targets for schema drift")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "disable scratch-database validation at run admission")
+	cmd.Flags().StringVar(&logFormat, "log-format", envOr("GODWIT_LOG_FORMAT", "json"), "log format: json or text")
+	cmd.Flags().StringVar(&logLevel, "log-level", envOr("GODWIT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
 	_ = cmd.MarkFlagRequired("store-dsn")
 
 	return cmd
+}
+
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+
+	return fallback
 }

@@ -77,6 +77,9 @@ for _ in $(seq 1 90); do
 done
 [ "$STATE" = "RUN_STATE_SUCCEEDED" ]
 
+echo "==> what godwit-2 logged while taking over (structured, no SQL, no DSN)"
+docker compose logs --no-log-prefix godwit-2 | grep -E 'msg="run (claimed|finished)"|msg="statement applied"' | tail -n 5 || true
+
 echo
 echo "==> proof on the target database:"
 docker compose exec -T target-db psql -U app -d app -c "\d users"

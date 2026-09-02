@@ -62,8 +62,9 @@ func newStore(t *testing.T) (*Store, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := Migrate(context.Background(), pool); err != nil {
-		t.Fatal(err)
+	n, err := Migrate(context.Background(), pool)
+	if err != nil || n != len(storeMigrations) {
+		t.Fatalf("applied = %d, err = %v", n, err)
 	}
 
 	return NewStore(pool), pool

@@ -37,6 +37,7 @@ const (
 
 // StatementEvent reports one executed statement.
 type StatementEvent struct {
+	Version   int64
 	Index     int
 	Statement Statement
 	Duration  time.Duration
@@ -148,7 +149,7 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 
 	for i := prog.lastDone + 1; i < len(p.Statements); i++ {
-		if err := e.execStatement(ctx, prog, i, p.Statements[i]); err != nil {
+		if err := e.execStatement(ctx, prog, p.Migration.Version, i, p.Statements[i]); err != nil {
 			err = fmt.Errorf("statement %d of %d_%s (%s): %w", i, p.Migration.Version, p.Migration.Name, p.Direction, err)
 			markFailed(ctx, e.db, prog.runID, err)
 
@@ -173,7 +174,7 @@ func (e *Executor) applied(ctx context.Context, version int64) (bool, string, er
 	return true, checksum, nil
 }
 
-func (e *Executor) execStatement(ctx context.Context, prog runProgress, idx int, st Statement) error {
+func (e *Executor) execStatement(ctx context.Context, prog runProgress, version int64, idx int, st Statement) error {
 	e.hook(HookBeforeStatement, idx)
 	start := time.Now()
 	var err error
@@ -182,7 +183,7 @@ func (e *Executor) execStatement(ctx context.Context, prog runProgress, idx int,
 	} else {
 		err = e.execTx(ctx, prog, idx, st)
 	}
-	e.observe(StatementEvent{Index: idx, Statement: st, Duration: time.Since(start), Err: err})
+	e.observe(StatementEvent{Version: version, Index: idx, Statement: st, Duration: time.Since(start), Err: err})
 
 	return err
 }

@@ -21,8 +21,9 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	_, pool := newStore(t)
-	if err := Migrate(context.Background(), pool); err != nil {
-		t.Fatal(err)
+	n, err := Migrate(context.Background(), pool)
+	if err != nil || n != 0 {
+		t.Fatalf("applied = %d, err = %v", n, err)
 	}
 }
 

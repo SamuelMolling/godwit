@@ -18,6 +18,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
+	"github.com/SamuelMolling/godwit/internal/version"
 )
 
 // Config assembles one godwit service instance.
@@ -45,18 +46,21 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer pool.Close()
 
-	if err := controlplane.Migrate(ctx, pool); err != nil {
+	log := cfg.Log.With("replica", cfg.Holder, "build", version.Version)
+	applied, err := controlplane.Migrate(ctx, pool)
+	if err != nil {
 		return err
 	}
+	log.Info("store migrated", "applied", applied)
 	store := controlplane.NewStore(pool)
 
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
 	cfg.Scheduler.Holder = cfg.Holder
-	eng := controlplane.PGEngine{Metrics: m}
+	eng := controlplane.PGEngine{Metrics: m, Log: log}
 	sched := controlplane.NewScheduler(store, creds.Registry(cfg.MasterKey),
-		eng, controlplane.Policies(), cfg.Scheduler, cfg.Log)
+		eng, controlplane.Policies(), cfg.Scheduler, log)
 	sched.Metrics = m
 	go sched.Run(ctx)
 
@@ -64,7 +68,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.WebhookURL != "" {
 		notifier = notify.Webhook{URL: cfg.WebhookURL}
 	}
-	drift := controlplane.NewDriftMonitor(store, sched, eng, notifier, cfg.DriftInterval, cfg.Log)
+	drift := controlplane.NewDriftMonitor(store, sched, eng, notifier, cfg.DriftInterval, log)
 	go drift.Run(ctx)
 
 	var validator api.Validator
@@ -78,12 +82,14 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	log.Info("listening", "addr", ln.Addr().String(), "validation", !cfg.SkipValidation)
 	if cfg.OnReady != nil {
 		cfg.OnReady(ln.Addr())
 	}
 
 	apiSrv := api.NewServer(store, drift, validator, cfg.MasterKey)
 	apiSrv.Metrics = m
+	apiSrv.Log = log
 	srv := &http.Server{
 		Handler:           api.Handler(apiSrv, cfg.Tokens),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -91,6 +97,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	go func() {
 		<-ctx.Done()
+		log.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,10 +17,11 @@ type Engine interface {
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 }
 
-// PGEngine is the PostgreSQL Engine; Metrics is optional.
+// PGEngine is the PostgreSQL Engine; Metrics and Log are optional.
 type PGEngine struct {
 	Opts    engine.Options
 	Metrics *metrics.Metrics
+	Log     *slog.Logger
 }
 
 // Apply implements Engine.
@@ -30,12 +32,15 @@ func (e PGEngine) Apply(ctx context.Context, target, dsn string, plans []engine.
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	return applyPlans(ctx, conn, e.Opts, plans, engine.WithObserver(e.observer(target)))
+	_, err = applyPlans(ctx, conn, e.Opts, plans, engine.WithObserver(e.observer(target)))
+
+	return err
 }
 
 func (e PGEngine) observer(target string) func(engine.StatementEvent) {
-	if e.Metrics == nil {
-		return func(engine.StatementEvent) {}
+	log := e.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
 	}
 
 	return func(ev engine.StatementEvent) {
@@ -43,7 +48,19 @@ func (e PGEngine) observer(target string) func(engine.StatementEvent) {
 		if ev.Statement.NoTx {
 			kind = "no_tx"
 		}
-		e.Metrics.Statement(target, kind, ev.Duration, ev.Err)
+		if e.Metrics != nil {
+			e.Metrics.Statement(target, kind, ev.Duration, ev.Err)
+		}
+		attrs := []any{
+			"target", target, "version", ev.Version, "stmt", ev.Index,
+			"kind", kind, "duration_ms", ev.Duration.Milliseconds(),
+		}
+		if ev.Err != nil {
+			log.Error("statement failed", append(attrs, "error", ev.Err.Error())...)
+
+			return
+		}
+		log.Info("statement applied", attrs...)
 	}
 }
 

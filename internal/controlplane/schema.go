@@ -140,17 +140,22 @@ func buildPlans(migs []engine.Migration, dir engine.Direction) ([]engine.Plan, e
 	return plans, nil
 }
 
-func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan, extra ...engine.Option) error {
+func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan, extra ...engine.Option) (int, error) {
 	exec := engine.New(db, opts, extra...)
+	applied := 0
 	for _, p := range plans {
 		run := exec.Up
 		if p.Direction == engine.DirectionDown {
 			run = exec.Down
 		}
-		if _, err := run(ctx, p); err != nil {
-			return err
+		res, err := run(ctx, p)
+		if err != nil {
+			return applied, err
+		}
+		if !res.Skipped {
+			applied++
 		}
 	}
 
-	return nil
+	return applied, nil
 }
