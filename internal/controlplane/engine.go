@@ -20,9 +20,10 @@ type ApplyRequest struct {
 	Opts   engine.Options
 }
 
-// Engine applies plans to a target database and inspects its schema.
+// Engine applies plans to a target database, marks migrations applied and inspects its schema.
 type Engine interface {
 	Apply(ctx context.Context, req ApplyRequest) error
+	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 }
 
@@ -70,6 +71,17 @@ func (e PGEngine) observer(runID, target string) func(engine.StatementEvent) {
 		}
 		log.Info("statement applied", attrs...)
 	}
+}
+
+// MarkApplied implements Engine.
+func (PGEngine) MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect target: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	return engine.New(conn, engine.Options{}).MarkApplied(ctx, migs)
 }
 
 // Snapshot implements Engine.

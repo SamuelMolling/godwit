@@ -180,18 +180,33 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	if _, err := client.AcceptBaseline(ctx, connect.NewRequest(&godwitv1.AcceptBaselineRequest{Target: "app"})); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
+		Name: "legacy", Provider: "static", Dsn: newDatabase(t, "lg"),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	baselined, err := client.BaselineTarget(ctx, connect.NewRequest(&godwitv1.BaselineTargetRequest{
+		Target: "legacy", Files: baselineFiles(), Version: 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	want := "run:created run:running run:succeeded " +
 		"run:created run:running run:awaiting_contract run:confirmed run:running run:succeeded " +
 		"run:created run:running run:failed run:resumed run:running run:failed run:parked " +
 		"run:created run:running run:succeeded run:reverted " +
-		"drift:detected drift:resolved drift:accepted"
+		"drift:detected drift:resolved drift:accepted " +
+		"run:succeeded"
 	if got := rec.summary(); got != want {
 		t.Fatalf("events:\n got %s\nwant %s", got, want)
 	}
 	rec.mu.Lock()
-	parked, revert, orig := rec.events[15], rec.events[16], rec.events[19]
+	parked, revert, orig, base := rec.events[15], rec.events[16], rec.events[19], rec.events[23]
 	rec.mu.Unlock()
+	if base.RunID != baselined.Msg.RunId || base.Target != "legacy" || base.Detail != "baseline to version 1: 1 migrations marked applied" {
+		t.Fatalf("baseline = %+v", base)
+	}
 	if parked.RunID != badID || parked.Detail != "manual hold" || parked.State != controlplane.StateNeedsAttention {
 		t.Fatalf("parked = %+v", parked)
 	}

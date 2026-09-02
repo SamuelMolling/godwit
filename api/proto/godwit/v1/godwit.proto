@@ -40,6 +40,8 @@ message Run {
   // Per-run timeout overrides as given at creation ("2s", "5m"); empty means the target's setting.
   string lock_timeout = 11;
   string statement_timeout = 12;
+  // "migrate" or "baseline".
+  string kind = 13;
 }
 
 message RegisterTargetRequest {
@@ -109,6 +111,17 @@ message AcceptBaselineRequest {
 }
 
 message AcceptBaselineResponse {}
+
+message BaselineTargetRequest {
+  string target = 1;
+  repeated MigrationFile files = 2;
+  // Every migration with a version at or below this one is marked applied without running.
+  int64 version = 3;
+}
+
+message BaselineTargetResponse {
+  string run_id = 1;
+}
 
 message GetRunRequest {
   string run_id = 1;
@@ -181,4 +194,5 @@ service GodwitService {
   rpc CheckDrift(CheckDriftRequest) returns (CheckDriftResponse);
   rpc ListDriftEvents(ListDriftEventsRequest) returns (ListDriftEventsResponse);
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);
+  rpc BaselineTarget(BaselineTargetRequest) returns (BaselineTargetResponse);
 }

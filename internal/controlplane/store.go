@@ -46,6 +46,13 @@ var (
 	ErrNotResumable        = errors.New("run is not failed or parked")
 	ErrNotAwaitingContract = errors.New("run is not awaiting contract")
 	ErrNotRevertable       = errors.New("run is not the latest on its target or the target is busy")
+	ErrBaselineRun         = errors.New("baseline runs cannot be reverted")
+)
+
+// Run kinds.
+const (
+	KindMigrate  = "migrate"
+	KindBaseline = "baseline"
 )
 
 // Run is one migration run tracked by the control plane.
@@ -58,6 +65,7 @@ type Run struct {
 	Rollout    string
 	Phase      string
 	Reverts    string
+	Kind       string
 	Timeouts   Timeouts
 	CreatedAt  time.Time
 	FinishedAt *time.Time
@@ -146,6 +154,26 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 	return nil
 }
 
+// CreateBaseline records an already-succeeded baseline run holding the files that describe the target's current schema.
+func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map[string]string) error {
+	names := make([]string, 0, len(files))
+	bodies := make([]string, 0, len(files))
+	for name, body := range files {
+		names = append(names, name)
+		bodies = append(bodies, body)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		WITH r AS (INSERT INTO cp_runs (id, target, state, kind, finished_at)
+			VALUES ($1, $2, 'succeeded', 'baseline', now()))
+		INSERT INTO cp_run_files (run_id, name, body)
+		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
+		id, target, names, bodies); err != nil {
+		return fmt.Errorf("create baseline: %w", err)
+	}
+
+	return nil
+}
+
 // CreateRevert queues a run that applies the down side of another run's files.
 // Only the latest non-reverted run on an idle target can be reverted.
 func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeouts) error {
@@ -168,12 +196,12 @@ func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeout
 	return nil
 }
 
-const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''),
+const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
 	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at`
 
 func (r *Run) fields() []any {
 	return []any{
-		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts,
+		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
 		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt,
 	}
 }

@@ -316,6 +316,9 @@ func TestStoreQueryErrors(t *testing.T) {
 	if err := s.CreateRevert(ctx, "id", "id", Timeouts{}); err == nil {
 		t.Fatal("want error")
 	}
+	if err := s.CreateBaseline(ctx, "id", "x", nil); err == nil {
+		t.Fatal("want error")
+	}
 	if err := s.Confirm(ctx, "id"); err == nil {
 		t.Fatal("want error")
 	}

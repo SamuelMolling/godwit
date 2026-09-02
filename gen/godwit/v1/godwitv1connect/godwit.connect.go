@@ -62,6 +62,9 @@ const (
 	// GodwitServiceAcceptBaselineProcedure is the fully-qualified name of the GodwitService's
 	// AcceptBaseline RPC.
 	GodwitServiceAcceptBaselineProcedure = "/godwit.v1.GodwitService/AcceptBaseline"
+	// GodwitServiceBaselineTargetProcedure is the fully-qualified name of the GodwitService's
+	// BaselineTarget RPC.
+	GodwitServiceBaselineTargetProcedure = "/godwit.v1.GodwitService/BaselineTarget"
 )
 
 // GodwitServiceClient is a client for the godwit.v1.GodwitService service.
@@ -78,6 +81,7 @@ type GodwitServiceClient interface {
 	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
 	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
 	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
+	BaselineTarget(context.Context, *connect.Request[v1.BaselineTargetRequest]) (*connect.Response[v1.BaselineTargetResponse], error)
 }
 
 // NewGodwitServiceClient constructs a client for the godwit.v1.GodwitService service. By default,
@@ -163,6 +167,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("AcceptBaseline")),
 			connect.WithClientOptions(opts...),
 		),
+		baselineTarget: connect.NewClient[v1.BaselineTargetRequest, v1.BaselineTargetResponse](
+			httpClient,
+			baseURL+GodwitServiceBaselineTargetProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("BaselineTarget")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -180,6 +190,7 @@ type godwitServiceClient struct {
 	checkDrift      *connect.Client[v1.CheckDriftRequest, v1.CheckDriftResponse]
 	listDriftEvents *connect.Client[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse]
 	acceptBaseline  *connect.Client[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse]
+	baselineTarget  *connect.Client[v1.BaselineTargetRequest, v1.BaselineTargetResponse]
 }
 
 // RegisterTarget calls godwit.v1.GodwitService.RegisterTarget.
@@ -242,6 +253,11 @@ func (c *godwitServiceClient) AcceptBaseline(ctx context.Context, req *connect.R
 	return c.acceptBaseline.CallUnary(ctx, req)
 }
 
+// BaselineTarget calls godwit.v1.GodwitService.BaselineTarget.
+func (c *godwitServiceClient) BaselineTarget(ctx context.Context, req *connect.Request[v1.BaselineTargetRequest]) (*connect.Response[v1.BaselineTargetResponse], error) {
+	return c.baselineTarget.CallUnary(ctx, req)
+}
+
 // GodwitServiceHandler is an implementation of the godwit.v1.GodwitService service.
 type GodwitServiceHandler interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
@@ -256,6 +272,7 @@ type GodwitServiceHandler interface {
 	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
 	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
 	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
+	BaselineTarget(context.Context, *connect.Request[v1.BaselineTargetRequest]) (*connect.Response[v1.BaselineTargetResponse], error)
 }
 
 // NewGodwitServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -337,6 +354,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("AcceptBaseline")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceBaselineTargetHandler := connect.NewUnaryHandler(
+		GodwitServiceBaselineTargetProcedure,
+		svc.BaselineTarget,
+		connect.WithSchema(godwitServiceMethods.ByName("BaselineTarget")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/godwit.v1.GodwitService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case GodwitServiceRegisterTargetProcedure:
@@ -363,6 +386,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceListDriftEventsHandler.ServeHTTP(w, r)
 		case GodwitServiceAcceptBaselineProcedure:
 			godwitServiceAcceptBaselineHandler.ServeHTTP(w, r)
+		case GodwitServiceBaselineTargetProcedure:
+			godwitServiceBaselineTargetHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -418,4 +443,8 @@ func (UnimplementedGodwitServiceHandler) ListDriftEvents(context.Context, *conne
 
 func (UnimplementedGodwitServiceHandler) AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.AcceptBaseline is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) BaselineTarget(context.Context, *connect.Request[v1.BaselineTargetRequest]) (*connect.Response[v1.BaselineTargetResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.BaselineTarget is not implemented"))
 }

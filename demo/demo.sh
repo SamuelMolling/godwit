@@ -211,6 +211,40 @@ docker compose exec -T godwit-2 /godwit run get "$TO_ID" --server http://localho
 curl -s localhost:18475/metrics | grep -E '^godwit_statement_failures_total'
 
 echo
+echo "==> baseline: adopting a database that already has a schema, without replaying it"
+docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE legacy;" > /dev/null
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric);" > /dev/null
+rpc RegisterTarget '{
+  "name": "legacy",
+  "provider": "static",
+  "dsn": "postgres://app:app@target-db:5432/legacy?sslmode=disable"
+}' 18475
+BASELINE_FILES='[
+    {"name": "00000000000001_baseline.up.sql", "body": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric);"},
+    {"name": "00000000000001_baseline.down.sql", "body": "DROP TABLE orders;"},
+    {"name": "20260901190000_orders_status.up.sql", "body": "ALTER TABLE orders ADD COLUMN status text;"},
+    {"name": "20260901190000_orders_status.down.sql", "body": "ALTER TABLE orders DROP COLUMN status;"}
+  ]'
+BL_ID=$(rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475 \
+  | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+docker compose exec -T godwit-2 /godwit run get "$BL_ID" --server http://localhost:8474 --token demo-token
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT version, name FROM godwit.migrations ORDER BY version;"
+echo "==> version 1 is marked applied without running; the next migration applies on top (validation replays the baseline files first)"
+BL2_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$BL2_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+docker compose exec -T target-db psql -U app -d legacy -c "\d orders"
+echo "==> a second baseline is refused: the target already has applied versions"
+rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475
+echo
+
+echo
 echo "==> the same API from the CLI: every run so far"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
 
@@ -219,5 +253,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"
