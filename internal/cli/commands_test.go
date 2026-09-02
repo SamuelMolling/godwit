@@ -226,3 +226,49 @@ func TestDownErrors(t *testing.T) {
 		t.Fatal("failing down must fail")
 	}
 }
+
+func TestConfigFileSetsDir(t *testing.T) {
+	t.Setenv("GODWIT_DIR", "")
+	root := t.TempDir()
+	migs := filepath.Join(root, "db")
+	if err := os.Rename(goodMigs(t), migs); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "godwit.yaml"), []byte("dir: db\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	code, out, errOut := runCLI("plan")
+	if code != 0 || !strings.Contains(out, "20260901120000_users (up)") {
+		t.Fatalf("code = %d, out = %s, stderr = %s", code, out, errOut)
+	}
+	if code, _, _ = runCLI("plan", "--dir", filepath.Join(root, "nope")); code != 1 {
+		t.Fatal("explicit --dir must beat the file")
+	}
+	if code, _, errOut = runCLI("plan", "--config", filepath.Join(root, "missing.yaml")); code != 1 ||
+		!strings.Contains(errOut, "missing.yaml") {
+		t.Fatalf("missing config: code = %d, stderr = %s", code, errOut)
+	}
+	if code, _, _ = runCLI("version", "--config", filepath.Join(root, "missing.yaml")); code != 0 {
+		t.Fatal("commands without target flags ignore the config")
+	}
+}
+
+func TestConfigFileSetsTimeouts(t *testing.T) {
+	t.Setenv("GODWIT_LOCK_TIMEOUT", "")
+	t.Setenv("GODWIT_STATEMENT_TIMEOUT", "")
+	dir := writeMigs(t, map[string]string{
+		"20260901120000_slow.up.sql":   "SELECT pg_sleep(5);",
+		"20260901120000_slow.down.sql": "SELECT 1;",
+	})
+	cfg := filepath.Join(t.TempDir(), "godwit.yaml")
+	if err := os.WriteFile(cfg, []byte("statement_timeout: 100ms\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut := runCLI("run", "--config", cfg, "--dsn", newTestDSN(t), "--dir", dir)
+	if code != 1 || !strings.Contains(errOut, "statement timeout") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
