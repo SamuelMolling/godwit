@@ -38,6 +38,8 @@ const (
 	GodwitServiceRegisterTargetProcedure = "/godwit.v1.GodwitService/RegisterTarget"
 	// GodwitServiceCreateRunProcedure is the fully-qualified name of the GodwitService's CreateRun RPC.
 	GodwitServiceCreateRunProcedure = "/godwit.v1.GodwitService/CreateRun"
+	// GodwitServicePlanRunProcedure is the fully-qualified name of the GodwitService's PlanRun RPC.
+	GodwitServicePlanRunProcedure = "/godwit.v1.GodwitService/PlanRun"
 	// GodwitServiceGetRunProcedure is the fully-qualified name of the GodwitService's GetRun RPC.
 	GodwitServiceGetRunProcedure = "/godwit.v1.GodwitService/GetRun"
 	// GodwitServiceListRunsProcedure is the fully-qualified name of the GodwitService's ListRuns RPC.
@@ -74,6 +76,8 @@ const (
 type GodwitServiceClient interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
 	CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error)
+	// Runs CreateRun's admission (hazard gate, order guard, scratch validation) and returns the plan without queueing anything.
+	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
 	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest]) (*connect.ServerStreamForClient[v1.WatchRunResponse], error)
@@ -109,6 +113,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			httpClient,
 			baseURL+GodwitServiceCreateRunProcedure,
 			connect.WithSchema(godwitServiceMethods.ByName("CreateRun")),
+			connect.WithClientOptions(opts...),
+		),
+		planRun: connect.NewClient[v1.PlanRunRequest, v1.PlanRunResponse](
+			httpClient,
+			baseURL+GodwitServicePlanRunProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("PlanRun")),
 			connect.WithClientOptions(opts...),
 		),
 		getRun: connect.NewClient[v1.GetRunRequest, v1.GetRunResponse](
@@ -190,6 +200,7 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 type godwitServiceClient struct {
 	registerTarget  *connect.Client[v1.RegisterTargetRequest, v1.RegisterTargetResponse]
 	createRun       *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
+	planRun         *connect.Client[v1.PlanRunRequest, v1.PlanRunResponse]
 	getRun          *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
 	listRuns        *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
 	watchRun        *connect.Client[v1.WatchRunRequest, v1.WatchRunResponse]
@@ -212,6 +223,11 @@ func (c *godwitServiceClient) RegisterTarget(ctx context.Context, req *connect.R
 // CreateRun calls godwit.v1.GodwitService.CreateRun.
 func (c *godwitServiceClient) CreateRun(ctx context.Context, req *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error) {
 	return c.createRun.CallUnary(ctx, req)
+}
+
+// PlanRun calls godwit.v1.GodwitService.PlanRun.
+func (c *godwitServiceClient) PlanRun(ctx context.Context, req *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error) {
+	return c.planRun.CallUnary(ctx, req)
 }
 
 // GetRun calls godwit.v1.GodwitService.GetRun.
@@ -278,6 +294,8 @@ func (c *godwitServiceClient) GetTargetStatus(ctx context.Context, req *connect.
 type GodwitServiceHandler interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
 	CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error)
+	// Runs CreateRun's admission (hazard gate, order guard, scratch validation) and returns the plan without queueing anything.
+	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
 	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest], *connect.ServerStream[v1.WatchRunResponse]) error
@@ -309,6 +327,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		GodwitServiceCreateRunProcedure,
 		svc.CreateRun,
 		connect.WithSchema(godwitServiceMethods.ByName("CreateRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	godwitServicePlanRunHandler := connect.NewUnaryHandler(
+		GodwitServicePlanRunProcedure,
+		svc.PlanRun,
+		connect.WithSchema(godwitServiceMethods.ByName("PlanRun")),
 		connect.WithHandlerOptions(opts...),
 	)
 	godwitServiceGetRunHandler := connect.NewUnaryHandler(
@@ -389,6 +413,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceRegisterTargetHandler.ServeHTTP(w, r)
 		case GodwitServiceCreateRunProcedure:
 			godwitServiceCreateRunHandler.ServeHTTP(w, r)
+		case GodwitServicePlanRunProcedure:
+			godwitServicePlanRunHandler.ServeHTTP(w, r)
 		case GodwitServiceGetRunProcedure:
 			godwitServiceGetRunHandler.ServeHTTP(w, r)
 		case GodwitServiceListRunsProcedure:
@@ -428,6 +454,10 @@ func (UnimplementedGodwitServiceHandler) RegisterTarget(context.Context, *connec
 
 func (UnimplementedGodwitServiceHandler) CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.CreateRun is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.PlanRun is not implemented"))
 }
 
 func (UnimplementedGodwitServiceHandler) GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error) {

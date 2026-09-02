@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -93,12 +94,17 @@ func newTargetAddCmd() *cobra.Command {
 func newMigrateCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.CreateRunRequest{}
-	var dir string
+	var dir, format string
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Send a migration directory to the service and watch the run",
 		Args:  cobra.NoArgs,
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, _ []string) error {
+			write, ok := planFormats[format]
+			if !ok {
+				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			}
 			if req.Target == "" {
 				return errors.New("--target (or target in godwit.yaml) is required")
 			}
@@ -107,6 +113,9 @@ func newMigrateCmd() *cobra.Command {
 				return err
 			}
 			req.Files = files
+			if dryRun {
+				return flags.dryRun(cmd, client, req, write)
+			}
 			created, err := client.CreateRun(cmd.Context(), connect.NewRequest(req))
 			if err != nil {
 				return err
@@ -122,10 +131,50 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
 	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "apply pending versions older than the newest applied one instead of refusing them")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "run the admission checks on the service and print the plan without queueing a run")
+	cmd.Flags().StringVar(&format, "format", "text", "dry-run output format: text, markdown or json")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
 	return cmd
+}
+
+func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, req *godwitv1.CreateRunRequest, write func(io.Writer, planReport)) error {
+	res, err := client.PlanRun(cmd.Context(), connect.NewRequest(&godwitv1.PlanRunRequest{
+		Target: req.Target, Files: req.Files, AcknowledgeHazards: req.AcknowledgeHazards, SkipValidation: req.SkipValidation,
+		Rollout: req.Rollout, AllowOutOfOrder: req.AllowOutOfOrder,
+	}))
+	if err != nil {
+		return err
+	}
+	if f.json {
+		f.print(cmd, res.Msg, "")
+
+		return nil
+	}
+	write(cmd.OutOrStdout(), planReportFromProto(res.Msg))
+
+	return nil
+}
+
+func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
+	r := planReport{live: true, target: m.Target, rollout: m.Rollout, validated: m.Validated, items: make([]planItem, 0, len(m.Migrations))}
+	for _, pm := range m.Migrations {
+		p := engine.Plan{
+			Migration: engine.Migration{Version: pm.Version, Name: pm.Name, Checksum: pm.Checksum},
+			Direction: engine.DirectionUp,
+		}
+		for _, ps := range pm.Statements {
+			st := engine.Statement{SQL: ps.Sql, NoTx: ps.NoTx}
+			for _, h := range ps.Hazards {
+				st.Hazards = append(st.Hazards, engine.Hazard{Code: h.Code, Detail: h.Detail})
+			}
+			p.Statements = append(p.Statements, st)
+		}
+		r.items = append(r.items, planItem{Plan: p, applied: pm.Applied, phase: pm.Phase})
+	}
+
+	return r
 }
 
 func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {

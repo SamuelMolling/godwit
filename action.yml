@@ -27,8 +27,11 @@ inputs:
   rollout:
     description: "Rollout policy for migrate: direct or expand-contract (default: godwit.yaml, else direct)"
     default: ""
+  dry-run:
+    description: "With migrate: ask the service for the admitted plan (hazards, order, scratch validation, applied state, phases) without queueing a run"
+    default: "false"
   comment:
-    description: "Post the lint or plan report as one sticky pull request comment (needs pull-requests: write)"
+    description: "Post the lint, plan or dry-run report as one sticky pull request comment (needs pull-requests: write)"
     default: "true"
   github-token:
     description: "Token used to post the pull request comment"
@@ -45,7 +48,7 @@ outputs:
     description: "Number of blocking lint findings"
     value: ${{ steps.godwit.outputs.blocking }}
   summary-path:
-    description: "Path of the markdown report written by lint or plan"
+    description: "Path of the markdown report written by lint, plan or migrate"
     value: ${{ steps.godwit.outputs.summary-path }}
 
 runs:
@@ -74,6 +77,7 @@ runs:
         SERVER: ${{ inputs.server }}
         TARGET: ${{ inputs.target }}
         ROLLOUT: ${{ inputs.rollout }}
+        DRY_RUN: ${{ inputs.dry-run }}
         GODWIT_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
@@ -117,24 +121,36 @@ runs:
             if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
             if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
             if [ -n "${ROLLOUT}" ]; then args+=(--rollout "${ROLLOUT}"); fi
-            events="${RUNNER_TEMP}/godwit-migrate.jsonl"
             errors="${RUNNER_TEMP}/godwit-migrate.err"
-            "${godwit}" migrate ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
-            cat "${errors}" >&2
-            last="$(tail -n 1 "${events}" 2>/dev/null || true)"
-            run_id="$(printf '%s' "${last}" | jq -r '.run.id // empty' 2>/dev/null || true)"
-            {
-              printf '## godwit migrate\n\n'
-              if [ -n "${last}" ]; then
-                printf '%s' "${last}" | jq -r '.run | "run `\(.id)`: **\(.state | ascii_downcase | ltrimstr("run_state_"))**" + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
-              elif [ -s "${errors}" ]; then
-                printf 'no run created:\n\n```\n'
-                cat "${errors}"
-                printf '```\n'
-              else
-                printf 'no run created\n'
+            events="${RUNNER_TEMP}/godwit-migrate.jsonl"
+            if [ "${DRY_RUN}" = "true" ]; then
+              "${godwit}" migrate ${args[@]+"${args[@]}"} --dry-run --format markdown >"${summary}" 2>"${errors}" || status=$?
+              cat "${errors}" >&2
+              if [ ! -s "${summary}" ]; then
+                {
+                  printf '## godwit dry run\n\nrefused:\n\n```\n'
+                  cat "${errors}"
+                  printf '```\n'
+                } >"${summary}"
               fi
-            } >"${summary}"
+            else
+              "${godwit}" migrate ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
+              cat "${errors}" >&2
+              last="$(tail -n 1 "${events}" 2>/dev/null || true)"
+              run_id="$(printf '%s' "${last}" | jq -r '.run.id // empty' 2>/dev/null || true)"
+              {
+                printf '## godwit migrate\n\n'
+                if [ -n "${last}" ]; then
+                  printf '%s' "${last}" | jq -r '.run | "run `\(.id)`: **\(.state | ascii_downcase | ltrimstr("run_state_"))**" + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
+                elif [ -s "${errors}" ]; then
+                  printf 'no run created:\n\n```\n'
+                  cat "${errors}"
+                  printf '```\n'
+                else
+                  printf 'no run created\n'
+                fi
+              } >"${summary}"
+            fi
             ;;
           *)
             echo "unknown command '${COMMAND}' (want lint, plan or migrate)" >&2
@@ -152,11 +168,11 @@ runs:
         } >>"${GITHUB_OUTPUT}"
 
     - name: Comment on the pull request
-      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' && inputs.command != 'migrate' }}
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' && (inputs.command != 'migrate' || inputs.dry-run == 'true') }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
-        MARKER: "<!-- godwit:${{ inputs.command }} -->"
+        MARKER: "<!-- godwit:${{ inputs.dry-run == 'true' && 'dry-run' || inputs.command }} -->"
         SUMMARY: ${{ steps.godwit.outputs.summary-path }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |

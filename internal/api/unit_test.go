@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v4"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
@@ -257,45 +258,117 @@ func TestCheckOrder(t *testing.T) {
 
 		return p
 	}
+	s := NewServer(nil, nil, nil, nil)
+
+	if err := s.checkOrder("app", []engine.Plan{plan(2)}, nil, false); err != nil {
+		t.Fatalf("empty history: %v", err)
+	}
+	if err := s.checkOrder("app", []engine.Plan{plan(1), plan(3), plan(4)}, []int64{1, 3}, false); err != nil {
+		t.Fatalf("applied and newer: %v", err)
+	}
+	err := s.checkOrder("app", []engine.Plan{plan(1), plan(2), plan(3)}, []int64{1, 3}, false)
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "out-of-order migrations 2: newest applied version on app is 3") {
+		t.Fatalf("behind: %v", err)
+	}
+	if err := s.checkOrder("app", []engine.Plan{plan(2)}, []int64{1, 3}, true); err != nil {
+		t.Fatalf("allowed: %v", err)
+	}
+}
+
+func TestAdmitStoreError(t *testing.T) {
+	t.Parallel()
+
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	applied := func(versions ...int64) {
-		rows := pgxmock.NewRows([]string{"version"})
-		for _, v := range versions {
-			rows.AddRow(v)
-		}
-		mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(rows)
-	}
 	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
-	ctx := context.Background()
-
+	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("ghost").WillReturnError(pgx.ErrNoRows)
+	if _, err := s.admit(context.Background(), "ghost", nil, nil, false, false); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown target: %v", err)
+	}
+	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnError(errors.New("down"))
-	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(2)}, false); connect.CodeOf(err) != connect.CodeInternal {
+	if _, err := s.admit(context.Background(), "app", nil, nil, false, false); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("store error: %v", err)
-	}
-	applied()
-	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(2)}, false); err != nil {
-		t.Fatalf("empty history: %v", err)
-	}
-	applied(1, 3)
-	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(1), plan(3), plan(4)}, false); err != nil {
-		t.Fatalf("applied and newer: %v", err)
-	}
-	applied(1, 3)
-	err = s.checkOrder(ctx, "app", []engine.Plan{plan(1), plan(2), plan(3)}, false)
-	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "out-of-order migrations 2: newest applied version on app is 3") {
-		t.Fatalf("behind: %v", err)
-	}
-	applied(1, 3)
-	if err := s.checkOrder(ctx, "app", []engine.Plan{plan(2)}, true); err != nil {
-		t.Fatalf("allowed: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestPlanRunUnit(t *testing.T) {
+	t.Parallel()
+
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	ctx := context.Background()
+	files := []*godwitv1.MigrationFile{
+		{Name: "00000000000001_t.up.sql", Body: "CREATE TABLE t (id int);\nCREATE INDEX CONCURRENTLY t_id ON t (id);"},
+		{Name: "00000000000001_t.down.sql", Body: "DROP TABLE t;"},
+		{Name: "00000000000002_d.up.sql", Body: "ALTER TABLE t DROP COLUMN id;"},
+		{Name: "00000000000002_d.down.sql", Body: "SELECT 1;"},
+	}
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+
+	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Files: files})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("no target: %v", err)
+	}
+	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app"})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("no files: %v", err)
+	}
+	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files, Rollout: "weird"})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("bad rollout: %v", err)
+	}
+	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files[:1]})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("bad files: %v", err)
+	}
+	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files})); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "H003") {
+		t.Fatalf("hazard gate: %v", err)
+	}
+
+	expectTarget(mock)
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
+	res, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{
+		Target: "app", Files: files, Rollout: controlplane.RolloutExpandContract, AcknowledgeHazards: []string{"H003"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.Msg
+	if got.Target != "app" || got.Rollout != controlplane.RolloutExpandContract || got.Validated || len(got.Migrations) != 2 {
+		t.Fatalf("plan = %+v", got)
+	}
+	first, second := got.Migrations[0], got.Migrations[1]
+	if first.Version != 1 || first.Name != "t" || first.Checksum == "" || !first.Applied || first.Phase != controlplane.PhaseExpand ||
+		len(first.Statements) != 2 || first.Statements[0].NoTx || !first.Statements[1].NoTx || len(first.Statements[1].Hazards) != 0 {
+		t.Fatalf("first = %+v", first)
+	}
+	if second.Version != 2 || second.Applied || second.Phase != controlplane.PhaseContract || len(second.Statements) != 1 ||
+		second.Statements[0].Sql != "ALTER TABLE t DROP COLUMN id" || len(second.Statements[0].Hazards) != 1 ||
+		second.Statements[0].Hazards[0].Code != "H003" || second.Statements[0].Hazards[0].Detail == "" {
+		t.Fatalf("second = %+v", second)
+	}
+
+	expectTarget(mock)
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	res, err = s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files[:2]}))
+	if err != nil || res.Msg.Migrations[0].Phase != controlplane.PhaseExpand || res.Msg.Migrations[0].Applied {
+		t.Fatalf("direct = %+v, err = %v", res, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func expectTarget(mock pgxmock.PgxPoolIface) {
+	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("app").
+		WillReturnRows(pgxmock.NewRows([]string{"provider", "config"}).AddRow("static", []byte(`{}`)))
 }
 
 type failingValidator struct{ err error }
@@ -321,12 +394,14 @@ func TestCreateRunInternalErrors(t *testing.T) {
 		})
 	}
 
+	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
 	s := NewServer(controlplane.NewStore(mock), nil, failingValidator{err: errors.New("scratch down")}, nil)
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("validator error: %v", err)
 	}
 
+	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
 	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "").WillReturnError(errors.New("insert down"))
 	s = NewServer(controlplane.NewStore(mock), nil, nil, nil)

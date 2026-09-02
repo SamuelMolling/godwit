@@ -28,6 +28,8 @@ type stubService struct {
 	statused   *godwitv1.GetTargetStatusRequest
 	status     *godwitv1.GetTargetStatusResponse
 	created    *godwitv1.CreateRunRequest
+	planned    *godwitv1.PlanRunRequest
+	plan       *godwitv1.PlanRunResponse
 	reverted   *godwitv1.RevertRunRequest
 	listed     *godwitv1.ListRunsRequest
 	got        string
@@ -86,6 +88,15 @@ func (s *stubService) CreateRun(_ context.Context, req *connect.Request[godwitv1
 	}
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: "r1"}), nil
+}
+
+func (s *stubService) PlanRun(_ context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
+	s.planned = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(s.plan), nil
 }
 
 func (s *stubService) RevertRun(_ context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
@@ -342,6 +353,118 @@ func TestMigrate(t *testing.T) {
 	}
 	if stub.watched != "r1" {
 		t.Fatalf("watched = %q", stub.watched)
+	}
+}
+
+func dryRunStub() *stubService {
+	return &stubService{plan: &godwitv1.PlanRunResponse{
+		Target: "app", Rollout: "expand-contract", Validated: true,
+		Migrations: []*godwitv1.PlannedMigration{
+			{Version: 20260901120000, Name: "users", Checksum: "c1", Applied: true, Phase: "expand", Statements: []*godwitv1.PlannedStatement{
+				{Sql: "CREATE TABLE users (id int)"},
+				{Sql: "CREATE INDEX CONCURRENTLY idx_users ON users (id)", NoTx: true},
+			}},
+			{Version: 20260901120001, Name: "drop_a", Checksum: "c2", Phase: "contract", Statements: []*godwitv1.PlannedStatement{
+				{Sql: "ALTER TABLE users DROP COLUMN a", Hazards: []*godwitv1.PlannedHazard{{Code: "H003", Detail: "DROP COLUMN is destructive"}}},
+			}},
+		},
+	}}
+}
+
+func TestMigrateDryRun(t *testing.T) {
+	t.Parallel()
+	stub := dryRunStub()
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("migrate", "--dry-run", "--server", url, "--target", "app", "--dir", goodMigs(t),
+		"--rollout", "expand-contract", "--ack", "H003", "--skip-validation", "--allow-out-of-order")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := "dry run on app (rollout expand-contract, validated on a scratch database)\n" +
+		"20260901120000_users (up): 2 statement(s) [expand, applied]\n" +
+		"  [0] tx    CREATE TABLE users (id int)\n" +
+		"  [1] no-tx CREATE INDEX CONCURRENTLY idx_users ON users (id)\n" +
+		"20260901120001_drop_a (up): 1 statement(s) [contract, pending]\n" +
+		"  [0] tx    ALTER TABLE users DROP COLUMN a\n" +
+		"        hazard H003: DROP COLUMN is destructive\n"
+	if out != want {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+	p := stub.planned
+	if p.Target != "app" || p.Rollout != "expand-contract" || !p.SkipValidation || !p.AllowOutOfOrder || strings.Join(p.AcknowledgeHazards, ",") != "H003" ||
+		len(p.Files) != 2 || p.Files[0].Name != "20260901120000_users.up.sql" {
+		t.Fatalf("request = %v", p)
+	}
+	if stub.created != nil || stub.watched != "" {
+		t.Fatal("dry run must not create or watch a run")
+	}
+}
+
+func TestMigrateDryRunMarkdown(t *testing.T) {
+	t.Parallel()
+	stub := dryRunStub()
+	stub.plan.Validated = false
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("migrate", "--dry-run", "--format", "markdown", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := "## godwit dry run\n\nTarget `app`, rollout `expand-contract`, not validated.\n\n" +
+		"| Migration | Direction | # | Mode | Statement | Hazards | Phase | Status |\n" +
+		"|---|---|---|---|---|---|---|---|\n" +
+		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users (id int)` |  | expand | applied |\n" +
+		"| `20260901120000_users` | up | 1 | no-tx | `CREATE INDEX CONCURRENTLY idx_users ON users (id)` |  | expand | applied |\n" +
+		"| `20260901120001_drop_a` | up | 0 | tx | `ALTER TABLE users DROP COLUMN a` | H003: DROP COLUMN is destructive | contract | pending |\n" +
+		"\n⚠️ 1 hazard(s); acknowledge them with `--ack`\n"
+	if out != want {
+		t.Fatalf("out = %q, want %q", out, want)
+	}
+}
+
+func TestMigrateDryRunJSON(t *testing.T) {
+	t.Parallel()
+	stub := dryRunStub()
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("migrate", "--dry-run", "--format", "json", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	var got dryRunJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got.Target != "app" || got.Rollout != "expand-contract" || !got.Validated || len(got.Migrations) != 2 {
+		t.Fatalf("plan = %+v", got)
+	}
+	first, second := got.Migrations[0], got.Migrations[1]
+	if !first.Applied || first.Phase != "expand" || first.Direction != "up" || first.Statements[1].Mode != "no-tx" ||
+		second.Applied || second.Phase != "contract" || second.Statements[0].Hazards[0].Code != "H003" {
+		t.Fatalf("migrations = %+v", got.Migrations)
+	}
+
+	code, out, _ = runCLI("migrate", "--dry-run", "--json", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	raw := decodeJSON(t, out)
+	if code != 0 || raw["target"] != "app" || raw["validated"] != true || len(raw["migrations"].([]any)) != 2 {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+}
+
+func TestMigrateDryRunErrors(t *testing.T) {
+	t.Parallel()
+	stub := dryRunStub()
+	url := startStub(t, stub)
+
+	if code, _, errOut := runCLI("migrate", "--dry-run", "--format", "yaml", "--server", url, "--target", "app", "--dir", goodMigs(t)); code != 1 ||
+		!strings.Contains(errOut, "unknown format") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("unacknowledged hazards: H003"))
+	code, out, errOut := runCLI("migrate", "--dry-run", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 1 || out != "" || errOut != "godwit: unacknowledged hazards: H003\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
 	}
 }
 
