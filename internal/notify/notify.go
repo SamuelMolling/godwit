@@ -49,6 +49,7 @@ type Event struct {
 	Attempt int       `json:"attempt,omitempty"`
 	Rollout string    `json:"rollout,omitempty"`
 	Phase   string    `json:"phase,omitempty"`
+	Actor   string    `json:"actor,omitempty"`
 	Detail  string    `json:"detail,omitempty"`
 	At      time.Time `json:"at"`
 }

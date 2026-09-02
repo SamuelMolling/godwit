@@ -17,8 +17,8 @@ func NewBaseliner(sched *Scheduler) *Baseliner {
 	return &Baseliner{sched: sched}
 }
 
-// Baseline marks migs applied on target, records run runID holding their files and snapshots the schema for drift.
-func (b *Baseliner) Baseline(ctx context.Context, runID, target string, migs []engine.Migration) error {
+// Baseline marks migs applied on target, records run runID (with provenance p) holding their files and snapshots the schema for drift.
+func (b *Baseliner) Baseline(ctx context.Context, runID, target string, migs []engine.Migration, p Provenance) error {
 	dsn, err := b.sched.targetDSN(ctx, target)
 	if err != nil {
 		return err
@@ -26,7 +26,7 @@ func (b *Baseliner) Baseline(ctx context.Context, runID, target string, migs []e
 	if err := b.sched.engine.MarkApplied(ctx, dsn, migs); err != nil {
 		return err
 	}
-	if err := b.sched.store.CreateBaseline(ctx, runID, target, migrationFiles(migs)); err != nil {
+	if err := b.sched.store.CreateBaseline(ctx, runID, target, migrationFiles(migs), p); err != nil {
 		return err
 	}
 	b.sched.baseline(ctx, Run{ID: runID, Target: target}, b.sched.log.With("run", runID, "target", target))

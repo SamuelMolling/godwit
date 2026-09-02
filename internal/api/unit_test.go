@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -41,19 +42,42 @@ func TestRPCErrMapping(t *testing.T) {
 	}
 }
 
-func TestAuthAllowed(t *testing.T) {
+func TestAuthActor(t *testing.T) {
 	t.Parallel()
 
-	open := newAuth(nil)
-	if !open.allowed("") {
-		t.Fatal("empty token set must allow everything")
+	if name, ok := newAuth(nil).actor(""); !ok || name != AnonymousActor {
+		t.Fatalf("empty token set = %q %v, want anonymous", name, ok)
 	}
-	locked := newAuth([]string{"t1"})
-	if locked.allowed("") || locked.allowed("Bearer nope") || locked.allowed("t1") {
-		t.Fatal("bad credentials must be rejected")
+	locked := newAuth([]Token{{Name: "ci", Secret: "t1"}})
+	for _, h := range []string{"", "Bearer nope", "t1"} {
+		if _, ok := locked.actor(h); ok {
+			t.Fatalf("header %q must be rejected", h)
+		}
 	}
-	if !locked.allowed("Bearer t1") {
-		t.Fatal("valid token must pass")
+	if name, ok := locked.actor("Bearer t1"); !ok || name != "ci" {
+		t.Fatalf("valid token = %q %v, want ci", name, ok)
+	}
+	if Actor(context.Background()) != AnonymousActor {
+		t.Fatal("bare context must be anonymous")
+	}
+}
+
+func TestParseTokens(t *testing.T) {
+	t.Parallel()
+
+	got, err := ParseTokens([]string{"ci:s1", " samuel:s2 ", "s3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Token{{Name: "ci", Secret: "s1"}, {Name: "samuel", Secret: "s2"}, {Name: AnonymousActor, Secret: "s3"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("tokens = %+v, want %+v", got, want)
+	}
+	for _, specs := range [][]string{{""}, {":s"}, {"ci:"}, {"ci:same", "ops:same"}} {
+		_, err := ParseTokens(specs)
+		if err == nil || strings.Contains(err.Error(), "same") {
+			t.Fatalf("ParseTokens(%q) = %v, want an error without the secret", specs, err)
+		}
 	}
 }
 
@@ -156,7 +180,7 @@ func TestHealthAndReadiness(t *testing.T) {
 
 		return rec
 	}
-	up := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return nil }}, []string{"secret"})
+	up := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return nil }}, []Token{{Name: "ops", Secret: "secret"}})
 	down := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return errors.New("boom") }}, nil)
 
 	if rec := get(up, "/healthz"); rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
@@ -188,8 +212,8 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at"}).
-			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil)))
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source"}).
+			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, ""))
 
 	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	s.watchInterval = time.Hour
@@ -403,7 +427,7 @@ func TestCreateRunInternalErrors(t *testing.T) {
 
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
-	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "").WillReturnError(errors.New("insert down"))
+	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "", AnonymousActor, "").WillReturnError(errors.New("insert down"))
 	s = NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("store error: %v", err)

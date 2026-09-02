@@ -131,7 +131,7 @@ func newSlack(f *fakeSlack, store TSStore, mode string) Slack {
 func runEvent(typ, state string) Event {
 	return Event{
 		Kind: KindRun, Type: typ, Target: "app", RunID: "12345678-0000-0000-0000-000000000000",
-		State: state, Attempt: 1, Rollout: "direct", Phase: "expand", At: time.Unix(0, 0),
+		State: state, Attempt: 1, Rollout: "direct", Phase: "expand", Actor: "ci", At: time.Unix(0, 0),
 	}
 }
 
@@ -145,7 +145,7 @@ func TestSlackThreadMode(t *testing.T) {
 	if err := s.Notify(ctx, runEvent(RunCreated, "queued")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Notify(ctx, Event{Kind: KindRun, Type: RunFailed, Target: "app", RunID: "12345678-0000-0000-0000-000000000000", State: "failed", Detail: "boom"}); err != nil {
+	if err := s.Notify(ctx, Event{Kind: KindRun, Type: RunFailed, Target: "app", RunID: "12345678-0000-0000-0000-000000000000", State: "failed", Actor: "ci", Detail: "boom"}); err != nil {
 		t.Fatal(err)
 	}
 	calls := f.recorded()
@@ -165,8 +165,8 @@ func TestSlackThreadMode(t *testing.T) {
 		t.Fatalf("button = %v", button)
 	}
 	fields := blocks[1].(map[string]any)["fields"].([]any)
-	if len(fields) != 4 || !strings.Contains(fields[0].(map[string]any)["text"].(string), "🕐 queued") ||
-		!strings.Contains(fields[1].(map[string]any)["text"].(string), "direct / expand") {
+	if len(fields) != 5 || !strings.Contains(fields[0].(map[string]any)["text"].(string), "🕐 queued") ||
+		!strings.Contains(fields[1].(map[string]any)["text"].(string), "direct / expand") || fields[3].(map[string]any)["text"] != "*Actor*\nci" {
 		t.Fatalf("fields = %v", fields)
 	}
 	reply := calls[1].Payload
@@ -174,7 +174,7 @@ func TestSlackThreadMode(t *testing.T) {
 		t.Fatalf("reply = %v", reply)
 	}
 	replyText := reply["blocks"].([]any)[0].(map[string]any)["text"].(map[string]any)["text"].(string)
-	if replyText != "❌ failed · *failed*\n```boom```" {
+	if replyText != "❌ failed · *failed* · by ci\n```boom```" {
 		t.Fatalf("reply text = %q", replyText)
 	}
 	update := calls[2].Payload
@@ -194,7 +194,7 @@ func TestSlackEditModeAndDrift(t *testing.T) {
 	s.PublicURL = ""
 
 	e := runEvent(RunCreated, "queued")
-	e.Attempt, e.Rollout = 0, ""
+	e.Attempt, e.Rollout, e.Actor = 0, "", ""
 	if err := s.Notify(ctx, e); err != nil {
 		t.Fatal(err)
 	}

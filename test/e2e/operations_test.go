@@ -115,6 +115,12 @@ func TestRevertLatest(t *testing.T) {
 
 	expectContains(t, r.mustCLI("revert", second.Id, "--ack", "H003"), "succeeded")
 	r.expectRun(second.Id, godwitv1.RunState_RUN_STATE_REVERTED, 1)
+	expectContains(t, r.mustCLI("run", "get", second.Id), "created_by: "+actor)
+	expectContains(t, r.mustCLI("audit", "--target", "app", "--limit", "2"),
+		actor+"    run.revert", "reverts="+second.Id+" acked=H003", actor+"    run.create", "migrations=1")
+	if !r.alive().logs.has("api call", "actor", actor) {
+		t.Fatal("access log must carry the actor")
+	}
 	if columnExists(t, r.appDSN, "users", "plan") {
 		t.Fatal("revert must drop plan")
 	}

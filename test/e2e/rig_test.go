@@ -30,6 +30,7 @@ import (
 
 const (
 	token    = "e2e-token"
+	actor    = "e2e"
 	pgRole   = "godwit"
 	leaseTTL = 5 * time.Second
 	settle   = 60 * time.Second
@@ -143,7 +144,7 @@ func (r *rig) start() {
 		"--max-attempts", "3",
 		"--drift-interval", "2s",
 	)
-	rep.cmd.Env = append(os.Environ(), "GODWIT_MASTER_KEY="+strings.Repeat("ab", 32), "GODWIT_TOKENS="+token)
+	rep.cmd.Env = append(os.Environ(), "GODWIT_MASTER_KEY="+strings.Repeat("ab", 32), "GODWIT_TOKENS="+actor+":"+token)
 	rep.cmd.Stderr = rep.logs
 	if err := rep.cmd.Start(); err != nil {
 		t.Fatal(err)

@@ -10,10 +10,11 @@ import (
 )
 
 type accessLog struct {
-	log *slog.Logger
+	log   *slog.Logger
+	actor func(header string) (string, bool)
 }
 
-func (a accessLog) observe(ctx context.Context, spec connect.Spec, start time.Time, err error) {
+func (a accessLog) observe(ctx context.Context, spec connect.Spec, header string, start time.Time, err error) {
 	method := spec.Procedure[strings.LastIndex(spec.Procedure, "/")+1:]
 	code, level := "ok", slog.LevelInfo
 	var extra []any
@@ -21,8 +22,12 @@ func (a accessLog) observe(ctx context.Context, spec connect.Spec, start time.Ti
 		code, level = connect.CodeOf(err).String(), slog.LevelWarn
 		extra = []any{"error", err.Error()}
 	}
-	attrs := append([]any{"method", method, "code", code, "duration_ms", time.Since(start).Milliseconds()}, extra...)
-	a.log.Log(ctx, level, "api call", attrs...)
+	attrs := []any{"method", method}
+	if name, ok := a.actor(header); ok {
+		attrs = append(attrs, "actor", name)
+	}
+	attrs = append(attrs, "code", code, "duration_ms", time.Since(start).Milliseconds())
+	a.log.Log(ctx, level, "api call", append(attrs, extra...)...)
 }
 
 // WrapUnary implements connect.Interceptor.
@@ -30,7 +35,7 @@ func (a accessLog) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		start := time.Now()
 		resp, err := next(ctx, req)
-		a.observe(ctx, req.Spec(), start, err)
+		a.observe(ctx, req.Spec(), req.Header().Get("Authorization"), start, err)
 
 		return resp, err
 	}
@@ -46,7 +51,7 @@ func (a accessLog) WrapStreamingHandler(next connect.StreamingHandlerFunc) conne
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
 		start := time.Now()
 		err := next(ctx, conn)
-		a.observe(ctx, conn.Spec(), start, err)
+		a.observe(ctx, conn.Spec(), conn.RequestHeader().Get("Authorization"), start, err)
 
 		return err
 	}

@@ -38,6 +38,8 @@ type stubService struct {
 	confirmed  string
 	checked    string
 	accepted   string
+	audited    *godwitv1.ListAuditRequest
+	entries    []*godwitv1.AuditEntry
 	run        *godwitv1.Run
 	runs       []*godwitv1.Run
 	events     []*godwitv1.Run
@@ -174,6 +176,15 @@ func (s *stubService) AcceptBaseline(_ context.Context, req *connect.Request[god
 	}
 
 	return connect.NewResponse(&godwitv1.AcceptBaselineResponse{}), nil
+}
+
+func (s *stubService) ListAudit(_ context.Context, req *connect.Request[godwitv1.ListAuditRequest]) (*connect.Response[godwitv1.ListAuditResponse], error) {
+	s.audited = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(&godwitv1.ListAuditResponse{Entries: s.entries}), nil
 }
 
 func startStub(t *testing.T, svc *stubService) string {
@@ -334,7 +345,8 @@ func TestMigrate(t *testing.T) {
 	url := startStub(t, stub)
 
 	code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t),
-		"--rollout", "expand-contract", "--ack", "H001,H003", "--skip-validation", "--lock-timeout", "3s", "--statement-timeout", "0")
+		"--rollout", "expand-contract", "--ack", "H001,H003", "--skip-validation", "--lock-timeout", "3s", "--statement-timeout", "0",
+		"--source", "github.com/org/repo@abc:db")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -344,7 +356,7 @@ func TestMigrate(t *testing.T) {
 	}
 	c := stub.created
 	if c.Target != "app" || c.Rollout != "expand-contract" || !c.SkipValidation || strings.Join(c.AcknowledgeHazards, ",") != "H001,H003" ||
-		c.LockTimeout != "3s" || c.StatementTimeout != "0" {
+		c.LockTimeout != "3s" || c.StatementTimeout != "0" || c.Source != "github.com/org/repo@abc:db" {
 		t.Fatalf("request = %v", c)
 	}
 	if len(c.Files) != 2 || c.Files[0].Name != "20260901120000_users.up.sql" || c.Files[1].Name != "20260901120000_users.down.sql" ||
@@ -582,7 +594,7 @@ func TestRunGet(t *testing.T) {
 	stub := &stubService{run: &godwitv1.Run{
 		Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1,
 		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", Kind: "migrate", LockTimeout: "2s", StatementTimeout: "1m",
-		CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
+		CreatedBy: "ci", Source: "github.com/org/repo@abc:db", CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
 	}}
 	url := startStub(t, stub)
 
@@ -591,7 +603,7 @@ func TestRunGet(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "run r1: succeeded (attempt 1)\n  target: app\n  kind: migrate\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
-		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
+		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created_by: ci\n  source: github.com/org/repo@abc:db\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
 	if out != want || stub.got != "r1" {
 		t.Fatalf("out = %q, got = %q", out, stub.got)
 	}
@@ -704,8 +716,8 @@ func TestRuns(t *testing.T) {
 	t.Parallel()
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	stub := &stubService{runs: []*godwitv1.Run{
-		{Id: "r1", Target: "app", Kind: "baseline", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Rollout: "direct", CreatedAt: timestamppb.New(created)},
-		{Id: "r2", Target: "app", Kind: "migrate", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, Rollout: "expand-contract", Phase: "expand"},
+		{Id: "r1", Target: "app", Kind: "baseline", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Rollout: "direct", CreatedBy: "ops", CreatedAt: timestamppb.New(created)},
+		{Id: "r2", Target: "app", Kind: "migrate", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, Rollout: "expand-contract", Phase: "expand", CreatedBy: "ci", Source: "repo@sha:db"},
 	}}
 	url := startStub(t, stub)
 
@@ -713,9 +725,9 @@ func TestRuns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "ID  TARGET  KIND      STATE              ROLLOUT          PHASE   CREATED\n" +
-		"r1  app     baseline  succeeded          direct                   2026-09-01T12:00:00Z\n" +
-		"r2  app     migrate   awaiting_contract  expand-contract  expand  \n"
+	want := "ID  TARGET  KIND      STATE              ROLLOUT          PHASE   BY   SOURCE       CREATED\n" +
+		"r1  app     baseline  succeeded          direct                   ops               2026-09-01T12:00:00Z\n" +
+		"r2  app     migrate   awaiting_contract  expand-contract  expand  ci   repo@sha:db  \n"
 	if out != want || stub.listed.Target != "app" {
 		t.Fatalf("out = %q, target = %q", out, stub.listed.Target)
 	}
@@ -762,6 +774,37 @@ func TestDrift(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 	if code, _, errOut := runCLI("drift", "accept", "app", "--server", url); code != 1 || errOut != "godwit: target app: not found\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestAudit(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	stub := &stubService{entries: []*godwitv1.AuditEntry{
+		{Id: 2, At: timestamppb.New(at), Actor: "ci", Action: "run.create", Target: "app", RunId: "r1", Detail: "rollout=direct migrations=2"},
+		{Id: 1, At: timestamppb.New(at), Actor: "ops", Action: "target.register", Target: "app"},
+	}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("audit", "--server", url, "--token", "tok", "--target", "app", "--run", "r1", "--limit", "5")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := "AT                    ACTOR  ACTION           TARGET  RUN  DETAIL\n" +
+		"2026-09-01T12:00:00Z  ci     run.create       app     r1   rollout=direct migrations=2\n" +
+		"2026-09-01T12:00:00Z  ops    target.register  app          \n"
+	if out != want || stub.audited.Target != "app" || stub.audited.RunId != "r1" || stub.audited.Limit != 5 || stub.auth != "Bearer tok" {
+		t.Fatalf("out = %q, request = %v, auth = %q", out, stub.audited, stub.auth)
+	}
+
+	code, out, _ = runCLI("audit", "--server", url, "--json")
+	if code != 0 || len(decodeJSON(t, out)["entries"].([]any)) != 2 {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	stub.err = connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token"))
+	if code, _, errOut := runCLI("audit", "--server", url); code != 1 || errOut != "godwit: invalid or missing bearer token\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }

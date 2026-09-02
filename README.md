@@ -31,10 +31,11 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Out-of-order guard | A pending version older than the newest one already applied on the target is refused at admission; `allow_out_of_order` lets it through and is logged — see [Out-of-order migrations](#out-of-order-migrations). |
 | Dry run | `PlanRun` / `migrate --dry-run` puts the files through the same admission as a real run (hazard gate, order guard, scratch validation) against a live target and returns what it would do — applied or pending per migration, the expand/contract split, statements with hazards — without queueing anything. The Action posts it as a PR comment — see [Dry run](#dry-run). |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
-| API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
-| CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target add`, `target baseline`, `target status`, `run`, `runs`, `revert` and `drift` cover the rest. |
+| API | gRPC and JSON over one connect endpoint, named bearer tokens, `WatchRun` streaming. |
+| Audit | Every token has a name; every mutation records who did it, and runs keep their creator and source (`repo@sha:dir`). `ListAudit` / `godwit audit` answer "who changed prod?" — see [Access and audit](#access-and-audit). |
+| CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target add`, `target baseline`, `target status`, `run`, `runs`, `revert`, `drift` and `audit` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
-| Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
+| Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call with its actor, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
 | Notifications | Every run transition and drift event goes to Slack (one message per run, threaded or edited in place) and/or a JSON webhook, delivered off the run's critical path — see [Notifications](#notifications). |
 | Deploy | Helm chart (two replicas, probes, PDB, ServiceMonitor, Ingress) and ArgoCD PreSync/PostSync hook examples — see [Deploy](#deploy). |
 
@@ -126,6 +127,28 @@ dry run on prod (rollout expand-contract, validated on a scratch database)
 
 `--format markdown` adds `Phase` and `Status` columns to the `plan` table under a `## godwit dry run` heading; `--format json` wraps the `plan` shape in `{target, rollout, validated, migrations: [{..., applied, phase}]}`; `--json` prints the raw response. A refusal exits 1 with the reason on stderr, as `migrate` would.
 
+## Access and audit
+
+`GODWIT_TOKENS` names every bearer token the service accepts: `ci:<secret>,samuel:<secret>`. A call authenticates with the secret and acts as the name, so "who" is a property of the credential, not a claim in the request. A bare `<secret>` keeps working and acts as `anonymous`; a service with no tokens at all is open and everything is `anonymous`. Names are all the spec carries for now; scopes are not implemented.
+
+The actor follows every mutation:
+
+- `cp_runs.created_by` is the actor that created the run (migrate, revert or baseline) and `source` is free text the caller attached, meant for a provenance pointer such as `github.com/org/repo@<sha>:db/migrations` — the GitHub Action fills it in from `${{ github.repository }}@${{ github.sha }}` and the migration directory, `godwit migrate --source` sets it by hand. Both show on `run get`, `runs` and `GetRun`.
+- Every mutating call appends one row to `cp_audit`: `at`, `actor`, `action`, `run_id`, `target`, `detail`. Actions are `target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm` and `drift.accept`; `detail` is short structured text (`rollout=direct migrations=3 acked=H001 source=…`), never a migration body or a secret. The audit row is written after the mutation succeeds and a failed audit write is logged, not returned: the mutation already happened, and failing the call would only make the client retry it.
+- The access log carries `actor`, Slack messages show an *Actor* field, and the webhook payload gains `actor`.
+
+`ListAudit{target?, run_id?, limit?}` / `godwit audit [--target] [--run] [--limit]` reads the log newest first (100 entries by default):
+
+```
+$ godwit audit --target prod --limit 3
+AT                    ACTOR   ACTION        TARGET  RUN                                   DETAIL
+2026-09-01T14:02:11Z  samuel  run.confirm   prod    6f1c2a30-7d5e-4b1a-9c3e-2f8d1e0a4b7c
+2026-09-01T13:58:40Z  ci      run.create    prod    6f1c2a30-7d5e-4b1a-9c3e-2f8d1e0a4b7c  rollout=expand-contract migrations=2 acked= source=github.com/acme/shop@a1b2c3d:db/migrations
+2026-09-01T09:12:03Z  samuel  drift.accept  prod
+```
+
+Reads (`GetRun`, `ListRuns`, `GetTargetStatus`, `CheckDrift`, `ListAudit`, …) are not audited; the access log has them.
+
 ## Credentials
 
 Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
@@ -170,9 +193,9 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
 | `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault [--lock-timeout] [--statement-timeout]`, `target baseline <name> --version <v> [--dir]`, `target status <name> [--dir]` |
-| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--allow-out-of-order] [--lock-timeout] [--statement-timeout]`, `migrate --dry-run [--format text\|markdown\|json]` — admission and plan only, no run |
+| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--allow-out-of-order] [--lock-timeout] [--statement-timeout] [--source]`, `migrate --dry-run [--format text\|markdown\|json]` — admission and plan only, no run |
 | `status` — applied state per migration | `revert <run-id> [--lock-timeout] [--statement-timeout]`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
-| `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
+| `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>`, `audit [--target] [--run] [--limit]` |
 
 `--server` and `--token` fall back to `GODWIT_SERVER` and `GODWIT_TOKEN`; `--json` prints the raw API response. `migrate` and `revert` stream the run until it settles and exit 0 on `succeeded`/`awaiting_contract`, 1 on `failed`/`needs_attention`. `run confirm --latest` confirms the newest run on the target still in `awaiting_contract` when no run id is at hand (a PostSync hook, a shell); it fails when there is none unless `--allow-none` makes that a no-op.
 
@@ -220,7 +243,7 @@ steps:
   - run: godwit run confirm "${{ steps.migrate.outputs.run-id }}"
 ```
 
-Inputs: `command` (`lint`|`plan`|`migrate`), `dir`, `base`, `ack`, `server`, `token`, `target`, `rollout`, `dry-run` (`false`), `comment` (`true`), `github-token`, `go-version` (`1.26`). Anything left empty falls back to `godwit.yaml`. Outputs: `run-id`, `blocking`, `summary-path`. The runner needs `gcc` (cgo), `jq` and `gh` — all present on `ubuntu-latest`.
+Inputs: `command` (`lint`|`plan`|`migrate`), `dir`, `base`, `ack`, `server`, `token`, `target`, `rollout`, `source` (default `<repository>@<sha>[:<dir>]`), `dry-run` (`false`), `comment` (`true`), `github-token`, `go-version` (`1.26`). Anything left empty falls back to `godwit.yaml`. Outputs: `run-id`, `blocking`, `summary-path`. The runner needs `gcc` (cgo), `jq` and `gh` — all present on `ubuntu-latest`.
 
 Until the repository goes public only the owner's repositories can `uses:` it; anywhere else, `go install github.com/SamuelMolling/godwit/cmd/godwit@main` and call the same commands (`--format markdown` on `lint`, `plan` and `migrate --dry-run`).
 
@@ -239,7 +262,7 @@ Until the repository goes public only the owner's repositories can `uses:` it; a
 | `GODWIT_SLACK_TOKEN` | Bot token (`chat:write`); setting it enables Slack. `GODWIT_SLACK_CHANNEL` is then required. |
 | `GODWIT_SLACK_MODE` | `thread` (default): one root message per run, each transition a threaded reply, root kept current. `edit`: one message rewritten in place. Drift gets its own message per detection, with the resolution threaded under it. |
 | `GODWIT_PUBLIC_URL` | Adds an "Open run" button pointing at `<url>/ui/runs/<id>`. |
-| `GODWIT_WEBHOOK_URL` | POSTs every event as JSON (`kind`, `type`, `target`, `run_id`, `state`, `attempt`, `rollout`, `phase`, `detail`, `at`, `text`). |
+| `GODWIT_WEBHOOK_URL` | POSTs every event as JSON (`kind`, `type`, `target`, `run_id`, `state`, `attempt`, `rollout`, `phase`, `actor`, `detail`, `at`, `text`). |
 
 Both providers can be on at once. Each has its own queue (256 events, one worker, 10 s per delivery, 3 retries with backoff and `Retry-After` on 429); a full queue drops the event with a warning rather than slowing a run. The Slack message timestamp is stored in the control-plane database, so any replica can keep the thread going. `godwit_notifications_total{provider,result}` counts `delivered`, `failed` and `dropped`.
 
@@ -271,7 +294,7 @@ Probes live on the same listener, also unauthenticated: `GET /healthz` answers 2
 |---|---|
 | `run`, `target`, `attempt`, `state` | Which run, on which target, which attempt, where it ended (`run claimed`, `run finished`). |
 | `version`, `stmt`, `kind`, `duration_ms` | Per-statement lines from the executor (with `run` and `target`): migration version, statement index, `tx` / `no_tx`, wall time. The SQL text is never logged. |
-| `method`, `code`, `duration_ms` | Access log for every API call; `ok` at info, any other connect code at warn with the error text. |
+| `method`, `actor`, `code`, `duration_ms` | Access log for every API call; `ok` at info, any other connect code at warn with the error text. `actor` is the token name (absent when the token was refused). |
 | `error` | Error text where something went wrong (the pgx connect error, the SQLSTATE, the refused hazard). |
 
 What never reaches the log: DSNs, tokens, credential files, Vault responses, target config, migration bodies. Clean drift checks log at debug, so `--log-level debug` is the way to watch the monitor tick. `/metrics`, `/healthz` and `/readyz` are plain HTTP routes and stay out of the access log.

@@ -154,6 +154,7 @@ func RunEvent(r Run, typ, detail string) notify.Event {
 		Attempt: r.Attempts,
 		Rollout: r.Rollout,
 		Phase:   r.Phase,
+		Actor:   r.Provenance.CreatedBy,
 		Detail:  detail,
 		At:      time.Now(),
 	}

@@ -136,6 +136,31 @@ CREATE TABLE cp_notifications (
 		UpSQL:    `ALTER TABLE cp_runs ADD COLUMN kind text NOT NULL DEFAULT 'migrate' CHECK (kind IN ('migrate', 'baseline'));`,
 		DownSQL:  `ALTER TABLE cp_runs DROP COLUMN kind;`,
 	},
+	{
+		Version:  20260901000007,
+		Name:     "audit",
+		Checksum: "cp-audit-v1",
+		UpSQL: `
+ALTER TABLE cp_runs
+	ADD COLUMN created_by text NOT NULL DEFAULT 'anonymous',
+	ADD COLUMN source     text NOT NULL DEFAULT '';
+
+CREATE TABLE cp_audit (
+	id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	at      timestamptz NOT NULL DEFAULT now(),
+	actor   text NOT NULL,
+	action  text NOT NULL,
+	run_id  uuid,
+	target  text NOT NULL,
+	detail  text NOT NULL DEFAULT ''
+);
+
+CREATE INDEX cp_audit_target_at_idx ON cp_audit (target, at DESC);
+CREATE INDEX cp_audit_run_id_idx ON cp_audit (run_id) WHERE run_id IS NOT NULL;`,
+		DownSQL: `
+DROP TABLE cp_audit;
+ALTER TABLE cp_runs DROP COLUMN source, DROP COLUMN created_by;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

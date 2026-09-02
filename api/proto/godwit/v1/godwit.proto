@@ -42,6 +42,10 @@ message Run {
   string statement_timeout = 12;
   // "migrate" or "baseline".
   string kind = 13;
+  // Name of the token that created the run ("anonymous" for unnamed tokens).
+  string created_by = 14;
+  // Free-text provenance given at creation, e.g. github.com/org/repo@<sha>:db/migrations.
+  string source = 15;
 }
 
 message RegisterTargetRequest {
@@ -77,6 +81,8 @@ message CreateRunRequest {
   string statement_timeout = 7;
   // Apply pending versions older than the newest applied one instead of refusing them.
   bool allow_out_of_order = 8;
+  // Where the files come from, kept on the run for provenance (free text).
+  string source = 9;
 }
 
 message CreateRunResponse {
@@ -201,6 +207,30 @@ message GetTargetStatusResponse {
   DriftBaseline drift_baseline = 8;
 }
 
+message ListAuditRequest {
+  string target = 1;
+  string run_id = 2;
+  // Newest entries first; 100 when zero.
+  int32 limit = 3;
+}
+
+message AuditEntry {
+  int64 id = 1;
+  google.protobuf.Timestamp at = 2;
+  // Token name behind the call.
+  string actor = 3;
+  // target.register, target.baseline, run.create, run.revert, run.resume, run.park, run.confirm or drift.accept.
+  string action = 4;
+  string run_id = 5;
+  string target = 6;
+  // Short key=value summary of the request; never a migration body or a secret.
+  string detail = 7;
+}
+
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+}
+
 message GetRunRequest {
   string run_id = 1;
 }
@@ -276,4 +306,5 @@ service GodwitService {
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);
   rpc BaselineTarget(BaselineTargetRequest) returns (BaselineTargetResponse);
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
 }

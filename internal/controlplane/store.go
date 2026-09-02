@@ -67,8 +67,15 @@ type Run struct {
 	Reverts    string
 	Kind       string
 	Timeouts   Timeouts
+	Provenance Provenance
 	CreatedAt  time.Time
 	FinishedAt *time.Time
+}
+
+// Provenance records who created a run and where its files came from.
+type Provenance struct {
+	CreatedBy string
+	Source    string
 }
 
 // Store persists targets, runs, files and leases in the control-plane database.
@@ -134,8 +141,8 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	return provider, config, nil
 }
 
-// CreateRun queues a run with its migration files and per-run timeout overrides.
-func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts) error {
+// CreateRun queues a run with its migration files, per-run timeout overrides and provenance.
+func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
 	for name, body := range files {
@@ -143,11 +150,11 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 		bodies = append(bodies, body)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout, lock_timeout, statement_timeout)
-			VALUES ($1, $2, 'queued', $5, nullif($6, ''), nullif($7, '')))
+		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout, lock_timeout, statement_timeout, created_by, source)
+			VALUES ($1, $2, 'queued', $5, nullif($6, ''), nullif($7, ''), $8, $9))
 		INSERT INTO cp_run_files (run_id, name, body)
 		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
-		id, target, names, bodies, rollout, t.Lock, t.Statement); err != nil {
+		id, target, names, bodies, rollout, t.Lock, t.Statement, p.CreatedBy, p.Source); err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
 
@@ -155,7 +162,7 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 }
 
 // CreateBaseline records an already-succeeded baseline run holding the files that describe the target's current schema.
-func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map[string]string) error {
+func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map[string]string, p Provenance) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
 	for name, body := range files {
@@ -163,11 +170,11 @@ func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map
 		bodies = append(bodies, body)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		WITH r AS (INSERT INTO cp_runs (id, target, state, kind, finished_at)
-			VALUES ($1, $2, 'succeeded', 'baseline', now()))
+		WITH r AS (INSERT INTO cp_runs (id, target, state, kind, finished_at, created_by, source)
+			VALUES ($1, $2, 'succeeded', 'baseline', now(), $5, $6))
 		INSERT INTO cp_run_files (run_id, name, body)
 		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
-		id, target, names, bodies); err != nil {
+		id, target, names, bodies, p.CreatedBy, p.Source); err != nil {
 		return fmt.Errorf("create baseline: %w", err)
 	}
 
@@ -176,16 +183,16 @@ func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map
 
 // CreateRevert queues a run that applies the down side of another run's files.
 // Only the latest non-reverted run on an idle target can be reverted.
-func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeouts) error {
+func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeouts, p Provenance) error {
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO cp_runs (id, target, state, reverts, lock_timeout, statement_timeout)
-		SELECT $1, o.target, 'queued', o.id, nullif($3, ''), nullif($4, '') FROM cp_runs o
+		INSERT INTO cp_runs (id, target, state, reverts, lock_timeout, statement_timeout, created_by, source)
+		SELECT $1, o.target, 'queued', o.id, nullif($3, ''), nullif($4, ''), $5, $6 FROM cp_runs o
 		WHERE o.id = $2 AND o.state IN ('succeeded', 'awaiting_contract', 'failed', 'needs_attention')
 		  AND NOT EXISTS (
 			SELECT 1 FROM cp_runs r WHERE r.target = o.target AND r.id <> o.id
 			  AND (r.state IN ('queued', 'running')
 			    OR (r.reverts IS NULL AND r.state <> 'reverted' AND r.created_at > o.created_at)))`,
-		id, original, t.Lock, t.Statement)
+		id, original, t.Lock, t.Statement, p.CreatedBy, p.Source)
 	if err != nil {
 		return fmt.Errorf("create revert: %w", err)
 	}
@@ -197,12 +204,12 @@ func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeout
 }
 
 const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
-	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at`
+	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source`
 
 func (r *Run) fields() []any {
 	return []any{
 		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
-		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt,
+		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt, &r.Provenance.CreatedBy, &r.Provenance.Source,
 	}
 }
 
