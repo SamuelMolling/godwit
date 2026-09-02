@@ -55,7 +55,7 @@ func TestRunLifecycle(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "11111111-1111-1111-1111-111111111111", "app", RolloutDirect, goodFiles()); err != nil {
+	if err := s.CreateRun(ctx, "11111111-1111-1111-1111-111111111111", "app", RolloutDirect, goodFiles(), Timeouts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,30 +145,30 @@ func TestCreateRevert(t *testing.T) {
 	queueRun(t, s, first, goodFiles())
 	queueRun(t, s, second, goodFiles())
 
-	if err := s.CreateRevert(ctx, revert, first); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, revert, first, Timeouts{}); !errors.Is(err, ErrNotRevertable) {
 		t.Fatalf("revert queued run: err = %v", err)
 	}
 	if err := s.Finish(ctx, first, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRevert(ctx, revert, first); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, revert, first, Timeouts{}); !errors.Is(err, ErrNotRevertable) {
 		t.Fatalf("revert with a later queued run: err = %v", err)
 	}
 	if err := s.Finish(ctx, second, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRevert(ctx, revert, first); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, revert, first, Timeouts{}); !errors.Is(err, ErrNotRevertable) {
 		t.Fatalf("revert with a later succeeded run: err = %v", err)
 	}
 
-	if err := s.CreateRevert(ctx, revert, second); err != nil {
+	if err := s.CreateRevert(ctx, revert, second, Timeouts{}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Run(ctx, revert)
 	if err != nil || r.State != StateQueued || r.Reverts != second || r.Target != "app" {
 		t.Fatalf("revert run = %+v, err = %v", r, err)
 	}
-	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000004", second); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000004", second, Timeouts{}); !errors.Is(err, ErrNotRevertable) {
 		t.Fatalf("double revert: err = %v", err)
 	}
 	if err := s.Finish(ctx, revert, StateFailed, "boom"); err != nil {
@@ -191,7 +191,7 @@ func TestCreateRevert(t *testing.T) {
 		t.Fatalf("history = %v, err = %v", history, err)
 	}
 
-	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000005", first); err != nil {
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000005", first, Timeouts{}); err != nil {
 		t.Fatalf("first is the latest again: %v", err)
 	}
 }
@@ -204,7 +204,7 @@ func TestClaimRecoversExpiredLease(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "33333333-3333-3333-3333-333333333333", "app", RolloutDirect, goodFiles()); err != nil {
+	if err := s.CreateRun(ctx, "33333333-3333-3333-3333-333333333333", "app", RolloutDirect, goodFiles(), Timeouts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,7 +235,7 @@ func TestClaimSerializesPerTarget(t *testing.T) {
 		"66666666-6666-6666-6666-666666666666": "b",
 	}
 	for id, target := range ids {
-		if err := s.CreateRun(ctx, id, target, RolloutDirect, goodFiles()); err != nil {
+		if err := s.CreateRun(ctx, id, target, RolloutDirect, goodFiles(), Timeouts{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -261,7 +261,7 @@ func TestCreateRunUnknownTarget(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStore(t)
-	err := s.CreateRun(context.Background(), "77777777-7777-7777-7777-777777777777", "ghost", RolloutDirect, goodFiles())
+	err := s.CreateRun(context.Background(), "77777777-7777-7777-7777-777777777777", "ghost", RolloutDirect, goodFiles(), Timeouts{})
 	if err == nil || !strings.Contains(err.Error(), "create run") {
 		t.Fatalf("err = %v", err)
 	}
@@ -286,7 +286,7 @@ func TestStoreQueryErrors(t *testing.T) {
 	if _, _, err := s.Target(ctx, "x"); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.CreateRun(ctx, "id", "x", RolloutDirect, nil); err == nil {
+	if err := s.CreateRun(ctx, "id", "x", RolloutDirect, nil, Timeouts{}); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := s.Run(ctx, "id"); err == nil {
@@ -313,7 +313,7 @@ func TestStoreQueryErrors(t *testing.T) {
 	if _, err := s.RunStats(ctx); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.CreateRevert(ctx, "id", "id"); err == nil {
+	if err := s.CreateRevert(ctx, "id", "id", Timeouts{}); err == nil {
 		t.Fatal("want error")
 	}
 	if err := s.Confirm(ctx, "id"); err == nil {

@@ -11,33 +11,41 @@ import (
 	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
+// ApplyRequest is one run's worth of plans plus the effective execution options.
+type ApplyRequest struct {
+	RunID  string
+	Target string
+	DSN    string
+	Plans  []engine.Plan
+	Opts   engine.Options
+}
+
 // Engine applies plans to a target database and inspects its schema.
 type Engine interface {
-	Apply(ctx context.Context, target, dsn string, plans []engine.Plan) error
+	Apply(ctx context.Context, req ApplyRequest) error
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 }
 
 // PGEngine is the PostgreSQL Engine; Metrics and Log are optional.
 type PGEngine struct {
-	Opts    engine.Options
 	Metrics *metrics.Metrics
 	Log     *slog.Logger
 }
 
 // Apply implements Engine.
-func (e PGEngine) Apply(ctx context.Context, target, dsn string, plans []engine.Plan) error {
-	conn, err := pgx.Connect(ctx, dsn)
+func (e PGEngine) Apply(ctx context.Context, req ApplyRequest) error {
+	conn, err := pgx.Connect(ctx, req.DSN)
 	if err != nil {
 		return fmt.Errorf("connect target: %w", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	_, err = applyPlans(ctx, conn, e.Opts, plans, engine.WithObserver(e.observer(target)))
+	_, err = applyPlans(ctx, conn, req.Opts, req.Plans, engine.WithObserver(e.observer(req.RunID, req.Target)))
 
 	return err
 }
 
-func (e PGEngine) observer(target string) func(engine.StatementEvent) {
+func (e PGEngine) observer(runID, target string) func(engine.StatementEvent) {
 	log := e.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -52,7 +60,7 @@ func (e PGEngine) observer(target string) func(engine.StatementEvent) {
 			e.Metrics.Statement(target, kind, ev.Duration, ev.Err)
 		}
 		attrs := []any{
-			"target", target, "version", ev.Version, "stmt", ev.Index,
+			"run", runID, "target", target, "version", ev.Version, "stmt", ev.Index,
 			"kind", kind, "duration_ms", ev.Duration.Milliseconds(),
 		}
 		if ev.Err != nil {

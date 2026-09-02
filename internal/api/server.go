@@ -98,6 +98,15 @@ func invalid(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
 }
 
+func timeouts(lock, statement string) (controlplane.Timeouts, error) {
+	t := controlplane.Timeouts{Lock: lock, Statement: statement}
+	if _, err := t.Options(); err != nil {
+		return controlplane.Timeouts{}, invalid(err.Error())
+	}
+
+	return t, nil
+}
+
 // RegisterTarget stores a target with its credential provider config.
 func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwitv1.RegisterTargetRequest]) (*connect.Response[godwitv1.RegisterTargetResponse], error) {
 	m := req.Msg
@@ -131,10 +140,21 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	default:
 		return nil, invalid("unknown provider " + m.Provider)
 	}
+	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if t.Lock != "" {
+		config[controlplane.ConfigLockTimeout] = t.Lock
+	}
+	if t.Statement != "" {
+		config[controlplane.ConfigStatementTimeout] = t.Statement
+	}
 	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider)
+	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider,
+		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
@@ -155,6 +175,10 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if _, ok := controlplane.Policies()[rollout]; !ok {
 		return nil, invalid("unknown rollout policy " + rollout)
 	}
+	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
+	if err != nil {
+		return nil, err
+	}
 	files := map[string]string{}
 	for _, f := range m.Files {
 		files[f.Name] = f.Body
@@ -168,14 +192,14 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 
 	id := s.newID()
-	if err := s.store.CreateRun(ctx, id, m.Target, rollout, files); err != nil {
+	if err := s.store.CreateRun(ctx, id, m.Target, rollout, files, t); err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", rollout,
-		"files", len(files), "acked", m.AcknowledgeHazards)
+		"files", len(files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement)
 	s.emit(ctx, controlplane.Run{
 		ID: id, Target: m.Target, State: controlplane.StateQueued,
-		Rollout: rollout, Phase: controlplane.PhaseExpand,
+		Rollout: rollout, Phase: controlplane.PhaseExpand, Timeouts: t,
 	}, notify.RunCreated, "")
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
@@ -184,6 +208,10 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 // RevertRun queues a run applying the down side of an earlier run's migrations.
 func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
 	m := req.Msg
+	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
+	if err != nil {
+		return nil, err
+	}
 	orig, err := s.store.Run(ctx, m.RunId)
 	if err != nil {
 		return nil, rpcErr(err)
@@ -201,11 +229,12 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	}
 
 	id := s.newID()
-	if err := s.store.CreateRevert(ctx, id, m.RunId); err != nil {
+	if err := s.store.CreateRevert(ctx, id, m.RunId, t); err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards)
-	s.emit(ctx, controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId},
+	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards,
+		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
+	s.emit(ctx, controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId, Timeouts: t},
 		notify.RunCreated, "reverts run "+notify.ShortID(m.RunId))
 
 	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
@@ -269,6 +298,8 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		Phase:     r.Phase,
 		Reverts:   r.Reverts,
 		CreatedAt: timestamppb.New(r.CreatedAt),
+
+		LockTimeout: r.Timeouts.Lock, StatementTimeout: r.Timeouts.Statement,
 	}
 	if r.FinishedAt != nil {
 		out.FinishedAt = timestamppb.New(*r.FinishedAt)

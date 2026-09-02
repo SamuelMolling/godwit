@@ -202,25 +202,36 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
 		held = len(contract)
 	}
 
-	dsn, err := s.targetDSN(ctx, run.Target)
+	dsn, defaults, err := s.target(ctx, run.Target)
+	if err != nil {
+		return 0, err
+	}
+	opts, err := run.Timeouts.Over(defaults).Options()
 	if err != nil {
 		return 0, err
 	}
 
-	return held, s.engine.Apply(ctx, run.Target, dsn, plans)
+	return held, s.engine.Apply(ctx, ApplyRequest{RunID: run.ID, Target: run.Target, DSN: dsn, Plans: plans, Opts: opts})
 }
 
 func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error) {
-	providerName, config, err := s.store.Target(ctx, target)
+	dsn, _, err := s.target(ctx, target)
+
+	return dsn, err
+}
+
+func (s *Scheduler) target(ctx context.Context, name string) (string, Timeouts, error) {
+	providerName, config, err := s.store.Target(ctx, name)
 	if err != nil {
-		return "", err
+		return "", Timeouts{}, err
 	}
 	provider, ok := s.providers[providerName]
 	if !ok {
-		return "", fmt.Errorf("unknown credential provider %q", providerName)
+		return "", Timeouts{}, fmt.Errorf("unknown credential provider %q", providerName)
 	}
+	dsn, err := provider.DSN(ctx, config)
 
-	return provider.DSN(ctx, config)
+	return dsn, TargetTimeouts(config), err
 }
 
 func (s *Scheduler) heartbeat(ctx context.Context, runID string) {

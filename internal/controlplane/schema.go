@@ -122,6 +122,13 @@ CREATE TABLE cp_notifications (
 );`,
 		DownSQL: `DROP TABLE cp_notifications;`,
 	},
+	{
+		Version:  20260901000005,
+		Name:     "timeouts",
+		Checksum: "cp-timeouts-v1",
+		UpSQL:    `ALTER TABLE cp_runs ADD COLUMN lock_timeout text, ADD COLUMN statement_timeout text;`,
+		DownSQL:  `ALTER TABLE cp_runs DROP COLUMN lock_timeout, DROP COLUMN statement_timeout;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

@@ -175,7 +175,8 @@ rpc RegisterTarget '{
   "name": "app-vault",
   "provider": "vault",
   "vaultPath": "secret/data/app",
-  "vaultTemplate": "postgres://{{user}}:{{password}}@{{host}}:5432/app?sslmode=disable"
+  "vaultTemplate": "postgres://{{user}}:{{password}}@{{host}}:5432/app?sslmode=disable",
+  "lockTimeout": "2s"
 }' 18475
 VT_ID=$(rpc CreateRun '{
   "target": "app-vault",
@@ -192,6 +193,24 @@ done
 echo "state: $STATE (credentials resolved from Vault at claim time)"
 
 echo
+echo "==> timeouts: the target caps lock waits at 2s; this run also caps every statement at 1s, so pg_sleep(3) fails fast"
+TO_ID=$(rpc CreateRun '{
+  "target": "app-vault",
+  "statementTimeout": "1s",
+  "files": [
+    {"name": "20260901180000_slow.up.sql", "body": "SELECT pg_sleep(3);"},
+    {"name": "20260901180000_slow.down.sql", "body": "SELECT 1;"}
+  ]
+}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$TO_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_FAILED" ] && break
+  sleep 1
+done
+docker compose exec -T godwit-2 /godwit run get "$TO_ID" --server http://localhost:8474 --token demo-token
+curl -s localhost:18475/metrics | grep -E '^godwit_statement_failures_total'
+
+echo
 echo "==> the same API from the CLI: every run so far"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
 
@@ -200,5 +219,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"
