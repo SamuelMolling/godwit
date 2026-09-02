@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 540" role="img" aria-label="godwit">
+  <defs>
+    <linearGradient id="copperGradient" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#F2A252"/>
+      <stop offset="0.56" stop-color="#E77B30"/>
+      <stop offset="1" stop-color="#D95E1F"/>
+    </linearGradient>
+    <linearGradient id="tanGradient" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#B88356"/>
+      <stop offset="1" stop-color="#D2A071"/>
+    </linearGradient>
+    <linearGradient id="beigeGradient" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#F0E2C8"/>
+      <stop offset="1" stop-color="#D7BF96"/>
+    </linearGradient>
+    <linearGradient id="charcoalGradient" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#29303A"/>
+      <stop offset="1" stop-color="#141820"/>
+    </linearGradient>
+    <style>
+      .charcoal-fill { fill: url(#charcoalGradient); }
+      .wordmark {
+        fill: #F0E2C8;
+        font-family: "Avenir Next", Avenir, Montserrat, "Helvetica Neue", Arial, sans-serif;
+        font-size: 198px;
+        font-weight: 500;
+        letter-spacing: -4px;
+      }
+    </style>
+  </defs>
+  <g id="bird" transform="translate(150 45)">
+    <path id="back-wing-tan" fill="url(#tanGradient)" d="M26 244 C88 222 128 188 182 150 C243 107 296 83 342 100 C368 109 385 128 389 154 C335 156 287 169 240 190 C179 217 113 241 26 244 Z"/>
+    <path id="body-beige" fill="url(#beigeGradient)" d="M147 257 C202 206 282 160 388 157 C386 226 344 285 274 302 C221 316 169 298 104 265 C121 263 134 260 147 257 Z"/>
+    <path id="front-wing-charcoal" class="charcoal-fill" d="M5 270 C59 258 107 235 157 202 C217 162 278 142 363 148 C328 197 291 236 244 255 C187 278 112 285 5 270 Z"/>
+    <path id="tail-tip-charcoal" class="charcoal-fill" d="M5 270 C54 266 94 256 137 241 C110 264 62 280 5 270 Z"/>
+    <path id="neck-and-chest-copper" fill="url(#copperGradient)" d="M326 232 C362 183 372 139 342 80 C319 36 338 0 381 0 C415 0 435 20 449 49 C451 53 456 57 462 59 L434 77 C418 79 407 79 395 83 C392 123 424 150 419 211 C416 251 390 290 326 310 C349 274 350 255 326 232 Z"/>
+    <path id="chest-beige-edge" fill="url(#beigeGradient)" d="M379 225 C397 206 410 184 416 157 C424 206 405 270 326 310 C347 282 367 254 379 225 Z"/>
+    <path id="head-copper" fill="url(#copperGradient)" d="M343 59 C333 17 358 -12 399 2 C425 11 443 32 451 58 C436 70 417 78 395 82 C378 85 359 78 343 59 Z"/>
+    <circle id="eye" cx="396" cy="30" r="6.8" fill="#1C2028"/>
+    <path id="beak-base" fill="#665746" d="M455 55 L487 70 L444 78 L434 76 Z"/>
+    <path id="beak-long" class="charcoal-fill" d="M483 66 L565 121 L560 126 L444 78 Z"/>
+    <path id="leg" fill="#1C2028" d="M281 308 L300 308 L289 364 L301 448 L288 448 L273 365 Z"/>
+    <path id="water-line-top" fill="#C5B18D" d="M36 450 C132 443 292 442 463 448 C347 455 185 457 36 450 Z"/>
+    <path id="water-line-mid" fill="#C5B18D" d="M122 465 C199 460 285 460 373 465 C284 471 199 471 122 465 Z"/>
+    <path id="water-line-small" fill="#C5B18D" d="M184 481 C218 477 249 477 282 481 C248 486 217 486 184 481 Z"/>
+  </g>
+  <g id="wordmark" transform="translate(790 110) scale(0.9)">
+    <text class="wordmark" x="0" y="194" transform="scale(1.42 1)">godwit</text>
+    <rect id="copper-underline" x="352" y="266" width="203" height="7" fill="#E0641D"/>
+  </g>
+</svg>

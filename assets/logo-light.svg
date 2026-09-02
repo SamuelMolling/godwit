@@ -20,7 +20,7 @@
     <style>
       .charcoal-fill { fill: url(#charcoalGradient); }
       .wordmark {
-        fill: #F0E2C8;
+        fill: #1C2028;
         font-family: "Avenir Next", Avenir, Montserrat, "Helvetica Neue", Arial, sans-serif;
         font-size: 198px;
         font-weight: 500;
@@ -28,7 +28,6 @@
       }
     </style>
   </defs>
-  <rect width="1600" height="540" fill="#000000"/>
   <g id="bird" transform="translate(150 45)">
     <path id="back-wing-tan" fill="url(#tanGradient)" d="M26 244 C88 222 128 188 182 150 C243 107 296 83 342 100 C368 109 385 128 389 154 C335 156 287 169 240 190 C179 217 113 241 26 244 Z"/>
     <path id="body-beige" fill="url(#beigeGradient)" d="M147 257 C202 206 282 160 388 157 C386 226 344 285 274 302 C221 316 169 298 104 265 C121 263 134 260 147 257 Z"/>
