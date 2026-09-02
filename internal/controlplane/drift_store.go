@@ -80,14 +80,16 @@ func (s *Store) SnapshotTargets(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// RecordDrift opens a drift event unless an identical one is open; reports whether it did.
-func (s *Store) RecordDrift(ctx context.Context, target, diff string) (bool, error) {
+// RecordDrift opens a drift event while baseline is still the target's fingerprint and no identical one is open; reports whether it did.
+func (s *Store) RecordDrift(ctx context.Context, target, baseline, diff string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO cp_drift_events (target, diff)
-		SELECT $1, $2 WHERE NOT EXISTS (
+		SELECT target, $3 FROM cp_snapshots
+		WHERE target = $1 AND fingerprint = $2 AND NOT EXISTS (
 			SELECT 1 FROM cp_drift_events
-			WHERE target = $1 AND diff = $2 AND resolved_at IS NULL)`,
-		target, diff)
+			WHERE target = $1 AND diff = $3 AND resolved_at IS NULL)
+		FOR UPDATE`,
+		target, baseline, diff)
 	if err != nil {
 		return false, fmt.Errorf("record drift: %w", err)
 	}
