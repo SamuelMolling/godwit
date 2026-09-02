@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/pashagolub/pgxmock/v4"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
@@ -31,7 +32,12 @@ func (i stubInspector) Observe(context.Context, string) (controlplane.Observatio
 func TestGetTargetStatus(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := NewServer(nil, nil, nil, nil)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	now := time.Now()
 	finished := now.Add(time.Minute)
 	s.Inspector = stubInspector{status: controlplane.TargetStatus{
@@ -61,12 +67,13 @@ func TestGetTargetStatus(t *testing.T) {
 		t.Fatalf("bad files: %v", err)
 	}
 
+	expectReadyCount(mock, 2)
 	res, err := s.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "app", Files: files}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := res.Msg
-	if got.Target != "app" || got.Provider != "static" || got.LockTimeout != "3s" || got.StatementTimeout != "1m" {
+	if got.Target != "app" || got.Provider != "static" || got.LockTimeout != "3s" || got.StatementTimeout != "1m" || got.ReadyPlans != 2 {
 		t.Fatalf("head = %+v", got)
 	}
 	if len(got.Applied) != 2 || !got.Applied[0].ChecksumMismatch || got.Applied[1].ChecksumMismatch ||
@@ -84,9 +91,15 @@ func TestGetTargetStatus(t *testing.T) {
 	}
 
 	s.Inspector = stubInspector{status: controlplane.TargetStatus{Target: "bare", Provider: "static"}}
+	expectReadyCount(mock, 0)
 	res, err = s.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "bare"}))
-	if err != nil || len(res.Msg.Applied) != 0 || len(res.Msg.Pending) != 0 || res.Msg.LastRun != nil || res.Msg.DriftBaseline != nil {
+	if err != nil || len(res.Msg.Applied) != 0 || len(res.Msg.Pending) != 0 || res.Msg.LastRun != nil || res.Msg.DriftBaseline != nil ||
+		res.Msg.ReadyPlans != 0 {
 		t.Fatalf("bare = %+v, err = %v", res, err)
+	}
+	mock.ExpectQuery("SELECT count").WithArgs("bare", pgxmock.AnyArg()).WillReturnError(errors.New("count down"))
+	if _, err := s.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "bare"})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("count error: %v", err)
 	}
 
 	s.Inspector = stubInspector{err: controlplane.ErrNotFound}
@@ -97,4 +110,11 @@ func TestGetTargetStatus(t *testing.T) {
 	if _, err := s.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "app"})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("internal: %v", err)
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func expectReadyCount(mock pgxmock.PgxPoolIface, n int) {
+	mock.ExpectQuery("SELECT count").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(n))
 }

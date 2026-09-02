@@ -87,6 +87,8 @@ message CreateRunRequest {
   bool allow_out_of_order = 8;
   // Where the files come from, kept on the run for provenance (free text).
   string source = 9;
+  // Bind this stored plan explicitly; files may be omitted (the plan supplies them) and target must match when set.
+  string plan_id = 10;
 }
 
 message CreateRunResponse {
@@ -180,6 +182,47 @@ message PlanRunResponse {
   string drift = 8;
 }
 
+message Plan {
+  string id = 1;
+  string target = 2;
+  string key = 3;
+  string rollout = 4;
+  // "ready", "bound" or "superseded".
+  string state = 5;
+  PlanObservation observed = 6;
+  string drift = 7;
+  repeated PlannedMigration migrations = 8;
+  bool validated = 9;
+  repeated string acknowledged_hazards = 10;
+  bool allow_out_of_order = 11;
+  string created_by = 12;
+  string source = 13;
+  google.protobuf.Timestamp created_at = 14;
+  // The run that applied the plan, when bound.
+  string run_id = 15;
+  // The plan that replaced this one, when superseded.
+  string superseded_by = 16;
+}
+
+message GetPlanRequest {
+  string plan_id = 1;
+}
+
+message GetPlanResponse {
+  Plan plan = 1;
+}
+
+message ListPlansRequest {
+  string target = 1;
+  // Page size; 100 when zero.
+  int32 limit = 2;
+}
+
+message ListPlansResponse {
+  // Newest first.
+  repeated Plan plans = 1;
+}
+
 message CheckDriftRequest {
   string target = 1;
 }
@@ -256,6 +299,8 @@ message GetTargetStatusResponse {
   repeated PendingMigration pending = 6;
   Run last_run = 7;
   DriftBaseline drift_baseline = 8;
+  // Stored plans still bindable on the target.
+  int32 ready_plans = 9;
 }
 
 message ListAuditRequest {
@@ -358,4 +403,6 @@ service GodwitService {
   rpc BaselineTarget(BaselineTargetRequest) returns (BaselineTargetResponse);
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+  rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
+  rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
 }

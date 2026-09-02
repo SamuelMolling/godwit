@@ -18,7 +18,7 @@ func newServeCmd() *cobra.Command {
 	var driftInterval, leaseTTL, tickInterval time.Duration
 	var maxAttempts int
 	var skipValidation, requirePlan bool
-	var planTTL time.Duration
+	var planTTL, planRetention time.Duration
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the godwit control-plane service",
@@ -58,6 +58,7 @@ func newServeCmd() *cobra.Command {
 				SkipValidation: skipValidation,
 				RequirePlan:    requirePlan,
 				PlanTTL:        planTTL,
+				PlanRetention:  planRetention,
 				Log:            log,
 			})
 		},
@@ -71,6 +72,7 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "disable scratch-database validation at run admission")
 	cmd.Flags().BoolVar(&requirePlan, "require-plan", false, "refuse runs without a stored plan on every target")
 	cmd.Flags().DurationVar(&planTTL, "plan-ttl", 720*time.Hour, "how long a stored plan stays bindable")
+	cmd.Flags().DurationVar(&planRetention, "plan-retention", 2160*time.Hour, "how long bound and superseded plans are kept before the drift ticker deletes them")
 	cmd.Flags().StringVar(&logFormat, "log-format", envOr("GODWIT_LOG_FORMAT", "json"), "log format: json or text")
 	cmd.Flags().StringVar(&logLevel, "log-level", envOr("GODWIT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
 	_ = cmd.MarkFlagRequired("store-dsn")

@@ -106,14 +106,22 @@ func newMigrateCmd() *cobra.Command {
 			if !ok {
 				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
 			}
-			if req.Target == "" {
+			if req.Target == "" && req.PlanId == "" {
 				return errors.New("--target (or target in godwit.yaml) is required")
 			}
-			files, err := migrationFiles(dir)
-			if err != nil {
-				return err
+			if req.PlanId != "" && dryRun {
+				return errors.New("--plan cannot be combined with --dry-run")
 			}
-			req.Files = files
+			if req.PlanId != "" && !cmd.Flags().Changed("rollout") {
+				req.Rollout = ""
+			}
+			if req.PlanId == "" || cmd.Flags().Changed("dir") {
+				files, err := migrationFiles(dir)
+				if err != nil {
+					return err
+				}
+				req.Files = files
+			}
 			if dryRun {
 				return flags.dryRun(cmd, client, req, write)
 			}
@@ -138,6 +146,7 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "run the admission checks on the service and print the plan without queueing a run")
 	cmd.Flags().StringVar(&format, "format", "text", "dry-run output format: text, markdown or json")
 	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the run (e.g. github.com/org/repo@<sha>:db/migrations)")
+	cmd.Flags().StringVar(&req.PlanId, "plan", "", "bind this stored plan by id; the plan supplies target, rollout and files unless given explicitly")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
@@ -341,8 +350,8 @@ func newRunGetCmd() *cobra.Command {
 				return err
 			}
 			r := resp.Msg.Run
-			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created_by: %s\n  source: %s\n  created: %s\n  finished: %s",
-				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, stamp(r.CreatedAt), stamp(r.FinishedAt)))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created_by: %s\n  source: %s\n  plan: %s\n  created: %s\n  finished: %s",
+				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, r.PlanId, stamp(r.CreatedAt), stamp(r.FinishedAt)))
 
 			return nil
 		}),

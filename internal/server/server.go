@@ -46,7 +46,9 @@ type Config struct {
 	RequirePlan    bool
 	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
 	PlanTTL time.Duration
-	Log     *slog.Logger
+	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
+	PlanRetention time.Duration
+	Log           *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
@@ -95,6 +97,7 @@ func Run(ctx context.Context, cfg Config) error {
 	go sched.Run(ctx)
 
 	drift := controlplane.NewDriftMonitor(store, sched, eng, notifier, cfg.DriftInterval, log)
+	drift.PlanRetention = cfg.PlanRetention
 	go drift.Run(ctx)
 
 	var validator api.Validator

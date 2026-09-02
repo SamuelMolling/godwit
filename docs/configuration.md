@@ -52,6 +52,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--skip-validation` | `false` | disable the scratch-database validation at admission (also disables `validated` in `PlanRun`) |
 | `--require-plan` | `false` | refuse every `CreateRun` that does not bind to a stored plan, on every target (targets registered with `--require-plan` refuse on their own) |
 | `--plan-ttl` | `720h` | stored plans older than this are ignored at `CreateRun` (treated as no plan) |
+| `--plan-retention` | `2160h` | `bound` and `superseded` plans older than this are deleted on the drift ticker (`ready` plans and plans of unfinished runs are kept); the run keeps its `run.create` audit entry, its `plan_id` becomes empty |
 | `--log-format` | `GODWIT_LOG_FORMAT` or `json` | `json` or `text` |
 | `--log-level` | `GODWIT_LOG_LEVEL` or `info` | `debug`, `info`, `warn` or `error` |
 
@@ -92,7 +93,7 @@ Rules, enforced at start-up: name and secret must be non-empty; scope must be on
 
 | Scope | Allows |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit` |
 | `pipeline` | read + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | pipeline + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
 | `admin` | operator + `RegisterTarget` |
@@ -124,7 +125,9 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
 | `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
-| `godwit migrate` | `--target`, `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--lock-timeout`, `--statement-timeout`, `--dry-run`, `--format text\|markdown\|json` (dry run only) | pipeline (`--dry-run`: read) |
+| `godwit plan show <plan-id>` | `--format text\|markdown\|json` | read; statements, hazards and recipes, observation, drift, state, run id, superseded-by |
+| `godwit plans` | `--target`, `--limit` | read; newest first |
+| `godwit migrate` | `--target`, `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--lock-timeout`, `--statement-timeout`, `--dry-run`, `--format text\|markdown\|json` (dry run only), `--plan <plan-id>` | pipeline (`--dry-run`: read) |
 | `godwit revert <run-id>` | `--ack`, `--skip-validation`, `--lock-timeout`, `--statement-timeout` | pipeline |
 | `godwit run get <run-id>` | | read |
 | `godwit run watch <run-id>` | | read; exits 1 on `failed` / `needs_attention` |
@@ -135,7 +138,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit drift accept <target>` | | operator |
 | `godwit audit` | `--target`, `--run`, `--limit` | read |
 
-`migrate` prints `plan <id>: bound` or `no stored plan for this set: implicit plan` before streaming; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
+`migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound` or `no stored plan for this set: implicit plan` before streaming; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 
 ## GitHub Action inputs
 

@@ -93,6 +93,48 @@ func (s *Store) ListPlans(ctx context.Context, target string, limit int) ([]Plan
 	return out, nil
 }
 
+// PlanFiles returns the migration files stored with a plan.
+func (s *Store) PlanFiles(ctx context.Context, id string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT name, body FROM cp_plan_files WHERE plan_id = $1`, id)
+	if err != nil {
+		return nil, fmt.Errorf("list plan files: %w", err)
+	}
+	files := map[string]string{}
+	var name, body string
+	if _, err := pgx.ForEachRow(rows, []any{&name, &body}, func() error {
+		files[name] = body
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read plan files: %w", err)
+	}
+
+	return files, nil
+}
+
+// ReadyPlanCount counts a target's ready plans created at or after since.
+func (s *Store) ReadyPlanCount(ctx context.Context, target string, since time.Time) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM cp_plans WHERE target = $1 AND state = 'ready' AND created_at >= $2`,
+		target, since).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count ready plans: %w", err)
+	}
+
+	return n, nil
+}
+
+// SweepPlans deletes bound and superseded plans created before olderThan, keeping those an unfinished run still applies.
+func (s *Store) SweepPlans(ctx context.Context, olderThan time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM cp_plans p WHERE p.state IN ('bound', 'superseded') AND p.created_at < $1
+		AND NOT EXISTS (SELECT 1 FROM cp_runs r WHERE r.plan_id = p.id AND r.finished_at IS NULL)`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("sweep plans: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
 // BindPlan marks a ready plan as applied by a run.
 func (s *Store) BindPlan(ctx context.Context, id, runID string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE cp_plans SET state = 'bound', run_id = $2 WHERE id = $1 AND state = 'ready'`, id, runID)
