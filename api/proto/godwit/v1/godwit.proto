@@ -123,6 +123,42 @@ message BaselineTargetResponse {
   string run_id = 1;
 }
 
+message GetTargetStatusRequest {
+  string target = 1;
+  // Optional: when given, versions missing on the target are reported as pending and checksums are compared.
+  repeated MigrationFile files = 2;
+}
+
+message AppliedMigration {
+  int64 version = 1;
+  string name = 2;
+  string checksum = 3;
+  google.protobuf.Timestamp applied_at = 4;
+  bool checksum_mismatch = 5;
+}
+
+message PendingMigration {
+  int64 version = 1;
+  string name = 2;
+}
+
+message DriftBaseline {
+  google.protobuf.Timestamp taken_at = 1;
+  string run_id = 2;
+  bool unresolved_drift = 3;
+}
+
+message GetTargetStatusResponse {
+  string target = 1;
+  string provider = 2;
+  string lock_timeout = 3;
+  string statement_timeout = 4;
+  repeated AppliedMigration applied = 5;
+  repeated PendingMigration pending = 6;
+  Run last_run = 7;
+  DriftBaseline drift_baseline = 8;
+}
+
 message GetRunRequest {
   string run_id = 1;
 }
@@ -195,4 +231,5 @@ service GodwitService {
   rpc ListDriftEvents(ListDriftEventsRequest) returns (ListDriftEventsResponse);
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);
   rpc BaselineTarget(BaselineTargetRequest) returns (BaselineTargetResponse);
+  rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
 }

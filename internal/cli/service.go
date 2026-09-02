@@ -22,7 +22,7 @@ func newTargetCmd() *cobra.Command {
 		Use:   "target",
 		Short: "Manage targets on the service",
 	}
-	cmd.AddCommand(newTargetAddCmd(), newTargetBaselineCmd())
+	cmd.AddCommand(newTargetAddCmd(), newTargetBaselineCmd(), newTargetStatusCmd())
 
 	return cmd
 }

@@ -110,6 +110,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Log = log
 	apiSrv.Notifier = notifier
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
+	apiSrv.Inspector = controlplane.NewInspector(sched)
 	srv := &http.Server{
 		Handler:           api.Handler(apiSrv, cfg.Tokens),
 		ReadHeaderTimeout: 10 * time.Second,

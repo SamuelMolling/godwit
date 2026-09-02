@@ -108,6 +108,9 @@ func TestDriftDisabled(t *testing.T) {
 	if _, err := s.BaselineTarget(ctx, connect.NewRequest(&godwitv1.BaselineTargetRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("err = %v", err)
 	}
+	if _, err := s.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestCheckHazards(t *testing.T) {

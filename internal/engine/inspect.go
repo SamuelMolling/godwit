@@ -7,9 +7,49 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// Applied is one row of the target's godwit.migrations table.
+type Applied struct {
+	Version   int64
+	Name      string
+	Checksum  string
+	AppliedAt time.Time
+}
+
+// ListApplied reads the applied versions without creating godwit's tables; a database never migrated reports none.
+func ListApplied(ctx context.Context, db DB) ([]Applied, error) {
+	var present bool
+	if err := db.QueryRow(ctx, `SELECT to_regclass('godwit.migrations') IS NOT NULL`).Scan(&present); err != nil {
+		return nil, fmt.Errorf("probe godwit schema: %w", err)
+	}
+	if !present {
+		return nil, nil
+	}
+
+	return readApplied(ctx, db)
+}
+
+func readApplied(ctx context.Context, db DB) ([]Applied, error) {
+	rows, err := db.Query(ctx, `SELECT version, name, checksum, applied_at FROM godwit.migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("list applied: %w", err)
+	}
+	var out []Applied
+	var a Applied
+	if _, err := pgx.ForEachRow(rows, []any{&a.Version, &a.Name, &a.Checksum, &a.AppliedAt}, func() error {
+		out = append(out, a)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read applied: %w", err)
+	}
+
+	return out, nil
+}
 
 // Snapshot renders a canonical description of the schema plus its sha256 fingerprint.
 func Snapshot(ctx context.Context, db DB) (definition, fingerprint string, err error) {

@@ -20,11 +20,12 @@ type ApplyRequest struct {
 	Opts   engine.Options
 }
 
-// Engine applies plans to a target database, marks migrations applied and inspects its schema.
+// Engine applies plans to a target database, marks migrations applied and inspects its schema and journal.
 type Engine interface {
 	Apply(ctx context.Context, req ApplyRequest) error
 	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
+	Applied(ctx context.Context, dsn string) ([]engine.Applied, error)
 }
 
 // PGEngine is the PostgreSQL Engine; Metrics and Log are optional.
@@ -93,4 +94,15 @@ func (PGEngine) Snapshot(ctx context.Context, dsn string) (string, string, error
 	defer func() { _ = conn.Close(context.Background()) }()
 
 	return engine.Snapshot(ctx, conn)
+}
+
+// Applied implements Engine.
+func (PGEngine) Applied(ctx context.Context, dsn string) ([]engine.Applied, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect target: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	return engine.ListApplied(ctx, conn)
 }

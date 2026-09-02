@@ -14,6 +14,7 @@ type Snapshot struct {
 	Target      string
 	Fingerprint string
 	Definition  string
+	RunID       string
 	TakenAt     time.Time
 }
 
@@ -49,8 +50,8 @@ func (s *Store) SaveSnapshot(ctx context.Context, target, fingerprint, definitio
 func (s *Store) SnapshotFor(ctx context.Context, target string) (Snapshot, error) {
 	var snap Snapshot
 	err := s.pool.QueryRow(ctx,
-		`SELECT target, fingerprint, definition, taken_at FROM cp_snapshots WHERE target = $1`,
-		target).Scan(&snap.Target, &snap.Fingerprint, &snap.Definition, &snap.TakenAt)
+		`SELECT target, fingerprint, definition, coalesce(run_id::text, ''), taken_at FROM cp_snapshots WHERE target = $1`,
+		target).Scan(&snap.Target, &snap.Fingerprint, &snap.Definition, &snap.RunID, &snap.TakenAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Snapshot{}, fmt.Errorf("snapshot for %q: %w", target, ErrNotFound)
 	}
@@ -59,6 +60,18 @@ func (s *Store) SnapshotFor(ctx context.Context, target string) (Snapshot, error
 	}
 
 	return snap, nil
+}
+
+// OpenDrift reports whether target has a drift event nobody has resolved or re-baselined.
+func (s *Store) OpenDrift(ctx context.Context, target string) (bool, error) {
+	var open bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM cp_drift_events WHERE target = $1 AND resolved_at IS NULL)`,
+		target).Scan(&open); err != nil {
+		return false, fmt.Errorf("check open drift: %w", err)
+	}
+
+	return open, nil
 }
 
 // SnapshotTargets lists targets that have an expected schema recorded.

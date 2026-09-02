@@ -295,24 +295,13 @@ func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, e
 	if err := bootstrap(ctx, e.db); err != nil {
 		return nil, err
 	}
-	rows, err := e.db.Query(ctx, `SELECT version, checksum, applied_at FROM godwit.migrations`)
+	applied, err := readApplied(ctx, e.db)
 	if err != nil {
-		return nil, fmt.Errorf("list applied: %w", err)
+		return nil, err
 	}
-
-	type appliedRow struct {
-		checksum  string
-		appliedAt time.Time
-	}
-	appliedBy := map[int64]appliedRow{}
-	var version int64
-	var row appliedRow
-	if _, err := pgx.ForEachRow(rows, []any{&version, &row.checksum, &row.appliedAt}, func() error {
-		appliedBy[version] = row
-
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("read applied: %w", err)
+	appliedBy := make(map[int64]Applied, len(applied))
+	for _, a := range applied {
+		appliedBy[a.Version] = a
 	}
 
 	out := make([]StatusRow, 0, len(migs))
@@ -320,8 +309,8 @@ func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, e
 		row := StatusRow{Version: m.Version, Name: m.Name}
 		if a, ok := appliedBy[m.Version]; ok {
 			row.Applied = true
-			row.Drifted = a.checksum != m.Checksum
-			row.AppliedAt = a.appliedAt
+			row.Drifted = a.Checksum != m.Checksum
+			row.AppliedAt = a.AppliedAt
 		}
 		out = append(out, row)
 	}
