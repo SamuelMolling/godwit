@@ -16,25 +16,28 @@ inputs:
     description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003"
     default: ""
   server:
-    description: "godwit service URL (migrate; default: server from godwit.yaml or GODWIT_SERVER)"
+    description: "godwit service URL (plan, migrate; default: server from godwit.yaml or GODWIT_SERVER)"
     default: ""
   token:
-    description: "Bearer token for the service (migrate)"
+    description: "Bearer token for the service (plan: read scope, migrate: pipeline scope)"
     default: ""
   target:
-    description: "Target name (migrate; default: target from godwit.yaml)"
+    description: "Target name (plan, migrate; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
     default: ""
   rollout:
-    description: "Rollout policy for migrate: direct or expand-contract (default: godwit.yaml, else direct)"
+    description: "Rollout policy for plan and migrate: direct or expand-contract (default: godwit.yaml, else direct)"
     default: ""
   dry-run:
-    description: "With migrate: ask the service for the admitted plan (hazards, order, scratch validation, applied state, phases) without queueing a run"
+    description: "With migrate: ask the service for the admitted plan without persisting it and without queueing a run (command: plan persists it)"
     default: "false"
   source:
-    description: "Provenance recorded on the run (migrate; default: <repository>@<sha>[:<dir>])"
+    description: "Provenance recorded on the plan or run (default: <repository>@<sha>[:<dir>])"
     default: ""
   comment:
     description: "Post the lint, plan or dry-run report as one sticky pull request comment (needs pull-requests: write)"
+    default: "true"
+  comment-on-push:
+    description: "On push events, post the migrate outcome on the pull request(s) merged by the commit (needs pull-requests: write)"
     default: "true"
   github-token:
     description: "Token used to post the pull request comment"
@@ -47,6 +50,15 @@ outputs:
   run-id:
     description: "Run id created by migrate"
     value: ${{ steps.godwit.outputs.run-id }}
+  plan-id:
+    description: "Id of the plan stored by plan, or bound by migrate (empty for an implicit run)"
+    value: ${{ steps.godwit.outputs.plan-id }}
+  plan-key:
+    description: "Key of the plan stored by plan"
+    value: ${{ steps.godwit.outputs.plan-key }}
+  stale:
+    description: "true when migrate was refused because the stored plan is stale or required (exit 3)"
+    value: ${{ steps.godwit.outputs.stale }}
   blocking:
     description: "Number of blocking lint findings"
     value: ${{ steps.godwit.outputs.blocking }}
@@ -86,10 +98,14 @@ runs:
       run: |
         set -euo pipefail
         godwit="${RUNNER_TEMP}/godwit"
-        summary="${RUNNER_TEMP}/godwit-${COMMAND}.md"
+        work="$(mktemp -d "${RUNNER_TEMP}/godwit-${COMMAND}.XXXXXX")"
+        summary="${work}/summary.md"
         status=0
         blocking=""
         run_id=""
+        plan_id=""
+        plan_key=""
+        stale=false
 
         ensure_base() {
           if git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
@@ -100,8 +116,29 @@ runs:
           esac
         }
 
+        remote_args() {
+          if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
+          if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+          if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
+          if [ -n "${ROLLOUT}" ]; then args+=(--rollout "${ROLLOUT}"); fi
+          if [ -z "${SOURCE}" ]; then
+            SOURCE="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+            if [ -n "${DIR}" ]; then SOURCE="${SOURCE}:${DIR}"; fi
+          fi
+          args+=(--source "${SOURCE}")
+        }
+
+        refused() {
+          {
+            printf '## godwit %s\n\n%s:\n\n```\n' "$1" "$2"
+            sed 's/^godwit: //' "${errors}"
+            printf '```\n'
+          } >"${summary}"
+        }
+
         dir_args=()
         if [ -n "${DIR}" ]; then dir_args+=(--dir "${DIR}"); fi
+        errors="${work}/errors.txt"
 
         case "${COMMAND}" in
           lint)
@@ -112,53 +149,50 @@ runs:
               args+=(--base "${BASE}")
             fi
             "${godwit}" lint ${args[@]+"${args[@]}"} --format markdown >"${summary}" || status=$?
-            "${godwit}" lint ${args[@]+"${args[@]}"} --format json >"${RUNNER_TEMP}/godwit-lint.json" 2>/dev/null || true
-            blocking="$(jq -r '.blocking // 0' "${RUNNER_TEMP}/godwit-lint.json" 2>/dev/null || true)"
+            "${godwit}" lint ${args[@]+"${args[@]}"} --format json >"${work}/lint.json" 2>/dev/null || true
+            blocking="$(jq -r '.blocking // 0' "${work}/lint.json" 2>/dev/null || true)"
             blocking="${blocking:-0}"
             ;;
           plan)
-            "${godwit}" plan ${dir_args[@]+"${dir_args[@]}"} --format markdown >"${summary}" || status=$?
+            args=(${dir_args[@]+"${dir_args[@]}"})
+            remote_args
+            "${godwit}" plan ${args[@]+"${args[@]}"} --format markdown >"${summary}" 2>"${errors}" || status=$?
+            cat "${errors}" >&2
+            if [ ! -s "${summary}" ]; then
+              refused plan refused
+            fi
+            plan_id="$(sed -n 's/^## godwit plan \(.*\)$/\1/p' "${summary}" | head -n 1)"
+            plan_key="$(sed -n 's/^key: \(.*\)$/\1/p' "${summary}" | head -n 1)"
             ;;
           migrate)
             args=(${dir_args[@]+"${dir_args[@]}"})
-            if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
-            if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
-            if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
-            if [ -n "${ROLLOUT}" ]; then args+=(--rollout "${ROLLOUT}"); fi
-            if [ -z "${SOURCE}" ]; then
-              SOURCE="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}@${GITHUB_SHA}"
-              if [ -n "${DIR}" ]; then SOURCE="${SOURCE}:${DIR}"; fi
-            fi
-            args+=(--source "${SOURCE}")
-            errors="${RUNNER_TEMP}/godwit-migrate.err"
-            events="${RUNNER_TEMP}/godwit-migrate.jsonl"
+            remote_args
+            events="${work}/events.jsonl"
             if [ "${DRY_RUN}" = "true" ]; then
               "${godwit}" migrate ${args[@]+"${args[@]}"} --dry-run --format markdown >"${summary}" 2>"${errors}" || status=$?
               cat "${errors}" >&2
               if [ ! -s "${summary}" ]; then
-                {
-                  printf '## godwit dry run\n\nrefused:\n\n```\n'
-                  cat "${errors}"
-                  printf '```\n'
-                } >"${summary}"
+                refused "dry run" refused
               fi
             else
               "${godwit}" migrate ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
               cat "${errors}" >&2
               last="$(tail -n 1 "${events}" 2>/dev/null || true)"
               run_id="$(printf '%s' "${last}" | jq -r '.run.id // empty' 2>/dev/null || true)"
-              {
-                printf '## godwit migrate\n\n'
-                if [ -n "${last}" ]; then
-                  printf '%s' "${last}" | jq -r '.run | "run `\(.id)`: **\(.state | ascii_downcase | ltrimstr("run_state_"))**" + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
-                elif [ -s "${errors}" ]; then
-                  printf 'no run created:\n\n```\n'
-                  cat "${errors}"
-                  printf '```\n'
-                else
-                  printf 'no run created\n'
-                fi
-              } >"${summary}"
+              plan_id="$(printf '%s' "${last}" | jq -r '.run.planId // empty' 2>/dev/null || true)"
+              if [ "${status}" = "3" ]; then
+                stale=true
+                refused migrate "refused: the stored plan is stale or missing, push to the pull request to re-plan"
+              elif [ -n "${last}" ]; then
+                {
+                  printf '## godwit migrate\n\n'
+                  printf '%s' "${last}" | jq -r '.run | "run `\(.id)`: **\(.state | ascii_downcase | ltrimstr("run_state_"))**" + (if .planId != "" and .planId != null then " (plan `\(.planId)`)" else " (implicit plan)" end) + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
+                } >"${summary}"
+              elif [ -s "${errors}" ]; then
+                refused migrate "no run created"
+              else
+                printf '## godwit migrate\n\nno run created\n' >"${summary}"
+              fi
             fi
             ;;
           *)
@@ -173,34 +207,27 @@ runs:
           printf 'status=%s\n' "${status}"
           printf 'blocking=%s\n' "${blocking}"
           printf 'run-id=%s\n' "${run_id}"
+          printf 'plan-id=%s\n' "${plan_id}"
+          printf 'plan-key=%s\n' "${plan_key}"
+          printf 'stale=%s\n' "${stale}"
           printf 'summary-path=%s\n' "${summary}"
         } >>"${GITHUB_OUTPUT}"
 
     - name: Comment on the pull request
-      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' && (inputs.command != 'migrate' || inputs.dry-run == 'true') }}
+      if: ${{ inputs.comment == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        COMMAND: ${{ inputs.command }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        COMMENT_ON_PUSH: ${{ inputs.comment-on-push }}
         MARKER: "<!-- godwit:${{ inputs.dry-run == 'true' && 'dry-run' || inputs.command }} -->"
         SUMMARY: ${{ steps.godwit.outputs.summary-path }}
+        EVENT_NAME: ${{ github.event_name }}
+        REPOSITORY: ${{ github.repository }}
+        SHA: ${{ github.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-      run: |
-        set -euo pipefail
-        body="${RUNNER_TEMP}/godwit-comment.md"
-        { printf '%s\n' "${MARKER}"; cat "${SUMMARY}"; } >"${body}"
-        ids="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-          --jq '.[] | select(.body | startswith(env.MARKER)) | .id')"
-        id="$(printf '%s\n' "${ids}" | awk 'NF { print; exit }')"
-        if [ -n "${id}" ]; then
-          url="repos/${GITHUB_REPOSITORY}/issues/comments/${id}"
-          method=PATCH
-        else
-          url="repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments"
-          method=POST
-        fi
-        if ! gh api --method "${method}" "${url}" -F "body=@${body}" >/dev/null; then
-          echo "::warning::godwit: could not post the pull request comment (does the token have pull-requests: write?)"
-        fi
+      run: "${{ github.action_path }}/scripts/action-comment.sh"
 
     - name: Propagate the exit status
       shell: bash

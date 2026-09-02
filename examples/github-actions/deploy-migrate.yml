@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write   # the outcome is posted on the pull request this commit merged
 
 concurrency: migrate-orders   # one pipeline per target at a time
 
@@ -20,6 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No plan id to pass: the service finds the plan the pull request stored from the files
+      # themselves (same target, rollout and pending set = same key) and refuses if the target moved.
       - name: Queue the run (expand phase applies now, contract waits)
         id: migrate
         uses: SamuelMolling/godwit@main
@@ -33,7 +36,7 @@ jobs:
           # Provenance stored on the run; this is also the default when omitted.
           source: ${{ github.server_url }}/${{ github.repository }}@${{ github.sha }}:db/migrations
 
-      - run: echo "run ${{ steps.migrate.outputs.run-id }}"
+      - run: echo "run ${{ steps.migrate.outputs.run-id }} bound to plan ${{ steps.migrate.outputs.plan-id }}"
 
   contract:
     needs: expand

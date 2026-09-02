@@ -32,24 +32,28 @@ It builds godwit from the checked-out action ref with `actions/setup-go` (`CGO_E
 | `command` | required | `lint`, `plan`, `migrate` |
 | `dir` | `dir` from `godwit.yaml`, else `migrations` | all |
 | `base` | `origin/main` | lint: only migrations added since the ref are linted, files modified since it are `E003`; empty checks every file. The ref is fetched depth-1 when missing |
-| `ack` | — | lint, migrate: comma-separated hazard codes |
-| `server` | `server` from `godwit.yaml` or `GODWIT_SERVER` | migrate |
-| `token` | — | migrate; exported as `GODWIT_TOKEN`, never passed on the command line |
-| `target` | `target` from `godwit.yaml` | migrate |
-| `rollout` | `godwit.yaml`, else `direct` | migrate |
-| `dry-run` | `false` | migrate: `PlanRun` instead of `CreateRun`, markdown report, no run |
-| `source` | `<host>/<owner>/<repo>@<sha>[:<dir>]` | migrate: provenance stored on the run (`cp_runs.source`) |
-| `comment` | `true` | post the report as one sticky pull request comment |
-| `github-token` | `${{ github.token }}` | for the comment (`pull-requests: write`) |
+| `ack` | — | lint, plan, migrate: comma-separated hazard codes |
+| `server` | `server` from `godwit.yaml` or `GODWIT_SERVER` | plan, migrate |
+| `token` | — | plan (`read`), migrate (`pipeline`); exported as `GODWIT_TOKEN`, never passed on the command line |
+| `target` | `target` from `godwit.yaml` | plan, migrate. With a target, `plan` runs on the service and stores the plan; without one it parses the files offline |
+| `rollout` | `godwit.yaml`, else `direct` | plan, migrate: part of the plan key, so both must agree |
+| `dry-run` | `false` | migrate: `PlanRun` without persisting, markdown report, no run (`command: plan` is the persisting variant) |
+| `source` | `<host>/<owner>/<repo>@<sha>[:<dir>]` | plan, migrate: provenance stored on the plan (`cp_plans.source`) or run (`cp_runs.source`) |
+| `comment` | `true` | post the lint, plan or dry-run report as one sticky pull request comment |
+| `comment-on-push` | `true` | on `push`, post the migrate outcome on the pull request(s) the commit merged |
+| `github-token` | `${{ github.token }}` | for the comments (`pull-requests: write`) |
 | `go-version` | `1.26` | build |
 
 | Output | Meaning |
 |---|---|
 | `run-id` | id of the run created by `migrate` (empty for dry runs and refusals) |
+| `plan-id` | id of the plan stored by `plan` on the service, or bound by `migrate` (empty offline and for implicit runs) |
+| `plan-key` | key of the plan stored by `plan` (same files, target and rollout give the same key on every push) |
+| `stale` | `true` when `migrate` exited 3: the stored plan is stale or the target requires one |
 | `blocking` | number of blocking lint findings |
 | `summary-path` | file with the markdown report, also appended to the job summary |
 
-The comment is posted only on `pull_request` events, and never for a real `migrate`. It is found and replaced by a hidden marker: `<!-- godwit:lint -->`, `<!-- godwit:plan -->` or `<!-- godwit:dry-run -->`, so lint, plan and dry run each keep one comment per pull request. A failed comment is a workflow warning, not a failure.
+Comments are sticky: each is found and replaced by a hidden marker, `<!-- godwit:lint -->`, `<!-- godwit:plan -->`, `<!-- godwit:dry-run -->` or `<!-- godwit:migrate -->`, so each command keeps one comment per pull request. On `pull_request` events lint, plan and dry run post their report; a real `migrate` never does. On `push` events only `migrate` posts, and it looks the pull request(s) up from the commit (`GET /repos/{owner}/{repo}/commits/{sha}/pulls`): the outcome of the merge lands on the pull request that shipped it, with the run id and state, the SQL error, or the `PlanStale` report. A push that merged no pull request posts nothing; a failed comment is a workflow warning, not a failure.
 
 ### Pull request gate
 
@@ -67,16 +71,16 @@ jobs:
       - uses: SamuelMolling/godwit@main
         with: { command: lint }
       - uses: SamuelMolling/godwit@main
-        with: { command: plan }
-      - uses: SamuelMolling/godwit@main
         with:
-          command: migrate
-          dry-run: "true"
+          command: plan
           server: https://godwit.internal
           token: ${{ secrets.GODWIT_TOKEN_READ }}
+          target: orders
 ```
 
-`lint` needs no service. The dry run needs a token with the `read` scope only: it asks the service for the admitted plan against the real target (hazards, out-of-order check, scratch validation, which versions are already applied, which statements would be deferred to contract) and reports it. A refusal becomes a `## godwit dry run` comment with the reason and a failed step.
+`lint` needs no service. `plan` with a target needs a token with the `read` scope only: it asks the service for the admitted plan against the real target (hazards, out-of-order check, scratch validation, which versions are already applied, which statements would be deferred to contract), stores it with an observation of the target, and posts a `## godwit plan <id>` comment carrying the key, the observation and a `### Changes outside migrations` diff when the target already differs from what the last run left. That stored plan is what the merge step binds to ([concepts: plans](concepts.md#plans)); a refusal becomes a `## godwit plan` comment with the reason and a failed step. Without a target the step parses the files offline as before. `dry-run: "true"` on `migrate` gives the same report without storing anything.
+
+Turn on **"Require branches to be up to date before merging"** in the branch protection rule of the base branch: GitHub then forces a re-run of the pull request workflow after the base moves, so the plan stored last is the one computed on the exact set the merge applies. Without it the merge step still catches the difference (`PlanStale`, exit 3) but only after the merge.
 
 Acknowledging a hazard is a code change, visible in the workflow file or in the migration author's `--ack` list, never a click:
 
@@ -111,7 +115,7 @@ jobs:
       - run: echo "run ${{ steps.migrate.outputs.run-id }}"
 ```
 
-The step streams `godwit migrate --json` events, writes `## godwit migrate` with the final state (and the error when there is one) to the job summary, and exits with the run. `concurrency` is optional: the service serialises runs per target itself, and a second run created while the first is `queued`/`running` just waits. The `source` recorded on the run is `github.com/<owner>/<repo>@<sha>`, which `godwit runs` and `godwit audit` show.
+The step streams `godwit migrate --json` events, writes `## godwit migrate` with the final state, the bound plan id (or `implicit plan`) and the error when there is one, to the job summary and to the merged pull request, and exits with the run. No plan id is passed: the service computes the key from the files, the target and the rollout, finds the plan the pull request stored and refuses when the target moved since (exit 3, output `stale=true`, the report on the pull request says what moved and how to fix it). Both steps must send the same `dir`, `target` and `rollout`, otherwise the keys differ and the run is implicit (or refused when the target has `require_plan`). `concurrency` is optional: the service serialises runs per target itself, and a second run created while the first is `queued`/`running` just waits. The `source` recorded on the run is `github.com/<owner>/<repo>@<sha>`, which `godwit runs` and `godwit audit` show.
 
 ### Expand → contract in a pipeline
 
@@ -130,7 +134,7 @@ With `rollout: expand-contract` the merge step exits 0 while the run sits in `aw
 
 `deploy/argocd/` has two hook Jobs for an application whose migrations are shipped in a ConfigMap alongside the manifests.
 
-**PreSync** (`presync-job.yaml`): `godwit migrate --target=orders --dir=/migrations --rollout=expand-contract` with the `orders-migrations` ConfigMap mounted at `/migrations`, `GODWIT_SERVER=http://godwit.godwit.svc:8474`, `GODWIT_TOKEN` from Secret `orders-godwit` key `token` (scope `pipeline`). `backoffLimit: 0` (the service retries, the Job must not), `activeDeadlineSeconds: 3600`, `hook-delete-policy: BeforeHookCreation`. Exit 0 on `succeeded` or `awaiting_contract` lets the sync proceed with the schema expanded; exit 1 stops the sync, the run's error is in the Job log and in `godwit run get`.
+**PreSync** (`presync-job.yaml`): `godwit migrate --target=orders --dir=/migrations --rollout=expand-contract` with the `orders-migrations` ConfigMap mounted at `/migrations`, `GODWIT_SERVER=http://godwit.godwit.svc:8474`, `GODWIT_TOKEN` from Secret `orders-godwit` key `token` (scope `pipeline`). `backoffLimit: 0` (the service retries, the Job must not), `activeDeadlineSeconds: 3600`, `hook-delete-policy: BeforeHookCreation`. Exit 0 on `succeeded` or `awaiting_contract` lets the sync proceed with the schema expanded; exit 1 stops the sync, the run's error is in the Job log and in `godwit run get`; exit 3 means the plan stored on the pull request is stale (or required and missing): the sync stops before any pod changes and the Job log carries the diff. The PreSync run binds to the plan the pull request stored: the ConfigMap holds the same `.up.sql`/`.down.sql` bodies as the repository, and the key is computed from those bodies, the target and the rollout, so it matches as long as the pull request planned with `target: orders` and `rollout: expand-contract`.
 
 **PostSync** (`postsync-confirm.yaml`): `godwit run confirm --latest --allow-none --target=orders`, `activeDeadlineSeconds: 600`. After the new pods are healthy, the contract phase runs. If the sync fails between the hooks, the run stays `awaiting_contract`; the old pods keep working against the expanded schema, and the next successful sync's PostSync confirms it, or an operator reverts it.
 
@@ -139,8 +143,8 @@ Replace `orders`, the Secret name and, for a reproducible hook, the image tag (`
 ## Expand → contract, end to end
 
 1. Author the change as two migrations: an additive one (`CREATE`, `ADD COLUMN`, `CREATE INDEX CONCURRENTLY`) and a later destructive one (`DROP`, `RENAME`: H002/H003/H008). The split is per migration: every plan up to the first one carrying a contract hazard runs in expand, that plan and everything after it wait for contract. A single file mixing both lands in contract whole.
-2. Pull request: `lint` (hazards acknowledged where intended), `plan`, dry run with a read token.
-3. Merge: `migrate --rollout expand-contract` → run ends `awaiting_contract`, step exits 0.
+2. Pull request: `lint` (hazards acknowledged where intended), `plan` with a read token: the admitted plan is stored with an observation of the target.
+3. Merge: `migrate --rollout expand-contract` binds to the stored plan (or refuses with exit 3 when the target moved) → run ends `awaiting_contract`, step exits 0; the outcome is posted on the merged pull request.
 4. Deploy the application version that handles both shapes.
 5. `run confirm --latest --allow-none` → contract phase runs, run ends `succeeded`.
 6. If step 4 fails: `godwit revert <run-id>` applies the down side of the expand phase (needs the destructive hazards in the down files acknowledged).

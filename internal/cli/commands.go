@@ -96,12 +96,12 @@ func (r planReport) contract() []string {
 	return lines
 }
 
-func (r planReport) driftBlock(indent, open, close string) string {
+func (r planReport) driftBlock(heading, indent, open, close string) string {
 	if r.drift == "" {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("drift since baseline:\n" + open)
+	b.WriteString(heading + "\n" + open)
 	for _, l := range strings.Split(r.drift, "\n") {
 		b.WriteString(indent + l + "\n")
 	}
@@ -177,7 +177,7 @@ func writePlanText(w io.Writer, r planReport) {
 		for _, l := range r.contract() {
 			fmt.Fprintln(w, l)
 		}
-		fmt.Fprint(w, r.driftBlock("  ", "", ""))
+		fmt.Fprint(w, r.driftBlock("drift since baseline:", "  ", "", ""))
 	}
 	for _, p := range r.items {
 		fmt.Fprintf(w, "%d_%s (%s): %d statement(s)%s\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements), p.liveSuffix())
@@ -200,7 +200,7 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, l)
 		}
-		if block := r.driftBlock("", "\n```diff\n", "```\n"); block != "" {
+		if block := r.driftBlock("### Changes outside migrations", "", "\n```diff\n", "```\n"); block != "" {
 			fmt.Fprintln(w)
 			fmt.Fprint(w, block)
 		}
