@@ -22,7 +22,7 @@ func (Direct) Split(plans []engine.Plan) ([]engine.Plan, []engine.Plan) { return
 // ExpandContract holds the first destructive migration and everything after it.
 type ExpandContract struct{}
 
-var contractHazards = map[string]bool{"H002": true, "H003": true}
+var contractHazards = map[string]bool{"H002": true, "H003": true, "H008": true}
 
 // Split implements RolloutPolicy.
 func (ExpandContract) Split(plans []engine.Plan) ([]engine.Plan, []engine.Plan) {
