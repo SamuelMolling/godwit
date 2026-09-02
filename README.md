@@ -28,6 +28,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Revert | `RevertRun` queues the down side of the latest run on a target — same journal, lease and hazard gate as the way up. The original is marked `reverted` and leaves the replayable history. |
 | Baseline | `BaselineTarget` adopts an existing database: every migration up to a version is marked applied without running it, recorded as a `baseline` run whose files seed the replayable history, and snapshotted for drift — see [Baselining an existing database](#baselining-an-existing-database). |
 | Target status | `GetTargetStatus` answers "where is this database?" in one call: applied versions read from the target's `godwit.migrations` (checksum mismatches flagged against the given files), pending versions, the last run, the drift baseline and whether drift is open, the credential provider and the configured timeouts — see [Target status](#target-status). |
+| Out-of-order guard | A pending version older than the newest one already applied on the target is refused at admission; `allow_out_of_order` lets it through and is logged — see [Out-of-order migrations](#out-of-order-migrations). |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target add`, `target baseline`, `target status`, `run`, `runs`, `revert` and `drift` cover the rest. |
@@ -92,6 +93,18 @@ godwit migrate --target app --dir migrations      # applies 20260901120000 only
 
 The call is refused with `FailedPrecondition` when the target already has applied versions — a baseline is a one-time adoption, not a way to skip migrations. Baseline runs cannot be reverted; `runs` and `run get` show the kind of every run.
 
+## Out-of-order migrations
+
+Two branches merge in the wrong order and the target already runs `20260901130000` when `20260901120000` shows up. Applying it silently would leave the history in a state that no fresh database can reproduce by replaying versions in order, so `CreateRun` refuses it with `FailedPrecondition`, naming the pending versions that fall behind and the newest applied one:
+
+```
+out-of-order migrations 20260901120000: newest applied version on app is 20260901130000 (pass allow_out_of_order to apply them anyway)
+```
+
+The newest applied version comes from the target's history in the control plane (the files of every `succeeded` run, baselines included), the same history scratch-database validation replays. Versions the target already has are never out of order, so resending the whole directory stays flagless; only a pending version below the newest applied one trips the guard.
+
+When the older migration is genuinely independent, `CreateRun{allow_out_of_order}` / `migrate --allow-out-of-order` admits it; the service logs `out-of-order migrations admitted` with the versions, and the run is otherwise ordinary. A project that lives with this permanently can set `allow_out_of_order: true` in `godwit.yaml`. This is Flyway's `outOfOrder` (off by default there too) and Atlas's default `--exec-order linear`; Liquibase has no notion of version order.
+
 ## Credentials
 
 Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
@@ -119,6 +132,7 @@ Put a `godwit.yaml` in your repo and the CLI stops needing repeated flags. The f
 dir: db/migrations          # plan, run, status, down, lint, migrate
 target: orders              # migrate
 rollout: expand-contract    # migrate
+allow_out_of_order: false   # migrate
 server: http://godwit:8474  # every service command
 lock_timeout: 5s            # apply, status, down (local commands only; the service uses the target's)
 statement_timeout: 0        # apply, status, down (0 disables)
@@ -126,7 +140,7 @@ statement_timeout: 0        # apply, status, down (0 disables)
 
 With that file a pipeline is `godwit lint --base origin/main` on the PR and `godwit migrate` on merge — both flagless.
 
-Precedence: explicit flag > `GODWIT_*` env (`GODWIT_DIR`, `GODWIT_TARGET`, `GODWIT_ROLLOUT`, `GODWIT_SERVER`, `GODWIT_LOCK_TIMEOUT`, `GODWIT_STATEMENT_TIMEOUT`) > file > default. Unknown keys are an error. The DSN never lives in the file — pass `--dsn` or use a credential provider.
+Precedence: explicit flag > `GODWIT_*` env (`GODWIT_DIR`, `GODWIT_TARGET`, `GODWIT_ROLLOUT`, `GODWIT_ALLOW_OUT_OF_ORDER`, `GODWIT_SERVER`, `GODWIT_LOCK_TIMEOUT`, `GODWIT_STATEMENT_TIMEOUT`) > file > default. Unknown keys are an error. The DSN never lives in the file — pass `--dsn` or use a credential provider.
 
 ## CLI
 
@@ -135,7 +149,7 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
 | `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault [--lock-timeout] [--statement-timeout]`, `target baseline <name> --version <v> [--dir]`, `target status <name> [--dir]` |
-| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--lock-timeout] [--statement-timeout]` |
+| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--allow-out-of-order] [--lock-timeout] [--statement-timeout]` |
 | `status` — applied state per migration | `revert <run-id> [--lock-timeout] [--statement-timeout]`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
 

@@ -439,8 +439,10 @@ type CreateRunRequest struct {
 	LockTimeout string `protobuf:"bytes,6,opt,name=lock_timeout,json=lockTimeout,proto3" json:"lock_timeout,omitempty"`
 	// Override the target's statement_timeout for this run; "0" disables it.
 	StatementTimeout string `protobuf:"bytes,7,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Apply pending versions older than the newest applied one instead of refusing them.
+	AllowOutOfOrder bool `protobuf:"varint,8,opt,name=allow_out_of_order,json=allowOutOfOrder,proto3" json:"allow_out_of_order,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateRunRequest) Reset() {
@@ -520,6 +522,13 @@ func (x *CreateRunRequest) GetStatementTimeout() string {
 		return x.StatementTimeout
 	}
 	return ""
+}
+
+func (x *CreateRunRequest) GetAllowOutOfOrder() bool {
+	if x != nil {
+		return x.AllowOutOfOrder
+	}
+	return false
 }
 
 type CreateRunResponse struct {
@@ -2023,7 +2032,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x0evault_template\x18\x06 \x01(\tR\rvaultTemplate\x12!\n" +
 	"\flock_timeout\x18\a \x01(\tR\vlockTimeout\x12+\n" +
 	"\x11statement_timeout\x18\b \x01(\tR\x10statementTimeout\"\x18\n" +
-	"\x16RegisterTargetResponse\"\x9e\x02\n" +
+	"\x16RegisterTargetResponse\"\xcb\x02\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
 	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\x12/\n" +
@@ -2031,7 +2040,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x0fskip_validation\x18\x04 \x01(\bR\x0eskipValidation\x12\x18\n" +
 	"\arollout\x18\x05 \x01(\tR\arollout\x12!\n" +
 	"\flock_timeout\x18\x06 \x01(\tR\vlockTimeout\x12+\n" +
-	"\x11statement_timeout\x18\a \x01(\tR\x10statementTimeout\"*\n" +
+	"\x11statement_timeout\x18\a \x01(\tR\x10statementTimeout\x12+\n" +
+	"\x12allow_out_of_order\x18\b \x01(\bR\x0fallowOutOfOrder\"*\n" +
 	"\x11CreateRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"+\n" +
 	"\x11CheckDriftRequest\x12\x16\n" +

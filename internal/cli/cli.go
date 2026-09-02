@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -66,12 +67,13 @@ func applyConfig(cmd *cobra.Command, path string) error {
 		return err
 	}
 	values := map[string]string{
-		"dir":               cfg.Dir,
-		"target":            cfg.Target,
-		"rollout":           cfg.Rollout,
-		"server":            cfg.Server,
-		"lock-timeout":      cfg.LockTimeout.String(),
-		"statement-timeout": cfg.StatementTimeout.String(),
+		"dir":                cfg.Dir,
+		"target":             cfg.Target,
+		"rollout":            cfg.Rollout,
+		"server":             cfg.Server,
+		"lock-timeout":       cfg.LockTimeout.String(),
+		"statement-timeout":  cfg.StatementTimeout.String(),
+		"allow-out-of-order": strconv.FormatBool(cfg.AllowOutOfOrder),
 	}
 	for name := range strings.SplitSeq(keys, ",") {
 		if fl := cmd.Flags().Lookup(name); fl != nil && !fl.Changed && values[name] != "" {

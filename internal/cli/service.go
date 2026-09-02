@@ -121,8 +121,9 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.Rollout, "rollout", "direct", "rollout policy: direct or expand-contract")
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
+	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "apply pending versions older than the newest applied one instead of refusing them")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
-	configKeys(cmd, "target", "dir", "rollout")
+	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
 	return cmd
 }
