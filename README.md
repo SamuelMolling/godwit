@@ -27,6 +27,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Revert | `RevertRun` queues the down side of the latest run on a target — same journal, lease and hazard gate as the way up. The original is marked `reverted` and leaves the replayable history. |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
+| CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
 
 ## Rollout policies
 
@@ -66,6 +67,26 @@ statement_timeout: 0        # --statement-timeout (0 disables)
 ```
 
 Precedence: explicit flag > `GODWIT_*` env (`GODWIT_DIR`, `GODWIT_TARGET`, `GODWIT_ROLLOUT`, `GODWIT_SERVER`, `GODWIT_LOCK_TIMEOUT`, `GODWIT_STATEMENT_TIMEOUT`) > file > default. Unknown keys are an error. The DSN never lives in the file — pass `--dsn` or use a credential provider.
+
+## CLI
+
+One binary, two modes. Local commands talk to a database directly (dev loop, no service needed); service commands talk to `godwit serve` over its API, so a pipeline gets the journal, hazard gate, validation and rollout policies without curl.
+
+| Local (`--dsn`) | Service (`--server`, `--token`) |
+|---|---|
+| `plan` — classify statements, show hazards | `target add <name> --provider static\|kubernetes\|vault` |
+| `run` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
+| `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `runs [--target]` |
+| `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
+
+`--server` and `--token` fall back to `GODWIT_SERVER` and `GODWIT_TOKEN`; `--json` prints the raw API response. `migrate` and `revert` stream the run until it settles and exit 0 on `succeeded`/`awaiting_contract`, 1 on `failed`/`needs_attention`.
+
+```bash
+export GODWIT_SERVER=https://godwit.internal GODWIT_TOKEN=$CI_TOKEN
+RUN_ID=$(godwit migrate --target prod --rollout expand-contract --json | tail -n1 | jq -r .run.id)
+kubectl rollout status deploy/app
+godwit run confirm "$RUN_ID"
+```
 
 ## Engines
 

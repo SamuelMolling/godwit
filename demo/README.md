@@ -20,6 +20,7 @@ The script:
 8. Runs an `expand-contract` rollout: the added column lands, the drop waits in `awaiting_contract` until `ConfirmRollout`.
 9. Reverts that run with `RevertRun`: `plan` comes back, `plan_v2` goes, the original run is marked `reverted`.
 10. Registers the target again through a Vault KV secret (`vault` provider with a DSN template) and runs a migration with credentials resolved at claim time.
+11. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API.
 
 Poke around:
 

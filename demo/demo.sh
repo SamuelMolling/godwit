@@ -189,5 +189,9 @@ done
 echo "state: $STATE (credentials resolved from Vault at claim time)"
 
 echo
+echo "==> the same API from the CLI: every run so far"
+docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
+
+echo
 echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"
