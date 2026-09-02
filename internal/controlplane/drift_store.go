@@ -97,11 +97,9 @@ func (s *Store) SnapshotTargets(ctx context.Context) ([]string, error) {
 func (s *Store) RecordDrift(ctx context.Context, target, baseline, diff string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO cp_drift_events (target, diff)
-		SELECT target, $3 FROM cp_snapshots
-		WHERE target = $1 AND fingerprint = $2 AND NOT EXISTS (
-			SELECT 1 FROM cp_drift_events
-			WHERE target = $1 AND diff = $3 AND resolved_at IS NULL)
-		FOR UPDATE`,
+		SELECT target, $3 FROM (
+			SELECT target FROM cp_snapshots WHERE target = $1 AND fingerprint = $2 FOR UPDATE) baseline
+		ON CONFLICT (target, md5(diff)) WHERE resolved_at IS NULL DO NOTHING`,
 		target, baseline, diff)
 	if err != nil {
 		return false, fmt.Errorf("record drift: %w", err)
