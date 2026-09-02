@@ -158,6 +158,12 @@ message PlannedMigration {
   // "expand" or "contract": the phase the rollout policy would put it in.
   string phase = 5;
   repeated PlannedStatement statements = 6;
+  // Its effect is already in the target's schema; applying the plan records it without executing.
+  bool already_applied = 7;
+  // The schema lines the migration adds ("+ ") or removes ("- "), when already_applied.
+  string effect = 8;
+  // Why detection was refused for this migration, when it was.
+  string note = 9;
 }
 
 message PlanRunResponse {

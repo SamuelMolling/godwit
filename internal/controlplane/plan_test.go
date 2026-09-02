@@ -248,7 +248,7 @@ func TestPGEngineObserve(t *testing.T) {
 
 	before := time.Now().UTC()
 	obs, err := insp.Observe(ctx, "app")
-	if err != nil || len(obs.Applied) != 0 || obs.Fingerprint == "" || obs.At.Before(before) {
+	if err != nil || len(obs.Applied) != 0 || obs.Fingerprint == "" || obs.At.Before(before) || obs.SearchPath != "public" {
 		t.Fatalf("empty target = %+v, err = %v", obs, err)
 	}
 
@@ -258,7 +258,7 @@ func TestPGEngineObserve(t *testing.T) {
 	waitState(t, s, id, StateSucceeded)
 	after, err := PGEngine{}.Observe(ctx, dsn)
 	if err != nil || len(after.Applied) != 1 || after.Applied[0].Version != 20260901120000 || after.Fingerprint == obs.Fingerprint ||
-		!strings.Contains(after.Definition, "godwit.t.id") || after.HistoryHash() == obs.HistoryHash() {
+		!strings.Contains(after.Definition, "godwit.t.id") || after.HistoryHash() == obs.HistoryHash() || after.SearchPath != "godwit,public" {
 		t.Fatalf("after run = %+v, err = %v", after, err)
 	}
 
@@ -286,6 +286,15 @@ func TestObserveQueryErrors(t *testing.T) {
 	mock.ExpectQuery("SELECT to_regclass").WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
 	mock.ExpectQuery("SELECT c.table_schema").WillReturnError(errBoom)
 	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v", err)
+	}
+
+	mock.ExpectQuery("SELECT to_regclass").WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
+	for range 4 {
+		mock.ExpectQuery("SELECT").WillReturnRows(pgxmock.NewRows([]string{"line"}))
+	}
+	mock.ExpectQuery("current_schemas").WillReturnError(errBoom)
+	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "read search path") {
 		t.Fatalf("err = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

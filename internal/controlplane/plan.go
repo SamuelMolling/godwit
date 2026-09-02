@@ -38,6 +38,7 @@ type Observation struct {
 	Applied     []engine.Applied
 	Definition  string
 	Fingerprint string
+	SearchPath  string
 	At          time.Time
 }
 
@@ -68,6 +69,10 @@ type PlanMigration struct {
 	Applied    bool            `json:"applied"`
 	Phase      string          `json:"phase"`
 	Statements []PlanStatement `json:"statements"`
+
+	AlreadyApplied bool   `json:"already_applied,omitempty"`
+	Effect         string `json:"effect,omitempty"`
+	Note           string `json:"note,omitempty"`
 }
 
 // Plan is a stored admission result plus the observation it was taken against.
@@ -175,6 +180,57 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied []int64) [
 	return out
 }
 
+// Detect marks the longest prefix of migs whose effect the target already holds; otherwise returns the drift.
+func Detect(migs []PlanMigration, plans []engine.Plan, v Validation, obs Observation) string {
+	k := len(v.Fingerprints) - 1
+	for k >= 0 && v.Fingerprints[k] != obs.Fingerprint {
+		k--
+	}
+	if k < 0 {
+		return detectDrift(migs, v, obs)
+	}
+	for i := range k {
+		if migs[i].Applied {
+			continue
+		}
+		reason := plans[i].Opaque()
+		if reason == "" && len(v.Effects[i]) == 0 {
+			reason = engine.OpaqueUnknown
+		}
+		if reason != "" {
+			migs[i].Note = reason
+
+			break
+		}
+		migs[i].AlreadyApplied = true
+		migs[i].Effect = strings.Join(v.Effects[i], "\n")
+	}
+
+	return ""
+}
+
+func detectDrift(migs []PlanMigration, v Validation, obs Observation) string {
+	lines := engine.DiffSchemas(v.Base, obs.Definition)
+	present := make(map[string]bool, len(lines))
+	for _, l := range lines {
+		present[l] = true
+	}
+	for i := range migs {
+		if migs[i].Applied || len(v.Effects[i]) == 0 {
+			continue
+		}
+		contained := true
+		for _, l := range v.Effects[i] {
+			contained = contained && present[l]
+		}
+		if contained {
+			migs[i].Note = "effect is present but not as a prefix"
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // SameStatements reports whether two plans would run the same statements with the same hazards and phases.
 func SameStatements(a, b []PlanMigration) bool {
 	return len(a) == len(b) && shape(a) == shape(b)
@@ -183,7 +239,7 @@ func SameStatements(a, b []PlanMigration) bool {
 func shape(ms []PlanMigration) string {
 	var b strings.Builder
 	for _, m := range ms {
-		fmt.Fprintf(&b, "%d %s %s\n", m.Version, m.Checksum, m.Phase)
+		fmt.Fprintf(&b, "%d %s %s %t\n", m.Version, m.Checksum, m.Phase, m.AlreadyApplied)
 		for _, st := range m.Statements {
 			codes := make([]string, 0, len(st.Hazards))
 			for _, h := range st.Hazards {

@@ -142,6 +142,9 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 
 		return res, nil
 	}
+	if p.MarkOnly {
+		return res, e.mark(ctx, p)
+	}
 
 	prog, err := openRun(ctx, e.db, p, e.newID())
 	if err != nil {
@@ -159,6 +162,27 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 
 	return res, e.finalize(ctx, p, prog.runID)
+}
+
+func (e *Executor) mark(ctx context.Context, p Plan) error {
+	if p.Direction != DirectionUp {
+		return fmt.Errorf("mark requires an up plan, got %q", p.Direction)
+	}
+	invalid, err := InvalidIndexes(ctx, e.db)
+	if err != nil {
+		return err
+	}
+	if len(invalid) > 0 {
+		return fmt.Errorf("index %s exists but is INVALID; drop it and let the migration build it", invalid[0])
+	}
+	runID := e.newID()
+	if _, err := e.db.Exec(ctx,
+		`INSERT INTO godwit.runs (id, version, direction, state, stmt_count) VALUES ($1, $2, 'up', 'running', 0)`,
+		runID, p.Migration.Version); err != nil {
+		return fmt.Errorf("insert run: %w", err)
+	}
+
+	return e.finalize(ctx, p, runID)
 }
 
 func (e *Executor) applied(ctx context.Context, version int64) (bool, string, error) {

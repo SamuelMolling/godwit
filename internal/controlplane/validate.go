@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,7 +15,10 @@ import (
 // ErrValidationFailed marks a migration the author must fix.
 var ErrValidationFailed = errors.New("migration failed validation")
 
-var connectScratch = pgx.ConnectConfig
+var (
+	connectScratch  = pgx.ConnectConfig
+	snapshotScratch = engine.Snapshot
+)
 
 // Validator replays a target's history on a scratch database and applies new plans on top.
 type Validator struct {
@@ -28,16 +32,23 @@ func NewValidator(pool *pgxpool.Pool, store *Store, newID func() string) *Valida
 	return &Validator{pool: pool, store: store, newID: newID}
 }
 
-// Validate reports the first plan that fails on a scratch copy of the target.
-func (v *Validator) Validate(ctx context.Context, target string, plans []engine.Plan) error {
+// Validation is what the scratch database looked like after the history and after each plan in turn.
+type Validation struct {
+	Base         string
+	Effects      [][]string
+	Fingerprints []string
+}
+
+// Validate replays the history, applies each plan on top and snapshots the schema after every step.
+func (v *Validator) Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (Validation, error) {
 	history, err := v.store.HistoryFiles(ctx, target)
 	if err != nil {
-		return err
+		return Validation{}, err
 	}
 
 	name := "godwit_validate_" + v.newID()
 	if _, err := v.pool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		return fmt.Errorf("create scratch database: %w", err)
+		return Validation{}, fmt.Errorf("create scratch database: %w", err)
 	}
 	defer func() {
 		_, _ = v.pool.Exec(context.WithoutCancel(ctx),
@@ -48,23 +59,60 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	cfg.Database = name
 	conn, err := connectScratch(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("connect scratch database: %w", err)
+		return Validation{}, fmt.Errorf("connect scratch database: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	if err := mirrorSearchPath(ctx, conn, searchPath); err != nil {
+		return Validation{}, err
+	}
 
 	for i, files := range history {
 		histPlans, err := PlansFromFiles(files, engine.DirectionUp)
 		if err != nil {
-			return fmt.Errorf("history run %d: %w", i, err)
+			return Validation{}, fmt.Errorf("history run %d: %w", i, err)
 		}
 		if _, err := applyPlans(ctx, conn, engine.Options{}, histPlans); err != nil {
-			return fmt.Errorf("replay history run %d: %w", i, err)
+			return Validation{}, fmt.Errorf("replay history run %d: %w", i, err)
 		}
 	}
 
-	if _, err := applyPlans(ctx, conn, engine.Options{}, plans); err != nil {
-		return fmt.Errorf("%w: %w", ErrValidationFailed, err)
+	return validateEach(ctx, conn, plans)
+}
+
+// The scratch role is not the target's; without this, unqualified names land in a different schema than on the target.
+func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) error {
+	if searchPath == "" {
+		return nil
+	}
+	schemas := strings.Split(searchPath, ",")
+	for i, schema := range schemas {
+		schemas[i] = pgx.Identifier{schema}.Sanitize()
+	}
+	if _, err := conn.Exec(ctx, "SET search_path TO "+strings.Join(schemas, ", ")); err != nil {
+		return fmt.Errorf("set search path: %w", err)
 	}
 
 	return nil
+}
+
+func validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan) (Validation, error) {
+	def, fp, err := snapshotScratch(ctx, conn)
+	if err != nil {
+		return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
+	}
+	val := Validation{Base: def, Fingerprints: []string{fp}}
+	for _, p := range plans {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}); err != nil {
+			return Validation{}, fmt.Errorf("%w: %w", ErrValidationFailed, err)
+		}
+		next, nextFP, err := snapshotScratch(ctx, conn)
+		if err != nil {
+			return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
+		}
+		val.Effects = append(val.Effects, engine.DiffSchemas(def, next))
+		val.Fingerprints = append(val.Fingerprints, nextFP)
+		def = next
+	}
+
+	return val, nil
 }

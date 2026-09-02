@@ -962,3 +962,55 @@ func TestPlan_RemoteErrors(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
+
+func alreadyAppliedStub() *stubService {
+	return &stubService{plan: &godwitv1.PlanRunResponse{
+		Target: "app", Rollout: "direct", Validated: true, PlanId: "p1", PlanKey: "k1",
+		Migrations: []*godwitv1.PlannedMigration{
+			{Version: 20260901120000, Name: "users", Checksum: "c1", Applied: true, Phase: "expand", Statements: []*godwitv1.PlannedStatement{
+				{Sql: "CREATE TABLE users (id int)"},
+			}},
+			{
+				Version: 20260901120001, Name: "email", Checksum: "c2", Phase: "expand", AlreadyApplied: true,
+				Effect:     "+ column public.users.email text null=YES default=<none>",
+				Statements: []*godwitv1.PlannedStatement{{Sql: "ALTER TABLE users ADD COLUMN email text"}},
+			},
+			{Version: 20260901120002, Name: "seed", Checksum: "c3", Phase: "expand", Note: "has DML, must execute", Statements: []*godwitv1.PlannedStatement{
+				{Sql: "INSERT INTO users (id) VALUES (1)", Hazards: []*godwitv1.PlannedHazard{{Code: "H011", Detail: "seed rows in a migration"}}},
+			}},
+		},
+	}}
+}
+
+func TestMigrateDryRunAlreadyApplied(t *testing.T) {
+	t.Parallel()
+	url := startStub(t, alreadyAppliedStub())
+
+	code, out, errOut := runCLI("migrate", "--dry-run", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if !strings.Contains(out, "20260901120001_email (up): 1 statement(s) [expand, already applied]\n") ||
+		!strings.Contains(out, "20260901120002_seed (up): 1 statement(s) [expand, pending (has DML, must execute)]\n") {
+		t.Fatalf("out = %q", out)
+	}
+
+	code, out, _ = runCLI("migrate", "--dry-run", "--format", "markdown", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 || !strings.Contains(out, "| `20260901120001_email` | up | 0 | tx | `ALTER TABLE users ADD COLUMN email text` |  | expand | already applied |\n") ||
+		!strings.Contains(out, "| H011: seed rows in a migration | expand | pending (has DML, must execute) |\n") ||
+		!strings.Contains(out, "\n`20260901120001_email` is already applied by hand; migrate records it without executing:\n\n```diff\n+ column public.users.email text null=YES default=<none>\n```\n\n⚠️ 1 hazard(s); acknowledge them with `--ack`\n") ||
+		strings.Contains(out, "<details>") {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	code, out, _ = runCLI("migrate", "--dry-run", "--format", "json", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	var got dryRunJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	m := got.Migrations
+	if code != 0 || len(m) != 3 || m[0].AlreadyApplied || !m[1].AlreadyApplied || !strings.HasPrefix(m[1].Effect, "+ column") ||
+		m[2].AlreadyApplied || m[2].Note != "has DML, must execute" {
+		t.Fatalf("code = %d, migrations = %+v", code, m)
+	}
+}

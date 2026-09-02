@@ -1092,8 +1092,14 @@ type PlannedMigration struct {
 	// Already in the target's history; the executor would skip it.
 	Applied bool `protobuf:"varint,4,opt,name=applied,proto3" json:"applied,omitempty"`
 	// "expand" or "contract": the phase the rollout policy would put it in.
-	Phase         string              `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
-	Statements    []*PlannedStatement `protobuf:"bytes,6,rep,name=statements,proto3" json:"statements,omitempty"`
+	Phase      string              `protobuf:"bytes,5,opt,name=phase,proto3" json:"phase,omitempty"`
+	Statements []*PlannedStatement `protobuf:"bytes,6,rep,name=statements,proto3" json:"statements,omitempty"`
+	// Its effect is already in the target's schema; applying the plan records it without executing.
+	AlreadyApplied bool `protobuf:"varint,7,opt,name=already_applied,json=alreadyApplied,proto3" json:"already_applied,omitempty"`
+	// The schema lines the migration adds ("+ ") or removes ("- "), when already_applied.
+	Effect string `protobuf:"bytes,8,opt,name=effect,proto3" json:"effect,omitempty"`
+	// Why detection was refused for this migration, when it was.
+	Note          string `protobuf:"bytes,9,opt,name=note,proto3" json:"note,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1168,6 +1174,27 @@ func (x *PlannedMigration) GetStatements() []*PlannedStatement {
 		return x.Statements
 	}
 	return nil
+}
+
+func (x *PlannedMigration) GetAlreadyApplied() bool {
+	if x != nil {
+		return x.AlreadyApplied
+	}
+	return false
+}
+
+func (x *PlannedMigration) GetEffect() string {
+	if x != nil {
+		return x.Effect
+	}
+	return ""
+}
+
+func (x *PlannedMigration) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
 }
 
 type PlanRunResponse struct {
@@ -2985,7 +3012,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x10PlannedStatement\x12\x10\n" +
 	"\x03sql\x18\x01 \x01(\tR\x03sql\x12\x13\n" +
 	"\x05no_tx\x18\x02 \x01(\bR\x04noTx\x122\n" +
-	"\ahazards\x18\x03 \x03(\v2\x18.godwit.v1.PlannedHazardR\ahazards\"\xc9\x01\n" +
+	"\ahazards\x18\x03 \x03(\v2\x18.godwit.v1.PlannedHazardR\ahazards\"\x9e\x02\n" +
 	"\x10PlannedMigration\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -2994,7 +3021,10 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x05phase\x18\x05 \x01(\tR\x05phase\x12;\n" +
 	"\n" +
 	"statements\x18\x06 \x03(\v2\x1b.godwit.v1.PlannedStatementR\n" +
-	"statements\"\xa0\x02\n" +
+	"statements\x12'\n" +
+	"\x0falready_applied\x18\a \x01(\bR\x0ealreadyApplied\x12\x16\n" +
+	"\x06effect\x18\b \x01(\tR\x06effect\x12\x12\n" +
+	"\x04note\x18\t \x01(\tR\x04note\"\xa0\x02\n" +
 	"\x0fPlanRunResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x18\n" +
 	"\arollout\x18\x02 \x01(\tR\arollout\x12;\n" +

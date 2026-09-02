@@ -55,7 +55,7 @@ func TestBaselinerRecordsRunAndReplaysHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewValidator(pool, s, func() string { return "basehist" }).Validate(ctx, "app", next); err != nil {
+	if _, err := NewValidator(pool, s, func() string { return "basehist" }).Validate(ctx, "app", next, ""); err != nil {
 		t.Fatalf("validate after baseline: %v", err)
 	}
 

@@ -51,8 +51,11 @@ func (f *targetFlags) executor(ctx context.Context) (*engine.Executor, func(), e
 
 type planItem struct {
 	engine.Plan
-	applied bool
-	phase   string
+	applied        bool
+	phase          string
+	alreadyApplied bool
+	effect         string
+	note           string
 }
 
 type planObservation struct {
@@ -234,6 +237,7 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 			}
 		}
 	}
+	fmt.Fprint(w, r.alreadyAppliedBlock())
 	if hazards > 0 {
 		fmt.Fprintf(w, "⚠️ %d hazard(s); acknowledge them with `--ack`\n", hazards)
 
@@ -274,9 +278,27 @@ func (r planReport) liveRule() string {
 	return ""
 }
 
+func (r planReport) alreadyAppliedBlock() string {
+	var b strings.Builder
+	for _, p := range r.items {
+		if !p.alreadyApplied {
+			continue
+		}
+		fmt.Fprintf(&b, "`%d_%s` is already applied by hand; migrate records it without executing:\n\n```diff\n%s\n```\n\n",
+			p.Migration.Version, p.Migration.Name, p.effect)
+	}
+
+	return b.String()
+}
+
 func (p planItem) status() string {
-	if p.applied {
+	switch {
+	case p.applied:
 		return "applied"
+	case p.alreadyApplied:
+		return "already applied"
+	case p.note != "":
+		return "pending (" + p.note + ")"
 	}
 
 	return "pending"
@@ -332,8 +354,11 @@ type hazardJSON struct {
 
 type livePlanJSON struct {
 	planJSON
-	Applied bool   `json:"applied"`
-	Phase   string `json:"phase"`
+	Applied        bool   `json:"applied"`
+	Phase          string `json:"phase"`
+	AlreadyApplied bool   `json:"already_applied,omitempty"`
+	Effect         string `json:"effect,omitempty"`
+	Note           string `json:"note,omitempty"`
 }
 
 type dryRunJSON struct {
@@ -368,7 +393,10 @@ func writePlanJSON(w io.Writer, r planReport) {
 			PlanID: r.planID, PlanKey: r.planKey, Observed: r.observed, Drift: r.drift,
 		}
 		for _, p := range r.items {
-			live.Migrations = append(live.Migrations, livePlanJSON{planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase})
+			live.Migrations = append(live.Migrations, livePlanJSON{
+				planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase,
+				AlreadyApplied: p.alreadyApplied, Effect: p.effect, Note: p.note,
+			})
 		}
 		out = live
 	} else {

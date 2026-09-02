@@ -33,7 +33,7 @@ type DriftOps interface {
 
 // Validator checks migrations before admission.
 type Validator interface {
-	Validate(ctx context.Context, target string, plans []engine.Plan) error
+	Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (controlplane.Validation, error)
 }
 
 // Baseliner marks migrations applied on a target without running them (implemented by the control plane).
@@ -206,7 +206,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 		return nil, err
 	}
 	if b.adm == nil {
-		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder); err != nil {
+		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, ""); err != nil {
 			return nil, err
 		}
 	}
@@ -287,7 +287,7 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
-	if _, err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true); err != nil {
+	if _, err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true, ""); err != nil {
 		return nil, err
 	}
 
@@ -337,12 +337,13 @@ func (s *Server) audit(ctx context.Context, action, runID, target, detail string
 }
 
 type admission struct {
-	applied   []int64
-	validated bool
+	applied    []int64
+	validated  bool
+	validation *controlplane.Validation
 }
 
 // admit refuses unacknowledged hazards, out-of-order versions and plans that fail on the scratch database.
-func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool) (admission, error) {
+func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool, searchPath string) (admission, error) {
 	if err := s.checkHazards(plans, acked); err != nil {
 		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
 
@@ -362,7 +363,8 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	if s.validator == nil || skipValidation {
 		return adm, nil
 	}
-	if err := s.validator.Validate(ctx, target, plans); err != nil {
+	val, err := s.validator.Validate(ctx, target, plans, searchPath)
+	if err != nil {
 		if errors.Is(err, controlplane.ErrValidationFailed) {
 			s.Metrics.ValidationFailed(target)
 			s.Log.Warn("run refused by validation", "target", target, "error", err.Error())
@@ -372,7 +374,7 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 
 		return admission{}, rpcErr(err)
 	}
-	adm.validated = true
+	adm.validated, adm.validation = true, &val
 
 	return adm, nil
 }

@@ -129,6 +129,9 @@ func observe(ctx context.Context, db engine.DB) (Observation, error) {
 	if obs.Definition, obs.Fingerprint, err = engine.Snapshot(ctx, db); err != nil {
 		return Observation{}, err
 	}
+	if err := db.QueryRow(ctx, `SELECT array_to_string(current_schemas(false), ',')`).Scan(&obs.SearchPath); err != nil {
+		return Observation{}, fmt.Errorf("read search path: %w", err)
+	}
 
 	return obs, nil
 }
