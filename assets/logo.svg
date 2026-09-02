@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 96" width="340" height="96" role="img" aria-label="godwit">
+  <rect width="340" height="96" rx="16" fill="#141716"/>
+  <g transform="translate(24 18) scale(2.5)">
+    <path fill="#6FC2C9" d="M23 12.1 17.6 12.8 16.2 11.8 14.6 12.1 13.4 12.8 7.6 4.4 9.6 13.4 5.4 14.2 3.2 14.6 4.6 15.6 8.2 16.2 1.6 18.2 2 19.2 9 17 12.8 16.6 16.4 15.2 17.8 14.2 23 13.2Z"/>
+  </g>
+  <text x="102" y="62" font-family="'IBM Plex Sans', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="42" font-weight="500" letter-spacing="-0.8" fill="#F1F2EF">godwit</text>
+</svg>
