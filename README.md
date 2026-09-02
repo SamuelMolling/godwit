@@ -36,24 +36,26 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 
 ## Hazards
 
-| Code | Statement | Why | Safe form |
-|---|---|---|---|
-| `H001` | `CREATE INDEX` without `CONCURRENTLY` | blocks writes while the index builds | `CREATE INDEX CONCURRENTLY` |
-| `H002` | `DROP TABLE` | destructive | contract phase, after every app version stopped using it |
-| `H003` | `DROP COLUMN` | destructive | contract phase, after every app version stopped using it |
-| `H004` | `ALTER COLUMN ... TYPE` | rewrites the table under an exclusive lock | new column, backfill, swap |
-| `H005` | `ADD COLUMN ... NOT NULL` without `DEFAULT` | fails on non-empty tables | add a `DEFAULT`, or add nullable and backfill |
-| `H006` | `ADD CONSTRAINT ... FOREIGN KEY` / `CHECK` without `NOT VALID` | scans the whole table under lock | `... NOT VALID`, then `VALIDATE CONSTRAINT` in a separate statement |
-| `H007` | `ALTER COLUMN ... SET NOT NULL` | scans the table under an exclusive lock | `ADD CHECK (col IS NOT NULL) NOT VALID`, `VALIDATE CONSTRAINT`, then `SET NOT NULL` (instant on PostgreSQL 12+) |
-| `H008` | `RENAME` table or column | breaks application versions still using the old name | add the new one, migrate readers and writers, drop the old one |
-| `H009` | `DROP INDEX` without `CONCURRENTLY` | blocks reads and writes on the table | `DROP INDEX CONCURRENTLY` |
-| `H010` | `ADD PRIMARY KEY` / `ADD CONSTRAINT ... UNIQUE` without `USING INDEX` | builds the index under an exclusive lock | `CREATE UNIQUE INDEX CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX` |
+| Code | Statement | Why | Safe form | Phase |
+|---|---|---|---|---|
+| `H001` | `CREATE INDEX` without `CONCURRENTLY` | blocks writes while the index builds | `CREATE INDEX CONCURRENTLY` | `expand` |
+| `H002` | `DROP TABLE` | destructive | contract phase, after every app version stopped using it | `contract` |
+| `H003` | `DROP COLUMN` | destructive | contract phase, after every app version stopped using it | `contract` |
+| `H004` | `ALTER COLUMN ... TYPE` | rewrites the table under an exclusive lock | new column, backfill, swap | `expand` |
+| `H005` | `ADD COLUMN ... NOT NULL` without `DEFAULT` | fails on non-empty tables | add a `DEFAULT`, or add nullable and backfill | `expand` |
+| `H006` | `ADD CONSTRAINT ... FOREIGN KEY` / `CHECK` without `NOT VALID` | scans the whole table under lock | `... NOT VALID`, then `VALIDATE CONSTRAINT` in a separate statement | `expand` |
+| `H007` | `ALTER COLUMN ... SET NOT NULL` | scans the table under an exclusive lock | `ADD CHECK (col IS NOT NULL) NOT VALID`, `VALIDATE CONSTRAINT`, then `SET NOT NULL` (instant on PostgreSQL 12+) | `expand` |
+| `H008` | `RENAME` table or column | breaks application versions still using the old name | add the new one, migrate readers and writers, drop the old one | `contract` |
+| `H009` | `DROP INDEX` without `CONCURRENTLY` | blocks reads and writes on the table | `DROP INDEX CONCURRENTLY` | `expand` |
+| `H010` | `ADD PRIMARY KEY` / `ADD CONSTRAINT ... UNIQUE` without `USING INDEX` | builds the index under an exclusive lock | `CREATE UNIQUE INDEX CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX` | `expand` |
 
 Acknowledge a hazard you have reviewed with `--ack H006,H010` (`acknowledge_hazards` on the API); the gate still counts it in `godwit_hazards_total{acked="true"}`.
 
+The phase column is what `expand-contract` acts on: `contract` codes (`H002`, `H003`, `H008`) remove or rename something the previous app version still addresses by name, so the first migration carrying one — and everything after it — waits in `awaiting_contract`. `expand` codes are lock, rewrite and constraint hazards; the old version keeps working once the statement finishes, so they run in the expand phase.
+
 ## Rollout policies
 
-With `expand-contract`, put contract statements (drops) in their own migration file. The run stops in `awaiting_contract` once the expand phase is applied; the previous app version keeps working. Your deploy pipeline (or an ArgoCD PostSync hook) calls `ConfirmRollout` after the new version is healthy, and the contract phase runs.
+With `expand-contract`, put contract statements (drops and renames) in their own migration file. The run stops in `awaiting_contract` once the expand phase is applied; the previous app version keeps working. Your deploy pipeline (or an ArgoCD PostSync hook) calls `ConfirmRollout` after the new version is healthy, and the contract phase runs.
 
 ```
 CreateRun{rollout: "expand-contract"}  →  running  →  awaiting_contract  →  ConfirmRollout  →  running  →  succeeded
@@ -61,7 +63,7 @@ CreateRun{rollout: "expand-contract"}  →  running  →  awaiting_contract  →
 
 ## Reverting
 
-`RevertRun{run_id}` creates a new run that applies the `.down.sql` side of that run's migrations, newest version first, through the same crash-safe executor. Only the latest run on an idle target can be reverted, so reverts happen in reverse order. Down migrations go through the hazard gate and scratch-database validation like any other plan.
+`RevertRun{run_id}` creates a new run that applies the `.down.sql` side of that run's migrations, newest version first, through the same crash-safe executor. Only the latest run on an idle target can be reverted, so reverts happen in reverse order. Down migrations go through the hazard gate and scratch-database validation like any other plan. A revert is all-or-nothing per run: every migration in the run comes down together, and there is no way to revert a single version out of a multi-migration run.
 
 ```
 RevertRun{run_id: A}  →  new run R (reverts: A)  →  succeeded  ⇒  A becomes reverted
