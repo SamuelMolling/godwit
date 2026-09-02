@@ -1,0 +1,28 @@
+name: migrations dry run
+
+on:
+  pull_request:
+    paths:
+      - db/migrations/**   # your migration directory
+      - godwit.yaml
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask the service for the admitted plan against the live target
+        uses: SamuelMolling/godwit@main
+        with:
+          command: migrate
+          dry-run: "true"
+          dir: db/migrations                        # drop when godwit.yaml sets dir
+          server: https://godwit.internal           # your godwit service URL
+          token: ${{ secrets.GODWIT_TOKEN_READ }}   # token with the read scope
+          target: orders                            # target registered on the service
+          rollout: expand-contract                  # shows which statements wait for contract

@@ -1,0 +1,55 @@
+# Two Applications: the godwit service (Helm chart from this repository) and an
+# application whose chart carries deploy/argocd/presync-job.yaml and
+# postsync-confirm.yaml next to its own manifests. Sync godwit first: the PreSync
+# hook connects to http://godwit.godwit.svc:8474 and fails the sync when the
+# service is not there yet.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: godwit
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/SamuelMolling/godwit.git
+    targetRevision: main
+    path: deploy/helm/godwit
+    helm:
+      valuesObject:
+        image:
+          repository: registry.example.com/platform/godwit   # your registry
+          tag: "0.0.1"
+        existingSecret:
+          name: godwit   # Secret with GODWIT_MASTER_KEY, GODWIT_TOKENS, GODWIT_STORE_DSN
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: godwit
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: orders
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/example/orders.git   # the application's repository
+    targetRevision: main
+    path: deploy/chart   # chart templates: the app, the orders-migrations ConfigMap, presync-job.yaml, postsync-confirm.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: orders
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

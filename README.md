@@ -55,7 +55,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | [Security](docs/security.md) | tokens, master key rotation, providers, what is logged, network |
 | [Comparison](docs/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
 
-Also: [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
+Also: [examples](examples/README.md) (copy-ready pipelines), [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
 
 ## Design principles
 

@@ -16,4 +16,4 @@ Plain markdown, one file per concern. Everything here describes the code on `mai
 
 Suggested order for a first read: getting started → concepts → configuration. Operators add operations and the runbook; pipeline authors add CI/CD.
 
-Related material outside `docs/`: [deploy/helm/godwit/README.md](../deploy/helm/godwit/README.md) (chart values), [deploy/argocd/README.md](../deploy/argocd/README.md) (hook Jobs), [demo/README.md](../demo/README.md) (the docker-compose walkthrough), [AGENTS.md](../AGENTS.md) (contributor rules).
+Related material outside `docs/`: [examples/README.md](../examples/README.md) (ready-to-copy GitHub Actions workflows and ArgoCD manifests), [deploy/helm/godwit/README.md](../deploy/helm/godwit/README.md) (chart values), [deploy/argocd/README.md](../deploy/argocd/README.md) (hook Jobs), [demo/README.md](../demo/README.md) (the docker-compose walkthrough), [AGENTS.md](../AGENTS.md) (contributor rules).
