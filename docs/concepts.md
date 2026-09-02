@@ -172,10 +172,22 @@ The monitor fingerprints every snapshotted target every `--drift-interval` (5m).
 
 Every statement runs under `lock_timeout` (default 5s) and `statement_timeout` (default 0, disabled). Both can be set on the target at registration and overridden per run; the run value wins field by field, then the target's, then the default. Values are Go durations (`5s`, `2m`, `0`); a lock timeout below 1ms is refused. A statement that hits one fails the run with PostgreSQL's `55P03` (lock) or `57014` (statement) error, counted in `godwit_statement_failures_total{reason="lock_timeout"|"statement_timeout"}`.
 
+## Plans
+
+`PlanRun{persist}` stores the admitted plan in `cp_plans` / `cp_plan_files` together with an **observation** of the target at that moment: a `history_hash` over the live `godwit.migrations` (version and checksum, ascending), the schema fingerprint and definition (`engine.Snapshot`), and the time. The **plan key** is `sha256` of the target, the rollout and the ordered *pending set* — the files whose version is not yet applied, with their up and down checksums. It is a pure function of the files and of the target's history: not a git SHA (squash merges change it), not the plan id. One `ready` plan exists per `(target, key)`; re-planning the same set refreshes the row under a new id. An applied migration whose file body differs from the recorded checksum cannot be planned (`invalid_argument`) nor bound (`PlanStale{content}`).
+
+`CreateRun` computes the key from its files and looks for a ready plan not older than `--plan-ttl`:
+
+- **fresh** — history hash and schema fingerprint match the observation: the run binds to the plan (`plan_id` on the run and on the response), the plan becomes `bound`.
+- **explained** — every version added to the history since the plan came from a run that succeeded after the plan was created, nothing was removed, and the live schema matches the baseline snapshot taken by the last run: the set is re-planned; if the statements are identical, the old plan is `superseded`, the new one bound, audit `plan.supersede`. A set that now falls below the newest applied version is `PlanStale{order}` unless `allow_out_of_order`; a set that no longer validates is `PlanStale{validation}`.
+- **stale** — anything else: `failed_precondition` with a `PlanStale` detail (`reason` history / schema / order / validation / content, the added and removed versions, the `+`/`-` schema lines, a hint) before any row is written on the store or the target.
+
+With no matching plan the run is admitted as today (implicit plan, empty `plan_id`) unless the target was registered with `require_plan` or the service runs with `--require-plan`: then `failed_precondition` with a `PlanRequired` detail naming the nearest stored plans and the difference between their files and the set.
+
 ## Target status
 
 `GetTargetStatus` reads `godwit.migrations` on the live target without creating it (a never-migrated database reports nothing), compares against optional files (pending versions, `checksum_mismatch` when an applied migration's up file changed), and adds the last run, the drift baseline (`taken_at`, the run that took it, whether drift is open), the provider and the registered timeouts.
 
 ## Actors and provenance
 
-Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`) after it succeeds; reads are not audited.
+Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`, `plan.create`, `plan.supersede`) after it succeeds; reads are not audited. `PlanRun{persist}` is the one `read`-scope call that writes: the plan and its `plan.create` row.

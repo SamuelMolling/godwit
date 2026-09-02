@@ -168,6 +168,32 @@ rpc GetRun "{\"runId\": \"$EC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/
 docker compose exec -T target-db psql -U app -d app -c "\d users"
 
 echo
+echo "==> plan as contract: the pull request stores a plan with what the target looked like"
+PLAN_FILES='[
+  {"name": "20260901170000_users_email_idx.up.sql", "body": "CREATE INDEX CONCURRENTLY users_email_idx ON users (email);"},
+  {"name": "20260901170000_users_email_idx.down.sql", "body": "DROP INDEX CONCURRENTLY users_email_idx;"}
+]'
+PLAN_ID=$(rpc PlanRun "{\"target\": \"app\", \"persist\": true, \"source\": \"github.com/acme/app@9c1e2f\", \"files\": $PLAN_FILES}" 18475 | sed -E 's/.*"planId":"([^"]+)".*/\1/')
+echo "plan: $PLAN_ID"
+
+echo "==> someone changes the schema by hand between the review and the deploy"
+docker compose exec -T target-db psql -U app -d app -c "ALTER TABLE users ADD COLUMN nickname text;"
+echo "==> migrate refuses: the plan is stale, and says exactly what moved"
+rpc CreateRun "{\"target\": \"app\", \"files\": $PLAN_FILES}" 18475
+echo
+
+echo "==> the change is blessed as the new baseline; the same migrate now re-plans and binds"
+rpc AcceptBaseline '{"target": "app"}' 18475
+PC_ID=$(rpc CreateRun "{\"target\": \"app\", \"files\": $PLAN_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$PC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "run: $PC_ID ($STATE), bound to plan:"
+rpc GetRun "{\"runId\": \"$PC_ID\"}" 18475 | sed -E 's/.*"planId":"([^"]+)".*/\1/'
+
+echo
 echo "==> vault: the same database registered through a Vault KV secret, no DSN in the control plane"
 docker compose exec -T -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=demo-root vault \
   vault kv put -mount=secret app user=app password=app host=target-db > /dev/null

@@ -46,6 +46,8 @@ message Run {
   string created_by = 14;
   // Free-text provenance given at creation, e.g. github.com/org/repo@<sha>:db/migrations.
   string source = 15;
+  // Id of the stored plan this run applies; empty for implicit runs.
+  string plan_id = 16;
 }
 
 message RegisterTargetRequest {
@@ -62,6 +64,8 @@ message RegisterTargetRequest {
   string lock_timeout = 7;
   // statement_timeout for every statement on this target; default 0 (disabled).
   string statement_timeout = 8;
+  // Refuse runs whose migration set has no stored plan.
+  bool require_plan = 9;
 }
 
 message RegisterTargetResponse {}
@@ -87,6 +91,8 @@ message CreateRunRequest {
 
 message CreateRunResponse {
   string run_id = 1;
+  // Id of the plan the run was bound to; empty for implicit runs.
+  string plan_id = 2;
 }
 
 message PlanRunRequest {
@@ -96,6 +102,38 @@ message PlanRunRequest {
   bool skip_validation = 4;
   string rollout = 5;
   bool allow_out_of_order = 6;
+  // Store the plan so a later CreateRun with the same migration set binds to it.
+  bool persist = 7;
+  // Free-text provenance stored with the plan, e.g. github.com/org/repo@<sha>:db/migrations.
+  string source = 8;
+}
+
+message PlanObservation {
+  // sha256 over the target's live migration history (version and checksum, ascending).
+  string history_hash = 1;
+  string schema_fingerprint = 2;
+  int32 applied_count = 3;
+  int64 newest_applied = 4;
+  google.protobuf.Timestamp at = 5;
+}
+
+// Error detail on failed_precondition: the stored plan no longer matches the target.
+message PlanStale {
+  string plan_id = 1;
+  // "history", "schema", "order", "validation" or "content".
+  string reason = 2;
+  repeated string history_added = 3;
+  repeated string history_removed = 4;
+  string schema_diff = 5;
+  string hint = 6;
+}
+
+// Error detail on failed_precondition: the target requires a stored plan and none matches the set.
+message PlanRequired {
+  string target = 1;
+  string key = 2;
+  repeated string nearest_plan_ids = 3;
+  string files_diff = 4;
 }
 
 message PlannedHazard {
@@ -127,6 +165,12 @@ message PlanRunResponse {
   repeated PlannedMigration migrations = 3;
   // Whether the plan was replayed on a scratch database (false with skip_validation or no validator).
   bool validated = 4;
+  // Set when persist was requested.
+  string plan_id = 5;
+  string plan_key = 6;
+  PlanObservation observed = 7;
+  // Schema changes on the target that no run made, as +/- lines; empty without a baseline.
+  string drift = 8;
 }
 
 message CheckDriftRequest {
@@ -219,7 +263,7 @@ message AuditEntry {
   google.protobuf.Timestamp at = 2;
   // Token name behind the call.
   string actor = 3;
-  // target.register, target.baseline, run.create, run.revert, run.resume, run.park, run.confirm or drift.accept.
+  // target.register, target.baseline, run.create, run.revert, run.resume, run.park, run.confirm, drift.accept, plan.create or plan.supersede.
   string action = 4;
   string run_id = 5;
   string target = 6;

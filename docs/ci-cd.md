@@ -11,6 +11,7 @@ The CLI outside GitHub comes from the image `ghcr.io/samuelmolling/godwit` (`mai
 | 0 | all | success; for `migrate` and `revert`: the run reached `succeeded` or `awaiting_contract` |
 | 1 | all | error: blocking lint findings, refusal at admission, run `failed` or `needs_attention`, connection or usage error |
 | 2 | Action only | unknown `command` input |
+| 3 | `migrate` | plan stale or required: re-plan on the pull request |
 
 The Action's last step re-exits with the CLI status after the summary and comment are written, so a failing lint still posts its report.
 

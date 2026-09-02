@@ -68,6 +68,7 @@ type Run struct {
 	Kind       string
 	Timeouts   Timeouts
 	Provenance Provenance
+	PlanID     string
 	CreatedAt  time.Time
 	FinishedAt *time.Time
 }
@@ -141,8 +142,8 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	return provider, config, nil
 }
 
-// CreateRun queues a run with its migration files, per-run timeout overrides and provenance.
-func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance) error {
+// CreateRun queues a run with its migration files, per-run timeout overrides, provenance and bound plan (empty when implicit).
+func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance, planID string) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
 	for name, body := range files {
@@ -150,11 +151,11 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 		bodies = append(bodies, body)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout, lock_timeout, statement_timeout, created_by, source)
-			VALUES ($1, $2, 'queued', $5, nullif($6, ''), nullif($7, ''), $8, $9))
+		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout, lock_timeout, statement_timeout, created_by, source, plan_id)
+			VALUES ($1, $2, 'queued', $5, nullif($6, ''), nullif($7, ''), $8, $9, nullif($10, '')::uuid))
 		INSERT INTO cp_run_files (run_id, name, body)
 		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
-		id, target, names, bodies, rollout, t.Lock, t.Statement, p.CreatedBy, p.Source); err != nil {
+		id, target, names, bodies, rollout, t.Lock, t.Statement, p.CreatedBy, p.Source, planID); err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
 
@@ -204,12 +205,12 @@ func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeout
 }
 
 const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
-	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source`
+	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source, coalesce(plan_id::text, '')`
 
 func (r *Run) fields() []any {
 	return []any{
 		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
-		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt, &r.Provenance.CreatedBy, &r.Provenance.Source,
+		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt, &r.Provenance.CreatedBy, &r.Provenance.Source, &r.PlanID,
 	}
 }
 

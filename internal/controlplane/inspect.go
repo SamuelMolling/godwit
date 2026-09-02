@@ -61,3 +61,13 @@ func (i *Inspector) Status(ctx context.Context, name string) (TargetStatus, erro
 
 	return st, nil
 }
+
+// Observe reads the target's live history and schema over one connection.
+func (i *Inspector) Observe(ctx context.Context, name string) (Observation, error) {
+	tg, err := i.sched.target(ctx, name)
+	if err != nil {
+		return Observation{}, err
+	}
+
+	return i.sched.engine.Observe(ctx, tg.dsn)
+}

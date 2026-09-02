@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -22,6 +23,11 @@ func Main(args []string, out, errOut io.Writer) int {
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(errOut, "godwit: %v\n", err)
+		var exit exitError
+		if errors.As(err, &exit) {
+			return exit.code
+		}
+
 		return 1
 	}
 

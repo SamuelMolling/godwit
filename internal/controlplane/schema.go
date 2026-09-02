@@ -174,6 +174,48 @@ WHERE e.resolved_at IS NULL AND EXISTS (
 CREATE UNIQUE INDEX cp_drift_events_open_idx ON cp_drift_events (target, md5(diff)) WHERE resolved_at IS NULL;`,
 		DownSQL: `DROP INDEX cp_drift_events_open_idx;`,
 	},
+	{
+		Version:  20260901000009,
+		Name:     "plans",
+		Checksum: "cp-plans-v1",
+		UpSQL: `
+CREATE TABLE cp_plans (
+	id                 uuid PRIMARY KEY,
+	target             text NOT NULL REFERENCES cp_targets (name),
+	key                text NOT NULL,
+	rollout            text NOT NULL,
+	state              text NOT NULL CHECK (state IN ('ready', 'bound', 'superseded')),
+	history_hash       text NOT NULL,
+	applied            jsonb NOT NULL,
+	schema_fingerprint text NOT NULL,
+	schema_definition  text NOT NULL,
+	drift              text NOT NULL DEFAULT '',
+	plan               jsonb NOT NULL,
+	validated          boolean NOT NULL,
+	acked              text[] NOT NULL DEFAULT '{}',
+	allow_out_of_order boolean NOT NULL DEFAULT false,
+	created_by         text NOT NULL,
+	source             text NOT NULL DEFAULT '',
+	created_at         timestamptz NOT NULL DEFAULT now(),
+	run_id             uuid REFERENCES cp_runs (id),
+	superseded_by      uuid REFERENCES cp_plans (id) ON UPDATE CASCADE
+);
+CREATE UNIQUE INDEX cp_plans_ready_idx ON cp_plans (target, key) WHERE state = 'ready';
+CREATE INDEX cp_plans_target_created_idx ON cp_plans (target, created_at DESC);
+
+CREATE TABLE cp_plan_files (
+	plan_id uuid NOT NULL REFERENCES cp_plans (id) ON UPDATE CASCADE,
+	name    text NOT NULL,
+	body    text NOT NULL,
+	PRIMARY KEY (plan_id, name)
+);
+
+ALTER TABLE cp_runs ADD COLUMN plan_id uuid REFERENCES cp_plans (id);`,
+		DownSQL: `
+ALTER TABLE cp_runs DROP COLUMN plan_id;
+DROP TABLE cp_plan_files;
+DROP TABLE cp_plans;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

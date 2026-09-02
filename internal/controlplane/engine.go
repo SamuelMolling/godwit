@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -26,6 +27,7 @@ type Engine interface {
 	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 	Applied(ctx context.Context, dsn string) ([]engine.Applied, error)
+	Observe(ctx context.Context, dsn string) (Observation, error)
 }
 
 // PGEngine is the PostgreSQL Engine; Metrics and Log are optional.
@@ -105,4 +107,28 @@ func (PGEngine) Applied(ctx context.Context, dsn string) ([]engine.Applied, erro
 	defer func() { _ = conn.Close(context.Background()) }()
 
 	return engine.ListApplied(ctx, conn)
+}
+
+// Observe implements Engine: history and schema read over one connection.
+func (PGEngine) Observe(ctx context.Context, dsn string) (Observation, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return Observation{}, fmt.Errorf("connect target: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	return observe(ctx, conn)
+}
+
+func observe(ctx context.Context, db engine.DB) (Observation, error) {
+	obs := Observation{At: time.Now().UTC()}
+	var err error
+	if obs.Applied, err = engine.ListApplied(ctx, db); err != nil {
+		return Observation{}, err
+	}
+	if obs.Definition, obs.Fingerprint, err = engine.Snapshot(ctx, db); err != nil {
+		return Observation{}, err
+	}
+
+	return obs, nil
 }

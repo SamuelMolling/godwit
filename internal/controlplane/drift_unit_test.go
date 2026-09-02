@@ -253,7 +253,7 @@ func TestDriftEventDedupMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(storeMigrations) - 1
+	before := slices.IndexFunc(storeMigrations, func(m engine.Migration) bool { return m.Name == "drift_event_dedup" })
 	if n, err := applyMigrations(ctx, conn.Conn(), storeMigrations[:before]); err != nil || n != before {
 		t.Fatalf("applied = %d, err = %v", n, err)
 	}
@@ -266,7 +266,7 @@ func TestDriftEventDedupMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n, err := Migrate(ctx, pool); err != nil || n != 1 {
+	if n, err := Migrate(ctx, pool); err != nil || n != len(storeMigrations)-before {
 		t.Fatalf("applied = %d, err = %v", n, err)
 	}
 	var open []int64

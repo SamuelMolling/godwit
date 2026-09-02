@@ -50,6 +50,8 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--tick-interval` | `2s` | how often the scheduler looks for runnable runs |
 | `--max-attempts` | `3` | claims a run may take before it is finished as `needs_attention` |
 | `--skip-validation` | `false` | disable the scratch-database validation at admission (also disables `validated` in `PlanRun`) |
+| `--require-plan` | `false` | refuse every `CreateRun` that does not bind to a stored plan, on every target (targets registered with `--require-plan` refuse on their own) |
+| `--plan-ttl` | `720h` | stored plans older than this are ignored at `CreateRun` (treated as no plan) |
 | `--log-format` | `GODWIT_LOG_FORMAT` or `json` | `json` or `text` |
 | `--log-level` | `GODWIT_LOG_LEVEL` or `info` | `debug`, `info`, `warn` or `error` |
 
@@ -99,14 +101,14 @@ A procedure missing from the table is denied to everyone. With tokens configured
 
 ## CLI reference
 
-Global: `--config <path>`. Every service command: `--server`, `--token`, `--json`. Exit code is 0 on success and 1 on any error (refusal, failed run, connection error); `lint` exits 1 on blocking findings.
+Global: `--config <path>`. Every service command: `--server`, `--token`, `--json`. Exit code is 0 on success and 1 on any error (refusal, failed run, connection error); `lint` exits 1 on blocking findings; `migrate` exits 3 when the service refuses the run because its stored plan is stale or a plan is required.
 
 ### Local (no service)
 
 | Command | Flags | Notes |
 |---|---|---|
 | `godwit version` | | prints `godwit <version> (<commit>)` |
-| `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline |
+| `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline; with `--target` it becomes a service command (below) |
 | `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>` | with `--base`, only migrations added since the ref are checked and files modified since it are `E003`; blocking findings exit 1 |
 | `godwit apply` | `--dsn` (required), `--dir`, `--lock-timeout`, `--statement-timeout` | runs the executor directly against a database |
 | `godwit status` | `--dsn` (required), `--dir`, timeouts as above | `applied <ts>`, `pending`, `applied <ts> (checksum drift!)` per migration; bootstraps the `godwit` schema |
@@ -118,9 +120,10 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 | Command | Flags | Scope |
 |---|---|---|
-| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout` | admin |
+| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan` | admin |
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
+| `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
 | `godwit migrate` | `--target`, `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--lock-timeout`, `--statement-timeout`, `--dry-run`, `--format text\|markdown\|json` (dry run only) | pipeline (`--dry-run`: read) |
 | `godwit revert <run-id>` | `--ack`, `--skip-validation`, `--lock-timeout`, `--statement-timeout` | pipeline |
 | `godwit run get <run-id>` | | read |
@@ -132,7 +135,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit drift accept <target>` | | operator |
 | `godwit audit` | `--target`, `--run`, `--limit` | read |
 
-`migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
+`migrate` prints `plan <id>: bound` or `no stored plan for this set: implicit plan` before streaming; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 
 ## GitHub Action inputs
 

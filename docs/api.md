@@ -50,8 +50,8 @@ Missing or unknown token: `unauthenticated: invalid or missing bearer token`. In
 | `unauthenticated` | 401 | bad bearer |
 | `permission_denied` | 403 | scope too low |
 | `not_found` | 404 | unknown target or run id |
-| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not the latest on its target or the target is busy`, `baseline runs cannot be reverted`, `target already has applied migrations` |
-| `unimplemented` | 501 | `drift detection is not enabled`, `baselining is not enabled`, `target status is not enabled` (server wired without those components; not the case for `godwit serve`) |
+| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not the latest on its target or the target is busy`, `baseline runs cannot be reverted`, `target already has applied migrations`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`) |
+| `unimplemented` | 501 | `drift detection is not enabled`, `baselining is not enabled`, `target status is not enabled`, `stored plans are not enabled` (server wired without those components; not the case for `godwit serve`) |
 | `internal` | 500 | store errors, credential provider errors, `replay history run N: ...` from validation |
 
 ## RPCs
@@ -60,10 +60,10 @@ Request and response fields are listed as JSON. Fields not mentioned do not exis
 
 ### RegisterTarget — admin
 
-Creates or replaces a target. `provider` is `static` (`dsn` encrypted with the master key), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `lockTimeout` / `statementTimeout` become the target defaults.
+Creates or replaces a target. `provider` is `static` (`dsn` encrypted with the master key), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan.
 
 ```bash
-call RegisterTarget '{"name":"app","provider":"static","dsn":"postgres://app:app@db/app","lockTimeout":"5s"}'
+call RegisterTarget '{"name":"app","provider":"static","dsn":"postgres://app:app@db/app","lockTimeout":"5s","requirePlan":true}'
 # {}
 call RegisterTarget '{"name":"app","provider":"vault","vaultPath":"secret/data/app/db","vaultTemplate":"postgres://{{user}}:{{password}}@db/app"}'
 ```
@@ -71,6 +71,8 @@ call RegisterTarget '{"name":"app","provider":"vault","vaultPath":"secret/data/a
 ### CreateRun — pipeline
 
 Admits and queues a run. `files` are `{name, body}` pairs named `<version>_<name>.up.sql` / `.down.sql`; both sides of every version are required. Admission, in order: target exists → hazard gate (`acknowledgeHazards`) → out-of-order guard (`allowOutOfOrder`) → scratch validation (`skipValidation`). `rollout` is `direct` (default) or `expand-contract`. `source` is free text stored on the run.
+
+Before admission the set is matched against the plans stored by `PlanRun{persist}` (see [Plans](concepts.md#plans)): a fresh plan is bound (`planId` in the response and on the run), an explained one is re-planned and superseded, a stale one is refused with `failed_precondition` and a `godwit.v1.PlanStale` detail (`planId`, `reason`, `historyAdded`, `historyRemoved`, `schemaDiff`, `hint`); the message carries the same information as text. No matching plan means an implicit plan and an empty `planId`, unless the target or the service requires plans: then `failed_precondition` with a `godwit.v1.PlanRequired` detail (`target`, `key`, `nearestPlanIds`, `filesDiff`).
 
 ```bash
 call CreateRun '{
@@ -82,27 +84,35 @@ call CreateRun '{
   "rollout":"expand-contract",
   "source":"github.com/acme/app@1f2e3d4"
 }'
-# {"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c"}
+# {"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c","planId":"7f3a2c1e-..."}
 ```
 
-Refusal:
+Refusals:
 
 ```json
 {"code":"failed_precondition","message":"unacknowledged hazards (pass acknowledge_hazards to accept):\nH001: CREATE INDEX without CONCURRENTLY blocks writes on orders"}
 ```
 
+```json
+{"code":"failed_precondition",
+ "message":"plan 7f3a2c1e on app is stale (planned 2026-09-01T12:00:03Z by ci, github.com/acme/app@9c1e2f)\n  reason : schema\n  schema : + column public.users.age bigint null=NO default=<none>\n           (1 changes not made by any run since the plan)\n  files  : unchanged (key 3e0f1a2b)\nfix: push to the pull request (re-plan) or `godwit drift accept app` if the schema changes are intended",
+ "details":[{"type":"godwit.v1.PlanStale","value":"..."}]}
+```
+
 ### PlanRun — read
 
-Same admission as `CreateRun`, no run. Returns every migration with `applied`, `phase` (`expand` / `contract`, given `rollout`) and its statements with `noTx` and hazards; `validated` is true when the scratch replay ran.
+Same admission as `CreateRun`, no run. Returns every migration with `applied`, `phase` (`expand` / `contract`, given `rollout`) and its statements with `noTx` and hazards; `validated` is true when the scratch replay ran. With `persist`, the plan is stored for a later `CreateRun` to bind to, and the response adds `planId`, `planKey`, `observed` (`historyHash`, `schemaFingerprint`, `appliedCount`, `newestApplied`, `at`) and `drift` (schema changes on the target that no run made, as `+`/`-` lines; empty without a baseline). `source` is free text stored with the plan. An applied migration whose body no longer matches its recorded checksum is `invalid_argument: <version>_<name> applied with different content`.
 
 ```bash
-call PlanRun '{"target":"app","files":[...],"rollout":"expand-contract"}'
+call PlanRun '{"target":"app","files":[...],"rollout":"expand-contract","persist":true,"source":"github.com/acme/app@9c1e2f"}'
 ```
 
 ```json
 {"target":"app","rollout":"expand-contract","validated":true,
  "migrations":[{"version":"20260901120000","name":"create_orders","checksum":"9f...","phase":"expand",
-   "statements":[{"sql":"CREATE TABLE orders (id bigserial PRIMARY KEY)"}]}]}
+   "statements":[{"sql":"CREATE TABLE orders (id bigserial PRIMARY KEY)"}]}],
+ "planId":"7f3a2c1e-...","planKey":"3e0f1a2b...",
+ "observed":{"historyHash":"c4...","schemaFingerprint":"a1...","appliedCount":3,"newestApplied":"20260901110000","at":"2026-09-01T12:00:03Z"}}
 ```
 
 ### GetRun — read
@@ -117,7 +127,7 @@ call GetRun '{"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c"}'
  "rollout":"direct","phase":"expand","kind":"migrate","createdBy":"ci","source":"github.com/acme/app@1f2e3d4"}}
 ```
 
-`Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`.
+`Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan).
 
 ### ListRuns — read
 

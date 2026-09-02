@@ -41,9 +41,11 @@ type Baseliner interface {
 	Baseline(ctx context.Context, runID, target string, migs []engine.Migration, p controlplane.Provenance) error
 }
 
-// Inspector reports a target's applied versions, last run and drift baseline (implemented by the control plane).
+// Inspector reports a target's applied versions, last run and drift baseline, and observes its live history and schema
+// (implemented by the control plane).
 type Inspector interface {
 	Status(ctx context.Context, target string) (controlplane.TargetStatus, error)
+	Observe(ctx context.Context, target string) (controlplane.Observation, error)
 }
 
 // Server implements godwit.v1.GodwitService over the control-plane store.
@@ -56,8 +58,12 @@ type Server struct {
 	Notifier notify.Notifier
 	// Baseliner serves BaselineTarget; nil leaves it unimplemented.
 	Baseliner Baseliner
-	// Inspector serves GetTargetStatus; nil leaves it unimplemented.
+	// Inspector serves GetTargetStatus and stored plans; nil leaves both unimplemented and every run implicit.
 	Inspector Inspector
+	// RequirePlan refuses runs without a stored plan on every target, not only those registered with require_plan.
+	RequirePlan bool
+	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
+	PlanTTL time.Duration
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -105,12 +111,14 @@ func rpcErr(err error) *connect.Error {
 		return connect.NewError(connect.CodeNotFound, err)
 	case errors.Is(err, controlplane.ErrNotResumable), errors.Is(err, controlplane.ErrNotAwaitingContract),
 		errors.Is(err, controlplane.ErrNotRevertable), errors.Is(err, controlplane.ErrBaselineRun),
-		errors.Is(err, engine.ErrAlreadyMigrated):
+		errors.Is(err, engine.ErrAlreadyMigrated), errors.Is(err, controlplane.ErrAppliedContent):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
 	}
 }
+
+var errOutOfOrder = errors.New("out-of-order migrations")
 
 func invalid(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
@@ -168,13 +176,16 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if t.Statement != "" {
 		config[controlplane.ConfigStatementTimeout] = t.Statement
 	}
+	if m.RequirePlan {
+		config[controlplane.ConfigRequirePlan] = "true"
+	}
 	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider,
-		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
+		"lock_timeout", t.Lock, "statement_timeout", t.Statement, "require_plan", m.RequirePlan)
 	s.audit(ctx, controlplane.AuditTargetRegister, "", m.Name,
-		fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s", m.Provider, t.Lock, t.Statement))
+		fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s require_plan=%t", m.Provider, t.Lock, t.Statement, m.RequirePlan))
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
@@ -190,26 +201,37 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.admit(ctx, m.Target, spec.plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder); err != nil {
+	b, err := s.bind(ctx, m, spec)
+	if err != nil {
 		return nil, err
+	}
+	if b.adm == nil {
+		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder); err != nil {
+			return nil, err
+		}
 	}
 
 	id := s.newID()
 	p := controlplane.Provenance{CreatedBy: Actor(ctx), Source: m.Source}
-	if err := s.store.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p); err != nil {
+	if err := s.store.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID); err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout, "source", m.Source,
-		"files", len(spec.files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
-		"allow_out_of_order", m.AllowOutOfOrder)
+	if b.planID != "" {
+		if err := s.store.BindPlan(ctx, b.planID, id); err != nil {
+			return nil, rpcErr(err)
+		}
+	}
+	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout, "source", m.Source, "plan", b.planID,
+		"files", len(spec.files), "acked", b.acked, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
+		"allow_out_of_order", b.allowOutOfOrder)
 	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target,
-		fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s", spec.rollout, len(spec.plans), strings.Join(m.AcknowledgeHazards, ","), m.Source))
+		fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", spec.rollout, len(spec.plans), strings.Join(b.acked, ","), m.Source, b.planID))
 	s.emit(ctx, controlplane.Run{
-		ID: id, Target: m.Target, State: controlplane.StateQueued,
+		ID: id, Target: m.Target, State: controlplane.StateQueued, PlanID: b.planID,
 		Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t, Provenance: p,
-	}, notify.RunCreated, "")
+	}, notify.RunCreated, b.detail())
 
-	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
+	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id, PlanId: b.planID}), nil
 }
 
 type runSpec struct {
@@ -377,6 +399,7 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		Kind:      r.Kind,
 		CreatedBy: r.Provenance.CreatedBy,
 		Source:    r.Provenance.Source,
+		PlanId:    r.PlanID,
 		CreatedAt: timestamppb.New(r.CreatedAt),
 
 		LockTimeout: r.Timeouts.Lock, StatementTimeout: r.Timeouts.Statement,
@@ -533,8 +556,8 @@ func (s *Server) checkOrder(target string, plans []engine.Plan, applied []int64,
 
 		return nil
 	}
-	err := fmt.Errorf("out-of-order migrations %s: newest applied version on %s is %d (pass allow_out_of_order to apply them anyway)",
-		strings.Join(behind, ", "), target, latest)
+	err := fmt.Errorf("%w %s: newest applied version on %s is %d (pass allow_out_of_order to apply them anyway)",
+		errOutOfOrder, strings.Join(behind, ", "), target, latest)
 	s.Log.Warn("run refused by order guard", "target", target, "error", err.Error())
 
 	return connect.NewError(connect.CodeFailedPrecondition, err)

@@ -1,0 +1,165 @@
+package controlplane
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const planColumns = `id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition, drift, plan,
+	validated, acked, allow_out_of_order, created_by, source, created_at, coalesce(run_id::text, ''), coalesce(superseded_by::text, '')`
+
+// SavePlan stores a ready plan with its files; a ready plan with the same key on the target is replaced.
+func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) error {
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM cp_plan_files f USING cp_plans p
+		WHERE f.plan_id = p.id AND p.target = $1 AND p.key = $2 AND p.state = 'ready'`, p.Target, p.Key); err != nil {
+		return fmt.Errorf("replace plan files: %w", err)
+	}
+	names := make([]string, 0, len(files))
+	bodies := make([]string, 0, len(files))
+	for name, body := range files {
+		names = append(names, name)
+		bodies = append(bodies, body)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		WITH p AS (
+			INSERT INTO cp_plans (id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition,
+				drift, plan, validated, acked, allow_out_of_order, created_by, source)
+			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			ON CONFLICT (target, key) WHERE state = 'ready' DO UPDATE SET
+				id = EXCLUDED.id, rollout = EXCLUDED.rollout, history_hash = EXCLUDED.history_hash, applied = EXCLUDED.applied,
+				schema_fingerprint = EXCLUDED.schema_fingerprint, schema_definition = EXCLUDED.schema_definition,
+				drift = EXCLUDED.drift, plan = EXCLUDED.plan, validated = EXCLUDED.validated, acked = EXCLUDED.acked,
+				allow_out_of_order = EXCLUDED.allow_out_of_order, created_by = EXCLUDED.created_by, source = EXCLUDED.source,
+				created_at = now()
+			RETURNING id)
+		INSERT INTO cp_plan_files (plan_id, name, body)
+		SELECT (SELECT id FROM p), n, b FROM unnest($16::text[], $17::text[]) AS f (n, b)`,
+		p.ID, p.Target, p.Key, p.Rollout, p.HistoryHash, jsonOf(p.Applied), p.SchemaFingerprint, p.SchemaDefinition,
+		p.Drift, jsonOf(p.Migrations), p.Validated, append([]string{}, p.Acked...), p.AllowOutOfOrder, p.CreatedBy, p.Source, names, bodies); err != nil {
+		return fmt.Errorf("save plan: %w", err)
+	}
+
+	return nil
+}
+
+// ReadyPlan returns the ready plan for a key on a target, created at or after since.
+func (s *Store) ReadyPlan(ctx context.Context, target, key string, since time.Time) (Plan, error) {
+	p, err := scanPlan(s.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM cp_plans
+		WHERE target = $1 AND key = $2 AND state = 'ready' AND created_at >= $3`, target, key, since))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Plan{}, fmt.Errorf("plan for %s: %w", target, ErrNotFound)
+	}
+	if err != nil {
+		return Plan{}, fmt.Errorf("load plan: %w", err)
+	}
+
+	return p, nil
+}
+
+// Plan returns one plan by id.
+func (s *Store) Plan(ctx context.Context, id string) (Plan, error) {
+	p, err := scanPlan(s.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM cp_plans WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Plan{}, fmt.Errorf("plan %q: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return Plan{}, fmt.Errorf("load plan: %w", err)
+	}
+
+	return p, nil
+}
+
+// ListPlans returns a target's plans, newest first; limit caps the page (100 when zero).
+func (s *Store) ListPlans(ctx context.Context, target string, limit int) ([]Plan, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+planColumns+` FROM cp_plans
+		WHERE target = $1 ORDER BY created_at DESC, id LIMIT $2`, target, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list plans: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Plan, error) { return scanPlan(row) })
+	if err != nil {
+		return nil, fmt.Errorf("list plans: %w", err)
+	}
+
+	return out, nil
+}
+
+// BindPlan marks a ready plan as applied by a run.
+func (s *Store) BindPlan(ctx context.Context, id, runID string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE cp_plans SET state = 'bound', run_id = $2 WHERE id = $1 AND state = 'ready'`, id, runID)
+	if err != nil {
+		return fmt.Errorf("bind plan: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("ready plan %q: %w", id, ErrNotFound)
+	}
+
+	return nil
+}
+
+// SupersedePlan retires a ready plan and stores next in its place, linking the two.
+func (s *Store) SupersedePlan(ctx context.Context, id string, next Plan, files map[string]string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE cp_plans SET state = 'superseded' WHERE id = $1 AND state = 'ready'`, id)
+	if err != nil {
+		return fmt.Errorf("supersede plan: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("ready plan %q: %w", id, ErrNotFound)
+	}
+	if err := s.SavePlan(ctx, next, files); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE cp_plans SET superseded_by = $2 WHERE id = $1`, id, next.ID); err != nil {
+		return fmt.Errorf("link superseded plan: %w", err)
+	}
+
+	return nil
+}
+
+// RunsApplying maps each version held by a succeeded run of the target created after since to that run's id.
+func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time) (map[int64]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (version) left(f.name, 14)::bigint AS version, r.id
+		FROM cp_runs r JOIN cp_run_files f ON f.run_id = r.id
+		WHERE r.target = $1 AND r.state = 'succeeded' AND r.created_at > $2
+		ORDER BY version, r.created_at`, target, since)
+	if err != nil {
+		return nil, fmt.Errorf("list applying runs: %w", err)
+	}
+	out := map[int64]string{}
+	var v int64
+	var id string
+	if _, err := pgx.ForEachRow(rows, []any{&v, &id}, func() error {
+		out[v] = id
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("list applying runs: %w", err)
+	}
+
+	return out, nil
+}
+
+func scanPlan(row pgx.Row) (Plan, error) {
+	var p Plan
+	err := row.Scan(&p.ID, &p.Target, &p.Key, &p.Rollout, &p.State, &p.HistoryHash, &p.Applied, &p.SchemaFingerprint,
+		&p.SchemaDefinition, &p.Drift, &p.Migrations, &p.Validated, &p.Acked, &p.AllowOutOfOrder, &p.CreatedBy, &p.Source,
+		&p.CreatedAt, &p.RunID, &p.SupersededBy)
+
+	return p, err
+}
+
+func jsonOf(v any) []byte {
+	b, _ := json.Marshal(v)
+
+	return b
+}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
@@ -45,6 +46,7 @@ type stubService struct {
 	events     []*godwitv1.Run
 	drift      *godwitv1.CheckDriftResponse
 	revertID   string
+	planID     string
 	err        error
 }
 
@@ -89,7 +91,7 @@ func (s *stubService) CreateRun(_ context.Context, req *connect.Request[godwitv1
 		return nil, err
 	}
 
-	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: "r1"}), nil
+	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: "r1", PlanId: s.planID}), nil
 }
 
 func (s *stubService) PlanRun(_ context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
@@ -350,7 +352,7 @@ func TestMigrate(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "run r1: queued\nrun r1: running (attempt 1)\nrun r1: succeeded (attempt 1)\n"
+	want := "no stored plan for this set: implicit plan\nrun r1: queued\nrun r1: running (attempt 1)\nrun r1: succeeded (attempt 1)\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
@@ -534,8 +536,75 @@ func TestMigrateFailedPrintsErrorLine(t *testing.T) {
 	}})
 
 	_, out, _ := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t))
-	if out != "run r1: failed (attempt 2): boom\n" {
+	if out != "no stored plan for this set: implicit plan\nrun r1: failed (attempt 2): boom\n" {
 		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestMigrateBoundPlan(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{planID: "p1", events: []*godwitv1.Run{run("r1", godwitv1.RunState_RUN_STATE_SUCCEEDED, 1)}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 || out != "plan p1: bound\nrun r1: succeeded (attempt 1)\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+}
+
+func TestMigrate_StaleExit3(t *testing.T) {
+	t.Parallel()
+	msg := "plan abcd1234 on app is stale (planned 2026-09-01T10:00:00Z by ci)\n  reason : schema\nfix: push to the pull request (re-plan)"
+	cases := map[string]proto.Message{
+		"stale":    &godwitv1.PlanStale{PlanId: "abcd1234", Reason: "schema"},
+		"required": &godwitv1.PlanRequired{Target: "app", Key: "k"},
+	}
+	for name, detail := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cerr := connect.NewError(connect.CodeFailedPrecondition, errors.New(msg))
+			d, err := connect.NewErrorDetail(detail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cerr.AddDetail(d)
+			url := startStub(t, &stubService{err: cerr})
+
+			code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t))
+			if code != ExitPlanRefused || out != "" || errOut != "godwit: "+msg+"\n" {
+				t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
+			}
+		})
+	}
+}
+
+func TestMigrateOtherDetailExit1(t *testing.T) {
+	t.Parallel()
+	cerr := connect.NewError(connect.CodeFailedPrecondition, errors.New("nope"))
+	d, err := connect.NewErrorDetail(&godwitv1.Run{Id: "r1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cerr.AddDetail(d)
+	url := startStub(t, &stubService{err: cerr})
+
+	code, _, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 1 || errOut != "godwit: nope\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestTargetAdd_RequirePlan(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{}
+	url := startStub(t, stub)
+
+	code, _, errOut := runCLI("target", "add", "app", "--server", url, "--provider", "static", "--dsn", "d", "--require-plan")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if !stub.registered.RequirePlan {
+		t.Fatalf("request = %v", stub.registered)
 	}
 }
 
@@ -805,6 +874,87 @@ func TestAudit(t *testing.T) {
 
 	stub.err = connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token"))
 	if code, _, errOut := runCLI("audit", "--server", url); code != 1 || errOut != "godwit: invalid or missing bearer token\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func storedPlanStub() *stubService {
+	stub := dryRunStub()
+	stub.plan.PlanId = "p1"
+	stub.plan.PlanKey = "k1"
+	stub.plan.Drift = "+ table public.orders\n- index public.idx_old"
+	stub.plan.Observed = &godwitv1.PlanObservation{
+		HistoryHash: "h1", SchemaFingerprint: "f1", AppliedCount: 1, NewestApplied: 20260901120000,
+		At: timestamppb.New(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)),
+	}
+
+	return stub
+}
+
+func TestPlan_RemotePersists(t *testing.T) {
+	t.Parallel()
+	stub := storedPlanStub()
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("plan", "--server", url, "--token", "tok", "--target", "app", "--dir", goodMigs(t),
+		"--rollout", "expand-contract", "--ack", "H003", "--skip-validation", "--allow-out-of-order", "--source", "repo@sha:db")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := "plan p1 on app (rollout expand-contract, validated on a scratch database)\n" +
+		"key: k1\n" +
+		"observed: 1 applied, newest 20260901120000, history h1, schema f1, at 2026-09-01T10:00:00Z\n" +
+		"drift since baseline:\n" +
+		"  + table public.orders\n" +
+		"  - index public.idx_old\n" +
+		"20260901120000_users (up): 2 statement(s) [expand, applied]\n"
+	if !strings.HasPrefix(out, want) {
+		t.Fatalf("out = %q, want prefix %q", out, want)
+	}
+	p := stub.planned
+	if !p.Persist || p.Target != "app" || p.Rollout != "expand-contract" || !p.SkipValidation || !p.AllowOutOfOrder ||
+		strings.Join(p.AcknowledgeHazards, ",") != "H003" || p.Source != "repo@sha:db" || len(p.Files) != 2 || stub.auth != "Bearer tok" {
+		t.Fatalf("request = %v, auth = %q", p, stub.auth)
+	}
+}
+
+func TestPlan_RemoteFormats(t *testing.T) {
+	t.Parallel()
+	url := startStub(t, storedPlanStub())
+
+	_, out, _ := runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t), "--format", "markdown")
+	for _, want := range []string{"## godwit plan p1\n", "\nkey: k1\n", "\nobserved: 1 applied", "\ndrift since baseline:\n\n```diff\n+ table public.orders\n- index public.idx_old\n```\n\n| Migration"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("markdown lacks %q:\n%s", want, out)
+		}
+	}
+	_, out, _ = runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t), "--format", "json")
+	var got dryRunJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got.PlanID != "p1" || got.PlanKey != "k1" || got.Observed == nil || got.Observed.NewestApplied != 20260901120000 ||
+		got.Drift != "+ table public.orders\n- index public.idx_old" {
+		t.Fatalf("json = %+v", got)
+	}
+	_, out, _ = runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t), "--json")
+	if m := decodeJSON(t, out); m["planId"] != "p1" {
+		t.Fatalf("raw json = %s", out)
+	}
+}
+
+func TestPlan_RemoteErrors(t *testing.T) {
+	t.Parallel()
+	if code, _, errOut := runCLI("plan", "--target", "app", "--dir", goodMigs(t)); code != 1 || !strings.Contains(errOut, "--server") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	url := startStub(t, &stubService{err: connect.NewError(connect.CodeInvalidArgument, errors.New("20260901120000_users applied with different content"))})
+	code, _, errOut := runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 1 || errOut != "godwit: 20260901120000_users applied with different content\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	if code, _, errOut := runCLI("plan", "--server", url, "--target", "app", "--dir", t.TempDir()+"/missing"); code != 1 ||
+		!strings.Contains(errOut, "read migration dir") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }

@@ -45,7 +45,7 @@ func newScheduler(t *testing.T, s *Store, cfg Config) (*Scheduler, string) {
 
 func queueRun(t *testing.T, s *Store, id string, files map[string]string) {
 	t.Helper()
-	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, files, Timeouts{}, Provenance{}); err != nil {
+	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, files, Timeouts{}, Provenance{}, ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -306,7 +306,7 @@ func TestSchedulerUnknownRollout(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "postgres://x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "33333333-0000-0000-0000-000000000001", "app", "canary", goodFiles(), Timeouts{}, Provenance{}); err != nil {
+	if err := s.CreateRun(ctx, "33333333-0000-0000-0000-000000000001", "app", "canary", goodFiles(), Timeouts{}, Provenance{}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -333,7 +333,7 @@ func TestSchedulerExpandContract(t *testing.T) {
 		"20260901120001_drop.down.sql": upBody,
 	}
 	id := "55555555-0000-0000-0000-000000000001"
-	if err := s.CreateRun(ctx, id, "app", RolloutExpandContract, files, Timeouts{}, Provenance{}); err != nil {
+	if err := s.CreateRun(ctx, id, "app", RolloutExpandContract, files, Timeouts{}, Provenance{}, ""); err != nil {
 		t.Fatal(err)
 	}
 

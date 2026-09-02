@@ -14,10 +14,10 @@ import (
 
 // Applied is one row of the target's godwit.migrations table.
 type Applied struct {
-	Version   int64
-	Name      string
-	Checksum  string
-	AppliedAt time.Time
+	Version   int64     `json:"version"`
+	Name      string    `json:"name"`
+	Checksum  string    `json:"checksum"`
+	AppliedAt time.Time `json:"applied_at"`
 }
 
 // ListApplied reads the applied versions without creating godwit's tables; a database never migrated reports none.
