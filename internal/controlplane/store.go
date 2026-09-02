@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
 // Pool is the connection-pool surface the store needs; *pgxpool.Pool satisfies it.
@@ -302,20 +303,44 @@ func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 	return nil
 }
 
-// Resume requeues a failed or parked run.
-func (s *Store) Resume(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `
+// Resume requeues a failed or parked run and returns it.
+func (s *Store) Resume(ctx context.Context, id string) (Run, error) {
+	run, err := scanRun(s.pool.QueryRow(ctx, `
 		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1)
 		UPDATE cp_runs SET state = 'queued', attempts = 0, error = NULL, finished_at = NULL, updated_at = now()
-		WHERE id = $1 AND state IN ('failed', 'needs_attention')`, id)
-	if err != nil {
-		return fmt.Errorf("resume run: %w", err)
+		WHERE id = $1 AND state IN ('failed', 'needs_attention')
+		RETURNING `+runColumns, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, fmt.Errorf("run %q: %w", id, ErrNotResumable)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("run %q: %w", id, ErrNotResumable)
+	if err != nil {
+		return Run{}, fmt.Errorf("resume run: %w", err)
 	}
 
-	return nil
+	return run, nil
+}
+
+// RunStats counts runs per target and state with the age of the oldest one.
+func (s *Store) RunStats(ctx context.Context) ([]metrics.RunStat, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT target, state, count(*), extract(epoch FROM now() - min(updated_at))
+		FROM cp_runs GROUP BY target, state ORDER BY target, state`)
+	if err != nil {
+		return nil, fmt.Errorf("run stats: %w", err)
+	}
+	var out []metrics.RunStat
+	var st metrics.RunStat
+	var age float64
+	if _, err := pgx.ForEachRow(rows, []any{&st.Target, &st.State, &st.Count, &age}, func() error {
+		st.OldestAge = time.Duration(age * float64(time.Second))
+		out = append(out, st)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read run stats: %w", err)
+	}
+
+	return out, nil
 }
 
 // Confirm requeues an awaiting_contract run for its contract phase.

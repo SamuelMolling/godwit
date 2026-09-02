@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
 var testLog = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -121,7 +125,7 @@ func TestSchedulerFailureAndPark(t *testing.T) {
 		if !strings.Contains(r.Error, "statement 0") {
 			t.Fatalf("error = %q", r.Error)
 		}
-		if err := s.Resume(ctx, r.ID); err != nil {
+		if _, err := s.Resume(ctx, r.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -173,12 +177,43 @@ func TestSchedulerFailoverBetweenReplicas(t *testing.T) {
 
 	// Replica 2 recovers the abandoned run and finishes it.
 	providers := map[string]creds.Provider{"plain": plainProvider{}}
-	sched2 := NewScheduler(s, providers, PGEngine{}, Policies(), Config{Holder: "replica-2"}, testLog)
+	m := metrics.New()
+	sched2 := NewScheduler(s, providers, PGEngine{Metrics: m}, Policies(), Config{Holder: "replica-2"}, testLog)
+	sched2.Metrics = m
 	sched2.Tick(ctx)
 
 	r := waitState(t, s, "11111111-0000-0000-0000-000000000005", StateSucceeded)
 	if r.Attempts != 2 {
 		t.Fatalf("attempts = %d, want 2 (claim + recovery)", r.Attempts)
+	}
+	for _, want := range []string{
+		`godwit_run_resumes_total{source="reconciler",target="app"} 1`,
+		`godwit_run_duration_seconds_count{result="succeeded",target="app"} 1`,
+		`godwit_statement_duration_seconds_count{kind="tx",target="app"}`,
+	} {
+		if body := scrape(t, m); !strings.Contains(body, want) {
+			t.Fatalf("metrics missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func scrape(t *testing.T, m *metrics.Metrics) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	return rec.Body.String()
+}
+
+func TestPGEngineObserver(t *testing.T) {
+	t.Parallel()
+
+	PGEngine{}.observer("app")(engine.StatementEvent{})
+
+	m := metrics.New()
+	PGEngine{Metrics: m}.observer("app")(engine.StatementEvent{Statement: engine.Statement{NoTx: true}})
+	if body := scrape(t, m); !strings.Contains(body, `godwit_statement_duration_seconds_count{kind="no_tx",target="app"} 1`) {
+		t.Fatalf("metrics:\n%s", body)
 	}
 }
 

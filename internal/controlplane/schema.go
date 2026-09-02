@@ -140,8 +140,8 @@ func buildPlans(migs []engine.Migration, dir engine.Direction) ([]engine.Plan, e
 	return plans, nil
 }
 
-func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan) error {
-	exec := engine.New(db, opts)
+func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan, extra ...engine.Option) error {
+	exec := engine.New(db, opts, extra...)
 	for _, p := range plans {
 		run := exec.Up
 		if p.Direction == engine.DirectionDown {

@@ -35,12 +35,21 @@ const (
 	HookAfterExec       HookPoint = "after_exec"
 )
 
+// StatementEvent reports one executed statement.
+type StatementEvent struct {
+	Index     int
+	Statement Statement
+	Duration  time.Duration
+	Err       error
+}
+
 // Executor applies plans over one database session.
 type Executor struct {
-	db    DB
-	opts  Options
-	hook  func(HookPoint, int)
-	newID func() string
+	db      DB
+	opts    Options
+	hook    func(HookPoint, int)
+	observe func(StatementEvent)
+	newID   func() string
 }
 
 // Option customizes an Executor.
@@ -51,6 +60,11 @@ func WithHook(fn func(HookPoint, int)) Option {
 	return func(e *Executor) { e.hook = fn }
 }
 
+// WithObserver installs a callback that sees every executed statement.
+func WithObserver(fn func(StatementEvent)) Option {
+	return func(e *Executor) { e.observe = fn }
+}
+
 // WithIDGenerator overrides run ID generation.
 func WithIDGenerator(fn func() string) Option {
 	return func(e *Executor) { e.newID = fn }
@@ -59,10 +73,11 @@ func WithIDGenerator(fn func() string) Option {
 // New builds an Executor over db.
 func New(db DB, opts Options, extra ...Option) *Executor {
 	e := &Executor{
-		db:    db,
-		opts:  opts.withDefaults(),
-		hook:  func(HookPoint, int) {},
-		newID: uuid.NewString,
+		db:      db,
+		opts:    opts.withDefaults(),
+		hook:    func(HookPoint, int) {},
+		observe: func(StatementEvent) {},
+		newID:   uuid.NewString,
 	}
 	for _, fn := range extra {
 		fn(e)
@@ -160,11 +175,16 @@ func (e *Executor) applied(ctx context.Context, version int64) (bool, string, er
 
 func (e *Executor) execStatement(ctx context.Context, prog runProgress, idx int, st Statement) error {
 	e.hook(HookBeforeStatement, idx)
+	start := time.Now()
+	var err error
 	if st.NoTx {
-		return e.execNoTx(ctx, prog, idx, st)
+		err = e.execNoTx(ctx, prog, idx, st)
+	} else {
+		err = e.execTx(ctx, prog, idx, st)
 	}
+	e.observe(StatementEvent{Index: idx, Statement: st, Duration: time.Since(start), Err: err})
 
-	return e.execTx(ctx, prog, idx, st)
+	return err
 }
 
 func (e *Executor) execTx(ctx context.Context, prog runProgress, idx int, st Statement) error {

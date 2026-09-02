@@ -18,6 +18,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
 // DriftOps is the drift surface the API exposes (implemented by the monitor).
@@ -33,6 +34,9 @@ type Validator interface {
 
 // Server implements godwit.v1.GodwitService over the control-plane store.
 type Server struct {
+	// Metrics receives admission and API events; replace it before Handler to share a registry.
+	Metrics *metrics.Metrics
+
 	store         *controlplane.Store
 	drift         DriftOps
 	validator     Validator
@@ -44,6 +48,7 @@ type Server struct {
 // NewServer wires a Server; drift and validator are optional (nil disables).
 func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, masterKey []byte) *Server {
 	return &Server{
+		Metrics:       metrics.New(),
 		store:         store,
 		drift:         drift,
 		validator:     validator,
@@ -53,11 +58,12 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 	}
 }
 
-// Handler mounts the connect service with bearer-token auth; serve it with h2c enabled.
+// Handler mounts the connect service with bearer-token auth and /metrics; serve it with h2c enabled.
 func Handler(s *Server, tokens []string) http.Handler {
 	mux := http.NewServeMux()
-	path, h := godwitv1connect.NewGodwitServiceHandler(s, connect.WithInterceptors(newAuth(tokens)))
+	path, h := godwitv1connect.NewGodwitServiceHandler(s, connect.WithInterceptors(s.Metrics.Interceptor(), newAuth(tokens)))
 	mux.Handle(path, h)
+	mux.Handle("/metrics", s.Metrics.Handler())
 
 	return mux
 }
@@ -183,7 +189,7 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 
 // admit refuses unacknowledged hazards and plans that fail on the scratch database.
 func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation bool) error {
-	if err := checkHazards(plans, acked); err != nil {
+	if err := s.checkHazards(plans, acked); err != nil {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	if s.validator == nil || skipValidation {
@@ -191,6 +197,8 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	}
 	if err := s.validator.Validate(ctx, target, plans); err != nil {
 		if errors.Is(err, controlplane.ErrValidationFailed) {
+			s.Metrics.ValidationFailed(target)
+
 			return connect.NewError(connect.CodeInvalidArgument, err)
 		}
 
@@ -293,9 +301,11 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // ResumeRun requeues a failed or parked run.
 func (s *Server) ResumeRun(ctx context.Context, req *connect.Request[godwitv1.ResumeRunRequest]) (*connect.Response[godwitv1.ResumeRunResponse], error) {
-	if err := s.store.Resume(ctx, req.Msg.RunId); err != nil {
+	run, err := s.store.Resume(ctx, req.Msg.RunId)
+	if err != nil {
 		return nil, rpcErr(err)
 	}
+	s.Metrics.RunResumed(run.Target)
 
 	return connect.NewResponse(&godwitv1.ResumeRunResponse{}), nil
 }
@@ -319,7 +329,7 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 }
 
 // checkHazards refuses plans carrying hazard codes the author did not accept.
-func checkHazards(plans []engine.Plan, acked []string) error {
+func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
 	ackSet := map[string]bool{}
 	for _, code := range acked {
 		ackSet[code] = true
@@ -328,6 +338,7 @@ func checkHazards(plans []engine.Plan, acked []string) error {
 	for _, p := range plans {
 		for _, st := range p.Statements {
 			for _, h := range st.Hazards {
+				s.Metrics.Hazard(h.Code, ackSet[h.Code])
 				if !ackSet[h.Code] {
 					pending = append(pending, fmt.Sprintf("%s: %s", h.Code, h.Detail))
 				}

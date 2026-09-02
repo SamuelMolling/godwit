@@ -21,6 +21,7 @@ The script:
 9. Reverts that run with `RevertRun`: `plan` comes back, `plan_v2` goes, the original run is marked `reverted`.
 10. Registers the target again through a Vault KV secret (`vault` provider with a DSN template) and runs a migration with credentials resolved at claim time.
 11. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API.
+12. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
 
 Poke around:
 

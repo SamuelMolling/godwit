@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
@@ -20,6 +21,9 @@ type Drift struct {
 
 // DriftMonitor periodically compares live schemas against their baselines.
 type DriftMonitor struct {
+	// Metrics receives check outcomes; replace it before Run to share a registry.
+	Metrics *metrics.Metrics
+
 	store    *Store
 	dsn      func(ctx context.Context, target string) (string, error)
 	engine   Engine
@@ -35,6 +39,7 @@ func NewDriftMonitor(store *Store, sched *Scheduler, eng Engine, notifier notify
 	}
 
 	return &DriftMonitor{
+		Metrics:  sched.Metrics,
 		store:    store,
 		dsn:      sched.targetDSN,
 		engine:   eng,
@@ -92,9 +97,11 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 		if err := m.store.ResolveDrift(ctx, target); err != nil {
 			return Drift{}, err
 		}
+		m.Metrics.DriftChecked(target, metrics.DriftClean)
 
 		return Drift{Target: target}, nil
 	}
+	m.Metrics.DriftChecked(target, metrics.DriftDrifted)
 
 	diff := strings.Join(engine.DiffSchemas(expected.Definition, liveDef), "\n")
 	created, err := m.store.RecordDrift(ctx, target, diff)
@@ -121,6 +128,7 @@ func (m *DriftMonitor) AcceptBaseline(ctx context.Context, target string) error 
 	if err != nil {
 		return fmt.Errorf("snapshot live schema: %w", err)
 	}
+	m.Metrics.DriftChecked(target, metrics.DriftAccepted)
 
 	return m.store.SaveSnapshot(ctx, target, fp, def, "")
 }

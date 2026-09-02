@@ -8,6 +8,7 @@ import (
 
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
 // Config tunes a Scheduler.
@@ -34,6 +35,9 @@ func (c Config) withDefaults() Config {
 
 // Scheduler claims runnable runs and executes them under a heartbeated lease.
 type Scheduler struct {
+	// Metrics receives run events; replace it before Run to share a registry.
+	Metrics *metrics.Metrics
+
 	store     *Store
 	providers map[string]creds.Provider
 	engine    Engine
@@ -45,6 +49,7 @@ type Scheduler struct {
 // NewScheduler wires a Scheduler.
 func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine, policies map[string]RolloutPolicy, cfg Config, log *slog.Logger) *Scheduler {
 	return &Scheduler{
+		Metrics:   metrics.New(),
 		store:     store,
 		providers: providers,
 		engine:    eng,
@@ -84,10 +89,15 @@ func (s *Scheduler) Tick(ctx context.Context) {
 
 func (s *Scheduler) execute(ctx context.Context, run Run) {
 	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
+	s.Metrics.RunClaimed(run.Target, run.Attempts)
+	start := time.Now()
+	finish := func(state, errText string) {
+		_ = s.store.Finish(ctx, run.ID, state, errText)
+		s.Metrics.RunFinished(run.Target, state, run.Attempts, time.Since(start))
+	}
 	if run.Attempts > s.cfg.MaxAttempts {
 		log.Error("resume budget exhausted; parking")
-		_ = s.store.Finish(ctx, run.ID, StateNeedsAttention,
-			fmt.Sprintf("gave up after %d attempts", run.Attempts-1))
+		finish(StateNeedsAttention, fmt.Sprintf("gave up after %d attempts", run.Attempts-1))
 
 		return
 	}
@@ -99,7 +109,7 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	held, err := s.applyRun(ctx, run)
 	if err != nil {
 		log.Error("run failed", "error", err)
-		_ = s.store.Finish(ctx, run.ID, StateFailed, err.Error())
+		finish(StateFailed, err.Error())
 
 		return
 	}
@@ -107,12 +117,12 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	s.baseline(ctx, run, log)
 	if held > 0 {
 		log.Info("expand phase applied; awaiting rollout confirmation", "held", held)
-		_ = s.store.Finish(ctx, run.ID, StateAwaitingContract, "")
+		finish(StateAwaitingContract, "")
 
 		return
 	}
 	log.Info("run succeeded")
-	_ = s.store.Finish(ctx, run.ID, StateSucceeded, "")
+	finish(StateSucceeded, "")
 }
 
 func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
@@ -163,7 +173,7 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
 		return 0, err
 	}
 
-	return held, s.engine.Apply(ctx, dsn, plans)
+	return held, s.engine.Apply(ctx, run.Target, dsn, plans)
 }
 
 func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error) {
@@ -189,6 +199,7 @@ func (s *Scheduler) heartbeat(ctx context.Context, runID string) {
 		case <-ticker.C:
 			if err := s.store.Heartbeat(ctx, runID, s.cfg.Holder, s.cfg.TTL); err != nil {
 				s.log.Warn("heartbeat lost", "run", runID, "error", err)
+				s.Metrics.HeartbeatFailed()
 
 				return
 			}
