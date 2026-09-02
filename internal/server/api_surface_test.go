@@ -298,6 +298,11 @@ func TestAPIInternalErrors(t *testing.T) {
 	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: "x"})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("revert: %v", err)
 	}
+	if _, err := client.BaselineTarget(ctx, connect.NewRequest(&godwitv1.BaselineTargetRequest{
+		Target: "app", Files: migrationFiles(), Version: 20260901120000,
+	})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("baseline: %v", err)
+	}
 }
 
 func TestAPIAcceptBaselineUnknownTarget(t *testing.T) {

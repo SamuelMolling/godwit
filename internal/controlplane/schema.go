@@ -129,6 +129,13 @@ CREATE TABLE cp_notifications (
 		UpSQL:    `ALTER TABLE cp_runs ADD COLUMN lock_timeout text, ADD COLUMN statement_timeout text;`,
 		DownSQL:  `ALTER TABLE cp_runs DROP COLUMN lock_timeout, DROP COLUMN statement_timeout;`,
 	},
+	{
+		Version:  20260901000006,
+		Name:     "run_kind",
+		Checksum: "cp-run-kind-v1",
+		UpSQL:    `ALTER TABLE cp_runs ADD COLUMN kind text NOT NULL DEFAULT 'migrate' CHECK (kind IN ('migrate', 'baseline'));`,
+		DownSQL:  `ALTER TABLE cp_runs DROP COLUMN kind;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

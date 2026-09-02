@@ -105,6 +105,9 @@ func TestDriftDisabled(t *testing.T) {
 	if _, err := s.AcceptBaseline(ctx, connect.NewRequest(&godwitv1.AcceptBaselineRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("err = %v", err)
 	}
+	if _, err := s.BaselineTarget(ctx, connect.NewRequest(&godwitv1.BaselineTargetRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestCheckHazards(t *testing.T) {
@@ -181,8 +184,8 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "coalesce", "coalesce", "created_at", "finished_at"}).
-			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", "", "", time.Now(), (*time.Time)(nil)))
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at"}).
+			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil)))
 
 	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	s.watchInterval = time.Hour

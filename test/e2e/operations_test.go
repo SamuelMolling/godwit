@@ -186,3 +186,44 @@ func TestHazardGateAndValidation(t *testing.T) {
 		t.Fatalf("runs after validation refusal = %d, want 2", n)
 	}
 }
+
+func TestBaselineExistingDatabase(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("app")
+	execSQL(t, r.appDSN, usersTable.up)
+	dir := migrationDir(t, usersTable, migration{v2, "plan", "ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;"})
+
+	out := r.mustCLI("target", "baseline", "app", "--dir", dir, "--version", "20260901120000")
+	expectContains(t, out, "baselined to version 20260901120000")
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 1 {
+		t.Fatalf("applied versions after baseline = %d, want 1", n)
+	}
+	if columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("baseline must not execute migrations")
+	}
+	run := r.latestRun()
+	if run.Kind != "baseline" || run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED {
+		t.Fatalf("baseline run = %+v", run)
+	}
+	expectContains(t, r.mustCLI("runs", "--target", "app"), "baseline")
+
+	expectContains(t, r.mustMigrate(dir), "succeeded")
+	if !columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("migration after baseline must apply the newer version")
+	}
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 2 {
+		t.Fatalf("applied versions after migrate = %d, want 2", n)
+	}
+
+	code, _, errOut := r.cli("target", "baseline", "app", "--dir", dir, "--version", "20260901120000")
+	if code != 1 {
+		t.Fatalf("second baseline exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "already has applied migrations")
+	code, _, errOut = r.cli("revert", run.Id)
+	if code != 1 {
+		t.Fatalf("revert baseline exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "baseline runs cannot be reverted")
+}

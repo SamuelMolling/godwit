@@ -24,6 +24,7 @@ type stubService struct {
 	mu         sync.Mutex
 	auth       string
 	registered *godwitv1.RegisterTargetRequest
+	baselined  *godwitv1.BaselineTargetRequest
 	created    *godwitv1.CreateRunRequest
 	reverted   *godwitv1.RevertRunRequest
 	listed     *godwitv1.ListRunsRequest
@@ -56,6 +57,15 @@ func (s *stubService) RegisterTarget(_ context.Context, req *connect.Request[god
 	}
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
+}
+
+func (s *stubService) BaselineTarget(_ context.Context, req *connect.Request[godwitv1.BaselineTargetRequest]) (*connect.Response[godwitv1.BaselineTargetResponse], error) {
+	s.baselined = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(&godwitv1.BaselineTargetResponse{RunId: "b1"}), nil
 }
 
 func (s *stubService) CreateRun(_ context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
@@ -212,6 +222,43 @@ func TestTargetAddJSONAndError(t *testing.T) {
 	stub.err = connect.NewError(connect.CodeInvalidArgument, errors.New("dsn is required"))
 	code, _, errOut := runCLI("target", "add", "app", "--server", url, "--provider", "static")
 	if code != 1 || errOut != "godwit: dsn is required\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestTargetBaseline(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "20260901120000")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if out != "target app: baselined to version 20260901120000 (run b1)\n" {
+		t.Fatalf("out = %q", out)
+	}
+	b := stub.baselined
+	if b.Target != "app" || b.Version != 20260901120000 || len(b.Files) != 2 || b.Files[0].Name != "20260901120000_users.up.sql" {
+		t.Fatalf("request = %v", b)
+	}
+
+	code, out, _ = runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "1", "--json")
+	if code != 0 || decodeJSON(t, out)["runId"] != "b1" {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", "/nope", "--version", "1"); code != 1 ||
+		!strings.Contains(errOut, "read migration dir") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t)); code != 1 ||
+		!strings.Contains(errOut, "version") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target already has applied migrations"))
+	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "1"); code != 1 ||
+		errOut != "godwit: target already has applied migrations\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
@@ -400,7 +447,7 @@ func TestRunGet(t *testing.T) {
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	stub := &stubService{run: &godwitv1.Run{
 		Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1,
-		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", LockTimeout: "2s", StatementTimeout: "1m",
+		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", Kind: "migrate", LockTimeout: "2s", StatementTimeout: "1m",
 		CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
 	}}
 	url := startStub(t, stub)
@@ -409,7 +456,7 @@ func TestRunGet(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "run r1: succeeded (attempt 1)\n  target: app\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
+	want := "run r1: succeeded (attempt 1)\n  target: app\n  kind: migrate\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
 		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
 	if out != want || stub.got != "r1" {
 		t.Fatalf("out = %q, got = %q", out, stub.got)
@@ -523,8 +570,8 @@ func TestRuns(t *testing.T) {
 	t.Parallel()
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	stub := &stubService{runs: []*godwitv1.Run{
-		{Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Rollout: "direct", CreatedAt: timestamppb.New(created)},
-		{Id: "r2", Target: "app", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, Rollout: "expand-contract", Phase: "expand"},
+		{Id: "r1", Target: "app", Kind: "baseline", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Rollout: "direct", CreatedAt: timestamppb.New(created)},
+		{Id: "r2", Target: "app", Kind: "migrate", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, Rollout: "expand-contract", Phase: "expand"},
 	}}
 	url := startStub(t, stub)
 
@@ -532,9 +579,9 @@ func TestRuns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "ID  TARGET  STATE              ROLLOUT          PHASE   CREATED\n" +
-		"r1  app     succeeded          direct                   2026-09-01T12:00:00Z\n" +
-		"r2  app     awaiting_contract  expand-contract  expand  \n"
+	want := "ID  TARGET  KIND      STATE              ROLLOUT          PHASE   CREATED\n" +
+		"r1  app     baseline  succeeded          direct                   2026-09-01T12:00:00Z\n" +
+		"r2  app     migrate   awaiting_contract  expand-contract  expand  \n"
 	if out != want || stub.listed.Target != "app" {
 		t.Fatalf("out = %q, target = %q", out, stub.listed.Target)
 	}

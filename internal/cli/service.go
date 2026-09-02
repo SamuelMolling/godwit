@@ -22,7 +22,40 @@ func newTargetCmd() *cobra.Command {
 		Use:   "target",
 		Short: "Manage targets on the service",
 	}
-	cmd.AddCommand(newTargetAddCmd())
+	cmd.AddCommand(newTargetAddCmd(), newTargetBaselineCmd())
+
+	return cmd
+}
+
+func newTargetBaselineCmd() *cobra.Command {
+	flags := &clientFlags{}
+	req := &godwitv1.BaselineTargetRequest{}
+	var dir string
+	cmd := &cobra.Command{
+		Use:   "baseline <name>",
+		Short: "Mark migrations up to a version as applied on an existing database without running them",
+		Args:  cobra.ExactArgs(1),
+		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
+			req.Target = args[0]
+			files, err := migrationFiles(dir)
+			if err != nil {
+				return err
+			}
+			req.Files = files
+			resp, err := client.BaselineTarget(cmd.Context(), connect.NewRequest(req))
+			if err != nil {
+				return err
+			}
+			flags.print(cmd, resp.Msg, fmt.Sprintf("target %s: baselined to version %d (run %s)", req.Target, req.Version, resp.Msg.RunId))
+
+			return nil
+		}),
+	}
+	flags.register(cmd)
+	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
+	cmd.Flags().Int64Var(&req.Version, "version", 0, "highest migration version already present in the database")
+	_ = cmd.MarkFlagRequired("version")
+	configKeys(cmd, "dir")
 
 	return cmd
 }
@@ -214,8 +247,8 @@ func newRunGetCmd() *cobra.Command {
 				return err
 			}
 			r := resp.Msg.Run
-			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created: %s\n  finished: %s",
-				runLine(r), r.Target, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, stamp(r.CreatedAt), stamp(r.FinishedAt)))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created: %s\n  finished: %s",
+				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, stamp(r.CreatedAt), stamp(r.FinishedAt)))
 
 			return nil
 		}),
@@ -353,9 +386,9 @@ func newRunsCmd() *cobra.Command {
 func runsTable(runs []*godwitv1.Run) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTARGET\tSTATE\tROLLOUT\tPHASE\tCREATED")
+	fmt.Fprintln(w, "ID\tTARGET\tKIND\tSTATE\tROLLOUT\tPHASE\tCREATED")
 	for _, r := range runs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Id, r.Target, stateName(r.State), r.Rollout, r.Phase, stamp(r.CreatedAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Id, r.Target, r.Kind, stateName(r.State), r.Rollout, r.Phase, stamp(r.CreatedAt))
 	}
 	_ = w.Flush()
 

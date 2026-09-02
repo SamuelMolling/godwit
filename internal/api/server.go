@@ -34,6 +34,11 @@ type Validator interface {
 	Validate(ctx context.Context, target string, plans []engine.Plan) error
 }
 
+// Baseliner marks migrations applied on a target without running them (implemented by the control plane).
+type Baseliner interface {
+	Baseline(ctx context.Context, runID, target string, migs []engine.Migration) error
+}
+
 // Server implements godwit.v1.GodwitService over the control-plane store.
 type Server struct {
 	// Metrics receives admission and API events; replace it before Handler to share a registry.
@@ -42,6 +47,8 @@ type Server struct {
 	Log *slog.Logger
 	// Notifier receives operator-driven run events; replace it before Handler.
 	Notifier notify.Notifier
+	// Baseliner serves BaselineTarget; nil leaves it unimplemented.
+	Baseliner Baseliner
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -87,7 +94,8 @@ func rpcErr(err error) *connect.Error {
 	case errors.Is(err, controlplane.ErrNotFound):
 		return connect.NewError(connect.CodeNotFound, err)
 	case errors.Is(err, controlplane.ErrNotResumable), errors.Is(err, controlplane.ErrNotAwaitingContract),
-		errors.Is(err, controlplane.ErrNotRevertable):
+		errors.Is(err, controlplane.ErrNotRevertable), errors.Is(err, controlplane.ErrBaselineRun),
+		errors.Is(err, engine.ErrAlreadyMigrated):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, err)
@@ -216,6 +224,9 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err != nil {
 		return nil, rpcErr(err)
 	}
+	if orig.Kind == controlplane.KindBaseline {
+		return nil, rpcErr(fmt.Errorf("run %q: %w", m.RunId, controlplane.ErrBaselineRun))
+	}
 	files, err := s.store.RunFiles(ctx, m.RunId)
 	if err != nil {
 		return nil, rpcErr(err)
@@ -297,6 +308,7 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		Rollout:   r.Rollout,
 		Phase:     r.Phase,
 		Reverts:   r.Reverts,
+		Kind:      r.Kind,
 		CreatedAt: timestamppb.New(r.CreatedAt),
 
 		LockTimeout: r.Timeouts.Lock, StatementTimeout: r.Timeouts.Statement,
@@ -431,7 +443,10 @@ func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
 	return nil
 }
 
-var errDriftDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("drift detection is not enabled"))
+var (
+	errDriftDisabled    = connect.NewError(connect.CodeUnimplemented, errors.New("drift detection is not enabled"))
+	errBaselineDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("baselining is not enabled"))
+)
 
 // CheckDrift compares a target's live schema against its baseline now.
 func (s *Server) CheckDrift(ctx context.Context, req *connect.Request[godwitv1.CheckDriftRequest]) (*connect.Response[godwitv1.CheckDriftResponse], error) {
@@ -479,4 +494,48 @@ func (s *Server) AcceptBaseline(ctx context.Context, req *connect.Request[godwit
 	}
 
 	return connect.NewResponse(&godwitv1.AcceptBaselineResponse{}), nil
+}
+
+// BaselineTarget marks every migration up to a version as applied on a target without running it.
+func (s *Server) BaselineTarget(ctx context.Context, req *connect.Request[godwitv1.BaselineTargetRequest]) (*connect.Response[godwitv1.BaselineTargetResponse], error) {
+	if s.Baseliner == nil {
+		return nil, errBaselineDisabled
+	}
+	m := req.Msg
+	if m.Target == "" {
+		return nil, invalid("target is required")
+	}
+	if m.Version <= 0 {
+		return nil, invalid("version must be positive")
+	}
+	files := map[string]string{}
+	for _, f := range m.Files {
+		files[f.Name] = f.Body
+	}
+	plans, err := controlplane.PlansFromFiles(files, engine.DirectionUp)
+	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	var migs []engine.Migration
+	for _, p := range plans {
+		if p.Migration.Version <= m.Version {
+			migs = append(migs, p.Migration)
+		}
+	}
+	if len(migs) == 0 {
+		return nil, invalid(fmt.Sprintf("no migration at or below version %d", m.Version))
+	}
+
+	id := s.newID()
+	if err := s.Baseliner.Baseline(ctx, id, m.Target, migs); err != nil {
+		return nil, rpcErr(err)
+	}
+	detail := fmt.Sprintf("baseline to version %d: %d migrations marked applied", m.Version, len(migs))
+	s.Log.Info("target baselined", "run", id, "target", m.Target, "version", m.Version, "migrations", len(migs))
+	s.emit(ctx, controlplane.Run{
+		ID: id, Target: m.Target, State: controlplane.StateSucceeded,
+		Rollout: controlplane.RolloutDirect, Phase: controlplane.PhaseExpand, Kind: controlplane.KindBaseline,
+	}, notify.RunSucceeded, detail)
+
+	return connect.NewResponse(&godwitv1.BaselineTargetResponse{RunId: id}), nil
 }

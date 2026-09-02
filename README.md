@@ -26,9 +26,10 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies and auto-resolves. `AcceptBaseline` blesses manual changes. |
 | Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
 | Revert | `RevertRun` queues the down side of the latest run on a target — same journal, lease and hazard gate as the way up. The original is marked `reverted` and leaves the replayable history. |
+| Baseline | `BaselineTarget` adopts an existing database: every migration up to a version is marked applied without running it, recorded as a `baseline` run whose files seed the replayable history, and snapshotted for drift — see [Baselining an existing database](#baselining-an-existing-database). |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
-| CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
+| CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target add`, `target baseline`, `run`, `runs`, `revert` and `drift` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
 | Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
 | Notifications | Every run transition and drift event goes to Slack (one message per run, threaded or edited in place) and/or a JSON webhook, delivered off the run's critical path — see [Notifications](#notifications). |
@@ -68,6 +69,27 @@ CreateRun{rollout: "expand-contract"}  →  running  →  awaiting_contract  →
 ```
 RevertRun{run_id: A}  →  new run R (reverts: A)  →  succeeded  ⇒  A becomes reverted
 ```
+
+## Baselining an existing database
+
+A database that predates godwit already has its schema; running the migrations that built it would fail on the first `CREATE TABLE`. `BaselineTarget{target, files, version}` loads the files, marks every migration with a version at or below `version` as applied in `godwit.migrations` (with its checksum) without executing anything, and records a run of kind `baseline` in state `succeeded` holding those files. From then on the target behaves like one godwit built: later migrations apply normally, scratch-database validation replays the baseline files before the new ones, and a schema snapshot taken right after the call feeds drift detection.
+
+The usual shape is a schema dump as the first migration plus the real migrations after it:
+
+```
+migrations/
+  00000000000001_baseline.up.sql      # pg_dump --schema-only of the existing database
+  00000000000001_baseline.down.sql    # DROP of everything above
+  20260901120000_add_email.up.sql
+  20260901120000_add_email.down.sql
+```
+
+```
+godwit target baseline app --dir migrations --version 1
+godwit migrate --target app --dir migrations      # applies 20260901120000 only
+```
+
+The call is refused with `FailedPrecondition` when the target already has applied versions — a baseline is a one-time adoption, not a way to skip migrations. Baseline runs cannot be reverted; `runs` and `run get` show the kind of every run.
 
 ## Credentials
 
@@ -111,7 +133,7 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
-| `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault [--lock-timeout] [--statement-timeout]` |
+| `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault [--lock-timeout] [--statement-timeout]`, `target baseline <name> --version <v> [--dir]` |
 | `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--lock-timeout] [--statement-timeout]` |
 | `status` — applied state per migration | `revert <run-id> [--lock-timeout] [--statement-timeout]`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
