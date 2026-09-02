@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.svg" alt="godwit" width="340"></p>
+<p align="center"><img src="assets/logo.svg" alt="godwit" width="260"></p>
 
 # godwit
 
