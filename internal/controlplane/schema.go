@@ -161,6 +161,19 @@ CREATE INDEX cp_audit_run_id_idx ON cp_audit (run_id) WHERE run_id IS NOT NULL;`
 DROP TABLE cp_audit;
 ALTER TABLE cp_runs DROP COLUMN source, DROP COLUMN created_by;`,
 	},
+	{
+		Version:  20260901000008,
+		Name:     "drift_event_dedup",
+		Checksum: "cp-drift-event-dedup-v1",
+		UpSQL: `
+UPDATE cp_drift_events e SET resolved_at = now()
+WHERE e.resolved_at IS NULL AND EXISTS (
+	SELECT 1 FROM cp_drift_events o
+	WHERE o.target = e.target AND o.diff = e.diff AND o.resolved_at IS NULL AND o.id < e.id);
+
+CREATE UNIQUE INDEX cp_drift_events_open_idx ON cp_drift_events (target, md5(diff)) WHERE resolved_at IS NULL;`,
+		DownSQL: `DROP INDEX cp_drift_events_open_idx;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.
