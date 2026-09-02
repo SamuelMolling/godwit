@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -46,47 +48,144 @@ func (f *targetFlags) executor(ctx context.Context) (*engine.Executor, func(), e
 	return exec, func() { _ = conn.Close(context.Background()) }, nil
 }
 
+var planFormats = map[string]func(io.Writer, []engine.Plan){
+	"text":     writePlanText,
+	"markdown": writePlanMarkdown,
+	"json":     writePlanJSON,
+}
+
 func newPlanCmd() *cobra.Command {
 	flags := &targetFlags{}
+	var format string
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Parse migrations and print classified statements with hazards",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			write, ok := planFormats[format]
+			if !ok {
+				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			}
 			migs, err := engine.LoadDir(flags.dir)
 			if err != nil {
 				return err
 			}
+			plans := make([]engine.Plan, 0, 2*len(migs))
 			for _, m := range migs {
 				for _, dir := range []engine.Direction{engine.DirectionUp, engine.DirectionDown} {
 					p, err := engine.BuildPlan(m, dir)
 					if err != nil {
 						return err
 					}
-					printPlan(cmd, p)
+					plans = append(plans, p)
 				}
 			}
+			write(cmd.OutOrStdout(), plans)
 
 			return nil
 		},
 	}
 	flags.register(cmd, false)
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
 
 	return cmd
 }
 
-func printPlan(cmd *cobra.Command, p engine.Plan) {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%d_%s (%s): %d statement(s)\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements))
-	for i, st := range p.Statements {
-		mode := "tx"
-		if st.NoTx {
-			mode = "no-tx"
-		}
-		fmt.Fprintf(out, "  [%d] %-5s %s\n", i, mode, firstLine(st.SQL))
-		for _, h := range st.Hazards {
-			fmt.Fprintf(out, "        hazard %s: %s\n", h.Code, h.Detail)
+func writePlanText(w io.Writer, plans []engine.Plan) {
+	for _, p := range plans {
+		fmt.Fprintf(w, "%d_%s (%s): %d statement(s)\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements))
+		for i, st := range p.Statements {
+			fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(st), firstLine(st.SQL))
+			for _, h := range st.Hazards {
+				fmt.Fprintf(w, "        hazard %s: %s\n", h.Code, h.Detail)
+			}
 		}
 	}
+}
+
+func writePlanMarkdown(w io.Writer, plans []engine.Plan) {
+	fmt.Fprintln(w, "## godwit plan")
+	fmt.Fprintln(w)
+	hazards := 0
+	if len(plans) > 0 {
+		fmt.Fprintln(w, "| Migration | Direction | # | Mode | Statement | Hazards |")
+		fmt.Fprintln(w, "|---|---|---|---|---|---|")
+	}
+	for _, p := range plans {
+		for i, st := range p.Statements {
+			codes := make([]string, 0, len(st.Hazards))
+			for _, h := range st.Hazards {
+				codes = append(codes, fmt.Sprintf("%s: %s", h.Code, h.Detail))
+			}
+			hazards += len(st.Hazards)
+			fmt.Fprintf(w, "| `%d_%s` | %s | %d | %s | `%s` | %s |\n", p.Migration.Version, p.Migration.Name, p.Direction, i,
+				statementMode(st), markdownCell(oneLine(st.SQL)), markdownCell(strings.Join(codes, "; ")))
+		}
+	}
+	if len(plans) > 0 {
+		fmt.Fprintln(w)
+	}
+	if hazards > 0 {
+		fmt.Fprintf(w, "⚠️ %d hazard(s); acknowledge them with `--ack`\n", hazards)
+
+		return
+	}
+	fmt.Fprintln(w, "✅ no hazards")
+}
+
+func markdownCell(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
+}
+
+func oneLine(sql string) string {
+	line := strings.Join(strings.Fields(sql), " ")
+	if len(line) > 120 {
+		return line[:119] + "…"
+	}
+
+	return line
+}
+
+type planJSON struct {
+	Version    int64           `json:"version"`
+	Name       string          `json:"name"`
+	Direction  string          `json:"direction"`
+	Statements []statementJSON `json:"statements"`
+}
+
+type statementJSON struct {
+	SQL     string       `json:"sql"`
+	Mode    string       `json:"mode"`
+	Hazards []hazardJSON `json:"hazards"`
+}
+
+type hazardJSON struct {
+	Code   string `json:"code"`
+	Detail string `json:"detail"`
+}
+
+func writePlanJSON(w io.Writer, plans []engine.Plan) {
+	out := make([]planJSON, 0, len(plans))
+	for _, p := range plans {
+		pj := planJSON{Version: p.Migration.Version, Name: p.Migration.Name, Direction: string(p.Direction), Statements: []statementJSON{}}
+		for _, st := range p.Statements {
+			hazards := make([]hazardJSON, 0, len(st.Hazards))
+			for _, h := range st.Hazards {
+				hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail})
+			}
+			pj.Statements = append(pj.Statements, statementJSON{SQL: st.SQL, Mode: statementMode(st), Hazards: hazards})
+		}
+		out = append(out, pj)
+	}
+	data, _ := json.Marshal(out)
+	fmt.Fprintln(w, string(data))
+}
+
+func statementMode(st engine.Statement) string {
+	if st.NoTx {
+		return "no-tx"
+	}
+
+	return "tx"
 }
 
 func firstLine(sql string) string {

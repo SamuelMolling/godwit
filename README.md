@@ -21,7 +21,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Crash-safe engine | Plain-SQL migrations under a statement-level journal in the target database; DDL and progress commit atomically. Non-transactional statements (`CREATE INDEX CONCURRENTLY`, …) use write-ahead intents and verifiers. Survives `kill -9` at any point. |
 | Control plane | Runs are leased with heartbeats; a replica that dies mid-run is taken over by another and resumed from the journal. Failed runs park as `needs_attention` after a resume budget. |
 | Hazard gate | The planner ([libpg_query](https://github.com/pganalyze/pg_query_go)) tags unsafe DDL with a code and the safe alternative (see [Hazards](#hazards)). Runs carrying unacknowledged hazards are refused. |
-| PR lint | `godwit lint` parses a migration directory offline and fails on unacknowledged hazards, parse errors and migrations modified after merge; a no-op `.down.sql` is a warning. Text, markdown (for `$GITHUB_STEP_SUMMARY`) and JSON output. |
+| PR lint | `godwit lint` parses a migration directory offline and fails on unacknowledged hazards, parse errors and migrations modified after merge; a no-op `.down.sql` is a warning. Text, markdown (for `$GITHUB_STEP_SUMMARY`) and JSON output. The repository is also a GitHub Action wrapping `lint`, `plan` and `migrate` with a sticky PR comment. |
 | Pre-apply validation | Every run replays the target's history plus the new files on a scratch database before it is queued. |
 | Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
 | Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
@@ -95,7 +95,7 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
-| `plan` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault` |
+| `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault` |
 | `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
 | `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
@@ -111,12 +111,36 @@ godwit run confirm "$RUN_ID"
 
 ## In your PR
 
+The repository doubles as a composite GitHub Action (`action.yml`): it builds `godwit` from the pinned ref and runs one command. `lint` and `plan` write their markdown report to the step summary and keep one sticky comment on the pull request up to date (marker `<!-- godwit:<command> -->`); `migrate` streams the run and exits with its pipeline code.
+
 ```yaml
-- uses: actions/checkout@v4
-  with: { fetch-depth: 0 }
-- run: go install github.com/SamuelMolling/godwit/cmd/godwit@latest
-- run: godwit lint --base origin/main --format markdown >> "$GITHUB_STEP_SUMMARY"
+# pull request gate
+permissions: { contents: read, pull-requests: write }
+steps:
+  - uses: actions/checkout@v4
+  - uses: SamuelMolling/godwit@main
+    with: { command: lint, ack: H001 }          # base: origin/main is fetched when the checkout is shallow
+  - uses: SamuelMolling/godwit@main
+    with: { command: plan }
+
+# on merge
+steps:
+  - uses: actions/checkout@v4
+  - uses: SamuelMolling/godwit@main
+    id: migrate
+    with:
+      command: migrate
+      server: https://godwit.internal
+      token: ${{ secrets.GODWIT_TOKEN }}
+      target: prod
+      rollout: expand-contract
+  - run: kubectl rollout status deploy/app
+  - run: godwit run confirm "${{ steps.migrate.outputs.run-id }}"
 ```
+
+Inputs: `command` (`lint`|`plan`|`migrate`), `dir`, `base`, `ack`, `server`, `token`, `target`, `rollout`, `comment` (`true`), `github-token`, `go-version` (`1.26`). Anything left empty falls back to `godwit.yaml`. Outputs: `run-id`, `blocking`, `summary-path`. The runner needs `gcc` (cgo), `jq` and `gh` — all present on `ubuntu-latest`.
+
+Until the repository goes public only the owner's repositories can `uses:` it; anywhere else, `go install github.com/SamuelMolling/godwit/cmd/godwit@main` and call the same commands (`--format markdown` on `lint` and `plan`).
 
 ## Metrics
 

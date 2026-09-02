@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,11 +56,76 @@ func TestPlanNoTxMarker(t *testing.T) {
 	}
 }
 
+func TestPlanMarkdown(t *testing.T) {
+	t.Parallel()
+
+	dir := writeMigs(t, map[string]string{
+		"20260901120000_users.up.sql":   "CREATE TABLE users (\n  id int,\n  " + strings.Repeat("a", 120) + " int\n);\nCREATE INDEX idx_users ON users (id) WHERE id > 0 OR id | 1 = 1;",
+		"20260901120000_users.down.sql": "DROP TABLE users;",
+	})
+	code, out, errOut := runCLI("plan", "--dir", dir, "--format", "markdown")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	for _, want := range []string{
+		"## godwit plan",
+		"| Migration | Direction | # | Mode | Statement | Hazards |",
+		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users ( id int, " + strings.Repeat("a", 90) + "…` |  |",
+		"| `20260901120000_users` | up | 1 | tx | `CREATE INDEX idx_users ON users (id) WHERE id > 0 OR id \\| 1 = 1` | H001: CREATE INDEX without CONCURRENTLY blocks writes on users |",
+		"| `20260901120000_users` | down | 0 | tx | `DROP TABLE users` | H002: DROP TABLE is destructive |",
+		"⚠️ 2 hazard(s); acknowledge them with `--ack`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+
+	safe := writeMigs(t, map[string]string{
+		"20260901120000_i.up.sql":   "CREATE INDEX CONCURRENTLY i ON t (v);",
+		"20260901120000_i.down.sql": "SELECT 1;",
+	})
+	code, out, _ = runCLI("plan", "--dir", safe, "--format", "markdown")
+	if code != 0 || !strings.Contains(out, "| no-tx |") || !strings.HasSuffix(out, "\n✅ no hazards\n") {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	code, out, _ = runCLI("plan", "--dir", t.TempDir(), "--format", "markdown")
+	if code != 0 || out != "## godwit plan\n\n✅ no hazards\n" {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+}
+
+func TestPlanJSON(t *testing.T) {
+	t.Parallel()
+
+	code, out, errOut := runCLI("plan", "--dir", goodMigs(t), "--format", "json")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	var plans []planJSON
+	if err := json.Unmarshal([]byte(out), &plans); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(plans) != 2 || plans[0].Direction != "up" || plans[1].Direction != "down" || plans[0].Name != "users" {
+		t.Fatalf("plans = %+v", plans)
+	}
+	up := plans[0].Statements
+	if len(up) != 2 || up[0].Mode != "tx" || len(up[0].Hazards) != 0 || up[1].Hazards[0].Code != "H001" {
+		t.Fatalf("up = %+v", up)
+	}
+	if !strings.Contains(out, `"hazards":[]`) {
+		t.Fatalf("hazards must marshal as an empty list: %s", out)
+	}
+}
+
 func TestPlanErrors(t *testing.T) {
 	t.Parallel()
 
 	if code, _, _ := runCLI("plan", "--dir", filepath.Join(t.TempDir(), "nope")); code != 1 {
 		t.Fatal("missing dir must fail")
+	}
+	if code, _, errOut := runCLI("plan", "--dir", goodMigs(t), "--format", "yaml"); code != 1 || !strings.Contains(errOut, "unknown format") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	dir := writeMigs(t, map[string]string{
 		"20260901120000_x.up.sql":   "NOT SQL",

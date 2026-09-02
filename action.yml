@@ -1,0 +1,188 @@
+name: godwit
+description: Lint, plan or migrate plain-SQL PostgreSQL migrations with godwit
+author: Samuel Molling
+
+inputs:
+  command:
+    description: "What to run: lint, plan or migrate"
+    required: true
+  dir:
+    description: "Migration directory (default: dir from godwit.yaml, else migrations)"
+    default: ""
+  base:
+    description: "Git ref; lint only checks migrations added since it (empty checks every migration)"
+    default: origin/main
+  ack:
+    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003"
+    default: ""
+  server:
+    description: "godwit service URL (migrate; default: server from godwit.yaml or GODWIT_SERVER)"
+    default: ""
+  token:
+    description: "Bearer token for the service (migrate)"
+    default: ""
+  target:
+    description: "Target name (migrate; default: target from godwit.yaml)"
+    default: ""
+  rollout:
+    description: "Rollout policy for migrate: direct or expand-contract (default: godwit.yaml, else direct)"
+    default: ""
+  comment:
+    description: "Post the lint or plan report as one sticky pull request comment (needs pull-requests: write)"
+    default: "true"
+  github-token:
+    description: "Token used to post the pull request comment"
+    default: ${{ github.token }}
+  go-version:
+    description: "Go version used to build godwit (cgo: libpg_query)"
+    default: "1.26"
+
+outputs:
+  run-id:
+    description: "Run id created by migrate"
+    value: ${{ steps.godwit.outputs.run-id }}
+  blocking:
+    description: "Number of blocking lint findings"
+    value: ${{ steps.godwit.outputs.blocking }}
+  summary-path:
+    description: "Path of the markdown report written by lint or plan"
+    value: ${{ steps.godwit.outputs.summary-path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    - name: Build godwit
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        CGO_ENABLED=1 go build -o "${RUNNER_TEMP}/godwit" ./cmd/godwit
+
+    - name: Run godwit ${{ inputs.command }}
+      id: godwit
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+        DIR: ${{ inputs.dir }}
+        BASE: ${{ inputs.base }}
+        ACK: ${{ inputs.ack }}
+        SERVER: ${{ inputs.server }}
+        TARGET: ${{ inputs.target }}
+        ROLLOUT: ${{ inputs.rollout }}
+        GODWIT_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        godwit="${RUNNER_TEMP}/godwit"
+        summary="${RUNNER_TEMP}/godwit-${COMMAND}.md"
+        status=0
+        blocking=""
+        run_id=""
+
+        ensure_base() {
+          if git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            return 0
+          fi
+          case "${BASE}" in
+            origin/*) git fetch --no-tags --depth=1 origin "+refs/heads/${BASE#origin/}:refs/remotes/${BASE}" ;;
+          esac
+        }
+
+        dir_args=()
+        if [ -n "${DIR}" ]; then dir_args+=(--dir "${DIR}"); fi
+
+        case "${COMMAND}" in
+          lint)
+            args=(${dir_args[@]+"${dir_args[@]}"})
+            if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
+            if [ -n "${BASE}" ]; then
+              ensure_base
+              args+=(--base "${BASE}")
+            fi
+            "${godwit}" lint ${args[@]+"${args[@]}"} --format markdown >"${summary}" || status=$?
+            "${godwit}" lint ${args[@]+"${args[@]}"} --format json >"${RUNNER_TEMP}/godwit-lint.json" 2>/dev/null || true
+            blocking="$(jq -r '.blocking // 0' "${RUNNER_TEMP}/godwit-lint.json" 2>/dev/null || true)"
+            blocking="${blocking:-0}"
+            ;;
+          plan)
+            "${godwit}" plan ${dir_args[@]+"${dir_args[@]}"} --format markdown >"${summary}" || status=$?
+            ;;
+          migrate)
+            args=(${dir_args[@]+"${dir_args[@]}"})
+            if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
+            if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+            if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
+            if [ -n "${ROLLOUT}" ]; then args+=(--rollout "${ROLLOUT}"); fi
+            events="${RUNNER_TEMP}/godwit-migrate.jsonl"
+            errors="${RUNNER_TEMP}/godwit-migrate.err"
+            "${godwit}" migrate ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
+            cat "${errors}" >&2
+            last="$(tail -n 1 "${events}" 2>/dev/null || true)"
+            run_id="$(printf '%s' "${last}" | jq -r '.run.id // empty' 2>/dev/null || true)"
+            {
+              printf '## godwit migrate\n\n'
+              if [ -n "${last}" ]; then
+                printf '%s' "${last}" | jq -r '.run | "run `\(.id)`: **\(.state | ascii_downcase | ltrimstr("run_state_"))**" + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
+              elif [ -s "${errors}" ]; then
+                printf 'no run created:\n\n```\n'
+                cat "${errors}"
+                printf '```\n'
+              else
+                printf 'no run created\n'
+              fi
+            } >"${summary}"
+            ;;
+          *)
+            echo "unknown command '${COMMAND}' (want lint, plan or migrate)" >&2
+            exit 2
+            ;;
+        esac
+
+        cat "${summary}"
+        cat "${summary}" >>"${GITHUB_STEP_SUMMARY}"
+        {
+          printf 'status=%s\n' "${status}"
+          printf 'blocking=%s\n' "${blocking}"
+          printf 'run-id=%s\n' "${run_id}"
+          printf 'summary-path=%s\n' "${summary}"
+        } >>"${GITHUB_OUTPUT}"
+
+    - name: Comment on the pull request
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' && inputs.command != 'migrate' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MARKER: "<!-- godwit:${{ inputs.command }} -->"
+        SUMMARY: ${{ steps.godwit.outputs.summary-path }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        body="${RUNNER_TEMP}/godwit-comment.md"
+        { printf '%s\n' "${MARKER}"; cat "${SUMMARY}"; } >"${body}"
+        ids="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+          --jq '.[] | select(.body | startswith(env.MARKER)) | .id')"
+        id="$(printf '%s\n' "${ids}" | awk 'NF { print; exit }')"
+        if [ -n "${id}" ]; then
+          url="repos/${GITHUB_REPOSITORY}/issues/comments/${id}"
+          method=PATCH
+        else
+          url="repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments"
+          method=POST
+        fi
+        if ! gh api --method "${method}" "${url}" -F "body=@${body}" >/dev/null; then
+          echo "::warning::godwit: could not post the pull request comment (does the token have pull-requests: write?)"
+        fi
+
+    - name: Propagate the exit status
+      shell: bash
+      env:
+        STATUS: ${{ steps.godwit.outputs.status }}
+      run: |
+        set -euo pipefail
+        if [ "${STATUS}" != "0" ]; then
+          exit "${STATUS}"
+        fi
