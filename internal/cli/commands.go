@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 
+	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
@@ -20,11 +21,12 @@ type targetFlags struct {
 }
 
 func (f *targetFlags) register(cmd *cobra.Command, withDSN bool) {
-	cmd.Flags().StringVar(&f.dir, "dir", "migrations", "migration directory")
+	d := config.Defaults()
+	cmd.Flags().StringVar(&f.dir, "dir", d.Dir, "migration directory")
 	if withDSN {
 		cmd.Flags().StringVar(&f.dsn, "dsn", "", "target database DSN")
-		cmd.Flags().DurationVar(&f.lockTimeout, "lock-timeout", 5*time.Second, "lock_timeout for each statement")
-		cmd.Flags().DurationVar(&f.statementTimeout, "statement-timeout", 0, "statement_timeout for each statement (0 disables)")
+		cmd.Flags().DurationVar(&f.lockTimeout, "lock-timeout", d.LockTimeout, "lock_timeout for each statement")
+		cmd.Flags().DurationVar(&f.statementTimeout, "statement-timeout", d.StatementTimeout, "statement_timeout for each statement (0 disables)")
 		_ = cmd.MarkFlagRequired("dsn")
 	}
 }

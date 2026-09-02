@@ -52,6 +52,21 @@ Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
 - `kubernetes` — `secret_path` points at a mounted secret file on the replica.
 - `vault` — `vault_path` is read from Vault at run time (`secret/data/app` for KV v2, `database/creds/app` for dynamic credentials). The DSN is the secret's `dsn` field, or `vault_template` rendered over its fields: `postgres://{{username}}:{{password}}@db/app`. The service authenticates with `VAULT_TOKEN` or, when unset, the Kubernetes auth method (`VAULT_K8S_ROLE`, `VAULT_K8S_MOUNT`, `VAULT_K8S_JWT`); `VAULT_ADDR` is required.
 
+## Configuration
+
+Put a `godwit.yaml` in your repo and the CLI stops needing repeated flags. The file is looked up from the working directory upwards until the repo root (`.git`); `--config path` points at a specific file. `dir` is resolved relative to the file.
+
+```yaml
+dir: db/migrations          # --dir
+target: orders              # target name on the control plane
+rollout: canary             # rollout policy for migrate
+server: http://godwit:8474  # control-plane URL
+lock_timeout: 5s            # --lock-timeout
+statement_timeout: 0        # --statement-timeout (0 disables)
+```
+
+Precedence: explicit flag > `GODWIT_*` env (`GODWIT_DIR`, `GODWIT_TARGET`, `GODWIT_ROLLOUT`, `GODWIT_SERVER`, `GODWIT_LOCK_TIMEOUT`, `GODWIT_STATEMENT_TIMEOUT`) > file > default. Unknown keys are an error. The DSN never lives in the file — pass `--dsn` or use a credential provider.
+
 ## Engines
 
 | Engine | Status |

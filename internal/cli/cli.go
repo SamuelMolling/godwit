@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/version"
 )
 
@@ -26,19 +27,46 @@ func Main(args []string, out, errOut io.Writer) int {
 }
 
 func newRootCmd() *cobra.Command {
+	var configPath string
 	root := &cobra.Command{
 		Use:           "godwit",
 		Short:         "Crash-safe database migration service",
 		Long:          "godwit is a pipeline-native database migration service with crash-safe execution.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return applyConfig(cmd, configPath)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
+	root.PersistentFlags().StringVar(&configPath, "config", "", "path to godwit.yaml (default: nearest godwit.yaml up to the repo root)")
 	root.AddCommand(newVersionCmd(), newPlanCmd(), newRunCmd(), newStatusCmd(), newDownCmd(), newServeCmd())
 
 	return root
+}
+
+func applyConfig(cmd *cobra.Command, path string) error {
+	flags := cmd.Flags()
+	if flags.Lookup("dir") == nil {
+		return nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	for name, value := range map[string]string{
+		"dir":               cfg.Dir,
+		"lock-timeout":      cfg.LockTimeout.String(),
+		"statement-timeout": cfg.StatementTimeout.String(),
+	} {
+		if fl := flags.Lookup(name); fl != nil && !fl.Changed {
+			_ = fl.Value.Set(value)
+		}
+	}
+
+	return nil
 }
 
 func newVersionCmd() *cobra.Command {
