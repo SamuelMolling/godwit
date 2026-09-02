@@ -6,12 +6,13 @@
 replicaCount: 2
 
 image:
-  # There is no public image yet: build with `docker build -t <registry>/godwit:<tag> .`
-  # at the repo root and point this at your registry.
-  repository: godwit
-  # Defaults to .Chart.AppVersion when empty.
-  tag: ""
-  pullPolicy: IfNotPresent
+  # Published from main by .github/workflows/publish.yml (linux/amd64 and linux/arm64).
+  # Tags: `main` (moving), `sha-<short commit>` (immutable). Set both when mirroring to your registry.
+  repository: ghcr.io/samuelmolling/godwit
+  # Defaults to .Chart.AppVersion when empty; `main` moves, so pin `sha-<short commit>` for a fixed rollout.
+  tag: main
+  # `main` moves: Always re-resolves it on every pod start. Use IfNotPresent with an immutable tag.
+  pullPolicy: Always
 imagePullSecrets: []
 
 nameOverride: ""

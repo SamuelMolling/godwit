@@ -1,0 +1,60 @@
+version: 2
+
+project_name: godwit
+
+# Linux binaries are static musl builds via zig; darwin ones use Apple clang for either arch.
+builds:
+  - main: ./cmd/godwit
+    binary: godwit
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/SamuelMolling/godwit/internal/version.Version={{ .Version }}
+      - -X github.com/SamuelMolling/godwit/internal/version.Commit={{ .ShortCommit }}
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env: [CC=clang -arch x86_64]
+      - goos: darwin
+        goarch: arm64
+        env: [CC=clang -arch arm64]
+      - goos: linux
+        goarch: amd64
+        env: [CC=zig cc -target x86_64-linux-musl]
+        ldflags: &static
+          - -s -w -extldflags=-static
+          - -X github.com/SamuelMolling/godwit/internal/version.Version={{ .Version }}
+          - -X github.com/SamuelMolling/godwit/internal/version.Commit={{ .ShortCommit }}
+      - goos: linux
+        goarch: arm64
+        env: [CC=zig cc -target aarch64-linux-musl]
+        ldflags: *static
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:"]
+
+brews:
+  - name: godwit
+    repository:
+      owner: SamuelMolling
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/SamuelMolling/godwit
+    description: Crash-safe PostgreSQL migration service and CLI
+    license: Apache-2.0
+    install: bin.install "godwit"
+    test: system "#{bin}/godwit", "version"

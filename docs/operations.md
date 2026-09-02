@@ -92,7 +92,7 @@ Never delete a `running` or `failed` row from `godwit.runs`: the next attempt re
 ## Upgrades
 
 1. Read the release notes for new store migrations (`internal/controlplane/schema.go`, `storeMigrations`).
-2. Roll the image. On start every replica runs `Migrate` on the store under the store's own advisory lock; the first one applies, the others see nothing pending. The log line `store migrated` carries `applied=N`.
+2. Roll the image (`ghcr.io/samuelmolling/godwit`: `main` follows the branch, `sha-<short commit>` pins one build; set `image.tag` in the chart). On start every replica runs `Migrate` on the store under the store's own advisory lock; the first one applies, the others see nothing pending. The log line `store migrated` carries `applied=N`.
 3. Store migrations are forward-only in practice; `DownSQL` exists but no command applies it. To roll back a release, restore the store from backup taken before step 2.
 4. Old and new replicas share the store during the rollout; keep migrations additive (they are).
 

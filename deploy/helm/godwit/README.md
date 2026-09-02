@@ -5,7 +5,7 @@ Runs `godwit serve` as a two-replica Deployment: the second replica is what turn
 ## Prerequisites
 
 - A PostgreSQL database for the control-plane store (any version the service supports; it creates its own tables).
-- An image. There is no public one yet: `docker build -t registry.example.com/platform/godwit:0.0.1 .` at the repo root, push it, set `image.repository` / `image.tag`.
+- An image. The chart defaults to `ghcr.io/samuelmolling/godwit:main`, published from every merge to `main` (also tagged `sha-<short commit>`); to run from your own registry, `docker build -t <registry>/godwit:<tag> .` at the repo root, push it, set `image.repository` / `image.tag`.
 - A Secret with the credentials. The chart never creates it:
 
 ```bash
@@ -21,7 +21,7 @@ kubectl -n godwit create secret generic godwit \
 
 ```bash
 helm upgrade --install godwit deploy/helm/godwit -n godwit --create-namespace \
-  --set image.repository=registry.example.com/platform/godwit
+  --set image.tag=sha-$(git rev-parse --short HEAD)
 ```
 
 The release prints the in-cluster URL and the first commands to run. Every value is documented in [values.yaml](values.yaml); [ci/full-values.yaml](ci/full-values.yaml) is a rendering with every optional block on, used by `make helm-lint`.
@@ -51,4 +51,4 @@ Anything else the process should see (proxies) goes through `extraEnv` / `extraE
 
 ## Upgrading
 
-Bump `image.tag`; the store schema migrates itself at start-up. Rolling update keeps one replica serving, and a run in flight on the replica being replaced is resumed by the other one from the journal once its lease expires.
+Bump `image.tag` (an immutable `sha-<short commit>` tag makes the rollout explicit; `main` with `pullPolicy: Always` follows the branch); the store schema migrates itself at start-up. Rolling update keeps one replica serving, and a run in flight on the replica being replaced is resumed by the other one from the journal once its lease expires.
