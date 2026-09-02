@@ -1,6 +1,6 @@
 # ArgoCD hooks
 
-Two Jobs wrap an application's sync with an expand → contract migration. Copy them next to the app's manifests and rename `orders`.
+Two Jobs wrap an application's sync with an expand → contract migration. Copy them next to the app's manifests and rename `orders`. Both run `ghcr.io/samuelmolling/godwit:main`; pin a `sha-<short commit>` tag in a production overlay.
 
 ```
 PreSync   godwit migrate --target orders --dir /migrations --rollout expand-contract

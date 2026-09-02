@@ -1,4 +1,4 @@
-.PHONY: all build test cover e2e lint proto-lint tidy helm-lint
+.PHONY: all build test cover e2e lint proto-lint tidy helm-lint release-snapshot
 
 all: lint proto-lint cover build
 
@@ -30,3 +30,6 @@ helm-lint:
 	helm lint $(HELM_CHART) -f $(HELM_CHART)/ci/full-values.yaml
 	helm template godwit $(HELM_CHART) > /dev/null
 	helm template godwit $(HELM_CHART) -f $(HELM_CHART)/ci/full-values.yaml > /dev/null
+
+release-snapshot:
+	goreleaser release --snapshot --clean --skip=publish

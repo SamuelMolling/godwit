@@ -12,6 +12,7 @@ Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behin
 
 ```bash
 go install github.com/SamuelMolling/godwit/cmd/godwit@main      # needs gcc (libpg_query) and Go 1.26
+docker pull ghcr.io/samuelmolling/godwit:main                       # or the image: linux/amd64 + arm64, distroless
 export GODWIT_MASTER_KEY=$(openssl rand -hex 32) GODWIT_TOKENS='admin:admin:s3cret'
 godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store &
 export GODWIT_SERVER=http://localhost:8474 GODWIT_TOKEN=s3cret

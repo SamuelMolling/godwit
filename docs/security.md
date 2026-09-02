@@ -73,4 +73,4 @@ Notifications carry the same fields as the log plus the error text; a webhook UR
 
 ## Supply chain
 
-The binary embeds `libpg_query` through cgo; the Dockerfile builds it from source in the repository at a pinned Go version and ships a distroless image. There is no published image: build and sign your own.
+The binary embeds `libpg_query` through cgo; the Dockerfile builds it from source in the repository at a pinned Go version and ships a distroless image. `ghcr.io/samuelmolling/godwit` is built from `main` by `.github/workflows/publish.yml` with the workflow's own `GITHUB_TOKEN` (no long-lived registry credential) and carries `org.opencontainers.image.source` / `revision` labels; images are not signed yet, so pin `sha-<short commit>` or build and sign your own from the same Dockerfile. Release binaries (`v*` tags, GoReleaser) ship with a `checksums.txt`.

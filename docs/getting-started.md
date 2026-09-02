@@ -11,7 +11,13 @@ go install github.com/SamuelMolling/godwit/cmd/godwit@main   # needs gcc and Go 
 godwit version
 ```
 
-Or build the image at the repo root (`docker build -t godwit:dev .`, distroless, entrypoint `/godwit`).
+Or pull the image, published from every merge to `main` for linux/amd64 and linux/arm64 (distroless, entrypoint `/godwit`, also tagged `sha-<short commit>`):
+
+```bash
+docker run --rm ghcr.io/samuelmolling/godwit:main version
+```
+
+`docker build -t godwit:dev .` at the repo root produces the same image locally. Tagged releases will also ship binaries for macOS and Linux via `brew install SamuelMolling/tap/godwit`; until the first `v*` tag, `go install` or the image are the options.
 
 ## 1. The dev loop (no service)
 
