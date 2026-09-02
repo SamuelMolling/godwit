@@ -16,9 +16,18 @@ func TestServeBadMasterKey(t *testing.T) {
 func TestServeUnreachableStore(t *testing.T) {
 	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
 	t.Setenv("GODWIT_TOKENS", "t1,t2")
-	code, _, _ := runCLI("serve", "--store-dsn", "postgres://bad:bad@127.0.0.1:1/x", "--listen", "127.0.0.1:0")
+	code, _, _ := runCLI("serve", "--store-dsn", "postgres://bad:bad@127.0.0.1:1/x", "--listen", "127.0.0.1:0",
+		"--lease-ttl", "5s", "--tick-interval", "500ms", "--max-attempts", "2")
 	if code != 1 {
 		t.Fatalf("code = %d, want 1", code)
+	}
+}
+
+func TestServeBadSchedulerFlags(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--max-attempts", "many")
+	if code != 1 || !strings.Contains(errOut, "max-attempts") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 }
 

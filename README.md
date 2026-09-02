@@ -219,6 +219,10 @@ cd demo && docker compose up -d --build && ./demo.sh
 
 Two replicas, a store and a target database. The script kills the replica executing a slow migration; the other one recovers the lease and finishes the run from the journal. See [demo/README.md](demo/README.md).
 
+## Testing
+
+`make test` runs the unit and in-process integration suites (100% coverage enforced by `make cover`). `make e2e` builds the binary and drives it through the CLI against a real PostgreSQL in Docker: replicas run as OS processes and get SIGKILLed mid-statement, mid-index-build, under lock timeouts, across expand/contract, reverts and drift. It needs Docker, takes under a minute and is not part of CI.
+
 ## Status
 
 🚧 v1 in progress — **PostgreSQL only, API-first, no UI yet** (Backstage plugin or standalone UI arrive in v1.1 on top of the same API).

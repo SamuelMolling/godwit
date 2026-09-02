@@ -1,0 +1,188 @@
+//go:build e2e
+
+package e2e
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+
+	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+)
+
+func columnExists(t *testing.T, dsn, table, column string) bool {
+	t.Helper()
+
+	return query[bool](t, dsn,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)`, table, column)
+}
+
+func TestLockTimeoutFailsThenResumes(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("t")
+	r.mustMigrate(migrationDir(t, migration{v1, "t", "CREATE TABLE t (id int);", "DROP TABLE t;"}))
+
+	ctx := context.Background()
+	holder := connectDB(t, r.appDSN)
+	tx, err := holder.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "LOCK TABLE t IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := migrationDir(t, migration{v2, "add_x", "ALTER TABLE t ADD COLUMN x int;", "ALTER TABLE t DROP COLUMN x;"})
+	code, _, errOut := r.migrate(dir)
+	if code != 1 {
+		t.Fatalf("migrate exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "failed", "SQLSTATE 55P03")
+	run := r.latestRun()
+	if run.State != godwitv1.RunState_RUN_STATE_FAILED {
+		t.Fatalf("state = %s, want failed", run.State)
+	}
+	expectContains(t, run.Error, "SQLSTATE 55P03")
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	r.mustCLI("run", "resume", run.Id)
+	expectContains(t, r.mustCLI("run", "watch", run.Id), "succeeded")
+	if !columnExists(t, r.appDSN, "t", "x") {
+		t.Fatal("column x missing after resume")
+	}
+	expectContains(t, r.metrics(),
+		`godwit_statement_failures_total{reason="lock_timeout",target="t"} 1`,
+		`godwit_run_resumes_total{source="manual",target="t"} 1`)
+}
+
+func TestExpandContractConfirm(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 2)
+	r.addTarget("app")
+	r.mustMigrate(migrationDir(t, migration{
+		v1, "users",
+		"CREATE TABLE users (id bigint PRIMARY KEY, email text, plan text);", "DROP TABLE users;",
+	}))
+
+	dir := migrationDir(t,
+		migration{v2, "add_plan_v2", "ALTER TABLE users ADD COLUMN plan_v2 text;", "ALTER TABLE users DROP COLUMN plan_v2;"},
+		migration{v3, "drop_plan", "ALTER TABLE users DROP COLUMN plan;", "ALTER TABLE users ADD COLUMN plan text;"},
+	)
+	expectContains(t, r.mustMigrate(dir, "--rollout", "expand-contract", "--ack", "H003"), "awaiting_contract")
+	run := r.latestRun()
+	if run.State != godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT {
+		t.Fatalf("state = %s, want awaiting_contract", run.State)
+	}
+	if !columnExists(t, r.appDSN, "users", "plan") || !columnExists(t, r.appDSN, "users", "plan_v2") {
+		t.Fatal("expand phase must keep plan and add plan_v2")
+	}
+
+	r.mustCLI("run", "confirm", run.Id)
+	expectContains(t, r.mustCLI("run", "watch", run.Id), "succeeded")
+	if columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("contract phase must drop plan")
+	}
+}
+
+func TestRevertLatest(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 2)
+	r.addTarget("app")
+	r.mustMigrate(migrationDir(t, usersTable))
+	first := r.latestRun()
+	r.mustMigrate(migrationDir(t, migration{
+		v2, "plan",
+		"ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;",
+	}))
+	second := r.latestRun()
+
+	code, _, errOut := r.cli("revert", first.Id, "--ack", "H002")
+	if code != 1 {
+		t.Fatalf("revert of a non-latest run exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "not the latest")
+	_, err := r.client().RevertRun(context.Background(), connect.NewRequest(&godwitv1.RevertRunRequest{
+		RunId: first.Id, AcknowledgeHazards: []string{"H002"},
+	}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("revert code = %v, want failed_precondition", connect.CodeOf(err))
+	}
+
+	expectContains(t, r.mustCLI("revert", second.Id, "--ack", "H003"), "succeeded")
+	r.expectRun(second.Id, godwitv1.RunState_RUN_STATE_REVERTED, 1)
+	if columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("revert must drop plan")
+	}
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations WHERE version = $1`, v2); n != 0 {
+		t.Fatalf("version %d still recorded after revert", v2)
+	}
+}
+
+func TestDriftDetectAndAccept(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 2)
+	r.addTarget("app")
+	r.mustMigrate(migrationDir(t, usersTable))
+
+	execSQL(t, r.appDSN, "CREATE TABLE rogue (id int)")
+	waitUntil(t, 10*time.Second, "drift event", func() bool { return len(r.driftEvents()) == 1 })
+	expectContains(t, r.mustCLI("drift", "check", "app"), "drifted", "rogue")
+
+	r.mustCLI("drift", "accept", "app")
+	expectContains(t, r.mustCLI("drift", "check", "app"), "no drift")
+	waitUntil(t, 10*time.Second, "every drift event resolved", func() bool {
+		events := r.driftEvents()
+		for _, ev := range events {
+			if ev.ResolvedAt == nil {
+				return false
+			}
+		}
+
+		return len(events) > 0
+	})
+}
+
+func TestHazardGateAndValidation(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("app")
+	r.mustMigrate(migrationDir(t, usersTable))
+
+	drop := migration{v2, "drop_users", "DROP TABLE users;", "SELECT 1;"}
+	code, _, errOut := r.migrate(migrationDir(t, drop))
+	if code != 1 {
+		t.Fatalf("unacknowledged DROP TABLE exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "H002")
+	_, err := r.client().CreateRun(context.Background(), connect.NewRequest(&godwitv1.CreateRunRequest{Target: "app", Files: files(drop)}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("hazard code = %v, want failed_precondition", connect.CodeOf(err))
+	}
+	if n := len(r.listRuns()); n != 1 {
+		t.Fatalf("runs after refusal = %d, want 1", n)
+	}
+
+	expectContains(t, r.mustMigrate(migrationDir(t, drop), "--ack", "H002"), "succeeded")
+	if query[bool](t, r.appDSN, `SELECT to_regclass('users') IS NOT NULL`) {
+		t.Fatal("users still exists after acknowledged DROP TABLE")
+	}
+
+	broken := migration{v3, "broken", "ALTER TABLE nope ADD COLUMN x int;", "SELECT 1;"}
+	code, _, errOut = r.migrate(migrationDir(t, broken))
+	if code != 1 {
+		t.Fatalf("invalid migration exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "failed validation", `relation "nope" does not exist`)
+	_, err = r.client().CreateRun(context.Background(), connect.NewRequest(&godwitv1.CreateRunRequest{Target: "app", Files: files(broken)}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("validation code = %v, want invalid_argument", connect.CodeOf(err))
+	}
+	if n := len(r.listRuns()); n != 2 {
+		t.Fatalf("runs after validation refusal = %d, want 2", n)
+	}
+}

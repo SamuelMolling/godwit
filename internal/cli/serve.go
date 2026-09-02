@@ -9,12 +9,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/server"
 )
 
 func newServeCmd() *cobra.Command {
 	var listen, storeDSN, logFormat, logLevel string
-	var driftInterval time.Duration
+	var driftInterval, leaseTTL, tickInterval time.Duration
+	var maxAttempts int
 	var skipValidation bool
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -45,6 +47,7 @@ func newServeCmd() *cobra.Command {
 				MasterKey:      key,
 				Tokens:         tokens,
 				Holder:         hostname,
+				Scheduler:      controlplane.Config{TTL: leaseTTL, Interval: tickInterval, MaxAttempts: maxAttempts},
 				DriftInterval:  driftInterval,
 				WebhookURL:     os.Getenv("GODWIT_WEBHOOK_URL"),
 				SlackToken:     os.Getenv("GODWIT_SLACK_TOKEN"),
@@ -59,6 +62,9 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&listen, "listen", ":8474", "address to serve the API on")
 	cmd.Flags().StringVar(&storeDSN, "store-dsn", "", "control-plane database DSN")
 	cmd.Flags().DurationVar(&driftInterval, "drift-interval", 5*time.Minute, "how often to check targets for schema drift")
+	cmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "how long a claimed run stays leased without a heartbeat")
+	cmd.Flags().DurationVar(&tickInterval, "tick-interval", 2*time.Second, "how often the scheduler looks for runnable runs")
+	cmd.Flags().IntVar(&maxAttempts, "max-attempts", 3, "claims a run may take before it parks as needs_attention")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "disable scratch-database validation at run admission")
 	cmd.Flags().StringVar(&logFormat, "log-format", envOr("GODWIT_LOG_FORMAT", "json"), "log format: json or text")
 	cmd.Flags().StringVar(&logLevel, "log-level", envOr("GODWIT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
