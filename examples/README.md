@@ -8,9 +8,9 @@ Copy into `.github/workflows/` of the repository that holds the migrations.
 
 | File | Trigger | What it does | Token scope |
 |---|---|---|---|
-| [pr-lint-and-plan.yml](github-actions/pr-lint-and-plan.yml) | pull request | `lint` the migrations added since `origin/main`, `plan` offline; each posts a sticky comment | none |
-| [pr-dry-run.yml](github-actions/pr-dry-run.yml) | pull request | `migrate --dry-run` against the live target: admitted plan, hazards, scratch validation, what waits for contract; sticky comment | `read` |
-| [deploy-migrate.yml](github-actions/deploy-migrate.yml) | push to `main` | job `expand`: `migrate --rollout expand-contract` with the commit as `source`; job `contract`: `run confirm --latest --allow-none`, gated by a GitHub environment with required reviewers | `pipeline` |
+| [pr-lint-and-plan.yml](github-actions/pr-lint-and-plan.yml) | pull request | `lint` the migrations added since `origin/main`; `plan` against the live target, stored on the service as the plan the merge will apply; each posts a sticky comment | `read` (plan) |
+| [pr-dry-run.yml](github-actions/pr-dry-run.yml) | pull request | non-persisting variant: `migrate --dry-run` against the live target shows the same admitted plan without storing it; sticky comment | `read` |
+| [deploy-migrate.yml](github-actions/deploy-migrate.yml) | push to `main` | job `expand`: `migrate --rollout expand-contract` bound to the plan the pull request stored, outcome posted on the merged pull request; job `contract`: `run confirm --latest --allow-none`, gated by a GitHub environment with required reviewers | `pipeline` |
 
 The action builds godwit from source with cgo (`go-version` pins the toolchain), so the first step of a job takes about a minute.
 

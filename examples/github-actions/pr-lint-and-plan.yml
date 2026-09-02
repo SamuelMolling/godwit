@@ -10,6 +10,8 @@ permissions:
   contents: read
   pull-requests: write
 
+# Branch protection "Require branches to be up to date before merging" makes GitHub re-run this
+# workflow after the base moves, so the stored plan always describes the set the merge will apply.
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -24,8 +26,16 @@ jobs:
           base: origin/main    # the branch pull requests merge into
           # ack: H003          # hazard codes reviewed and accepted on purpose
 
-      - name: Plan (offline, no service)
+      - name: Plan against the live target and store the plan the merge will apply
+        id: plan
         uses: SamuelMolling/godwit@main
         with:
           command: plan
           dir: db/migrations
+          server: https://godwit.internal           # your godwit service URL
+          token: ${{ secrets.GODWIT_TOKEN_READ }}   # token with the read scope
+          target: orders                            # target registered on the service
+          rollout: expand-contract                  # must match the merge step
+          # ack: H003                               # same codes as lint
+
+      - run: echo "plan ${{ steps.plan.outputs.plan-id }} (key ${{ steps.plan.outputs.plan-key }})"

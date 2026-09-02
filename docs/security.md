@@ -11,7 +11,7 @@ The service holds a way to reach every registered target as a role that can run 
 Bearer tokens are static secrets in `GODWIT_TOKENS`, compared in the auth interceptor on every RPC ([spec](configuration.md#token-spec), [per-RPC table](api.md#authentication-and-scopes)). Recommendations:
 
 - one token per caller (`ci`, `argocd-orders`, `oncall`), named, so `cp_runs.created_by` and `cp_audit.actor` mean something;
-- `read` for pull request dry runs, `pipeline` for merge pipelines and ArgoCD hooks, `operator` for humans on call, `admin` only for the process that registers targets;
+- `read` for pull request plans and dry runs, `pipeline` for merge pipelines and ArgoCD hooks, `operator` for humans on call, `admin` only for the process that registers targets;
 - never run with `GODWIT_TOKENS` unset outside a laptop: everyone becomes `anonymous` with `admin`;
 - rotate by adding the new secret under the same name, rolling callers, removing the old one; the service refuses to start when two entries share a secret, and every change needs a restart (tokens are read at start-up).
 

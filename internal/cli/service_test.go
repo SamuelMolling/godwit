@@ -927,7 +927,7 @@ func TestPlan_RemoteFormats(t *testing.T) {
 	url := startStub(t, storedPlanStub())
 
 	_, out, _ := runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t), "--format", "markdown")
-	for _, want := range []string{"## godwit plan p1\n", "\nkey: k1\n", "\nobserved: 1 applied", "\ndrift since baseline:\n\n```diff\n+ table public.orders\n- index public.idx_old\n```\n\n| Migration"} {
+	for _, want := range []string{"## godwit plan p1\n", "\nkey: k1\n", "\nobserved: 1 applied", "\n### Changes outside migrations\n\n```diff\n+ table public.orders\n- index public.idx_old\n```\n\n| Migration"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("markdown lacks %q:\n%s", want, out)
 		}

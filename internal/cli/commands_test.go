@@ -100,6 +100,31 @@ func TestPlanMarkdown(t *testing.T) {
 	}
 }
 
+func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	writePlanMarkdown(&b, planReport{
+		live: true, target: "app", rollout: "direct", validated: true, planID: "p1", planKey: "k1", drift: "+ column public.rogue.id integer null=YES default=<none>",
+		observed: &planObservation{HistoryHash: "h1", SchemaFingerprint: "f1", AppliedCount: 2, NewestApplied: 20260901120000, At: "2026-09-01T10:00:00Z"},
+	})
+	want := "## godwit plan p1\n\n" +
+		"Target `app`, rollout `direct`, validated on a scratch database.\n\n" +
+		"key: k1\n\n" +
+		"observed: 2 applied, newest 20260901120000, history h1, schema f1, at 2026-09-01T10:00:00Z\n\n" +
+		"### Changes outside migrations\n\n```diff\n+ column public.rogue.id integer null=YES default=<none>\n```\n\n" +
+		"✅ no hazards\n"
+	if b.String() != want {
+		t.Fatalf("markdown = %q, want %q", b.String(), want)
+	}
+
+	b.Reset()
+	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct"})
+	if got := b.String(); got != "## godwit dry run\n\nTarget `app`, rollout `direct`, not validated.\n\n✅ no hazards\n" {
+		t.Fatalf("markdown = %q", got)
+	}
+}
+
 func TestPlanJSON(t *testing.T) {
 	t.Parallel()
 

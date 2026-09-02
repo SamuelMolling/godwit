@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - action.yml
+      - scripts/action-comment.sh
       - internal/cli/**
       - testdata/action/**
       - .github/workflows/action-smoke.yml
@@ -11,11 +12,46 @@ on:
 permissions:
   contents: read
 
+env:
+  GODWIT_SERVER: http://127.0.0.1:8474
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: godwit
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: godwit
+        ports:
+          - 5432:5432
+        options: --health-cmd "pg_isready -U godwit" --health-interval 2s --health-timeout 5s --health-retries 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Stub gh
+        shell: bash
+        run: |
+          set -euo pipefail
+          stub="${RUNNER_TEMP}/stub-bin"
+          mkdir -p "${stub}"
+          cat >"${stub}/gh" <<'EOF'
+          #!/usr/bin/env bash
+          printf '%s\n' "$*" >>"${GH_STUB_LOG}"
+          case "$*" in
+            *"/pulls --jq"*) printf '%s\n' "${GH_STUB_PULLS:-}" ;;
+            *"--method "*)
+              for arg in "$@"; do
+                case "${arg}" in body=@*) cat "${arg#body=@}" >>"${GH_STUB_LOG}" ;; esac
+              done
+              ;;
+          esac
+          EOF
+          chmod +x "${stub}/gh"
+          echo "${stub}" >>"${GITHUB_PATH}"
+          echo "GH_STUB_LOG=${RUNNER_TEMP}/gh-stub.log" >>"${GITHUB_ENV}"
 
       - name: lint without acknowledging H001
         id: blocking
@@ -45,13 +81,95 @@ jobs:
           ack: H001
           comment: "false"
 
-      - name: plan
+      - name: plan offline
         id: plan
         uses: ./
         with:
           command: plan
           dir: testdata/action/migrations
-          comment: "false"
+
+      - name: Start the service and register a target
+        shell: bash
+        env:
+          GODWIT_TOKENS: ci-read:read:smoke-read,ci-pipe:pipeline:smoke-pipe,ops:smoke-admin
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          GODWIT_MASTER_KEY="$(openssl rand -hex 32)"
+          export GODWIT_MASTER_KEY
+          docker exec "${POSTGRES_ID}" psql -U godwit -c 'CREATE DATABASE app'
+          nohup "${RUNNER_TEMP}/godwit" serve --listen 127.0.0.1:8474 --tick-interval 500ms \
+            --store-dsn 'postgres://godwit@127.0.0.1:5432/godwit?sslmode=disable' >"${RUNNER_TEMP}/serve.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fs "${GODWIT_SERVER}/readyz" >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fs "${GODWIT_SERVER}/readyz"
+          "${RUNNER_TEMP}/godwit" target add app --token smoke-admin --provider static \
+            --dsn 'postgres://godwit@127.0.0.1:5432/app?sslmode=disable'
+
+      - name: plan on the service
+        id: stored
+        uses: ./
+        with:
+          command: plan
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-read
+          ack: H001
+
+      - name: Change the target by hand
+        shell: bash
+        env:
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+        run: docker exec "${POSTGRES_ID}" psql -U godwit -d app -c 'CREATE TABLE rogue (id int)'
+
+      - name: migrate against a stale plan
+        id: stale
+        continue-on-error: true
+        uses: ./
+        with:
+          command: migrate
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-pipe
+          ack: H001
+
+      - name: re-plan on the service
+        id: replan
+        uses: ./
+        with:
+          command: plan
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-read
+          ack: H001
+
+      - name: migrate bound to the stored plan
+        id: migrate
+        uses: ./
+        with:
+          command: migrate
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-pipe
+          ack: H001
+
+      - name: Comment on push through the merged pull request
+        shell: bash
+        env:
+          EVENT_NAME: push
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          GH_STUB_PULLS: "7"
+          GH_TOKEN: stub
+          COMMAND: migrate
+          DRY_RUN: "false"
+          COMMENT_ON_PUSH: "true"
+          MARKER: "<!-- godwit:migrate -->"
+          SUMMARY: ${{ steps.migrate.outputs.summary-path }}
+          PR_NUMBER: ""
+        run: ./scripts/action-comment.sh
 
       - name: Check outputs
         shell: bash
@@ -61,6 +179,21 @@ jobs:
           LINT_COUNT: ${{ steps.lint.outputs.blocking }}
           LINT_SUMMARY: ${{ steps.lint.outputs.summary-path }}
           PLAN_SUMMARY: ${{ steps.plan.outputs.summary-path }}
+          PLAN_ID: ${{ steps.plan.outputs.plan-id }}
+          STORED_ID: ${{ steps.stored.outputs.plan-id }}
+          STORED_KEY: ${{ steps.stored.outputs.plan-key }}
+          STORED_SUMMARY: ${{ steps.stored.outputs.summary-path }}
+          STALE_OUTCOME: ${{ steps.stale.outcome }}
+          STALE: ${{ steps.stale.outputs.stale }}
+          STALE_RUN: ${{ steps.stale.outputs.run-id }}
+          STALE_SUMMARY: ${{ steps.stale.outputs.summary-path }}
+          REPLAN_ID: ${{ steps.replan.outputs.plan-id }}
+          REPLAN_KEY: ${{ steps.replan.outputs.plan-key }}
+          MIGRATE_STALE: ${{ steps.migrate.outputs.stale }}
+          MIGRATE_RUN: ${{ steps.migrate.outputs.run-id }}
+          MIGRATE_PLAN: ${{ steps.migrate.outputs.plan-id }}
+          MIGRATE_SUMMARY: ${{ steps.migrate.outputs.summary-path }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           test "${BLOCKING_OUTCOME}" = "failure"
@@ -70,3 +203,35 @@ jobs:
           grep -q 'no unacknowledged hazards' "${LINT_SUMMARY}"
           grep -q '^## godwit plan$' "${PLAN_SUMMARY}"
           grep -q 'H001: CREATE INDEX without CONCURRENTLY' "${PLAN_SUMMARY}"
+          test -z "${PLAN_ID}"
+
+          test -n "${STORED_ID}"
+          test -n "${STORED_KEY}"
+          grep -q "^## godwit plan ${STORED_ID}$" "${STORED_SUMMARY}"
+          grep -q "^key: ${STORED_KEY}$" "${STORED_SUMMARY}"
+          grep -q '^observed: 0 applied' "${STORED_SUMMARY}"
+
+          test "${STALE_OUTCOME}" = "failure"
+          test "${STALE}" = "true"
+          test -z "${STALE_RUN}"
+          grep -q '^## godwit migrate$' "${STALE_SUMMARY}"
+          grep -q 'is stale' "${STALE_SUMMARY}"
+          grep -q 'reason : schema' "${STALE_SUMMARY}"
+          grep -q '+ column public.rogue.id integer' "${STALE_SUMMARY}"
+
+          test "${REPLAN_KEY}" = "${STORED_KEY}"
+          test "${REPLAN_ID}" != "${STORED_ID}"
+          test "${MIGRATE_STALE}" = "false"
+          test -n "${MIGRATE_RUN}"
+          test "${MIGRATE_PLAN}" = "${REPLAN_ID}"
+          grep -q "^run \`${MIGRATE_RUN}\`: \*\*succeeded\*\* (plan \`${REPLAN_ID}\`)$" "${MIGRATE_SUMMARY}"
+
+          cat "${GH_STUB_LOG}"
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 3
+          grep -q '^<!-- godwit:plan -->$' "${GH_STUB_LOG}"
+          grep -q "^api repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls --jq" "${GH_STUB_LOG}"
+          grep -q "^api --method POST repos/${GITHUB_REPOSITORY}/issues/7/comments -F body=@" "${GH_STUB_LOG}"
+          grep -q '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}"
+          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -q '^## godwit migrate$'
+          ! grep -q '^<!-- godwit:dry-run -->$' "${GH_STUB_LOG}"
+          ! grep -q '^<!-- godwit:lint -->$' "${GH_STUB_LOG}"

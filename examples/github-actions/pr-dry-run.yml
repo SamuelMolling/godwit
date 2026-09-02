@@ -1,3 +1,5 @@
+# Non-persisting variant of pr-lint-and-plan.yml: the same admitted plan, but nothing is stored,
+# so the merge step runs an implicit plan (or is refused when the target has require_plan).
 name: migrations dry run
 
 on:
@@ -16,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ask the service for the admitted plan against the live target
+      - name: Ask the service for the admitted plan against the live target, without storing it
         uses: SamuelMolling/godwit@main
         with:
           command: migrate
