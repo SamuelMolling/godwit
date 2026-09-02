@@ -218,7 +218,7 @@ func TestClientMissingServer(t *testing.T) {
 	t.Parallel()
 
 	code, _, errOut := runCLI("runs")
-	if code != 1 || !strings.Contains(errOut, "--server (or GODWIT_SERVER) is required") {
+	if code != 1 || !strings.Contains(errOut, "--server (or GODWIT_SERVER, or server in godwit.yaml) is required") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }

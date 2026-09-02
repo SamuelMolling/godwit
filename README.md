@@ -59,13 +59,15 @@ Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
 Put a `godwit.yaml` in your repo and the CLI stops needing repeated flags. The file is looked up from the working directory upwards until the repo root (`.git`); `--config path` points at a specific file. `dir` is resolved relative to the file.
 
 ```yaml
-dir: db/migrations          # --dir
-target: orders              # target name on the control plane
-rollout: canary             # rollout policy for migrate
-server: http://godwit:8474  # control-plane URL
-lock_timeout: 5s            # --lock-timeout
-statement_timeout: 0        # --statement-timeout (0 disables)
+dir: db/migrations          # plan, run, status, down, lint, migrate
+target: orders              # migrate
+rollout: expand-contract    # migrate
+server: http://godwit:8474  # every service command
+lock_timeout: 5s            # run, status, down
+statement_timeout: 0        # run, status, down (0 disables)
 ```
+
+With that file a pipeline is `godwit lint --base origin/main` on the PR and `godwit migrate` on merge — both flagless.
 
 Precedence: explicit flag > `GODWIT_*` env (`GODWIT_DIR`, `GODWIT_TARGET`, `GODWIT_ROLLOUT`, `GODWIT_SERVER`, `GODWIT_LOCK_TIMEOUT`, `GODWIT_STATEMENT_TIMEOUT`) > file > default. Unknown keys are an error. The DSN never lives in the file — pass `--dsn` or use a credential provider.
 

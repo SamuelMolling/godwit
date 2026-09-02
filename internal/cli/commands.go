@@ -23,7 +23,9 @@ type targetFlags struct {
 func (f *targetFlags) register(cmd *cobra.Command, withDSN bool) {
 	d := config.Defaults()
 	cmd.Flags().StringVar(&f.dir, "dir", d.Dir, "migration directory")
+	configKeys(cmd, "dir")
 	if withDSN {
+		configKeys(cmd, "lock-timeout", "statement-timeout")
 		cmd.Flags().StringVar(&f.dsn, "dsn", "", "target database DSN")
 		cmd.Flags().DurationVar(&f.lockTimeout, "lock-timeout", d.LockTimeout, "lock_timeout for each statement")
 		cmd.Flags().DurationVar(&f.statementTimeout, "statement-timeout", d.StatementTimeout, "statement_timeout for each statement (0 disables)")

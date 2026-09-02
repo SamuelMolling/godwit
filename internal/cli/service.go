@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -12,6 +13,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
@@ -63,6 +65,9 @@ func newMigrateCmd() *cobra.Command {
 		Short: "Send a migration directory to the service and watch the run",
 		Args:  cobra.NoArgs,
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, _ []string) error {
+			if req.Target == "" {
+				return errors.New("--target (or target in godwit.yaml) is required")
+			}
 			files, err := migrationFiles(dir)
 			if err != nil {
 				return err
@@ -78,11 +83,11 @@ func newMigrateCmd() *cobra.Command {
 	}
 	flags.register(cmd)
 	cmd.Flags().StringVar(&req.Target, "target", "", "target name")
-	cmd.Flags().StringVar(&dir, "dir", "migrations", "migration directory")
+	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
 	cmd.Flags().StringVar(&req.Rollout, "rollout", "direct", "rollout policy: direct or expand-contract")
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
-	_ = cmd.MarkFlagRequired("target")
+	configKeys(cmd, "target", "dir", "rollout")
 
 	return cmd
 }

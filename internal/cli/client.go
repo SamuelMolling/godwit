@@ -28,11 +28,12 @@ func (f *clientFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.server, "server", os.Getenv("GODWIT_SERVER"), "godwit service URL (env GODWIT_SERVER)")
 	cmd.Flags().StringVar(&f.token, "token", os.Getenv("GODWIT_TOKEN"), "bearer token (env GODWIT_TOKEN)")
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the raw JSON response")
+	configKeys(cmd, "server")
 }
 
 func (f *clientFlags) client() (godwitv1connect.GodwitServiceClient, error) {
 	if f.server == "" {
-		return nil, errors.New("--server (or GODWIT_SERVER) is required")
+		return nil, errors.New("--server (or GODWIT_SERVER, or server in godwit.yaml) is required")
 	}
 	var transport http.RoundTripper = &http2.Transport{
 		AllowHTTP: true,
