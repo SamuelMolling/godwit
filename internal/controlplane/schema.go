@@ -140,16 +140,22 @@ CREATE TABLE cp_notifications (
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.
 func PlansFromFiles(files map[string]string, dir engine.Direction) ([]engine.Plan, error) {
-	fsys := fstest.MapFS{}
-	for name, body := range files {
-		fsys[name] = &fstest.MapFile{Data: []byte(body)}
-	}
-	migs, err := engine.LoadFS(fsys)
+	migs, err := MigrationsFromFiles(files)
 	if err != nil {
 		return nil, err
 	}
 
 	return buildPlans(migs, dir)
+}
+
+// MigrationsFromFiles loads migrations from in-memory files named like on disk.
+func MigrationsFromFiles(files map[string]string) ([]engine.Migration, error) {
+	fsys := fstest.MapFS{}
+	for name, body := range files {
+		fsys[name] = &fstest.MapFile{Data: []byte(body)}
+	}
+
+	return engine.LoadFS(fsys)
 }
 
 func buildPlans(migs []engine.Migration, dir engine.Direction) ([]engine.Plan, error) {

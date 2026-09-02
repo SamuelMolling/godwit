@@ -90,3 +90,30 @@ func TestSnapshotQueryErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestListApplied(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+
+	got, err := ListApplied(ctx, conn)
+	if err != nil || got != nil {
+		t.Fatalf("fresh database: %v, err = %v", got, err)
+	}
+	if err := bootstrap(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `INSERT INTO godwit.migrations (version, name, checksum) VALUES (2, 'b', 'y'), (1, 'a', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	got, err = ListApplied(ctx, conn)
+	if err != nil || len(got) != 2 || got[0].Version != 1 || got[0].Name != "a" || got[0].Checksum != "x" ||
+		got[1].Version != 2 || got[0].AppliedAt.IsZero() {
+		t.Fatalf("applied = %+v, err = %v", got, err)
+	}
+
+	mock, _ := newMockExec(t)
+	mock.ExpectQuery("to_regclass").WillReturnError(errBoom)
+	_, err = ListApplied(ctx, mock)
+	wantErr(t, err, "probe godwit schema")
+}

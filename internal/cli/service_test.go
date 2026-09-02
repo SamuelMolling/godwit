@@ -25,6 +25,8 @@ type stubService struct {
 	auth       string
 	registered *godwitv1.RegisterTargetRequest
 	baselined  *godwitv1.BaselineTargetRequest
+	statused   *godwitv1.GetTargetStatusRequest
+	status     *godwitv1.GetTargetStatusResponse
 	created    *godwitv1.CreateRunRequest
 	reverted   *godwitv1.RevertRunRequest
 	listed     *godwitv1.ListRunsRequest
@@ -66,6 +68,15 @@ func (s *stubService) BaselineTarget(_ context.Context, req *connect.Request[god
 	}
 
 	return connect.NewResponse(&godwitv1.BaselineTargetResponse{RunId: "b1"}), nil
+}
+
+func (s *stubService) GetTargetStatus(_ context.Context, req *connect.Request[godwitv1.GetTargetStatusRequest]) (*connect.Response[godwitv1.GetTargetStatusResponse], error) {
+	s.statused = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(s.status), nil
 }
 
 func (s *stubService) CreateRun(_ context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {

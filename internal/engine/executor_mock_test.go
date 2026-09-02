@@ -468,7 +468,7 @@ func TestStatusErrorPaths(t *testing.T) {
 			name: "list fails",
 			setup: func(mock pgxmock.PgxConnIface) {
 				expectBootstrap(mock)
-				mock.ExpectQuery("SELECT version, checksum, applied_at").WillReturnError(errBoom)
+				mock.ExpectQuery("SELECT version, name, checksum, applied_at").WillReturnError(errBoom)
 			},
 			wantErr: "list applied",
 		},
@@ -476,9 +476,9 @@ func TestStatusErrorPaths(t *testing.T) {
 			name: "scan fails",
 			setup: func(mock pgxmock.PgxConnIface) {
 				expectBootstrap(mock)
-				mock.ExpectQuery("SELECT version, checksum, applied_at").
-					WillReturnRows(pgxmock.NewRows([]string{"version", "checksum", "applied_at"}).
-						AddRow("no", "c", "now"))
+				mock.ExpectQuery("SELECT version, name, checksum, applied_at").
+					WillReturnRows(pgxmock.NewRows([]string{"version", "name", "checksum", "applied_at"}).
+						AddRow("no", "m", "c", "now"))
 			},
 			wantErr: "read applied",
 		},
@@ -486,9 +486,9 @@ func TestStatusErrorPaths(t *testing.T) {
 			name: "rows error",
 			setup: func(mock pgxmock.PgxConnIface) {
 				expectBootstrap(mock)
-				mock.ExpectQuery("SELECT version, checksum, applied_at").
-					WillReturnRows(pgxmock.NewRows([]string{"version", "checksum", "applied_at"}).
-						AddRow(int64(1), "c", time.Now()).RowError(0, errBoom))
+				mock.ExpectQuery("SELECT version, name, checksum, applied_at").
+					WillReturnRows(pgxmock.NewRows([]string{"version", "name", "checksum", "applied_at"}).
+						AddRow(int64(1), "m", "c", time.Now()).RowError(0, errBoom))
 			},
 			wantErr: "read applied",
 		},

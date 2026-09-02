@@ -39,6 +39,11 @@ type Baseliner interface {
 	Baseline(ctx context.Context, runID, target string, migs []engine.Migration) error
 }
 
+// Inspector reports a target's applied versions, last run and drift baseline (implemented by the control plane).
+type Inspector interface {
+	Status(ctx context.Context, target string) (controlplane.TargetStatus, error)
+}
+
 // Server implements godwit.v1.GodwitService over the control-plane store.
 type Server struct {
 	// Metrics receives admission and API events; replace it before Handler to share a registry.
@@ -49,6 +54,8 @@ type Server struct {
 	Notifier notify.Notifier
 	// Baseliner serves BaselineTarget; nil leaves it unimplemented.
 	Baseliner Baseliner
+	// Inspector serves GetTargetStatus; nil leaves it unimplemented.
+	Inspector Inspector
 
 	store         *controlplane.Store
 	drift         DriftOps

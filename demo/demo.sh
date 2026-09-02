@@ -243,6 +243,9 @@ docker compose exec -T target-db psql -U app -d legacy -c "\d orders"
 echo "==> a second baseline is refused: the target already has applied versions"
 rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475
 echo
+echo "==> target status: applied versions from the database, pending against the files, last run and drift baseline"
+rpc GetTargetStatus "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475
+echo
 
 echo
 echo "==> the same API from the CLI: every run so far"
@@ -253,5 +256,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, target status, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

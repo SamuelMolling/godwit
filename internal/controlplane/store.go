@@ -213,6 +213,20 @@ func scanRun(row pgx.Row) (Run, error) {
 	return r, err
 }
 
+// LastRun returns the most recently created run for target; ok is false when it never had one.
+func (s *Store) LastRun(ctx context.Context, target string) (r Run, ok bool, err error) {
+	r, err = scanRun(s.pool.QueryRow(ctx,
+		`SELECT `+runColumns+` FROM cp_runs WHERE target = $1 ORDER BY created_at DESC LIMIT 1`, target))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, false, nil
+	}
+	if err != nil {
+		return Run{}, false, fmt.Errorf("load last run: %w", err)
+	}
+
+	return r, true, nil
+}
+
 // Run returns one run by id.
 func (s *Store) Run(ctx context.Context, id string) (Run, error) {
 	r, err := scanRun(s.pool.QueryRow(ctx,
