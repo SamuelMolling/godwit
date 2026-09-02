@@ -38,7 +38,7 @@ type Validator interface {
 
 // Baseliner marks migrations applied on a target without running them (implemented by the control plane).
 type Baseliner interface {
-	Baseline(ctx context.Context, runID, target string, migs []engine.Migration) error
+	Baseline(ctx context.Context, runID, target string, migs []engine.Migration, p controlplane.Provenance) error
 }
 
 // Inspector reports a target's applied versions, last run and drift baseline (implemented by the control plane).
@@ -86,10 +86,11 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 
 // Handler mounts the connect service with bearer-token auth plus the unauthenticated
 // /metrics, /healthz and /readyz endpoints; serve it with h2c enabled.
-func Handler(s *Server, tokens []string) http.Handler {
+func Handler(s *Server, tokens []Token) http.Handler {
 	mux := http.NewServeMux()
+	a := newAuth(tokens)
 	path, h := godwitv1connect.NewGodwitServiceHandler(s,
-		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log}, newAuth(tokens)))
+		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log, actor: a.actor}, a))
 	mux.Handle(path, h)
 	mux.Handle("/metrics", s.Metrics.Handler())
 	mux.HandleFunc("GET /healthz", healthz)
@@ -172,6 +173,8 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	}
 	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider,
 		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
+	s.audit(ctx, controlplane.AuditTargetRegister, "", m.Name,
+		fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s", m.Provider, t.Lock, t.Statement))
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
@@ -192,15 +195,18 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 
 	id := s.newID()
-	if err := s.store.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t); err != nil {
+	p := controlplane.Provenance{CreatedBy: Actor(ctx), Source: m.Source}
+	if err := s.store.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p); err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout,
+	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout, "source", m.Source,
 		"files", len(spec.files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
 		"allow_out_of_order", m.AllowOutOfOrder)
+	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target,
+		fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s", spec.rollout, len(spec.plans), strings.Join(m.AcknowledgeHazards, ","), m.Source))
 	s.emit(ctx, controlplane.Run{
 		ID: id, Target: m.Target, State: controlplane.StateQueued,
-		Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t,
+		Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t, Provenance: p,
 	}, notify.RunCreated, "")
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
@@ -264,29 +270,48 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	}
 
 	id := s.newID()
-	if err := s.store.CreateRevert(ctx, id, m.RunId, t); err != nil {
+	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
+	if err := s.store.CreateRevert(ctx, id, m.RunId, t, p); err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards,
 		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
-	s.emit(ctx, controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId, Timeouts: t},
+	s.audit(ctx, controlplane.AuditRunRevert, id, orig.Target,
+		fmt.Sprintf("reverts=%s acked=%s", m.RunId, strings.Join(m.AcknowledgeHazards, ",")))
+	s.emit(ctx, controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId, Timeouts: t, Provenance: p},
 		notify.RunCreated, "reverts run "+notify.ShortID(m.RunId))
 
 	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
 }
 
 func (s *Server) emit(ctx context.Context, run controlplane.Run, typ, detail string) {
-	notify.Emit(ctx, s.Notifier, s.Log, controlplane.RunEvent(run, typ, detail))
+	e := controlplane.RunEvent(run, typ, detail)
+	e.Actor = Actor(ctx)
+	notify.Emit(ctx, s.Notifier, s.Log, e)
 }
 
-func (s *Server) emitLookup(ctx context.Context, id, typ, detail string) {
+// record audits an operator action on a run and notifies with the run's current state; the audit survives a failed lookup.
+func (s *Server) record(ctx context.Context, id, action, typ, detail string) {
 	run, err := s.store.Run(ctx, id)
 	if err != nil {
 		s.Log.Warn("notification skipped", "run", id, "type", typ, "error", err)
-
-		return
+	} else {
+		s.emit(ctx, run, typ, detail)
 	}
-	s.emit(ctx, run, typ, detail)
+	s.audit(ctx, action, id, run.Target, detail)
+}
+
+const auditDetailLimit = 500
+
+// audit writes an entry for a mutation that already happened; a store failure is logged, not returned.
+func (s *Server) audit(ctx context.Context, action, runID, target, detail string) {
+	if r := []rune(detail); len(r) > auditDetailLimit {
+		detail = string(r[:auditDetailLimit]) + "…"
+	}
+	e := controlplane.AuditEntry{Actor: Actor(ctx), Action: action, RunID: runID, Target: target, Detail: detail}
+	if err := s.store.Audit(ctx, e); err != nil {
+		s.Log.Error("audit write failed", "actor", e.Actor, "action", action, "run", runID, "target", target, "error", err)
+	}
 }
 
 type admission struct {
@@ -350,6 +375,8 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		Phase:     r.Phase,
 		Reverts:   r.Reverts,
 		Kind:      r.Kind,
+		CreatedBy: r.Provenance.CreatedBy,
+		Source:    r.Provenance.Source,
 		CreatedAt: timestamppb.New(r.CreatedAt),
 
 		LockTimeout: r.Timeouts.Lock, StatementTimeout: r.Timeouts.Statement,
@@ -432,6 +459,7 @@ func (s *Server) ResumeRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	}
 	s.Metrics.RunResumed(run.Target)
 	s.Log.Info("run resumed", "run", run.ID, "target", run.Target)
+	s.audit(ctx, controlplane.AuditRunResume, run.ID, run.Target, "")
 	s.emit(ctx, run, notify.RunResumed, "")
 
 	return connect.NewResponse(&godwitv1.ResumeRunResponse{}), nil
@@ -443,7 +471,7 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("run parked", "run", req.Msg.RunId, "reason", req.Msg.Reason)
-	s.emitLookup(ctx, req.Msg.RunId, notify.RunParked, req.Msg.Reason)
+	s.record(ctx, req.Msg.RunId, controlplane.AuditRunPark, notify.RunParked, req.Msg.Reason)
 
 	return connect.NewResponse(&godwitv1.ParkRunResponse{}), nil
 }
@@ -454,7 +482,7 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("rollout confirmed", "run", req.Msg.RunId)
-	s.emitLookup(ctx, req.Msg.RunId, notify.RunConfirmed, "")
+	s.record(ctx, req.Msg.RunId, controlplane.AuditRunConfirm, notify.RunConfirmed, "")
 
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }
@@ -561,6 +589,7 @@ func (s *Server) AcceptBaseline(ctx context.Context, req *connect.Request[godwit
 	if err := s.drift.AcceptBaseline(ctx, req.Msg.Target); err != nil {
 		return nil, rpcErr(err)
 	}
+	s.audit(ctx, controlplane.AuditDriftAccept, "", req.Msg.Target, "")
 
 	return connect.NewResponse(&godwitv1.AcceptBaselineResponse{}), nil
 }
@@ -596,15 +625,39 @@ func (s *Server) BaselineTarget(ctx context.Context, req *connect.Request[godwit
 	}
 
 	id := s.newID()
-	if err := s.Baseliner.Baseline(ctx, id, m.Target, migs); err != nil {
+	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
+	if err := s.Baseliner.Baseline(ctx, id, m.Target, migs, p); err != nil {
 		return nil, rpcErr(err)
 	}
 	detail := fmt.Sprintf("baseline to version %d: %d migrations marked applied", m.Version, len(migs))
 	s.Log.Info("target baselined", "run", id, "target", m.Target, "version", m.Version, "migrations", len(migs))
+	s.audit(ctx, controlplane.AuditTargetBaseline, id, m.Target, fmt.Sprintf("version=%d migrations=%d", m.Version, len(migs)))
 	s.emit(ctx, controlplane.Run{
 		ID: id, Target: m.Target, State: controlplane.StateSucceeded,
-		Rollout: controlplane.RolloutDirect, Phase: controlplane.PhaseExpand, Kind: controlplane.KindBaseline,
+		Rollout: controlplane.RolloutDirect, Phase: controlplane.PhaseExpand, Kind: controlplane.KindBaseline, Provenance: p,
 	}, notify.RunSucceeded, detail)
 
 	return connect.NewResponse(&godwitv1.BaselineTargetResponse{RunId: id}), nil
+}
+
+// ListAudit returns the newest audit entries, optionally filtered by target and run.
+func (s *Server) ListAudit(ctx context.Context, req *connect.Request[godwitv1.ListAuditRequest]) (*connect.Response[godwitv1.ListAuditResponse], error) {
+	entries, err := s.store.ListAudit(ctx, req.Msg.Target, req.Msg.RunId, int(req.Msg.Limit))
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	resp := &godwitv1.ListAuditResponse{}
+	for _, e := range entries {
+		resp.Entries = append(resp.Entries, &godwitv1.AuditEntry{
+			Id:     e.ID,
+			At:     timestamppb.New(e.At),
+			Actor:  e.Actor,
+			Action: e.Action,
+			RunId:  e.RunID,
+			Target: e.Target,
+			Detail: e.Detail,
+		})
+	}
+
+	return connect.NewResponse(resp), nil
 }

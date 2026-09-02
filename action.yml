@@ -30,6 +30,9 @@ inputs:
   dry-run:
     description: "With migrate: ask the service for the admitted plan (hazards, order, scratch validation, applied state, phases) without queueing a run"
     default: "false"
+  source:
+    description: "Provenance recorded on the run (migrate; default: <repository>@<sha>[:<dir>])"
+    default: ""
   comment:
     description: "Post the lint, plan or dry-run report as one sticky pull request comment (needs pull-requests: write)"
     default: "true"
@@ -78,6 +81,7 @@ runs:
         TARGET: ${{ inputs.target }}
         ROLLOUT: ${{ inputs.rollout }}
         DRY_RUN: ${{ inputs.dry-run }}
+        SOURCE: ${{ inputs.source }}
         GODWIT_TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
@@ -121,6 +125,11 @@ runs:
             if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
             if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
             if [ -n "${ROLLOUT}" ]; then args+=(--rollout "${ROLLOUT}"); fi
+            if [ -z "${SOURCE}" ]; then
+              SOURCE="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+              if [ -n "${DIR}" ]; then SOURCE="${SOURCE}:${DIR}"; fi
+            fi
+            args+=(--source "${SOURCE}")
             errors="${RUNNER_TEMP}/godwit-migrate.err"
             events="${RUNNER_TEMP}/godwit-migrate.jsonl"
             if [ "${DRY_RUN}" = "true" ]; then

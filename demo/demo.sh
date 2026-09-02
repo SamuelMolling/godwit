@@ -248,13 +248,17 @@ rpc GetTargetStatus "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475
 echo
 
 echo
-echo "==> the same API from the CLI: every run so far"
+echo "==> the same API from the CLI: every run so far, with who created it"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
+
+echo
+echo "==> the audit log: every mutation so far, by the token name (demo) that made it"
+docker compose exec -T godwit-2 /godwit audit --server http://localhost:8474 --token demo-token --limit 10
 
 echo
 echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, target status, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, target status, named tokens and an audit log, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

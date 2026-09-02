@@ -133,6 +133,7 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "apply pending versions older than the newest applied one instead of refusing them")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "run the admission checks on the service and print the plan without queueing a run")
 	cmd.Flags().StringVar(&format, "format", "text", "dry-run output format: text, markdown or json")
+	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the run (e.g. github.com/org/repo@<sha>:db/migrations)")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
@@ -297,8 +298,8 @@ func newRunGetCmd() *cobra.Command {
 				return err
 			}
 			r := resp.Msg.Run
-			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created: %s\n  finished: %s",
-				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, stamp(r.CreatedAt), stamp(r.FinishedAt)))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created_by: %s\n  source: %s\n  created: %s\n  finished: %s",
+				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, stamp(r.CreatedAt), stamp(r.FinishedAt)))
 
 			return nil
 		}),
@@ -436,9 +437,10 @@ func newRunsCmd() *cobra.Command {
 func runsTable(runs []*godwitv1.Run) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTARGET\tKIND\tSTATE\tROLLOUT\tPHASE\tCREATED")
+	fmt.Fprintln(w, "ID\tTARGET\tKIND\tSTATE\tROLLOUT\tPHASE\tBY\tSOURCE\tCREATED")
 	for _, r := range runs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Id, r.Target, r.Kind, stateName(r.State), r.Rollout, r.Phase, stamp(r.CreatedAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Id, r.Target, r.Kind, stateName(r.State), r.Rollout, r.Phase,
+			r.CreatedBy, r.Source, stamp(r.CreatedAt))
 	}
 	_ = w.Flush()
 

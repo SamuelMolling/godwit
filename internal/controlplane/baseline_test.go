@@ -32,11 +32,12 @@ func TestBaselinerRecordsRunAndReplaysHistory(t *testing.T) {
 	const id = "bbbbbbbb-0000-0000-0000-000000000010"
 
 	b := NewBaseliner(sched)
-	if err := b.Baseline(ctx, id, "app", baselineMigrations(t)); err != nil {
+	if err := b.Baseline(ctx, id, "app", baselineMigrations(t), Provenance{CreatedBy: "ops"}); err != nil {
 		t.Fatal(err)
 	}
 	run, err := s.Run(ctx, id)
-	if err != nil || run.Kind != KindBaseline || run.State != StateSucceeded || run.FinishedAt == nil || run.Rollout != RolloutDirect {
+	if err != nil || run.Kind != KindBaseline || run.State != StateSucceeded || run.FinishedAt == nil || run.Rollout != RolloutDirect ||
+		run.Provenance.CreatedBy != "ops" {
 		t.Fatalf("run = %+v, err = %v", run, err)
 	}
 	files, err := s.RunFiles(ctx, id)
@@ -64,7 +65,7 @@ func TestBaselinerRecordsRunAndReplaysHistory(t *testing.T) {
 		t.Fatalf("kind = %q", r.Kind)
 	}
 
-	err = b.Baseline(ctx, "bbbbbbbb-0000-0000-0000-000000000012", "app", baselineMigrations(t))
+	err = b.Baseline(ctx, "bbbbbbbb-0000-0000-0000-000000000012", "app", baselineMigrations(t), Provenance{CreatedBy: "ops"})
 	if !errors.Is(err, engine.ErrAlreadyMigrated) {
 		t.Fatalf("second baseline err = %v", err)
 	}
@@ -78,24 +79,24 @@ func TestBaselinerErrors(t *testing.T) {
 	b := NewBaseliner(sched)
 	migs := baselineMigrations(t)
 
-	if err := b.Baseline(ctx, "x", "ghost", migs); !errors.Is(err, ErrNotFound) {
+	if err := b.Baseline(ctx, "x", "ghost", migs, Provenance{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown target err = %v", err)
 	}
 	if err := s.RegisterTarget(ctx, "broken", "plain", map[string]string{"dsn": "postgres://nobody@127.0.0.1:1/x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Baseline(ctx, "x", "broken", migs); err == nil || !strings.Contains(err.Error(), "connect target") {
+	if err := b.Baseline(ctx, "x", "broken", migs, Provenance{}); err == nil || !strings.Contains(err.Error(), "connect target") {
 		t.Fatalf("unreachable target err = %v", err)
 	}
 
 	const id = "bbbbbbbb-0000-0000-0000-000000000020"
-	if err := b.Baseline(ctx, id, "app", migs); err != nil {
+	if err := b.Baseline(ctx, id, "app", migs, Provenance{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RegisterTarget(ctx, "other", "plain", map[string]string{"dsn": newDatabase(t, "tg")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Baseline(ctx, id, "other", migs); err == nil || !strings.Contains(err.Error(), "create baseline") {
+	if err := b.Baseline(ctx, id, "other", migs, Provenance{}); err == nil || !strings.Contains(err.Error(), "create baseline") {
 		t.Fatalf("duplicate run id err = %v", err)
 	}
 }

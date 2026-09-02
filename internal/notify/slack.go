@@ -205,6 +205,9 @@ func (s Slack) blocks(e Event) []map[string]any {
 	if e.Attempt > 0 {
 		fields = append(fields, mrkdwn("*Attempt*\n"+strconv.Itoa(e.Attempt)))
 	}
+	if e.Actor != "" {
+		fields = append(fields, mrkdwn("*Actor*\n"+e.Actor))
+	}
 	fields = append(fields, mrkdwn("*Last event*\n"+e.Type+" · "+e.At.UTC().Format(time.RFC3339)))
 	out := []map[string]any{
 		{"type": "header", "text": map[string]any{"type": "plain_text", "text": title}},
@@ -228,6 +231,9 @@ func replyBlocks(e Event) []map[string]any {
 	text := badge(e) + " · *" + e.Type + "*"
 	if e.Attempt > 0 {
 		text += " · attempt " + strconv.Itoa(e.Attempt)
+	}
+	if e.Actor != "" {
+		text += " · by " + e.Actor
 	}
 	if e.Detail != "" {
 		text += "\n```" + truncate(e.Detail) + "```"

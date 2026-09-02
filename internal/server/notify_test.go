@@ -104,9 +104,9 @@ func TestNotificationsEndToEnd(t *testing.T) {
 		Listen: "127.0.0.1:0", StoreDSN: storeDSN, MasterKey: testKey, Holder: "r1",
 		Scheduler:  controlplane.Config{Interval: 50 * time.Millisecond},
 		WebhookURL: hookSrv.URL, SlackToken: "xoxb-test", SlackChannel: "#ops", SlackURL: slackSrv.URL,
-		PublicURL: "https://godwit.example.com", Notifier: rec, Log: testLog,
+		PublicURL: "https://godwit.example.com", Notifier: rec, Log: testLog, Tokens: []string{"ci:ci-secret"},
 	})
-	client := newClient(baseURL, "")
+	client := newClient(baseURL, "ci-secret")
 	targetDSN := newDatabase(t, "tg")
 	registerTarget(t, client, targetDSN)
 
@@ -207,7 +207,7 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	if base.RunID != baselined.Msg.RunId || base.Target != "legacy" || base.Detail != "baseline to version 1: 1 migrations marked applied" {
 		t.Fatalf("baseline = %+v", base)
 	}
-	if parked.RunID != badID || parked.Detail != "manual hold" || parked.State != controlplane.StateNeedsAttention {
+	if parked.RunID != badID || parked.Detail != "manual hold" || parked.State != controlplane.StateNeedsAttention || parked.Actor != "ci" {
 		t.Fatalf("parked = %+v", parked)
 	}
 	if revert.RunID != reverted.Msg.RunId || revert.Detail != "reverts run "+notify.ShortID(badID) {
@@ -241,13 +241,19 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	if rootTS == "" || replies != 2 || updates != 2 {
 		t.Fatalf("first run: root %q, replies %d, updates %d", rootTS, replies, updates)
 	}
-	button := calls[0].Payload["blocks"].([]any)[2].(map[string]any)["elements"].([]any)[0].(map[string]any)
+	blocks := calls[0].Payload["blocks"].([]any)
+	button := blocks[2].(map[string]any)["elements"].([]any)[0].(map[string]any)
 	if button["url"] != "https://godwit.example.com/ui/runs/"+firstID {
 		t.Fatalf("button = %v", button)
 	}
+	fields := blocks[1].(map[string]any)["fields"].([]any)
+	if fields[2].(map[string]any)["text"] != "*Actor*\nci" {
+		t.Fatalf("root fields = %v", fields)
+	}
 
 	hookCalls := hook.waitFor(t, "godwit drift accepted on app")
-	if hookCalls[0].Payload["kind"] != "run" || hookCalls[0].Payload["type"] != "created" || hookCalls[0].Payload["run_id"] != firstID {
+	if hookCalls[0].Payload["kind"] != "run" || hookCalls[0].Payload["type"] != "created" || hookCalls[0].Payload["run_id"] != firstID ||
+		hookCalls[0].Payload["actor"] != "ci" {
 		t.Fatalf("webhook first = %+v", hookCalls[0])
 	}
 

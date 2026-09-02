@@ -24,9 +24,10 @@ import (
 
 // Config assembles one godwit service instance.
 type Config struct {
-	Listen        string
-	StoreDSN      string
-	MasterKey     []byte
+	Listen    string
+	StoreDSN  string
+	MasterKey []byte
+	// Tokens are bearer token specs, "name:secret" or a bare secret (named anonymous).
 	Tokens        []string
 	Holder        string
 	Scheduler     controlplane.Config
@@ -57,6 +58,10 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.SlackToken != "" && cfg.SlackChannel == "" {
 		return errors.New("slack channel is required when a slack token is set")
+	}
+	tokens, err := api.ParseTokens(cfg.Tokens)
+	if err != nil {
+		return err
 	}
 	pool, err := pgxpool.New(ctx, cfg.StoreDSN)
 	if err != nil {
@@ -112,7 +117,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
 	apiSrv.Inspector = controlplane.NewInspector(sched)
 	srv := &http.Server{
-		Handler:           api.Handler(apiSrv, cfg.Tokens),
+		Handler:           api.Handler(apiSrv, tokens),
 		ReadHeaderTimeout: 10 * time.Second,
 		Protocols:         h2cProtocols(),
 	}
