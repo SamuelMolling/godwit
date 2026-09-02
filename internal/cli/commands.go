@@ -48,7 +48,21 @@ func (f *targetFlags) executor(ctx context.Context) (*engine.Executor, func(), e
 	return exec, func() { _ = conn.Close(context.Background()) }, nil
 }
 
-var planFormats = map[string]func(io.Writer, []engine.Plan){
+type planItem struct {
+	engine.Plan
+	applied bool
+	phase   string
+}
+
+type planReport struct {
+	live      bool
+	target    string
+	rollout   string
+	validated bool
+	items     []planItem
+}
+
+var planFormats = map[string]func(io.Writer, planReport){
 	"text":     writePlanText,
 	"markdown": writePlanMarkdown,
 	"json":     writePlanJSON,
@@ -69,17 +83,17 @@ func newPlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			plans := make([]engine.Plan, 0, 2*len(migs))
+			report := planReport{items: make([]planItem, 0, 2*len(migs))}
 			for _, m := range migs {
 				for _, dir := range []engine.Direction{engine.DirectionUp, engine.DirectionDown} {
 					p, err := engine.BuildPlan(m, dir)
 					if err != nil {
 						return err
 					}
-					plans = append(plans, p)
+					report.items = append(report.items, planItem{Plan: p})
 				}
 			}
-			write(cmd.OutOrStdout(), plans)
+			write(cmd.OutOrStdout(), report)
 
 			return nil
 		},
@@ -90,9 +104,12 @@ func newPlanCmd() *cobra.Command {
 	return cmd
 }
 
-func writePlanText(w io.Writer, plans []engine.Plan) {
-	for _, p := range plans {
-		fmt.Fprintf(w, "%d_%s (%s): %d statement(s)\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements))
+func writePlanText(w io.Writer, r planReport) {
+	if r.live {
+		fmt.Fprintf(w, "dry run on %s (rollout %s, %s)\n", r.target, r.rollout, validatedLabel(r.validated))
+	}
+	for _, p := range r.items {
+		fmt.Fprintf(w, "%d_%s (%s): %d statement(s)%s\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements), p.liveSuffix())
 		for i, st := range p.Statements {
 			fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(st), firstLine(st.SQL))
 			for _, h := range st.Hazards {
@@ -102,26 +119,32 @@ func writePlanText(w io.Writer, plans []engine.Plan) {
 	}
 }
 
-func writePlanMarkdown(w io.Writer, plans []engine.Plan) {
-	fmt.Fprintln(w, "## godwit plan")
+func writePlanMarkdown(w io.Writer, r planReport) {
+	if r.live {
+		fmt.Fprintln(w, "## godwit dry run")
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Target `%s`, rollout `%s`, %s.\n", r.target, r.rollout, validatedLabel(r.validated))
+	} else {
+		fmt.Fprintln(w, "## godwit plan")
+	}
 	fmt.Fprintln(w)
 	hazards := 0
-	if len(plans) > 0 {
-		fmt.Fprintln(w, "| Migration | Direction | # | Mode | Statement | Hazards |")
-		fmt.Fprintln(w, "|---|---|---|---|---|---|")
+	if len(r.items) > 0 {
+		fmt.Fprintln(w, "| Migration | Direction | # | Mode | Statement | Hazards |"+r.liveHeader())
+		fmt.Fprintln(w, "|---|---|---|---|---|---|"+r.liveRule())
 	}
-	for _, p := range plans {
+	for _, p := range r.items {
 		for i, st := range p.Statements {
 			codes := make([]string, 0, len(st.Hazards))
 			for _, h := range st.Hazards {
 				codes = append(codes, fmt.Sprintf("%s: %s", h.Code, h.Detail))
 			}
 			hazards += len(st.Hazards)
-			fmt.Fprintf(w, "| `%d_%s` | %s | %d | %s | `%s` | %s |\n", p.Migration.Version, p.Migration.Name, p.Direction, i,
-				statementMode(st), markdownCell(oneLine(st.SQL)), markdownCell(strings.Join(codes, "; ")))
+			fmt.Fprintf(w, "| `%d_%s` | %s | %d | %s | `%s` | %s |%s\n", p.Migration.Version, p.Migration.Name, p.Direction, i,
+				statementMode(st), markdownCell(oneLine(st.SQL)), markdownCell(strings.Join(codes, "; ")), p.liveCells(r.live))
 		}
 	}
-	if len(plans) > 0 {
+	if len(r.items) > 0 {
 		fmt.Fprintln(w)
 	}
 	if hazards > 0 {
@@ -130,6 +153,54 @@ func writePlanMarkdown(w io.Writer, plans []engine.Plan) {
 		return
 	}
 	fmt.Fprintln(w, "✅ no hazards")
+}
+
+func validatedLabel(validated bool) string {
+	if validated {
+		return "validated on a scratch database"
+	}
+
+	return "not validated"
+}
+
+func (r planReport) liveHeader() string {
+	if r.live {
+		return " Phase | Status |"
+	}
+
+	return ""
+}
+
+func (r planReport) liveRule() string {
+	if r.live {
+		return "---|---|"
+	}
+
+	return ""
+}
+
+func (p planItem) status() string {
+	if p.applied {
+		return "applied"
+	}
+
+	return "pending"
+}
+
+func (p planItem) liveSuffix() string {
+	if p.phase == "" {
+		return ""
+	}
+
+	return fmt.Sprintf(" [%s, %s]", p.phase, p.status())
+}
+
+func (p planItem) liveCells(live bool) string {
+	if !live {
+		return ""
+	}
+
+	return fmt.Sprintf(" %s | %s |", p.phase, p.status())
 }
 
 func markdownCell(s string) string {
@@ -163,18 +234,46 @@ type hazardJSON struct {
 	Detail string `json:"detail"`
 }
 
-func writePlanJSON(w io.Writer, plans []engine.Plan) {
-	out := make([]planJSON, 0, len(plans))
-	for _, p := range plans {
-		pj := planJSON{Version: p.Migration.Version, Name: p.Migration.Name, Direction: string(p.Direction), Statements: []statementJSON{}}
-		for _, st := range p.Statements {
-			hazards := make([]hazardJSON, 0, len(st.Hazards))
-			for _, h := range st.Hazards {
-				hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail})
-			}
-			pj.Statements = append(pj.Statements, statementJSON{SQL: st.SQL, Mode: statementMode(st), Hazards: hazards})
+type livePlanJSON struct {
+	planJSON
+	Applied bool   `json:"applied"`
+	Phase   string `json:"phase"`
+}
+
+type dryRunJSON struct {
+	Target     string         `json:"target"`
+	Rollout    string         `json:"rollout"`
+	Validated  bool           `json:"validated"`
+	Migrations []livePlanJSON `json:"migrations"`
+}
+
+func toPlanJSON(p engine.Plan) planJSON {
+	pj := planJSON{Version: p.Migration.Version, Name: p.Migration.Name, Direction: string(p.Direction), Statements: []statementJSON{}}
+	for _, st := range p.Statements {
+		hazards := make([]hazardJSON, 0, len(st.Hazards))
+		for _, h := range st.Hazards {
+			hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail})
 		}
-		out = append(out, pj)
+		pj.Statements = append(pj.Statements, statementJSON{SQL: st.SQL, Mode: statementMode(st), Hazards: hazards})
+	}
+
+	return pj
+}
+
+func writePlanJSON(w io.Writer, r planReport) {
+	var out any
+	if r.live {
+		live := dryRunJSON{Target: r.target, Rollout: r.rollout, Validated: r.validated, Migrations: []livePlanJSON{}}
+		for _, p := range r.items {
+			live.Migrations = append(live.Migrations, livePlanJSON{planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase})
+		}
+		out = live
+	} else {
+		plans := make([]planJSON, 0, len(r.items))
+		for _, p := range r.items {
+			plans = append(plans, toPlanJSON(p.Plan))
+		}
+		out = plans
 	}
 	data, _ := json.Marshal(out)
 	fmt.Fprintln(w, string(data))

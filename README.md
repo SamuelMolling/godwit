@@ -29,6 +29,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Baseline | `BaselineTarget` adopts an existing database: every migration up to a version is marked applied without running it, recorded as a `baseline` run whose files seed the replayable history, and snapshotted for drift — see [Baselining an existing database](#baselining-an-existing-database). |
 | Target status | `GetTargetStatus` answers "where is this database?" in one call: applied versions read from the target's `godwit.migrations` (checksum mismatches flagged against the given files), pending versions, the last run, the drift baseline and whether drift is open, the credential provider and the configured timeouts — see [Target status](#target-status). |
 | Out-of-order guard | A pending version older than the newest one already applied on the target is refused at admission; `allow_out_of_order` lets it through and is logged — see [Out-of-order migrations](#out-of-order-migrations). |
+| Dry run | `PlanRun` / `migrate --dry-run` puts the files through the same admission as a real run (hazard gate, order guard, scratch validation) against a live target and returns what it would do — applied or pending per migration, the expand/contract split, statements with hazards — without queueing anything. The Action posts it as a PR comment — see [Dry run](#dry-run). |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target add`, `target baseline`, `target status`, `run`, `runs`, `revert` and `drift` cover the rest. |
@@ -105,6 +106,26 @@ The newest applied version comes from the target's history in the control plane 
 
 When the older migration is genuinely independent, `CreateRun{allow_out_of_order}` / `migrate --allow-out-of-order` admits it; the service logs `out-of-order migrations admitted` with the versions, and the run is otherwise ordinary. A project that lives with this permanently can set `allow_out_of_order: true` in `godwit.yaml`. This is Flyway's `outOfOrder` (off by default there too) and Atlas's default `--exec-order linear`; Liquibase has no notion of version order.
 
+## Dry run
+
+Offline `plan` says what the files contain; it cannot say what a target would do with them. `PlanRun{target, files, acknowledge_hazards, rollout, allow_out_of_order, skip_validation}` answers that: it runs exactly the admission `CreateRun` runs — hazard gate, out-of-order guard against the target's history, replay on a scratch database — and returns the plan instead of a run id. Nothing is queued and nothing is written to `cp_runs`.
+
+Per migration: version, name, checksum, `applied` (already in the target's history, so the executor would skip it), the `phase` the rollout policy would put it in (`expand` or `contract`), and each statement with its `no_tx` flag and hazards. The response also carries `validated`: `false` when `skip_validation` was passed or the service runs without a scratch database. A run that would be refused is refused here too, with the same codes: `FailedPrecondition` for unacknowledged hazards or out-of-order versions, `InvalidArgument` when the scratch replay fails, `NotFound` for an unknown target.
+
+```
+$ godwit migrate --target prod --dry-run --rollout expand-contract --ack H003
+dry run on prod (rollout expand-contract, validated on a scratch database)
+20260901120000_users (up): 1 statement(s) [expand, applied]
+  [0] tx    CREATE TABLE users (id bigint PRIMARY KEY, email text)
+20260901120001_name (up): 1 statement(s) [expand, pending]
+  [0] tx    ALTER TABLE users ADD COLUMN name text
+20260901120002_drop_id (up): 1 statement(s) [contract, pending]
+  [0] tx    ALTER TABLE users DROP COLUMN id
+        hazard H003: DROP COLUMN is destructive
+```
+
+`--format markdown` adds `Phase` and `Status` columns to the `plan` table under a `## godwit dry run` heading; `--format json` wraps the `plan` shape in `{target, rollout, validated, migrations: [{..., applied, phase}]}`; `--json` prints the raw response. A refusal exits 1 with the reason on stderr, as `migrate` would.
+
 ## Credentials
 
 Targets never store a plaintext DSN. `RegisterTarget` picks a provider:
@@ -149,7 +170,7 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 | Local (`--dsn`) | Service (`--server`, `--token`) |
 |---|---|
 | `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault [--lock-timeout] [--statement-timeout]`, `target baseline <name> --version <v> [--dir]`, `target status <name> [--dir]` |
-| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--allow-out-of-order] [--lock-timeout] [--statement-timeout]` |
+| `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation] [--allow-out-of-order] [--lock-timeout] [--statement-timeout]`, `migrate --dry-run [--format text\|markdown\|json]` — admission and plan only, no run |
 | `status` — applied state per migration | `revert <run-id> [--lock-timeout] [--statement-timeout]`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
 
@@ -164,7 +185,7 @@ godwit run confirm "$RUN_ID"
 
 ## In your PR
 
-The repository doubles as a composite GitHub Action (`action.yml`): it builds `godwit` from the pinned ref and runs one command. `lint` and `plan` write their markdown report to the step summary and keep one sticky comment on the pull request up to date (marker `<!-- godwit:<command> -->`); `migrate` streams the run and exits with its pipeline code.
+The repository doubles as a composite GitHub Action (`action.yml`): it builds `godwit` from the pinned ref and runs one command. `lint` and `plan` write their markdown report to the step summary and keep one sticky comment on the pull request up to date (marker `<!-- godwit:<command> -->`); `migrate` streams the run and exits with its pipeline code. `migrate` with `dry-run: true` asks the service for the [live plan](#dry-run) instead — applied state, phases, hazards, validation — and posts it as its own sticky comment (marker `<!-- godwit:dry-run -->`), failing the step when the run would be refused.
 
 ```yaml
 # pull request gate
@@ -175,6 +196,14 @@ steps:
     with: { command: lint, ack: H001 }          # base: origin/main is fetched when the checkout is shallow
   - uses: SamuelMolling/godwit@main
     with: { command: plan }
+  - uses: SamuelMolling/godwit@main                   # optional: what prod would do with these files
+    with:
+      command: migrate
+      dry-run: "true"
+      server: https://godwit.internal
+      token: ${{ secrets.GODWIT_TOKEN }}
+      target: prod
+      rollout: expand-contract
 
 # on merge
 steps:
@@ -191,9 +220,9 @@ steps:
   - run: godwit run confirm "${{ steps.migrate.outputs.run-id }}"
 ```
 
-Inputs: `command` (`lint`|`plan`|`migrate`), `dir`, `base`, `ack`, `server`, `token`, `target`, `rollout`, `comment` (`true`), `github-token`, `go-version` (`1.26`). Anything left empty falls back to `godwit.yaml`. Outputs: `run-id`, `blocking`, `summary-path`. The runner needs `gcc` (cgo), `jq` and `gh` — all present on `ubuntu-latest`.
+Inputs: `command` (`lint`|`plan`|`migrate`), `dir`, `base`, `ack`, `server`, `token`, `target`, `rollout`, `dry-run` (`false`), `comment` (`true`), `github-token`, `go-version` (`1.26`). Anything left empty falls back to `godwit.yaml`. Outputs: `run-id`, `blocking`, `summary-path`. The runner needs `gcc` (cgo), `jq` and `gh` — all present on `ubuntu-latest`.
 
-Until the repository goes public only the owner's repositories can `uses:` it; anywhere else, `go install github.com/SamuelMolling/godwit/cmd/godwit@main` and call the same commands (`--format markdown` on `lint` and `plan`).
+Until the repository goes public only the owner's repositories can `uses:` it; anywhere else, `go install github.com/SamuelMolling/godwit/cmd/godwit@main` and call the same commands (`--format markdown` on `lint`, `plan` and `migrate --dry-run`).
 
 ## Deploy
 

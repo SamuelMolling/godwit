@@ -255,3 +255,34 @@ func TestOutOfOrderRefusedUnlessAllowed(t *testing.T) {
 		t.Fatalf("applied versions = %d, want 3", n)
 	}
 }
+
+func TestDryRunPlansWithoutQueueing(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("app")
+	r.mustMigrate(migrationDir(t, usersTable))
+
+	dir := migrationDir(t, usersTable,
+		migration{v2, "name", "ALTER TABLE users ADD COLUMN name text;", "ALTER TABLE users DROP COLUMN name;"},
+		migration{v3, "drop_id", "ALTER TABLE users DROP COLUMN id;", "ALTER TABLE users ADD COLUMN id int;"})
+	out := r.mustMigrate(dir, "--dry-run", "--rollout", "expand-contract", "--ack", "H003", "--format", "markdown")
+	expectContains(t, out, "## godwit dry run", "Target `app`, rollout `expand-contract`, validated on a scratch database.",
+		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users", "| expand | applied |",
+		"| `20260901120001_name` | up | 0 | tx | `ALTER TABLE users ADD COLUMN name text` |  | expand | pending |",
+		"| `20260901120002_drop_id` | up | 0 | tx | `ALTER TABLE users DROP COLUMN id` | H003", "| contract | pending |")
+	if columnExists(t, r.appDSN, "users", "name") {
+		t.Fatal("dry run must not touch the target")
+	}
+	if n := len(r.listRuns()); n != 1 {
+		t.Fatalf("runs after dry run = %d, want 1", n)
+	}
+
+	code, _, errOut := r.migrate(dir, "--dry-run")
+	if code != 1 {
+		t.Fatalf("unacknowledged dry run exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "H003")
+	if n := len(r.listRuns()); n != 1 {
+		t.Fatalf("runs after refused dry run = %d, want 1", n)
+	}
+}

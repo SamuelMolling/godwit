@@ -83,6 +83,46 @@ message CreateRunResponse {
   string run_id = 1;
 }
 
+message PlanRunRequest {
+  string target = 1;
+  repeated MigrationFile files = 2;
+  repeated string acknowledge_hazards = 3;
+  bool skip_validation = 4;
+  string rollout = 5;
+  bool allow_out_of_order = 6;
+}
+
+message PlannedHazard {
+  string code = 1;
+  string detail = 2;
+}
+
+message PlannedStatement {
+  string sql = 1;
+  // Runs outside a transaction (CREATE INDEX CONCURRENTLY, VACUUM, ...).
+  bool no_tx = 2;
+  repeated PlannedHazard hazards = 3;
+}
+
+message PlannedMigration {
+  int64 version = 1;
+  string name = 2;
+  string checksum = 3;
+  // Already in the target's history; the executor would skip it.
+  bool applied = 4;
+  // "expand" or "contract": the phase the rollout policy would put it in.
+  string phase = 5;
+  repeated PlannedStatement statements = 6;
+}
+
+message PlanRunResponse {
+  string target = 1;
+  string rollout = 2;
+  repeated PlannedMigration migrations = 3;
+  // Whether the plan was replayed on a scratch database (false with skip_validation or no validator).
+  bool validated = 4;
+}
+
 message CheckDriftRequest {
   string target = 1;
 }
@@ -222,6 +262,8 @@ message RevertRunResponse {
 service GodwitService {
   rpc RegisterTarget(RegisterTargetRequest) returns (RegisterTargetResponse);
   rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
+  // Runs CreateRun's admission (hazard gate, order guard, scratch validation) and returns the plan without queueing anything.
+  rpc PlanRun(PlanRunRequest) returns (PlanRunResponse);
   rpc GetRun(GetRunRequest) returns (GetRunResponse);
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc WatchRun(WatchRunRequest) returns (stream WatchRunResponse);

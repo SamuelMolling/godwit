@@ -179,48 +179,62 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 // CreateRun validates and queues a run.
 func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
 	m := req.Msg
-	if m.Target == "" {
-		return nil, invalid("target is required")
-	}
-	if len(m.Files) == 0 {
-		return nil, invalid("at least one migration file is required")
-	}
-	rollout := m.Rollout
-	if rollout == "" {
-		rollout = controlplane.RolloutDirect
-	}
-	if _, ok := controlplane.Policies()[rollout]; !ok {
-		return nil, invalid("unknown rollout policy " + rollout)
+	spec, err := upSpec(m.Target, m.Rollout, m.Files)
+	if err != nil {
+		return nil, err
 	}
 	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
 	if err != nil {
 		return nil, err
 	}
-	files := map[string]string{}
-	for _, f := range m.Files {
-		files[f.Name] = f.Body
-	}
-	plans, err := controlplane.PlansFromFiles(files, engine.DirectionUp)
-	if err != nil {
-		return nil, invalid(err.Error())
-	}
-	if err := s.admit(ctx, m.Target, plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder); err != nil {
+	if _, err := s.admit(ctx, m.Target, spec.plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder); err != nil {
 		return nil, err
 	}
 
 	id := s.newID()
-	if err := s.store.CreateRun(ctx, id, m.Target, rollout, files, t); err != nil {
+	if err := s.store.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t); err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", rollout,
-		"files", len(files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
+	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout,
+		"files", len(spec.files), "acked", m.AcknowledgeHazards, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
 		"allow_out_of_order", m.AllowOutOfOrder)
 	s.emit(ctx, controlplane.Run{
 		ID: id, Target: m.Target, State: controlplane.StateQueued,
-		Rollout: rollout, Phase: controlplane.PhaseExpand, Timeouts: t,
+		Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t,
 	}, notify.RunCreated, "")
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id}), nil
+}
+
+type runSpec struct {
+	rollout string
+	files   map[string]string
+	plans   []engine.Plan
+}
+
+func upSpec(target, rollout string, in []*godwitv1.MigrationFile) (runSpec, error) {
+	if target == "" {
+		return runSpec{}, invalid("target is required")
+	}
+	if len(in) == 0 {
+		return runSpec{}, invalid("at least one migration file is required")
+	}
+	if rollout == "" {
+		rollout = controlplane.RolloutDirect
+	}
+	if _, ok := controlplane.Policies()[rollout]; !ok {
+		return runSpec{}, invalid("unknown rollout policy " + rollout)
+	}
+	files := map[string]string{}
+	for _, f := range in {
+		files[f.Name] = f.Body
+	}
+	plans, err := controlplane.PlansFromFiles(files, engine.DirectionUp)
+	if err != nil {
+		return runSpec{}, invalid(err.Error())
+	}
+
+	return runSpec{rollout: rollout, files: files, plans: plans}, nil
 }
 
 // RevertRun queues a run applying the down side of an earlier run's migrations.
@@ -245,7 +259,7 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
-	if err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true); err != nil {
+	if _, err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true); err != nil {
 		return nil, err
 	}
 
@@ -275,31 +289,45 @@ func (s *Server) emitLookup(ctx context.Context, id, typ, detail string) {
 	s.emit(ctx, run, typ, detail)
 }
 
+type admission struct {
+	applied   []int64
+	validated bool
+}
+
 // admit refuses unacknowledged hazards, out-of-order versions and plans that fail on the scratch database.
-func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool) error {
+func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool) (admission, error) {
 	if err := s.checkHazards(plans, acked); err != nil {
 		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
 
-		return connect.NewError(connect.CodeFailedPrecondition, err)
+		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
-	if err := s.checkOrder(ctx, target, plans, allowOutOfOrder); err != nil {
-		return err
+	if _, _, err := s.store.Target(ctx, target); err != nil {
+		return admission{}, rpcErr(err)
 	}
+	applied, err := s.store.AppliedVersions(ctx, target)
+	if err != nil {
+		return admission{}, rpcErr(err)
+	}
+	if err := s.checkOrder(target, plans, applied, allowOutOfOrder); err != nil {
+		return admission{}, err
+	}
+	adm := admission{applied: applied}
 	if s.validator == nil || skipValidation {
-		return nil
+		return adm, nil
 	}
 	if err := s.validator.Validate(ctx, target, plans); err != nil {
 		if errors.Is(err, controlplane.ErrValidationFailed) {
 			s.Metrics.ValidationFailed(target)
 			s.Log.Warn("run refused by validation", "target", target, "error", err.Error())
 
-			return connect.NewError(connect.CodeInvalidArgument, err)
+			return admission{}, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 
-		return rpcErr(err)
+		return admission{}, rpcErr(err)
 	}
+	adm.validated = true
 
-	return nil
+	return adm, nil
 }
 
 func toProto(r controlplane.Run) *godwitv1.Run {
@@ -457,11 +485,7 @@ func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
 }
 
 // checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it logs them.
-func (s *Server) checkOrder(ctx context.Context, target string, plans []engine.Plan, allow bool) error {
-	applied, err := s.store.AppliedVersions(ctx, target)
-	if err != nil {
-		return rpcErr(err)
-	}
+func (s *Server) checkOrder(target string, plans []engine.Plan, applied []int64, allow bool) error {
 	if len(applied) == 0 {
 		return nil
 	}
@@ -481,7 +505,7 @@ func (s *Server) checkOrder(ctx context.Context, target string, plans []engine.P
 
 		return nil
 	}
-	err = fmt.Errorf("out-of-order migrations %s: newest applied version on %s is %d (pass allow_out_of_order to apply them anyway)",
+	err := fmt.Errorf("out-of-order migrations %s: newest applied version on %s is %d (pass allow_out_of_order to apply them anyway)",
 		strings.Join(behind, ", "), target, latest)
 	s.Log.Warn("run refused by order guard", "target", target, "error", err.Error())
 
