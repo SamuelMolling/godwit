@@ -11,7 +11,7 @@ import (
 
 type accessLog struct {
 	log   *slog.Logger
-	actor func(header string) (string, bool)
+	actor func(header string) (Principal, bool)
 }
 
 func (a accessLog) observe(ctx context.Context, spec connect.Spec, header string, start time.Time, err error) {
@@ -23,8 +23,8 @@ func (a accessLog) observe(ctx context.Context, spec connect.Spec, header string
 		extra = []any{"error", err.Error()}
 	}
 	attrs := []any{"method", method}
-	if name, ok := a.actor(header); ok {
-		attrs = append(attrs, "actor", name)
+	if p, ok := a.actor(header); ok {
+		attrs = append(attrs, "actor", p.Name, "scope", string(p.Scope))
 	}
 	attrs = append(attrs, "code", code, "duration_ms", time.Since(start).Milliseconds())
 	a.log.Log(ctx, level, "api call", append(attrs, extra...)...)

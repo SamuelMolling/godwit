@@ -107,7 +107,7 @@ func TestRunRejectsBadTokenSpec(t *testing.T) {
 	t.Parallel()
 
 	err := Run(context.Background(), Config{Tokens: []string{"ci:"}, Log: testLog})
-	if err == nil || !strings.Contains(err.Error(), "token #1: want name:secret or a bare secret") {
+	if err == nil || !strings.Contains(err.Error(), "token #1: want name:scope:secret, name:secret or a bare secret") {
 		t.Fatalf("bad token spec: %v", err)
 	}
 }
