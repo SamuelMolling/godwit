@@ -1,6 +1,4 @@
-<p align="center"><img src="assets/logo.svg" alt="godwit" width="260"></p>
-
-# godwit
+<img src="assets/logo.svg" alt="godwit" width="100%">
 
 > The bar-tailed godwit holds the world record for the longest non-stop migration: ~13,500 km without landing. Your database migrations should be as reliable.
 
