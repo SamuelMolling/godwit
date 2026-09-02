@@ -320,6 +320,15 @@ func (s *Store) Resume(ctx context.Context, id string) (Run, error) {
 	return run, nil
 }
 
+// Ping reports whether the store answers a trivial query.
+func (s *Store) Ping(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx, "SELECT 1"); err != nil {
+		return fmt.Errorf("ping store: %w", err)
+	}
+
+	return nil
+}
+
 // RunStats counts runs per target and state with the age of the oldest one.
 func (s *Store) RunStats(ctx context.Context) ([]metrics.RunStat, error) {
 	rows, err := s.pool.Query(ctx, `

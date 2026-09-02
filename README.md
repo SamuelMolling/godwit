@@ -135,6 +135,8 @@ godwit run confirm "$RUN_ID"
 
 Per-migration and per-statement series are deliberately absent — that detail lives in the run journal, not in label cardinality.
 
+Probes live on the same listener, also unauthenticated: `GET /healthz` answers 200 while the process is up; `GET /readyz` answers 200 when the store replies to `SELECT 1` within 2s and 503 otherwise.
+
 ## Engines
 
 | Engine | Status |

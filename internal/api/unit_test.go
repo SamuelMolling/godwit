@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
 func TestRPCErrMapping(t *testing.T) {
@@ -131,5 +134,35 @@ func TestSettled(t *testing.T) {
 		if settled(state) != want {
 			t.Fatalf("settled(%s) != %v", state, want)
 		}
+	}
+}
+
+func TestHealthAndReadiness(t *testing.T) {
+	t.Parallel()
+
+	get := func(h http.Handler, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		return rec
+	}
+	up := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return nil }}, []string{"secret"})
+	down := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return errors.New("boom") }}, nil)
+
+	if rec := get(up, "/healthz"); rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("healthz = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get(up, "/readyz"); rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("readyz = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get(down, "/healthz"); rec.Code != http.StatusOK {
+		t.Fatalf("healthz with store down = %d", rec.Code)
+	}
+	if rec := get(down, "/readyz"); rec.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(rec.Body.String(), "store unavailable: boom") {
+		t.Fatalf("readyz with store down = %d %q", rec.Code, rec.Body.String())
+	}
+	if body := get(up, "/metrics").Body.String(); strings.Contains(body, "healthz") || strings.Contains(body, "readyz") {
+		t.Fatal("probes must not appear in API metrics")
 	}
 }

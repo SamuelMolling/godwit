@@ -271,8 +271,14 @@ func TestStoreQueryErrors(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)
 
+	if err := s.Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
 	s.pool.(interface{ Close() }).Close()
 
+	if err := s.Ping(ctx); err == nil {
+		t.Fatal("want error")
+	}
 	if err := s.RegisterTarget(ctx, "x", "static", nil); err == nil {
 		t.Fatal("want error")
 	}
