@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
 func TestAPIValidationAndErrors(t *testing.T) {
@@ -312,5 +314,80 @@ func TestAPIAcceptBaselineUnknownTarget(t *testing.T) {
 		connect.NewRequest(&godwitv1.AcceptBaselineRequest{Target: "ghost"}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestUIBehindBasicAuth(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	baseURL := startServiceCfg(t, Config{
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Tokens: []string{"tok"}, Holder: "r1",
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog,
+		UI: true, UIUser: "sam", UIPassword: "pw",
+	})
+	client := newClient(baseURL, "tok")
+	registerTarget(t, client, newDatabase(t, "tg"))
+	runToSuccess(t, client, migrationFiles(), nil)
+
+	web := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	call := func(method, path, auth string) (int, http.Header, string) {
+		req, _ := http.NewRequestWithContext(ctx, method, baseURL+path, nil)
+		if auth != "" {
+			req.SetBasicAuth("sam", auth)
+		}
+		resp, err := web.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+
+		return resp.StatusCode, resp.Header, string(body)
+	}
+
+	if code, hdr, _ := call(http.MethodGet, "/ui/", ""); code != http.StatusUnauthorized || hdr.Get("WWW-Authenticate") != `Basic realm="godwit"` {
+		t.Fatalf("anonymous: code = %d headers = %v", code, hdr)
+	}
+	if code, _, _ := call(http.MethodGet, "/ui/", "wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("wrong password: code = %d", code)
+	}
+	if code, _, body := call(http.MethodGet, "/ui/", "pw"); code != http.StatusOK || !strings.Contains(body, "succeeded") || !strings.Contains(body, "Signed in as") {
+		t.Fatalf("index: code = %d body = %s", code, body)
+	}
+	if code, hdr, _ := call(http.MethodPost, "/ui/drift/app/accept", "pw"); code != http.StatusSeeOther || hdr.Get("Location") != "/ui/drift?target=app" {
+		t.Fatalf("accept: code = %d headers = %v", code, hdr)
+	}
+	audit, err := client.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{Target: "app", Limit: 1}))
+	if err != nil || len(audit.Msg.Entries) != 1 || audit.Msg.Entries[0].Actor != "ui:sam" || audit.Msg.Entries[0].Action != controlplane.AuditDriftAccept {
+		t.Fatalf("audit = %+v, err = %v", audit, err)
+	}
+	if strings.Contains(scrapeMetrics(t, baseURL), `method="ListRuns"`) {
+		t.Fatal("UI calls must not count as API requests")
+	}
+}
+
+func TestUIWithoutBasicAuth(t *testing.T) {
+	t.Parallel()
+	logs := &lockedBuffer{}
+	baseURL := startServiceCfg(t, Config{
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Holder: "r1",
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: slog.New(slog.NewTextHandler(logs, nil)), UI: true,
+	})
+	resp, err := http.Get(baseURL + "/ui/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "No sign-in configured") {
+		t.Fatalf("code = %d body = %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(logs.String(), "ui enabled without basic auth") {
+		t.Fatalf("logs = %s", logs.String())
+	}
+
+	err = Run(context.Background(), Config{UIUser: "sam", Log: testLog})
+	if err == nil || !strings.Contains(err.Error(), "must be set together") {
+		t.Fatalf("half credentials: %v", err)
 	}
 }

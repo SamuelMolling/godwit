@@ -48,6 +48,9 @@ spec:
             {{- if .Values.serve.skipValidation }}
             - --skip-validation
             {{- end }}
+            {{- if .Values.serve.ui.enabled }}
+            - --ui
+            {{- end }}
             {{- range .Values.serve.extraArgs }}
             - {{ . | quote }}
             {{- end }}
@@ -71,6 +74,18 @@ spec:
               value: {{ .Values.serve.logFormat | quote }}
             - name: GODWIT_LOG_LEVEL
               value: {{ .Values.serve.logLevel | quote }}
+            {{- if and .Values.serve.ui.enabled .Values.serve.ui.basicAuth }}
+            - name: GODWIT_UI_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.keys.uiUser }}
+            - name: GODWIT_UI_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.keys.uiPassword }}
+            {{- end }}
             {{- with .Values.vault }}
             {{- if .addr }}
             - name: VAULT_ADDR

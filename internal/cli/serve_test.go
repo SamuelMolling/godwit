@@ -53,3 +53,19 @@ func TestServeLogFormatText(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 }
+
+func TestServeUICredentialsMustPair(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	t.Setenv("GODWIT_UI", "true")
+	t.Setenv("GODWIT_UI_USER", "sam")
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x")
+	if code != 1 || !strings.Contains(errOut, "must be set together") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+
+	t.Setenv("GODWIT_UI_USER", "")
+	code, _, errOut = runCLI("serve", "--store-dsn", "postgres://x", "--ui", "--ui-password", "pw")
+	if code != 1 || !strings.Contains(errOut, "must be set together") || strings.Contains(errOut, "pw") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}

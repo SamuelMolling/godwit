@@ -63,6 +63,10 @@ Notifications carry the same fields as the log plus the error text; a webhook UR
 
 `cp_audit` records every admitted mutation with actor, action, run id, target and detail (`run.create` detail is `rollout=<policy> migrations=<n> acked=<codes> source=<source>`; `target.baseline` is `version=<v> migrations=<n>`; `run.park` carries the reason). `ListAudit` needs `read`. Failed writes are logged as `audit write failed` at error level and do not fail the request; alert on that line if the trail matters.
 
+## Web UI
+
+`serve --ui` mounts the operator UI at `/ui` on the same plaintext listener. It does not use bearer tokens: with `--ui-user` and `--ui-password` (or `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD`) every UI request needs HTTP basic auth, compared in constant time, and the audit trail names the actor `ui:<user>`. Without the pair the UI is open to anyone who reaches the port with full operator rights (resume, park, confirm rollout, revert a succeeded run, check drift, accept baseline) and `serve` logs `ui enabled without basic auth`; treat that as a development setting. Basic auth sends the password on every request, so the TLS termination below is not optional when the UI is on. The password is never logged.
+
 ## Network
 
 - The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it (the Helm Ingress needs an h2c- or gRPC-capable class, or a service mesh); the CLI accepts `https://` URLs.

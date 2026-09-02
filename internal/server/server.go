@@ -19,6 +19,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
+	"github.com/SamuelMolling/godwit/internal/ui"
 	"github.com/SamuelMolling/godwit/internal/version"
 )
 
@@ -48,7 +49,11 @@ type Config struct {
 	PlanTTL time.Duration
 	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
 	PlanRetention time.Duration
-	Log           *slog.Logger
+	// UI serves the operator web UI under /ui/; UIUser and UIPassword put it behind basic auth.
+	UI         bool
+	UIUser     string
+	UIPassword string
+	Log        *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
@@ -63,6 +68,9 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.SlackToken != "" && cfg.SlackChannel == "" {
 		return errors.New("slack channel is required when a slack token is set")
+	}
+	if (cfg.UIUser == "") != (cfg.UIPassword == "") {
+		return errors.New("ui user and ui password must be set together")
 	}
 	tokens, err := api.ParseTokens(cfg.Tokens)
 	if err != nil {
@@ -125,8 +133,20 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Inspector = controlplane.NewInspector(sched)
 	apiSrv.Differ = controlplane.NewDiffer(pool, sched, history, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
+	handler := api.Handler(apiSrv, tokens)
+	if cfg.UI {
+		if cfg.UIUser == "" {
+			log.Warn("ui enabled without basic auth")
+		}
+		mux := http.NewServeMux()
+		mux.Handle("/", handler)
+		mux.Handle("/ui/", ui.New(apiSrv, ui.Config{
+			Replica: cfg.Holder, User: cfg.UIUser, Password: cfg.UIPassword,
+		}))
+		handler = mux
+	}
 	srv := &http.Server{
-		Handler:           api.Handler(apiSrv, tokens),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		Protocols:         h2cProtocols(),
 	}

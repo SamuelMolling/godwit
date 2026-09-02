@@ -1,0 +1,66 @@
+{{define "runs-body"}}
+<div id="runs" class="body" hx-get="/ui/{{if .Target}}?target={{.Target}}{{end}}" hx-trigger="every 3s" hx-swap="outerHTML">
+  <div class="strip">
+    <div class="{{if .Strip.Attention}}bad{{else}}zero{{end}}"><div class="k">Needs attention</div><div class="v">{{.Strip.Attention}}{{with .Strip.Oldest}} <small>{{.}}</small>{{end}}</div></div>
+    <div class="{{if .Strip.Awaiting}}warn{{else}}zero{{end}}"><div class="k">Awaiting contract</div><div class="v">{{.Strip.Awaiting}}{{with .Strip.Since}} <small>{{.}}</small>{{end}}</div></div>
+    <div class="{{if not .Strip.Running}}zero{{end}}"><div class="k">Running</div><div class="v">{{.Strip.Running}}</div></div>
+    <div class="{{if not .Strip.Queued}}zero{{end}}"><div class="k">Queued</div><div class="v">{{.Strip.Queued}}</div></div>
+    <div class="{{if not .Strip.Succeeded}}zero{{end}}"><div class="k">Succeeded · 24h</div><div class="v">{{.Strip.Succeeded}}</div></div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-hd"><h2>Needs you <span class="n">{{len .Queue}}</span></h2><div class="right">Blocked until an operator acts</div></div>
+    {{if .Queue}}
+    <div class="queue">
+      {{range .Queue}}
+      <div class="q{{if eq (state .State) "awaiting_contract"}} warn{{end}}">
+        <div>
+          <div class="head"><a href="/ui/runs/{{.Id}}">{{short .Id}}</a> <span class="pill {{state .State}}">{{label .State}}</span> <span class="tgt">{{.Target}}</span> <span class="age">{{if eq (state .State) "awaiting_contract"}}expand done {{ago .CreatedAt}}{{else}}stopped {{ago .FinishedAt}} · attempt {{.Attempts}}{{end}}</span></div>
+          {{if eq (state .State) "awaiting_contract"}}<div class="why">Expand phase applied. Holding the contract phase until you confirm the deploy is healthy.</div>{{else if .Error}}<div class="why">{{.Error}}</div>{{end}}
+        </div>
+        <div class="act">
+          {{if eq (state .State) "awaiting_contract"}}<form method="post" action="/ui/runs/{{.Id}}/confirm"><button class="btn sm pri"><svg class="ic"><use href="#i-check"/></svg>Confirm rollout</button></form>
+          {{else}}<form method="post" action="/ui/runs/{{.Id}}/resume"><button class="btn sm pri"><svg class="ic"><use href="#i-play"/></svg>Resume</button></form>{{end}}
+          <a class="btn sm" href="/ui/runs/{{.Id}}">Open</a>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Nothing needs you</b><p>Every run{{if .Target}} on {{.Target}}{{end}} is settled. New runs arrive from <span class="mono">godwit migrate</span> or the CI hook.</p></div>
+    {{end}}
+  </div>
+
+  <div class="sec">
+    <div class="sec-hd"><h2>{{if .Target}}Runs on {{.Target}}{{else}}All runs{{end}} <span class="n">{{len .Runs}}</span></h2><div class="right"><span class="live"><i></i>live</span><span>Newest first</span></div></div>
+    {{if .Runs}}
+    <div class="tbl"><table>
+      <thead><tr><th>Run</th><th>Target</th><th>State</th><th>Rollout</th><th class="r">Attempts</th><th>Started</th><th class="r">Duration</th></tr></thead>
+      <tbody>
+        {{range .Runs}}
+        <tr>
+          <td class="id"><a href="/ui/runs/{{.Id}}">{{short .Id}}</a><span class="sub">{{if .Reverts}}revert of {{short .Reverts}}{{else}}{{.Kind}}{{end}}{{with .PlanId}} · plan {{short .}}{{end}}{{with .CreatedBy}} · by {{.}}{{end}}{{with .Source}} · {{.}}{{end}}</span></td>
+          <td><span class="chip">{{.Target}}</span></td>
+          <td><span class="pill {{state .State}}">{{label .State}}</span></td>
+          <td class="ago">{{.Rollout}}{{with .Phase}} <small>{{.}}</small>{{end}}</td>
+          <td class="r num{{if gt .Attempts 1}} hot{{end}}">{{.Attempts}}{{if .Retries}} <small class="faint">+{{.Retries}} retried</small>{{end}}</td>
+          <td class="ago num">{{ago .CreatedAt}}<small>{{clock .CreatedAt}}</small></td>
+          <td class="r num">{{took .}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table></div>
+    {{else}}
+    <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>No runs yet</b><p><span class="mono">godwit migrate --target &lt;name&gt; --dir ./migrations</span> creates the first one.</p></div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "index.html"}}{{if .Partial}}{{template "runs-body" .}}{{else}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Runs</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Runs</h1></div>
+  <div class="acts"><a class="btn ghost" href="/ui/{{if .Target}}?target={{.Target}}{{end}}"><svg class="ic"><use href="#i-refresh"/></svg>Refresh</a></div>
+</header>
+{{template "runs-body" .}}
+{{template "foot" .}}{{end}}{{end}}

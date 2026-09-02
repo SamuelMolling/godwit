@@ -1,0 +1,108 @@
+{{define "run-actions"}}
+{{if or (eq (state .Run.State) "needs_attention") (eq (state .Run.State) "failed")}}
+<form method="post" action="/ui/runs/{{.Run.Id}}/resume"><button class="btn pri"><svg class="ic"><use href="#i-play"/></svg>Resume run</button></form>
+{{end}}
+{{if eq (state .Run.State) "awaiting_contract"}}
+<form method="post" action="/ui/runs/{{.Run.Id}}/confirm"><button class="btn pri"><svg class="ic"><use href="#i-check"/></svg>Confirm rollout</button></form>
+{{end}}
+{{end}}
+
+{{define "run-body"}}
+<div id="run" hx-get="/ui/runs/{{.Run.Id}}" hx-trigger="every 3s [document.activeElement.tagName !== 'INPUT']" hx-swap="outerHTML">
+<header class="ph">
+  <div class="ttl">
+    <div class="crumbs"><a href="/ui/">Runs</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Run.Id}}</span></div>
+    <h1><span class="mono" style="font-weight:500;font-size:22px">{{short .Run.Id}}</span> <span class="pill {{state .Run.State}} lg">{{label .Run.State}}</span></h1>
+  </div>
+  <div class="acts">{{template "run-actions" .}}</div>
+</header>
+<div class="body">
+  <div class="two">
+    <div class="stack">
+      <div class="blk">
+        <h3>What happened</h3>
+        <ul class="tl">
+          {{range .Steps}}
+          <li><i class="{{.Tone}}"></i><div><div class="d">{{.Text}}{{with .Who}} by <b>{{.}}</b>{{end}}{{with .Note}}: {{.}}{{end}}</div><div class="t">{{.When}}</div></div></li>
+          {{end}}
+        </ul>
+      </div>
+      {{if .Run.Error}}
+      <div class="blk">
+        <h3>Error</h3>
+        <pre>{{.Run.Error}}</pre>
+        {{if eq (state .Run.State) "needs_attention"}}<p class="note">The journal on <span class="mono">{{.Run.Target}}</span> keeps every committed statement; a resume continues from the first one that did not commit.</p>{{end}}
+      </div>
+      {{end}}
+      {{with .Plan}}
+      <div class="blk">
+        <h3>Plan</h3>
+        <p class="note"><span class="mono">{{.Id}}</span> · {{.State}} · {{if .Validated}}replayed on a scratch database{{else}}not validated{{end}}{{range .AcknowledgedHazards}} <span class="chip">{{.}} acknowledged</span>{{end}}</p>
+        <ul class="tl">
+          {{range $.Planned}}
+          <li><i class="{{if .AlreadyApplied}}warn{{else if .Hazards}}bad{{else}}ok{{end}}"></i><div>
+            <div class="d"><span class="mono">{{.Version}}</span> {{.Name}}{{with .Phase}} <span class="chip">{{.}}</span>{{end}}{{if .Applied}} <span class="chip">in history</span>{{end}}{{if .AlreadyApplied}} <span class="chip">already applied by hand</span>{{end}}</div>
+            <div class="t">{{if .AlreadyApplied}}recorded without executing, {{plural .Statements "statement"}} skipped{{else}}{{plural .Statements "statement"}}{{end}}</div>
+            {{with .Effect}}<pre>{{.}}</pre>{{end}}
+            {{with .Note}}<div class="d">{{.}}</div>{{end}}
+            {{range .Hazards}}<div class="d"><b>{{.Code}}</b> {{.Detail}}</div>{{with .Recipe}}<pre>{{.}}</pre>{{end}}{{end}}
+          </div></li>
+          {{end}}
+        </ul>
+      </div>
+      {{end}}
+    </div>
+
+    <aside class="aside">
+      <div class="blk">
+        <h3>Facts</h3>
+        <dl class="facts">
+          <dt>Target</dt><dd><span class="chip">{{.Run.Target}}</span></dd>
+          <dt>Kind</dt><dd class="mono">{{if .Run.Reverts}}revert of <a href="/ui/runs/{{.Run.Reverts}}">{{short .Run.Reverts}}</a>{{else}}{{.Run.Kind}}{{end}}</dd>
+          <dt>Rollout</dt><dd class="mono">{{.Run.Rollout}}{{with .Run.Phase}} · {{.}}{{end}}</dd>
+          <dt>Attempts</dt><dd class="num">{{.Run.Attempts}}{{if .Run.Retries}} <span class="faint">· {{.Run.Retries}} retried</span>{{end}}</dd>
+          {{with .Run.NotBefore}}<dt>Next attempt</dt><dd class="mono num">{{stamp .}}</dd>{{end}}
+          {{with .Run.PlanId}}<dt>Plan</dt><dd class="mono">{{short .}}{{with $.Plan}} <span class="faint">{{.State}}</span>{{else}} <span class="faint">pruned</span>{{end}}</dd>{{end}}
+          <dt>Created by</dt><dd>{{or .Run.CreatedBy "—"}}{{with .Run.Source}} <span class="faint">via {{.}}</span>{{end}}</dd>
+          <dt>Timeouts</dt><dd class="mono">lock {{or .Run.LockTimeout "default"}} · statement {{or .Run.StatementTimeout "default"}}</dd>
+          <dt>Created</dt><dd class="mono num">{{stamp .Run.CreatedAt}}</dd>
+          <dt>Finished</dt><dd class="mono num">{{stamp .Run.FinishedAt}}</dd>
+        </dl>
+      </div>
+      <div class="blk act">
+        <h3>Actions</h3>
+        {{if or (eq (state .Run.State) "needs_attention") (eq (state .Run.State) "failed")}}
+        <div class="opt">
+          <form method="post" action="/ui/runs/{{.Run.Id}}/resume"><button class="btn pri"><svg class="ic"><use href="#i-play"/></svg>Resume run</button></form>
+          <p>Queues it again from the journal. Attempts reset; the same hazard gate applies.</p>
+        </div>
+        <div class="opt">
+          <form method="post" action="/ui/runs/{{.Run.Id}}/park"><input class="in" name="reason" placeholder="Why it stays parked" aria-label="Park note" required><button class="btn"><svg class="ic"><use href="#i-pause"/></svg>Park</button></form>
+          <p>Marks it <em>needs attention</em> with the note other operators see in <em>Needs you</em>. Nothing runs.</p>
+        </div>
+        {{end}}
+        {{if eq (state .Run.State) "awaiting_contract"}}
+        <div class="opt">
+          <form method="post" action="/ui/runs/{{.Run.Id}}/confirm"><button class="btn pri"><svg class="ic"><use href="#i-check"/></svg>Confirm rollout</button></form>
+          <p>Releases the contract phase. Run it once the deploy that depends on the expand phase is healthy.</p>
+        </div>
+        {{end}}
+        {{if eq (state .Run.State) "succeeded"}}
+        <div class="opt">
+          <form method="post" action="/ui/runs/{{.Run.Id}}/revert"><input class="in" name="ack" placeholder="Hazards to acknowledge, e.g. H002" aria-label="Acknowledged hazards"><button class="btn dng"><svg class="ic"><use href="#i-undo"/></svg>Revert</button></form>
+          <p>Queues the down migrations as a new run through the same hazard gate and validation.</p>
+        </div>
+        {{end}}
+        {{if or (eq (state .Run.State) "running") (eq (state .Run.State) "queued") (eq (state .Run.State) "reverted")}}
+        <p class="note">Nothing to do{{if ne (state .Run.State) "reverted"}} until it settles{{end}}.</p>
+        {{end}}
+      </div>
+    </aside>
+  </div>
+</div>
+</div>
+{{end}}
+
+{{define "run.html"}}{{if .Partial}}{{template "run-body" .}}{{else}}{{template "head" .}}
+{{template "run-body" .}}
+{{template "foot" .}}{{end}}{{end}}

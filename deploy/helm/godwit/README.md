@@ -30,7 +30,7 @@ The release prints the in-cluster URL and the first commands to run. Every value
 
 | Object | Notes |
 |---|---|
-| Deployment | `serve --listen --store-dsn=$(GODWIT_STORE_DSN) --drift-interval [--skip-validation]`, env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
+| Deployment | `serve --listen --store-dsn=$(GODWIT_STORE_DSN) --drift-interval [--skip-validation] [--ui]`, env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
 | Service | ClusterIP on `service.port` → container port `serve.port` |
 | ServiceAccount | `serviceAccount.annotations` for Vault Kubernetes auth or cloud workload identity; token mounted by default because the Vault provider reads it |
 | PodDisruptionBudget | `minAvailable: 1` so a drain never takes both replicas |
@@ -48,6 +48,10 @@ The release prints the in-cluster URL and the first commands to run. Every value
 `notifications.webhookUrl` sets `GODWIT_WEBHOOK_URL`. For Slack, add `GODWIT_SLACK_TOKEN` to the Secret (`existingSecret.keys.slackToken` names the key) and set `notifications.slack.channel`; `notifications.slack.mode` picks `thread` or `edit` and `notifications.publicUrl` is the base of the "Open run" links.
 
 Anything else the process should see (proxies) goes through `extraEnv` / `extraEnvFrom`.
+
+## Web UI
+
+`serve.ui.enabled` adds `--ui`, serving the operator web UI at `/ui` on the same port. Set `serve.ui.basicAuth` and add `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD` to the Secret (`existingSecret.keys.uiUser` / `uiPassword` name the keys) so the UI asks for a username and password; without them anyone who reaches the port can act as an operator.
 
 ## Upgrading
 

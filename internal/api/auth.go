@@ -110,6 +110,11 @@ func Caller(ctx context.Context) Principal {
 	return anonymousAdmin
 }
 
+// WithPrincipal returns ctx carrying p as the caller, the way the auth interceptor does for a bearer token.
+func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	return context.WithValue(ctx, principalKey{}, p)
+}
+
 // Actor returns the name of the token behind the call, or anonymous outside an authenticated request.
 func Actor(ctx context.Context) string {
 	return Caller(ctx).Name
@@ -157,7 +162,7 @@ func (a *auth) authorize(ctx context.Context, procedure, header string) (context
 			fmt.Errorf("%s requires scope %s; token %s has scope %s", method, required, p.Name, p.Scope))
 	}
 
-	return context.WithValue(ctx, principalKey{}, p), nil
+	return WithPrincipal(ctx, p), nil
 }
 
 // WrapUnary implements connect.Interceptor.
