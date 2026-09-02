@@ -1,4 +1,4 @@
-.PHONY: all build test cover lint proto-lint tidy
+.PHONY: all build test cover lint proto-lint tidy helm-lint
 
 all: lint proto-lint cover build
 
@@ -19,3 +19,11 @@ proto-lint:
 
 tidy:
 	go mod tidy
+
+HELM_CHART := deploy/helm/godwit
+
+helm-lint:
+	helm lint $(HELM_CHART)
+	helm lint $(HELM_CHART) -f $(HELM_CHART)/ci/full-values.yaml
+	helm template godwit $(HELM_CHART) > /dev/null
+	helm template godwit $(HELM_CHART) -f $(HELM_CHART)/ci/full-values.yaml > /dev/null

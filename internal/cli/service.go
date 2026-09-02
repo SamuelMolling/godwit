@@ -255,23 +255,68 @@ func newRunResumeCmd() *cobra.Command {
 
 func newRunConfirmCmd() *cobra.Command {
 	flags := &clientFlags{}
+	var latest, allowNone bool
+	var target string
 	cmd := &cobra.Command{
-		Use:   "confirm <run-id>",
+		Use:   "confirm [run-id]",
 		Short: "Release the contract phase of an expand-contract run",
-		Args:  cobra.ExactArgs(1),
+		Long: "Confirms the run given as argument, or with --latest the newest run on --target\n" +
+			"that is awaiting its contract phase.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			resp, err := client.ConfirmRollout(cmd.Context(), connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: args[0]}))
+			id := ""
+			if len(args) == 1 {
+				id = args[0]
+			}
+			switch {
+			case latest && id != "":
+				return errors.New("pass a run id or --latest, not both")
+			case latest && target == "":
+				return errors.New("--latest requires --target (or target in godwit.yaml)")
+			case !latest && id == "":
+				return errors.New("a run id or --latest is required")
+			}
+			if latest {
+				listed, err := client.ListRuns(cmd.Context(), connect.NewRequest(&godwitv1.ListRunsRequest{Target: target}))
+				if err != nil {
+					return err
+				}
+				id = latestAwaiting(listed.Msg.Runs)
+				if id == "" && allowNone {
+					flags.print(cmd, listed.Msg, fmt.Sprintf("target %s: no run awaiting contract", target))
+
+					return nil
+				}
+				if id == "" {
+					return fmt.Errorf("target %s: no run awaiting contract", target)
+				}
+			}
+			resp, err := client.ConfirmRollout(cmd.Context(), connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: id}))
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, fmt.Sprintf("run %s: contract confirmed", args[0]))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("run %s: contract confirmed", id))
 
 			return nil
 		}),
 	}
 	flags.register(cmd)
+	cmd.Flags().BoolVar(&latest, "latest", false, "confirm the newest run awaiting contract on --target")
+	cmd.Flags().StringVar(&target, "target", "", "target name (with --latest)")
+	cmd.Flags().BoolVar(&allowNone, "allow-none", false, "with --latest, exit 0 when no run is awaiting contract")
+	configKeys(cmd, "target")
 
 	return cmd
+}
+
+func latestAwaiting(runs []*godwitv1.Run) string {
+	for _, r := range runs {
+		if r.State == godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT {
+			return r.Id
+		}
+	}
+
+	return ""
 }
 
 func newRunsCmd() *cobra.Command {

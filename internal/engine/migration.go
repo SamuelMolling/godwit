@@ -37,7 +37,7 @@ func LoadFS(fsys fs.FS) ([]Migration, error) {
 
 	byVersion := map[int64]*Migration{}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		m := fileRe.FindStringSubmatch(e.Name())

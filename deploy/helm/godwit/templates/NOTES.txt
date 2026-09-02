@@ -1,0 +1,25 @@
+godwit {{ include "godwit.imageTag" . }} is rolling out as {{ include "godwit.fullname" . }} in {{ .Release.Namespace }}
+({{ .Values.replicaCount }} replicas, credentials from Secret "{{ .Values.existingSecret.name }}").
+
+Inside the cluster the API is
+  http://{{ include "godwit.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+and through the Ingress at http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- end }}
+
+Check it:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "godwit.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "godwit.fullname" . }} {{ .Values.service.port }}
+  curl -s localhost:{{ .Values.service.port }}/readyz
+
+Register a target and run migrations with one of the tokens from the Secret:
+  export GODWIT_SERVER=http://localhost:{{ .Values.service.port }} GODWIT_TOKEN=...
+  godwit target add orders --provider vault --vault-path database/creds/orders \
+    --vault-template 'postgres://{{"{{"}}username{{"}}"}}:{{"{{"}}password{{"}}"}}@db/orders'
+  godwit migrate --target orders --rollout expand-contract
+{{- if not .Values.serviceMonitor.enabled }}
+
+Metrics are on /metrics; set serviceMonitor.enabled=true to scrape them with the Prometheus Operator.
+{{- end }}

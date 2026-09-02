@@ -1,0 +1,165 @@
+# Default values for the godwit chart. Every key is documented inline;
+# the ci/full-values.yaml file shows every optional block switched on.
+
+# Two replicas is the minimum for lease hand-over: when the replica executing
+# a run dies, the other one reclaims the lease and finishes from the journal.
+replicaCount: 2
+
+image:
+  # There is no public image yet: build with `docker build -t <registry>/godwit:<tag> .`
+  # at the repo root and point this at your registry.
+  repository: godwit
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Secret the service reads its credentials from. Create it before installing:
+#   kubectl create secret generic godwit \
+#     --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
+#     --from-literal=GODWIT_TOKENS=ci-token,ops-token \
+#     --from-literal=GODWIT_STORE_DSN=postgres://godwit:...@store/godwit_store
+# The DSN is injected as `--store-dsn=$(GODWIT_STORE_DSN)` so it never appears in the pod spec.
+existingSecret:
+  name: godwit
+  keys:
+    masterKey: GODWIT_MASTER_KEY
+    tokens: GODWIT_TOKENS
+    storeDSN: GODWIT_STORE_DSN
+
+# Flags of `godwit serve`; nothing else is accepted by the binary.
+serve:
+  # --listen: the API, /metrics, /healthz and /readyz share this port.
+  port: 8474
+  # --drift-interval: how often targets are fingerprinted for schema drift.
+  driftInterval: 5m
+  # --skip-validation: disable the scratch-database validation at run admission.
+  skipValidation: false
+  # GODWIT_LOG_FORMAT: json or text.
+  logFormat: json
+  # GODWIT_LOG_LEVEL: debug, info, warn or error.
+  logLevel: info
+  # Appended verbatim after the flags above.
+  extraArgs: []
+
+# Vault credential provider (targets registered with --provider vault).
+# With addr set and no token the service uses the Kubernetes auth method,
+# which needs the ServiceAccount token mounted (automountServiceAccountToken).
+vault:
+  addr: ""
+  # VAULT_K8S_ROLE / VAULT_K8S_MOUNT for the Kubernetes auth method.
+  k8sRole: ""
+  k8sMount: ""
+  # Static VAULT_TOKEN read from a Secret; leave name empty to use Kubernetes auth.
+  tokenSecret:
+    name: ""
+    key: VAULT_TOKEN
+
+notifications:
+  # GODWIT_WEBHOOK_URL: drift notifications are POSTed here.
+  webhookUrl: ""
+
+# Extra environment for anything not modelled above (notifier settings, proxies).
+extraEnv: []
+# - name: HTTPS_PROXY
+#   value: http://proxy:3128
+extraEnvFrom: []
+# - secretRef:
+#     name: godwit-extra
+
+# Extra volumes, e.g. for targets registered with --provider kubernetes
+# (--secret-path points at a file mounted here).
+extraVolumes: []
+extraVolumeMounts: []
+
+serviceAccount:
+  create: true
+  name: ""
+  # Vault Kubernetes auth and cloud workload identity both hang off annotations, e.g.
+  #   iam.gke.io/gcp-service-account: godwit@project.iam.gserviceaccount.com
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/godwit
+  annotations: {}
+  automountServiceAccountToken: true
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 8474
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: godwit.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: godwit-tls
+  #   hosts: [godwit.example.com]
+
+# Prometheus Operator scrape of /metrics (needs the ServiceMonitor CRD).
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  relabelings: []
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  periodSeconds: 5
+  failureThreshold: 3
+
+# The API server shuts down gracefully; the scheduler lease of an in-flight run
+# expires after this and another replica resumes it from the journal.
+terminationGracePeriodSeconds: 30
+
+nodeSelector: {}
+tolerations: []
+topologySpreadConstraints: []
+# Keep replicas on different nodes so a node loss does not stop the scheduler:
+# "soft" (preferred), "hard" (required) or "" to disable. Ignored when affinity is set.
+podAntiAffinity: soft
+affinity: {}
