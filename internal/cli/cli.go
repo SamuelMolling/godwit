@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -50,22 +51,33 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
+func configKeys(cmd *cobra.Command, keys ...string) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["config"] = strings.Join(append(strings.Split(cmd.Annotations["config"], ","), keys...), ",")
+}
+
 func applyConfig(cmd *cobra.Command, path string) error {
-	flags := cmd.Flags()
-	if flags.Lookup("dir") == nil {
+	keys, ok := cmd.Annotations["config"]
+	if !ok {
 		return nil
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err
 	}
-	for name, value := range map[string]string{
+	values := map[string]string{
 		"dir":               cfg.Dir,
+		"target":            cfg.Target,
+		"rollout":           cfg.Rollout,
+		"server":            cfg.Server,
 		"lock-timeout":      cfg.LockTimeout.String(),
 		"statement-timeout": cfg.StatementTimeout.String(),
-	} {
-		if fl := flags.Lookup(name); fl != nil && !fl.Changed {
-			_ = fl.Value.Set(value)
+	}
+	for name := range strings.SplitSeq(keys, ",") {
+		if fl := cmd.Flags().Lookup(name); fl != nil && !fl.Changed && values[name] != "" {
+			_ = fl.Value.Set(values[name])
 		}
 	}
 

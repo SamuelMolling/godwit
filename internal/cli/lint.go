@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/lint"
 )
 
@@ -39,7 +40,8 @@ func newLintCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&dir, "dir", "migrations", "migration directory")
+	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
+	configKeys(cmd, "dir")
 	cmd.Flags().StringSliceVar(&ack, "ack", nil, "hazard codes to acknowledge, e.g. H001,H003")
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
 	cmd.Flags().StringVar(&base, "base", "", "git ref; only migrations added since it are checked")
