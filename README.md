@@ -24,6 +24,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Pre-apply validation | Every run replays the target's history plus the new files on a scratch database before it is queued. |
 | Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
 | Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
+| Revert | `RevertRun` queues the down side of the latest run on a target — same journal, lease and hazard gate as the way up. The original is marked `reverted` and leaves the replayable history. |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store) and `kubernetes` (mounted secret). Vault next. |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 
@@ -33,6 +34,14 @@ With `expand-contract`, put contract statements (drops) in their own migration f
 
 ```
 CreateRun{rollout: "expand-contract"}  →  running  →  awaiting_contract  →  ConfirmRollout  →  running  →  succeeded
+```
+
+## Reverting
+
+`RevertRun{run_id}` creates a new run that applies the `.down.sql` side of that run's migrations, newest version first, through the same crash-safe executor. Only the latest run on an idle target can be reverted, so reverts happen in reverse order. Down migrations go through the hazard gate and scratch-database validation like any other plan.
+
+```
+RevertRun{run_id: A}  →  new run R (reverts: A)  →  succeeded  ⇒  A becomes reverted
 ```
 
 ## Engines

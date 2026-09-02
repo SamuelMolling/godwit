@@ -153,5 +153,17 @@ echo "state: $STATE"
 docker compose exec -T target-db psql -U app -d app -c "\d users"
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts."
+echo "==> revert: the down side of the last run, through the same crash-safe executor"
+RV_ID=$(rpc RevertRun "{\"runId\": \"$EC_ID\", \"acknowledgeHazards\": [\"H003\"]}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$RV_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "revert run: $RV_ID ($STATE); the original is now:"
+rpc GetRun "{\"runId\": \"$EC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/'
+docker compose exec -T target-db psql -U app -d app -c "\d users"
+
+echo
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

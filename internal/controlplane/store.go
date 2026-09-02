@@ -29,6 +29,7 @@ const (
 	StateFailed           = "failed"
 	StateNeedsAttention   = "needs_attention"
 	StateAwaitingContract = "awaiting_contract"
+	StateReverted         = "reverted"
 )
 
 // Run phases.
@@ -43,6 +44,7 @@ var (
 	ErrLeaseLost           = errors.New("lease lost")
 	ErrNotResumable        = errors.New("run is not failed or parked")
 	ErrNotAwaitingContract = errors.New("run is not awaiting contract")
+	ErrNotRevertable       = errors.New("run is not the latest on its target or the target is busy")
 )
 
 // Run is one migration run tracked by the control plane.
@@ -54,6 +56,7 @@ type Run struct {
 	Attempts   int
 	Rollout    string
 	Phase      string
+	Reverts    string
 	CreatedAt  time.Time
 	FinishedAt *time.Time
 }
@@ -80,7 +83,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration) error {
-	plans, err := buildPlans(migs)
+	plans, err := buildPlans(migs, engine.DirectionUp)
 	if err != nil {
 		return err
 	}
@@ -140,10 +143,32 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 	return nil
 }
 
-const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, created_at, finished_at`
+// CreateRevert queues a run that applies the down side of another run's files.
+// Only the latest non-reverted run on an idle target can be reverted.
+func (s *Store) CreateRevert(ctx context.Context, id, original string) error {
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO cp_runs (id, target, state, reverts)
+		SELECT $1, o.target, 'queued', o.id FROM cp_runs o
+		WHERE o.id = $2 AND o.state IN ('succeeded', 'awaiting_contract', 'failed', 'needs_attention')
+		  AND NOT EXISTS (
+			SELECT 1 FROM cp_runs r WHERE r.target = o.target AND r.id <> o.id
+			  AND (r.state IN ('queued', 'running')
+			    OR (r.reverts IS NULL AND r.state <> 'reverted' AND r.created_at > o.created_at)))`,
+		id, original)
+	if err != nil {
+		return fmt.Errorf("create revert: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run %q: %w", original, ErrNotRevertable)
+	}
+
+	return nil
+}
+
+const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), created_at, finished_at`
 
 func (r *Run) fields() []any {
-	return []any{&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.CreatedAt, &r.FinishedAt}
+	return []any{&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.CreatedAt, &r.FinishedAt}
 }
 
 func scanRun(row pgx.Row) (Run, error) {
@@ -258,10 +283,13 @@ func (s *Store) Heartbeat(ctx context.Context, runID, holder string, ttl time.Du
 	return nil
 }
 
-// Finish records a terminal state and releases the lease.
+// Finish records a terminal state and releases the lease; a succeeded revert marks its original reverted.
 func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 	tag, err := s.pool.Exec(ctx, `
-		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1)
+		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1),
+		orig AS (
+			UPDATE cp_runs SET state = 'reverted', updated_at = now()
+			WHERE $2 = 'succeeded' AND id = (SELECT reverts FROM cp_runs WHERE id = $1))
 		UPDATE cp_runs SET state = $2, error = NULLIF($3, ''), finished_at = now(), updated_at = now()
 		WHERE id = $1`, id, state, errText)
 	if err != nil {

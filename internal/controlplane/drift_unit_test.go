@@ -157,7 +157,7 @@ func TestValidatorCorruptHistory(t *testing.T) {
 	good, err := buildPlans([]engine.Migration{{
 		Version: 2, Name: "next",
 		UpSQL: "CREATE TABLE n (id int);", DownSQL: "DROP TABLE n;",
-	}})
+	}}, engine.DirectionUp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestValidatorScratchConnectFails(t *testing.T) {
 	good, err := buildPlans([]engine.Migration{{
 		Version: 1, Name: "ok",
 		UpSQL: "SELECT 1;", DownSQL: "SELECT 1;",
-	}})
+	}}, engine.DirectionUp)
 	if err != nil {
 		t.Fatal(err)
 	}

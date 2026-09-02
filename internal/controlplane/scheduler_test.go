@@ -319,6 +319,42 @@ func TestSchedulerExpandContract(t *testing.T) {
 	}
 }
 
+func TestSchedulerRevertsRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	sched, targetDSN := newScheduler(t, s, Config{Holder: "h1"})
+
+	id := "77777777-0000-0000-0000-000000000001"
+	queueRun(t, s, id, map[string]string{
+		"20260901120000_t.up.sql":   upBody,
+		"20260901120000_t.down.sql": "DROP TABLE t;",
+		"20260901120001_u.up.sql":   "CREATE VIEW u AS SELECT id FROM t;",
+		"20260901120001_u.down.sql": "DROP VIEW u;",
+	})
+	sched.Tick(ctx)
+	waitState(t, s, id, StateSucceeded)
+
+	revert := "77777777-0000-0000-0000-000000000002"
+	if err := s.CreateRevert(ctx, revert, id); err != nil {
+		t.Fatal(err)
+	}
+	sched.Tick(ctx)
+	r := waitState(t, s, revert, StateSucceeded)
+	if r.Reverts != id || r.Error != "" {
+		t.Fatalf("revert run = %+v", r)
+	}
+	if tableExists(t, targetDSN, "t") || tableExists(t, targetDSN, "u") {
+		t.Fatal("revert must drop u then t")
+	}
+	if r, _ = s.Run(ctx, id); r.State != StateReverted {
+		t.Fatalf("original = %+v", r)
+	}
+	if snap, err := s.SnapshotFor(ctx, "app"); err != nil || strings.Contains(snap.Definition, "public.t.id") {
+		t.Fatalf("baseline after revert = %+v, err = %v", snap, err)
+	}
+}
+
 func tableExists(t *testing.T, dsn, name string) bool {
 	t.Helper()
 	ctx := context.Background()

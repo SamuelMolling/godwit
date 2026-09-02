@@ -28,8 +28,8 @@ func TestListRunsRowError(t *testing.T) {
 
 	mock.ExpectQuery("SELECT id, target, state").WithArgs("").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "created_at", "finished_at"}).
-			AddRow("r1", "app", StateQueued, "", 0, RolloutDirect, PhaseExpand, now(), nilTime()).RowError(0, errBoom))
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "created_at", "finished_at"}).
+			AddRow("r1", "app", StateQueued, "", 0, RolloutDirect, PhaseExpand, "", now(), nilTime()).RowError(0, errBoom))
 
 	if _, err := s.ListRuns(context.Background(), ""); err == nil ||
 		!strings.Contains(err.Error(), "read runs") {

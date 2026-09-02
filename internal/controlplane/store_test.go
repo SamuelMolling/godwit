@@ -131,6 +131,70 @@ func TestRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateRevert(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+
+	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	first, second := "66666666-0000-0000-0000-000000000001", "66666666-0000-0000-0000-000000000002"
+	revert := "66666666-0000-0000-0000-000000000003"
+	queueRun(t, s, first, goodFiles())
+	queueRun(t, s, second, goodFiles())
+
+	if err := s.CreateRevert(ctx, revert, first); !errors.Is(err, ErrNotRevertable) {
+		t.Fatalf("revert queued run: err = %v", err)
+	}
+	if err := s.Finish(ctx, first, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRevert(ctx, revert, first); !errors.Is(err, ErrNotRevertable) {
+		t.Fatalf("revert with a later queued run: err = %v", err)
+	}
+	if err := s.Finish(ctx, second, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRevert(ctx, revert, first); !errors.Is(err, ErrNotRevertable) {
+		t.Fatalf("revert with a later succeeded run: err = %v", err)
+	}
+
+	if err := s.CreateRevert(ctx, revert, second); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Run(ctx, revert)
+	if err != nil || r.State != StateQueued || r.Reverts != second || r.Target != "app" {
+		t.Fatalf("revert run = %+v, err = %v", r, err)
+	}
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000004", second); !errors.Is(err, ErrNotRevertable) {
+		t.Fatalf("double revert: err = %v", err)
+	}
+	if err := s.Finish(ctx, revert, StateFailed, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ = s.Run(ctx, second); r.State != StateSucceeded {
+		t.Fatalf("failed revert must leave the original alone: %+v", r)
+	}
+	if err := s.Resume(ctx, revert); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(ctx, revert, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ = s.Run(ctx, second); r.State != StateReverted {
+		t.Fatalf("original after revert = %+v", r)
+	}
+	history, err := s.HistoryFiles(ctx, "app")
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %v, err = %v", history, err)
+	}
+
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000005", first); err != nil {
+		t.Fatalf("first is the latest again: %v", err)
+	}
+}
+
 func TestClaimRecoversExpiredLease(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -237,6 +301,9 @@ func TestStoreQueryErrors(t *testing.T) {
 		t.Fatal("want error")
 	}
 	if err := s.Resume(ctx, "id"); err == nil {
+		t.Fatal("want error")
+	}
+	if err := s.CreateRevert(ctx, "id", "id"); err == nil {
 		t.Fatal("want error")
 	}
 	if err := s.Confirm(ctx, "id"); err == nil {

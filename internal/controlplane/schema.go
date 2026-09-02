@@ -3,6 +3,8 @@ package controlplane
 
 import (
 	"context"
+	"slices"
+	"testing/fstest"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -91,16 +93,48 @@ ALTER TABLE cp_runs
 	DROP COLUMN phase,
 	DROP COLUMN rollout;`,
 	},
+	{
+		Version:  20260901000003,
+		Name:     "revert",
+		Checksum: "cp-revert-v1",
+		UpSQL: `
+ALTER TABLE cp_runs
+	ADD COLUMN reverts uuid REFERENCES cp_runs (id),
+	DROP CONSTRAINT cp_runs_state_check,
+	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention', 'awaiting_contract', 'reverted'));`,
+		DownSQL: `
+ALTER TABLE cp_runs
+	DROP CONSTRAINT cp_runs_state_check,
+	ADD CONSTRAINT cp_runs_state_check CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'needs_attention', 'awaiting_contract')),
+	DROP COLUMN reverts;`,
+	},
 }
 
-func buildPlans(migs []engine.Migration) ([]engine.Plan, error) {
+// PlansFromFiles loads migration files and plans one direction; down plans come newest first.
+func PlansFromFiles(files map[string]string, dir engine.Direction) ([]engine.Plan, error) {
+	fsys := fstest.MapFS{}
+	for name, body := range files {
+		fsys[name] = &fstest.MapFile{Data: []byte(body)}
+	}
+	migs, err := engine.LoadFS(fsys)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildPlans(migs, dir)
+}
+
+func buildPlans(migs []engine.Migration, dir engine.Direction) ([]engine.Plan, error) {
 	plans := make([]engine.Plan, 0, len(migs))
 	for _, m := range migs {
-		p, err := engine.BuildPlan(m, engine.DirectionUp)
+		p, err := engine.BuildPlan(m, dir)
 		if err != nil {
 			return nil, err
 		}
 		plans = append(plans, p)
+	}
+	if dir == engine.DirectionDown {
+		slices.Reverse(plans)
 	}
 
 	return plans, nil
@@ -109,7 +143,11 @@ func buildPlans(migs []engine.Migration) ([]engine.Plan, error) {
 func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan) error {
 	exec := engine.New(db, opts)
 	for _, p := range plans {
-		if _, err := exec.Up(ctx, p); err != nil {
+		run := exec.Up
+		if p.Direction == engine.DirectionDown {
+			run = exec.Down
+		}
+		if _, err := run(ctx, p); err != nil {
 			return err
 		}
 	}

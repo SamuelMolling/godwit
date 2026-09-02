@@ -51,6 +51,8 @@ const (
 	// GodwitServiceConfirmRolloutProcedure is the fully-qualified name of the GodwitService's
 	// ConfirmRollout RPC.
 	GodwitServiceConfirmRolloutProcedure = "/godwit.v1.GodwitService/ConfirmRollout"
+	// GodwitServiceRevertRunProcedure is the fully-qualified name of the GodwitService's RevertRun RPC.
+	GodwitServiceRevertRunProcedure = "/godwit.v1.GodwitService/RevertRun"
 	// GodwitServiceCheckDriftProcedure is the fully-qualified name of the GodwitService's CheckDrift
 	// RPC.
 	GodwitServiceCheckDriftProcedure = "/godwit.v1.GodwitService/CheckDrift"
@@ -72,6 +74,7 @@ type GodwitServiceClient interface {
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error)
 	ConfirmRollout(context.Context, *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error)
+	RevertRun(context.Context, *connect.Request[v1.RevertRunRequest]) (*connect.Response[v1.RevertRunResponse], error)
 	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
 	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
 	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
@@ -136,6 +139,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("ConfirmRollout")),
 			connect.WithClientOptions(opts...),
 		),
+		revertRun: connect.NewClient[v1.RevertRunRequest, v1.RevertRunResponse](
+			httpClient,
+			baseURL+GodwitServiceRevertRunProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("RevertRun")),
+			connect.WithClientOptions(opts...),
+		),
 		checkDrift: connect.NewClient[v1.CheckDriftRequest, v1.CheckDriftResponse](
 			httpClient,
 			baseURL+GodwitServiceCheckDriftProcedure,
@@ -167,6 +176,7 @@ type godwitServiceClient struct {
 	resumeRun       *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
 	parkRun         *connect.Client[v1.ParkRunRequest, v1.ParkRunResponse]
 	confirmRollout  *connect.Client[v1.ConfirmRolloutRequest, v1.ConfirmRolloutResponse]
+	revertRun       *connect.Client[v1.RevertRunRequest, v1.RevertRunResponse]
 	checkDrift      *connect.Client[v1.CheckDriftRequest, v1.CheckDriftResponse]
 	listDriftEvents *connect.Client[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse]
 	acceptBaseline  *connect.Client[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse]
@@ -212,6 +222,11 @@ func (c *godwitServiceClient) ConfirmRollout(ctx context.Context, req *connect.R
 	return c.confirmRollout.CallUnary(ctx, req)
 }
 
+// RevertRun calls godwit.v1.GodwitService.RevertRun.
+func (c *godwitServiceClient) RevertRun(ctx context.Context, req *connect.Request[v1.RevertRunRequest]) (*connect.Response[v1.RevertRunResponse], error) {
+	return c.revertRun.CallUnary(ctx, req)
+}
+
 // CheckDrift calls godwit.v1.GodwitService.CheckDrift.
 func (c *godwitServiceClient) CheckDrift(ctx context.Context, req *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error) {
 	return c.checkDrift.CallUnary(ctx, req)
@@ -237,6 +252,7 @@ type GodwitServiceHandler interface {
 	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	ParkRun(context.Context, *connect.Request[v1.ParkRunRequest]) (*connect.Response[v1.ParkRunResponse], error)
 	ConfirmRollout(context.Context, *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error)
+	RevertRun(context.Context, *connect.Request[v1.RevertRunRequest]) (*connect.Response[v1.RevertRunResponse], error)
 	CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error)
 	ListDriftEvents(context.Context, *connect.Request[v1.ListDriftEventsRequest]) (*connect.Response[v1.ListDriftEventsResponse], error)
 	AcceptBaseline(context.Context, *connect.Request[v1.AcceptBaselineRequest]) (*connect.Response[v1.AcceptBaselineResponse], error)
@@ -297,6 +313,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("ConfirmRollout")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceRevertRunHandler := connect.NewUnaryHandler(
+		GodwitServiceRevertRunProcedure,
+		svc.RevertRun,
+		connect.WithSchema(godwitServiceMethods.ByName("RevertRun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	godwitServiceCheckDriftHandler := connect.NewUnaryHandler(
 		GodwitServiceCheckDriftProcedure,
 		svc.CheckDrift,
@@ -333,6 +355,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceParkRunHandler.ServeHTTP(w, r)
 		case GodwitServiceConfirmRolloutProcedure:
 			godwitServiceConfirmRolloutHandler.ServeHTTP(w, r)
+		case GodwitServiceRevertRunProcedure:
+			godwitServiceRevertRunHandler.ServeHTTP(w, r)
 		case GodwitServiceCheckDriftProcedure:
 			godwitServiceCheckDriftHandler.ServeHTTP(w, r)
 		case GodwitServiceListDriftEventsProcedure:
@@ -378,6 +402,10 @@ func (UnimplementedGodwitServiceHandler) ParkRun(context.Context, *connect.Reque
 
 func (UnimplementedGodwitServiceHandler) ConfirmRollout(context.Context, *connect.Request[v1.ConfirmRolloutRequest]) (*connect.Response[v1.ConfirmRolloutResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ConfirmRollout is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) RevertRun(context.Context, *connect.Request[v1.RevertRunRequest]) (*connect.Response[v1.RevertRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.RevertRun is not implemented"))
 }
 
 func (UnimplementedGodwitServiceHandler) CheckDrift(context.Context, *connect.Request[v1.CheckDriftRequest]) (*connect.Response[v1.CheckDriftResponse], error) {
