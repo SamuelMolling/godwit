@@ -23,12 +23,14 @@ fullnameOverride: ""
 #     --from-literal=GODWIT_TOKENS=ci-token,ops-token \
 #     --from-literal=GODWIT_STORE_DSN=postgres://godwit:...@store/godwit_store
 # The DSN is injected as `--store-dsn=$(GODWIT_STORE_DSN)` so it never appears in the pod spec.
+# Add a GODWIT_SLACK_TOKEN entry and set notifications.slack.channel to enable Slack.
 existingSecret:
   name: godwit
   keys:
     masterKey: GODWIT_MASTER_KEY
     tokens: GODWIT_TOKENS
     storeDSN: GODWIT_STORE_DSN
+    slackToken: GODWIT_SLACK_TOKEN
 
 # Flags of `godwit serve`; nothing else is accepted by the binary.
 serve:
@@ -59,10 +61,17 @@ vault:
     key: VAULT_TOKEN
 
 notifications:
-  # GODWIT_WEBHOOK_URL: drift notifications are POSTed here.
+  # GODWIT_WEBHOOK_URL: run and drift events are POSTed here as JSON.
   webhookUrl: ""
+  # GODWIT_PUBLIC_URL: base of the UI links in notifications, e.g. https://godwit.example.com.
+  publicUrl: ""
+  slack:
+    # GODWIT_SLACK_CHANNEL: setting it wires GODWIT_SLACK_TOKEN from existingSecret.keys.slackToken.
+    channel: ""
+    # GODWIT_SLACK_MODE: thread (root message plus threaded replies) or edit (one message rewritten).
+    mode: thread
 
-# Extra environment for anything not modelled above (notifier settings, proxies).
+# Extra environment for anything not modelled above (proxies).
 extraEnv: []
 # - name: HTTPS_PROXY
 #   value: http://proxy:3128

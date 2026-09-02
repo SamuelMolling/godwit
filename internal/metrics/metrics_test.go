@@ -53,6 +53,7 @@ func TestEvents(t *testing.T) {
 	m.Hazard("H002", false)
 	m.ValidationFailed("app")
 	m.DriftChecked("app", DriftDrifted)
+	m.Notified("slack", "delivered")
 
 	expect(t, scrape(t, m),
 		`godwit_build_info{commit="none",version="dev"} 1`,
@@ -70,6 +71,7 @@ func TestEvents(t *testing.T) {
 		`godwit_hazards_total{acked="false",code="H002"} 1`,
 		`godwit_validation_failures_total{target="app"} 1`,
 		`godwit_drift_checks_total{result="drifted",target="app"} 1`,
+		`godwit_notifications_total{provider="slack",result="delivered"} 1`,
 	)
 }
 

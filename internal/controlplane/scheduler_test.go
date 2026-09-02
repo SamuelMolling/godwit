@@ -119,6 +119,8 @@ func TestSchedulerFailureAndPark(t *testing.T) {
 	}
 	queueRun(t, s, "11111111-0000-0000-0000-000000000003", bad)
 
+	notifier := &recordingNotifier{}
+	sched.Notifier = notifier
 	for range 2 {
 		sched.Tick(ctx)
 		r := waitState(t, s, "11111111-0000-0000-0000-000000000003", StateFailed)
@@ -132,6 +134,12 @@ func TestSchedulerFailureAndPark(t *testing.T) {
 	// Third failure exhausts MaxAttempts=2... resume resets attempts, so re-fail once more, then park.
 	sched.Tick(ctx)
 	waitState(t, s, "11111111-0000-0000-0000-000000000003", StateFailed)
+	if got := notifier.types(); got != "run:running run:failed run:running run:failed run:running run:failed" {
+		t.Fatalf("notifications = %q", got)
+	}
+	if e := notifier.events[1]; !strings.Contains(e.Detail, "statement 0") || e.State != StateFailed {
+		t.Fatalf("failed event = %+v", e)
+	}
 }
 
 func TestSchedulerParksAfterBudget(t *testing.T) {
@@ -359,6 +367,8 @@ func TestSchedulerRevertsRun(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)
 	sched, targetDSN := newScheduler(t, s, Config{Holder: "h1"})
+	notifier := &recordingNotifier{}
+	sched.Notifier = notifier
 
 	id := "77777777-0000-0000-0000-000000000001"
 	queueRun(t, s, id, map[string]string{
@@ -387,6 +397,16 @@ func TestSchedulerRevertsRun(t *testing.T) {
 	}
 	if snap, err := s.SnapshotFor(ctx, "app"); err != nil || strings.Contains(snap.Definition, "public.t.id") {
 		t.Fatalf("baseline after revert = %+v, err = %v", snap, err)
+	}
+	if got := notifier.types(); got != "run:running run:succeeded run:running run:succeeded run:reverted" {
+		t.Fatalf("notifications = %q", got)
+	}
+	first, last := notifier.events[0], notifier.events[4]
+	if first.RunID != id || first.State != StateRunning || first.Attempt != 1 || first.Rollout != RolloutDirect || first.Phase != PhaseExpand {
+		t.Fatalf("running event = %+v", first)
+	}
+	if last.RunID != id || last.State != StateReverted || last.Detail != "reverted by run 77777777" {
+		t.Fatalf("reverted event = %+v", last)
 	}
 }
 

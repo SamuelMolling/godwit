@@ -95,15 +95,16 @@ func (s *Store) RecordDrift(ctx context.Context, target, diff string) (bool, err
 	return tag.RowsAffected() > 0, nil
 }
 
-// ResolveDrift closes every open drift event for a target.
-func (s *Store) ResolveDrift(ctx context.Context, target string) error {
-	if _, err := s.pool.Exec(ctx,
+// ResolveDrift closes every open drift event for a target and reports whether any was open.
+func (s *Store) ResolveDrift(ctx context.Context, target string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE cp_drift_events SET resolved_at = now() WHERE target = $1 AND resolved_at IS NULL`,
-		target); err != nil {
-		return fmt.Errorf("resolve drift: %w", err)
+		target)
+	if err != nil {
+		return false, fmt.Errorf("resolve drift: %w", err)
 	}
 
-	return nil
+	return tag.RowsAffected() > 0, nil
 }
 
 // HistoryFiles returns the files of every succeeded run for a target, oldest first.

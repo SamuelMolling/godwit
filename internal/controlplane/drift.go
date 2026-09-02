@@ -94,11 +94,16 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 	}
 
 	if liveFP == expected.Fingerprint {
-		if err := m.store.ResolveDrift(ctx, target); err != nil {
+		resolved, err := m.store.ResolveDrift(ctx, target)
+		if err != nil {
 			return Drift{}, err
 		}
 		m.Metrics.DriftChecked(target, metrics.DriftClean)
 		m.log.Debug("drift checked", "target", target, "result", metrics.DriftClean)
+		if resolved {
+			m.log.Info("schema drift resolved", "target", target)
+			notify.Emit(ctx, m.notifier, m.log, driftEvent(target, notify.DriftResolved, ""))
+		}
 
 		return Drift{Target: target}, nil
 	}
@@ -112,9 +117,7 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 	}
 	if created {
 		m.log.Warn("schema drift detected", "target", target)
-		if err := m.notifier.Notify(ctx, notify.Event{Type: "drift", Target: target, Detail: diff}); err != nil {
-			m.log.Warn("drift notification failed", "target", target, "error", err)
-		}
+		notify.Emit(ctx, m.notifier, m.log, driftEvent(target, notify.DriftDetected, diff))
 	}
 
 	return Drift{Target: target, Drifted: true, Diff: diff}, nil
@@ -132,6 +135,14 @@ func (m *DriftMonitor) AcceptBaseline(ctx context.Context, target string) error 
 	}
 	m.Metrics.DriftChecked(target, metrics.DriftAccepted)
 	m.log.Info("baseline accepted", "target", target)
+	if err := m.store.SaveSnapshot(ctx, target, fp, def, ""); err != nil {
+		return err
+	}
+	notify.Emit(ctx, m.notifier, m.log, driftEvent(target, notify.DriftAccepted, ""))
 
-	return m.store.SaveSnapshot(ctx, target, fp, def, "")
+	return nil
+}
+
+func driftEvent(target, typ, detail string) notify.Event {
+	return notify.Event{Kind: notify.KindDrift, Type: typ, Target: target, Detail: detail, At: time.Now()}
 }

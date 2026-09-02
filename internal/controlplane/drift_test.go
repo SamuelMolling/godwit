@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,17 +17,31 @@ import (
 )
 
 type recordingNotifier struct {
-	events atomic.Int32
+	mu     sync.Mutex
+	events []notify.Event
 	fail   bool
 }
 
-func (n *recordingNotifier) Notify(context.Context, notify.Event) error {
-	n.events.Add(1)
+func (n *recordingNotifier) Notify(_ context.Context, e notify.Event) error {
+	n.mu.Lock()
+	n.events = append(n.events, e)
+	n.mu.Unlock()
 	if n.fail {
 		return errors.New("notify boom")
 	}
 
 	return nil
+}
+
+func (n *recordingNotifier) types() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []string
+	for _, e := range n.events {
+		out = append(out, e.Kind+":"+e.Type)
+	}
+
+	return strings.Join(out, " ")
 }
 
 func newMonitor(t *testing.T, s *Store, n notify.Notifier) (*DriftMonitor, string) {
@@ -77,8 +91,8 @@ func TestDriftLifecycle(t *testing.T) {
 	execTarget(t, targetDSN, "ALTER TABLE t ADD COLUMN sneaky text")
 	mon.Tick(ctx)
 	mon.Tick(ctx) // identical open drift must not re-notify
-	if got := notifier.events.Load(); got != 1 {
-		t.Fatalf("notifications = %d, want 1", got)
+	if got := notifier.types(); got != "drift:detected" {
+		t.Fatalf("notifications = %q", got)
 	}
 	events, err := s.ListDriftEvents(ctx, "app")
 	if err != nil || len(events) != 1 || events[0].ResolvedAt != nil ||
@@ -95,6 +109,15 @@ func TestDriftLifecycle(t *testing.T) {
 	events, _ = s.ListDriftEvents(ctx, "")
 	if len(events) != 1 || events[0].ResolvedAt == nil {
 		t.Fatalf("events = %+v", events)
+	}
+	if _, err := mon.Check(ctx, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := notifier.types(); got != "drift:detected drift:resolved" {
+		t.Fatalf("notifications = %q", got)
+	}
+	if e := notifier.events[0]; e.Target != "app" || !strings.Contains(e.Detail, ".t.sneaky") || e.At.IsZero() {
+		t.Fatalf("detected event = %+v", e)
 	}
 }
 
@@ -120,8 +143,8 @@ func TestAcceptBaseline(t *testing.T) {
 	if err != nil || !d.Drifted {
 		t.Fatalf("drift = %+v, err = %v", d, err)
 	}
-	if notifier.events.Load() != 1 {
-		t.Fatalf("notifications = %d", notifier.events.Load())
+	if got := notifier.types(); got != "drift:accepted drift:detected" {
+		t.Fatalf("notifications = %q", got)
 	}
 }
 

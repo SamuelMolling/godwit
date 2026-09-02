@@ -21,7 +21,8 @@ func newServeCmd() *cobra.Command {
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
 			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated bearer tokens),\n" +
-			"GODWIT_WEBHOOK_URL (drift notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
+			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
+			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			log, err := server.NewLogger(cmd.ErrOrStderr(), logFormat, logLevel)
@@ -46,6 +47,10 @@ func newServeCmd() *cobra.Command {
 				Holder:         hostname,
 				DriftInterval:  driftInterval,
 				WebhookURL:     os.Getenv("GODWIT_WEBHOOK_URL"),
+				SlackToken:     os.Getenv("GODWIT_SLACK_TOKEN"),
+				SlackChannel:   os.Getenv("GODWIT_SLACK_CHANNEL"),
+				SlackMode:      os.Getenv("GODWIT_SLACK_MODE"),
+				PublicURL:      os.Getenv("GODWIT_PUBLIC_URL"),
 				SkipValidation: skipValidation,
 				Log:            log,
 			})

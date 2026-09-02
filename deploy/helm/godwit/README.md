@@ -43,7 +43,11 @@ The release prints the in-cluster URL and the first commands to run. Every value
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
 - `static`: nothing to configure; the DSN is encrypted with the master key.
 
-Anything else the process should see (proxies, notifier settings) goes through `extraEnv` / `extraEnvFrom`.
+## Notifications
+
+`notifications.webhookUrl` sets `GODWIT_WEBHOOK_URL`. For Slack, add `GODWIT_SLACK_TOKEN` to the Secret (`existingSecret.keys.slackToken` names the key) and set `notifications.slack.channel`; `notifications.slack.mode` picks `thread` or `edit` and `notifications.publicUrl` is the base of the "Open run" links.
+
+Anything else the process should see (proxies) goes through `extraEnv` / `extraEnvFrom`.
 
 ## Upgrading
 

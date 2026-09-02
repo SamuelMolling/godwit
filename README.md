@@ -23,7 +23,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Hazard gate | The planner ([libpg_query](https://github.com/pganalyze/pg_query_go)) tags unsafe DDL with a code and the safe alternative (see [Hazards](#hazards)). Runs carrying unacknowledged hazards are refused. |
 | PR lint | `godwit lint` parses a migration directory offline and fails on unacknowledged hazards, parse errors and migrations modified after merge; a no-op `.down.sql` is a warning. Text, markdown (for `$GITHUB_STEP_SUMMARY`) and JSON output. The repository is also a GitHub Action wrapping `lint`, `plan` and `migrate` with a sticky PR comment. |
 | Pre-apply validation | Every run replays the target's history plus the new files on a scratch database before it is queued. |
-| Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies (webhook) and auto-resolves. `AcceptBaseline` blesses manual changes. |
+| Drift detection | Schema fingerprint after each run; a monitor diffs the live schema, records events, notifies and auto-resolves. `AcceptBaseline` blesses manual changes. |
 | Rollout policies | `direct` applies everything now. `expand-contract` applies additive migrations at PreSync and holds the first destructive migration (and everything after it) until `ConfirmRollout` — blue/green safe. |
 | Revert | `RevertRun` queues the down side of the latest run on a target — same journal, lease and hazard gate as the way up. The original is marked `reverted` and leaves the replayable history. |
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
@@ -31,6 +31,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
 | Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
+| Notifications | Every run transition and drift event goes to Slack (one message per run, threaded or edited in place) and/or a JSON webhook, delivered off the run's critical path — see [Notifications](#notifications). |
 | Deploy | Helm chart (two replicas, probes, PDB, ServiceMonitor, Ingress) and ArgoCD PreSync/PostSync hook examples — see [Deploy](#deploy). |
 
 ## Hazards
@@ -150,6 +151,19 @@ Until the repository goes public only the owner's repositories can `uses:` it; a
 
 [deploy/argocd](deploy/argocd) wraps an application's sync with `godwit migrate --rollout expand-contract` as a PreSync hook and `godwit run confirm --latest --allow-none` as PostSync, so the contract phase is released only after the new pods are healthy.
 
+## Notifications
+
+`godwit serve` emits an event for every run transition (`created`, `running`, `succeeded`, `failed`, `needs_attention`, `awaiting_contract`, `confirmed`, `resumed`, `parked`, `reverted`) and every drift change (`detected`, `resolved`, `accepted`). Providers are enabled by environment only:
+
+| Env | Effect |
+|---|---|
+| `GODWIT_SLACK_TOKEN` | Bot token (`chat:write`); setting it enables Slack. `GODWIT_SLACK_CHANNEL` is then required. |
+| `GODWIT_SLACK_MODE` | `thread` (default): one root message per run, each transition a threaded reply, root kept current. `edit`: one message rewritten in place. Drift gets its own message per detection, with the resolution threaded under it. |
+| `GODWIT_PUBLIC_URL` | Adds an "Open run" button pointing at `<url>/ui/runs/<id>`. |
+| `GODWIT_WEBHOOK_URL` | POSTs every event as JSON (`kind`, `type`, `target`, `run_id`, `state`, `attempt`, `rollout`, `phase`, `detail`, `at`, `text`). |
+
+Both providers can be on at once. Each has its own queue (256 events, one worker, 10 s per delivery, 3 retries with backoff and `Retry-After` on 429); a full queue drops the event with a warning rather than slowing a run. The Slack message timestamp is stored in the control-plane database, so any replica can keep the thread going. `godwit_notifications_total{provider,result}` counts `delivered`, `failed` and `dropped`.
+
 ## Metrics
 
 `godwit serve` exposes Prometheus metrics on `/metrics` (same listener, no auth). What to alert on:
@@ -163,6 +177,7 @@ Until the repository goes public only the owner's repositories can `uses:` it; a
 | `godwit_statement_failures_total{target,reason}` | `lock_timeout` and `statement_timeout` are contention on a live database; other SQLSTATEs are bugs in the migration. |
 | `godwit_hazards_total{code,acked}`, `godwit_validation_failures_total{target}` | Is the gate doing work, or is everything acknowledged blindly? |
 | `godwit_drift_checks_total{target,result}` | `clean`, `drifted` or `accepted` per check. |
+| `godwit_notifications_total{provider,result}` | `failed` means Slack or the webhook is refusing events; `dropped` means the queue is full. |
 | `godwit_api_requests_total{method,code}`, `godwit_api_request_duration_seconds{method}`, `godwit_build_info` | The service itself. |
 
 Per-migration and per-statement series are deliberately absent — that detail lives in the run journal, not in label cardinality.

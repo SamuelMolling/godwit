@@ -9,6 +9,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
+	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
 // Config tunes a Scheduler.
@@ -37,6 +38,8 @@ func (c Config) withDefaults() Config {
 type Scheduler struct {
 	// Metrics receives run events; replace it before Run to share a registry.
 	Metrics *metrics.Metrics
+	// Notifier receives run lifecycle events; replace it before Run.
+	Notifier notify.Notifier
 
 	store     *Store
 	providers map[string]creds.Provider
@@ -50,6 +53,7 @@ type Scheduler struct {
 func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine, policies map[string]RolloutPolicy, cfg Config, log *slog.Logger) *Scheduler {
 	return &Scheduler{
 		Metrics:   metrics.New(),
+		Notifier:  notify.None{},
 		store:     store,
 		providers: providers,
 		engine:    eng,
@@ -91,11 +95,19 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
 	log.Info("run claimed", "rollout", run.Rollout, "phase", run.Phase, "reverts", run.Reverts)
 	s.Metrics.RunClaimed(run.Target, run.Attempts)
+	run.State = StateRunning
+	notify.Emit(ctx, s.Notifier, log, RunEvent(run, notify.RunRunning, ""))
 	start := time.Now()
 	finish := func(state, errText string) {
 		_ = s.store.Finish(ctx, run.ID, state, errText)
 		d := time.Since(start)
 		s.Metrics.RunFinished(run.Target, state, run.Attempts, d)
+		run.State = state
+		notify.Emit(ctx, s.Notifier, log, RunEvent(run, state, errText))
+		if state == StateSucceeded && run.Reverts != "" {
+			orig := Run{ID: run.Reverts, Target: run.Target, State: StateReverted}
+			notify.Emit(ctx, s.Notifier, log, RunEvent(orig, notify.RunReverted, "reverted by run "+notify.ShortID(run.ID)))
+		}
 		attrs := []any{"state", state, "duration_ms", d.Milliseconds()}
 		if errText != "" {
 			log.Error("run finished", append(attrs, "error", errText)...)
@@ -129,6 +141,22 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 		return
 	}
 	finish(StateSucceeded, "")
+}
+
+// RunEvent builds the notification for a run at its current state.
+func RunEvent(r Run, typ, detail string) notify.Event {
+	return notify.Event{
+		Kind:    notify.KindRun,
+		Type:    typ,
+		Target:  r.Target,
+		RunID:   r.ID,
+		State:   r.State,
+		Attempt: r.Attempts,
+		Rollout: r.Rollout,
+		Phase:   r.Phase,
+		Detail:  detail,
+		At:      time.Now(),
+	}
 }
 
 func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {

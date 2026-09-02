@@ -32,7 +32,13 @@ func TestDriftStoreClosedPool(t *testing.T) {
 	if _, err := s.RecordDrift(ctx, "a", "d"); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.ResolveDrift(ctx, "a"); err == nil {
+	if _, err := s.ResolveDrift(ctx, "a"); err == nil {
+		t.Fatal("want error")
+	}
+	if _, _, err := s.GetTS(ctx, "run", "a"); err == nil {
+		t.Fatal("want error")
+	}
+	if err := s.PutTS(ctx, "run", "a", "C", "1"); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := s.ListDriftEvents(ctx, ""); err == nil {
