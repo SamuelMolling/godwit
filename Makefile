@@ -1,4 +1,4 @@
-.PHONY: all build test cover lint proto-lint tidy helm-lint
+.PHONY: all build test cover e2e lint proto-lint tidy helm-lint
 
 all: lint proto-lint cover build
 
@@ -10,6 +10,9 @@ test:
 
 cover:
 	./scripts/coverage.sh
+
+e2e:
+	go test -tags e2e -count=1 -timeout 15m ./test/e2e/...
 
 lint:
 	golangci-lint run
