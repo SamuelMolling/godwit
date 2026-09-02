@@ -17,4 +17,4 @@ Sync      Deployment rolls out on the expanded schema
 PostSync  godwit run confirm --latest --allow-none --target orders                    (no-op when nothing waits)
 ```
 
-To use it: replace `registry.example.com/platform/godwit`, `https://github.com/example/orders.git`, `deploy/chart` and `orders`; register the target on the service (`godwit target add orders ...`) before the first sync; put one `pipeline` token per application in `GODWIT_TOKENS` and in the `orders-godwit` Secret the Jobs read.
+To use it: replace `https://github.com/example/orders.git`, `deploy/chart` and `orders`; register the target on the service (`godwit target add orders ...`) before the first sync; put one `pipeline` token per application in `GODWIT_TOKENS` and in the `orders-godwit` Secret the Jobs read.
