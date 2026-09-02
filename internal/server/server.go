@@ -43,7 +43,10 @@ type Config struct {
 	Notifier notify.Notifier
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
-	Log            *slog.Logger
+	RequirePlan    bool
+	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
+	PlanTTL time.Duration
+	Log     *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
@@ -116,6 +119,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Notifier = notifier
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
 	apiSrv.Inspector = controlplane.NewInspector(sched)
+	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	srv := &http.Server{
 		Handler:           api.Handler(apiSrv, tokens),
 		ReadHeaderTimeout: 10 * time.Second,

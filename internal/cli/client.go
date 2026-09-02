@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
+	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 )
 
@@ -63,13 +64,30 @@ func (f *clientFlags) runE(fn remoteFunc) func(*cobra.Command, []string) error {
 	}
 }
 
+// ExitPlanRefused is the exit code when the service refuses to bind a migration set to a stored plan.
+const ExitPlanRefused = 3
+
+type exitError struct {
+	code int
+	msg  string
+}
+
+func (e exitError) Error() string { return e.msg }
+
 func apiError(err error) error {
 	var cerr *connect.Error
-	if errors.As(err, &cerr) {
-		return errors.New(cerr.Message())
+	if !errors.As(err, &cerr) {
+		return err
+	}
+	for _, d := range cerr.Details() {
+		switch d.Type() {
+		case string((&godwitv1.PlanStale{}).ProtoReflect().Descriptor().FullName()),
+			string((&godwitv1.PlanRequired{}).ProtoReflect().Descriptor().FullName()):
+			return exitError{code: ExitPlanRefused, msg: cerr.Message()}
+		}
 	}
 
-	return err
+	return errors.New(cerr.Message())
 }
 
 func (f *clientFlags) print(cmd *cobra.Command, msg proto.Message, human string) {

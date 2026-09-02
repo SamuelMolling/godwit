@@ -162,7 +162,9 @@ type Run struct {
 	// Name of the token that created the run ("anonymous" for unnamed tokens).
 	CreatedBy string `protobuf:"bytes,14,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
 	// Free-text provenance given at creation, e.g. github.com/org/repo@<sha>:db/migrations.
-	Source        string `protobuf:"bytes,15,opt,name=source,proto3" json:"source,omitempty"`
+	Source string `protobuf:"bytes,15,opt,name=source,proto3" json:"source,omitempty"`
+	// Id of the stored plan this run applies; empty for implicit runs.
+	PlanId        string `protobuf:"bytes,16,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -302,6 +304,13 @@ func (x *Run) GetSource() string {
 	return ""
 }
 
+func (x *Run) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
 type RegisterTargetRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -317,8 +326,10 @@ type RegisterTargetRequest struct {
 	LockTimeout string `protobuf:"bytes,7,opt,name=lock_timeout,json=lockTimeout,proto3" json:"lock_timeout,omitempty"`
 	// statement_timeout for every statement on this target; default 0 (disabled).
 	StatementTimeout string `protobuf:"bytes,8,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Refuse runs whose migration set has no stored plan.
+	RequirePlan   bool `protobuf:"varint,9,opt,name=require_plan,json=requirePlan,proto3" json:"require_plan,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RegisterTargetRequest) Reset() {
@@ -405,6 +416,13 @@ func (x *RegisterTargetRequest) GetStatementTimeout() string {
 		return x.StatementTimeout
 	}
 	return ""
+}
+
+func (x *RegisterTargetRequest) GetRequirePlan() bool {
+	if x != nil {
+		return x.RequirePlan
+	}
+	return false
 }
 
 type RegisterTargetResponse struct {
@@ -559,8 +577,10 @@ func (x *CreateRunRequest) GetSource() string {
 }
 
 type CreateRunResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// Id of the plan the run was bound to; empty for implicit runs.
+	PlanId        string `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -602,6 +622,13 @@ func (x *CreateRunResponse) GetRunId() string {
 	return ""
 }
 
+func (x *CreateRunResponse) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
 type PlanRunRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Target             string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
@@ -610,8 +637,12 @@ type PlanRunRequest struct {
 	SkipValidation     bool                   `protobuf:"varint,4,opt,name=skip_validation,json=skipValidation,proto3" json:"skip_validation,omitempty"`
 	Rollout            string                 `protobuf:"bytes,5,opt,name=rollout,proto3" json:"rollout,omitempty"`
 	AllowOutOfOrder    bool                   `protobuf:"varint,6,opt,name=allow_out_of_order,json=allowOutOfOrder,proto3" json:"allow_out_of_order,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Store the plan so a later CreateRun with the same migration set binds to it.
+	Persist bool `protobuf:"varint,7,opt,name=persist,proto3" json:"persist,omitempty"`
+	// Free-text provenance stored with the plan, e.g. github.com/org/repo@<sha>:db/migrations.
+	Source        string `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlanRunRequest) Reset() {
@@ -686,6 +717,252 @@ func (x *PlanRunRequest) GetAllowOutOfOrder() bool {
 	return false
 }
 
+func (x *PlanRunRequest) GetPersist() bool {
+	if x != nil {
+		return x.Persist
+	}
+	return false
+}
+
+func (x *PlanRunRequest) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+type PlanObservation struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// sha256 over the target's live migration history (version and checksum, ascending).
+	HistoryHash       string                 `protobuf:"bytes,1,opt,name=history_hash,json=historyHash,proto3" json:"history_hash,omitempty"`
+	SchemaFingerprint string                 `protobuf:"bytes,2,opt,name=schema_fingerprint,json=schemaFingerprint,proto3" json:"schema_fingerprint,omitempty"`
+	AppliedCount      int32                  `protobuf:"varint,3,opt,name=applied_count,json=appliedCount,proto3" json:"applied_count,omitempty"`
+	NewestApplied     int64                  `protobuf:"varint,4,opt,name=newest_applied,json=newestApplied,proto3" json:"newest_applied,omitempty"`
+	At                *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=at,proto3" json:"at,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *PlanObservation) Reset() {
+	*x = PlanObservation{}
+	mi := &file_godwit_v1_godwit_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanObservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanObservation) ProtoMessage() {}
+
+func (x *PlanObservation) ProtoReflect() protoreflect.Message {
+	mi := &file_godwit_v1_godwit_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanObservation.ProtoReflect.Descriptor instead.
+func (*PlanObservation) Descriptor() ([]byte, []int) {
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *PlanObservation) GetHistoryHash() string {
+	if x != nil {
+		return x.HistoryHash
+	}
+	return ""
+}
+
+func (x *PlanObservation) GetSchemaFingerprint() string {
+	if x != nil {
+		return x.SchemaFingerprint
+	}
+	return ""
+}
+
+func (x *PlanObservation) GetAppliedCount() int32 {
+	if x != nil {
+		return x.AppliedCount
+	}
+	return 0
+}
+
+func (x *PlanObservation) GetNewestApplied() int64 {
+	if x != nil {
+		return x.NewestApplied
+	}
+	return 0
+}
+
+func (x *PlanObservation) GetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.At
+	}
+	return nil
+}
+
+// Error detail on failed_precondition: the stored plan no longer matches the target.
+type PlanStale struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	PlanId string                 `protobuf:"bytes,1,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	// "history", "schema", "order", "validation" or "content".
+	Reason         string   `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	HistoryAdded   []string `protobuf:"bytes,3,rep,name=history_added,json=historyAdded,proto3" json:"history_added,omitempty"`
+	HistoryRemoved []string `protobuf:"bytes,4,rep,name=history_removed,json=historyRemoved,proto3" json:"history_removed,omitempty"`
+	SchemaDiff     string   `protobuf:"bytes,5,opt,name=schema_diff,json=schemaDiff,proto3" json:"schema_diff,omitempty"`
+	Hint           string   `protobuf:"bytes,6,opt,name=hint,proto3" json:"hint,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PlanStale) Reset() {
+	*x = PlanStale{}
+	mi := &file_godwit_v1_godwit_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanStale) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanStale) ProtoMessage() {}
+
+func (x *PlanStale) ProtoReflect() protoreflect.Message {
+	mi := &file_godwit_v1_godwit_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanStale.ProtoReflect.Descriptor instead.
+func (*PlanStale) Descriptor() ([]byte, []int) {
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *PlanStale) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *PlanStale) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *PlanStale) GetHistoryAdded() []string {
+	if x != nil {
+		return x.HistoryAdded
+	}
+	return nil
+}
+
+func (x *PlanStale) GetHistoryRemoved() []string {
+	if x != nil {
+		return x.HistoryRemoved
+	}
+	return nil
+}
+
+func (x *PlanStale) GetSchemaDiff() string {
+	if x != nil {
+		return x.SchemaDiff
+	}
+	return ""
+}
+
+func (x *PlanStale) GetHint() string {
+	if x != nil {
+		return x.Hint
+	}
+	return ""
+}
+
+// Error detail on failed_precondition: the target requires a stored plan and none matches the set.
+type PlanRequired struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Target         string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	Key            string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	NearestPlanIds []string               `protobuf:"bytes,3,rep,name=nearest_plan_ids,json=nearestPlanIds,proto3" json:"nearest_plan_ids,omitempty"`
+	FilesDiff      string                 `protobuf:"bytes,4,opt,name=files_diff,json=filesDiff,proto3" json:"files_diff,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *PlanRequired) Reset() {
+	*x = PlanRequired{}
+	mi := &file_godwit_v1_godwit_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanRequired) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanRequired) ProtoMessage() {}
+
+func (x *PlanRequired) ProtoReflect() protoreflect.Message {
+	mi := &file_godwit_v1_godwit_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanRequired.ProtoReflect.Descriptor instead.
+func (*PlanRequired) Descriptor() ([]byte, []int) {
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *PlanRequired) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *PlanRequired) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *PlanRequired) GetNearestPlanIds() []string {
+	if x != nil {
+		return x.NearestPlanIds
+	}
+	return nil
+}
+
+func (x *PlanRequired) GetFilesDiff() string {
+	if x != nil {
+		return x.FilesDiff
+	}
+	return ""
+}
+
 type PlannedHazard struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
@@ -696,7 +973,7 @@ type PlannedHazard struct {
 
 func (x *PlannedHazard) Reset() {
 	*x = PlannedHazard{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[7]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -708,7 +985,7 @@ func (x *PlannedHazard) String() string {
 func (*PlannedHazard) ProtoMessage() {}
 
 func (x *PlannedHazard) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[7]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -721,7 +998,7 @@ func (x *PlannedHazard) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlannedHazard.ProtoReflect.Descriptor instead.
 func (*PlannedHazard) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{7}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PlannedHazard) GetCode() string {
@@ -750,7 +1027,7 @@ type PlannedStatement struct {
 
 func (x *PlannedStatement) Reset() {
 	*x = PlannedStatement{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[8]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -762,7 +1039,7 @@ func (x *PlannedStatement) String() string {
 func (*PlannedStatement) ProtoMessage() {}
 
 func (x *PlannedStatement) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[8]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -775,7 +1052,7 @@ func (x *PlannedStatement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlannedStatement.ProtoReflect.Descriptor instead.
 func (*PlannedStatement) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{8}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PlannedStatement) GetSql() string {
@@ -815,7 +1092,7 @@ type PlannedMigration struct {
 
 func (x *PlannedMigration) Reset() {
 	*x = PlannedMigration{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[9]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -827,7 +1104,7 @@ func (x *PlannedMigration) String() string {
 func (*PlannedMigration) ProtoMessage() {}
 
 func (x *PlannedMigration) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[9]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -840,7 +1117,7 @@ func (x *PlannedMigration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlannedMigration.ProtoReflect.Descriptor instead.
 func (*PlannedMigration) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{9}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PlannedMigration) GetVersion() int64 {
@@ -891,14 +1168,20 @@ type PlanRunResponse struct {
 	Rollout    string                 `protobuf:"bytes,2,opt,name=rollout,proto3" json:"rollout,omitempty"`
 	Migrations []*PlannedMigration    `protobuf:"bytes,3,rep,name=migrations,proto3" json:"migrations,omitempty"`
 	// Whether the plan was replayed on a scratch database (false with skip_validation or no validator).
-	Validated     bool `protobuf:"varint,4,opt,name=validated,proto3" json:"validated,omitempty"`
+	Validated bool `protobuf:"varint,4,opt,name=validated,proto3" json:"validated,omitempty"`
+	// Set when persist was requested.
+	PlanId   string           `protobuf:"bytes,5,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	PlanKey  string           `protobuf:"bytes,6,opt,name=plan_key,json=planKey,proto3" json:"plan_key,omitempty"`
+	Observed *PlanObservation `protobuf:"bytes,7,opt,name=observed,proto3" json:"observed,omitempty"`
+	// Schema changes on the target that no run made, as +/- lines; empty without a baseline.
+	Drift         string `protobuf:"bytes,8,opt,name=drift,proto3" json:"drift,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlanRunResponse) Reset() {
 	*x = PlanRunResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[10]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -910,7 +1193,7 @@ func (x *PlanRunResponse) String() string {
 func (*PlanRunResponse) ProtoMessage() {}
 
 func (x *PlanRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[10]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -923,7 +1206,7 @@ func (x *PlanRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanRunResponse.ProtoReflect.Descriptor instead.
 func (*PlanRunResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{10}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PlanRunResponse) GetTarget() string {
@@ -954,6 +1237,34 @@ func (x *PlanRunResponse) GetValidated() bool {
 	return false
 }
 
+func (x *PlanRunResponse) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *PlanRunResponse) GetPlanKey() string {
+	if x != nil {
+		return x.PlanKey
+	}
+	return ""
+}
+
+func (x *PlanRunResponse) GetObserved() *PlanObservation {
+	if x != nil {
+		return x.Observed
+	}
+	return nil
+}
+
+func (x *PlanRunResponse) GetDrift() string {
+	if x != nil {
+		return x.Drift
+	}
+	return ""
+}
+
 type CheckDriftRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Target        string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
@@ -963,7 +1274,7 @@ type CheckDriftRequest struct {
 
 func (x *CheckDriftRequest) Reset() {
 	*x = CheckDriftRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[11]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -975,7 +1286,7 @@ func (x *CheckDriftRequest) String() string {
 func (*CheckDriftRequest) ProtoMessage() {}
 
 func (x *CheckDriftRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[11]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -988,7 +1299,7 @@ func (x *CheckDriftRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckDriftRequest.ProtoReflect.Descriptor instead.
 func (*CheckDriftRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{11}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *CheckDriftRequest) GetTarget() string {
@@ -1008,7 +1319,7 @@ type CheckDriftResponse struct {
 
 func (x *CheckDriftResponse) Reset() {
 	*x = CheckDriftResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[12]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1020,7 +1331,7 @@ func (x *CheckDriftResponse) String() string {
 func (*CheckDriftResponse) ProtoMessage() {}
 
 func (x *CheckDriftResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[12]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1033,7 +1344,7 @@ func (x *CheckDriftResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckDriftResponse.ProtoReflect.Descriptor instead.
 func (*CheckDriftResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{12}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CheckDriftResponse) GetDrifted() bool {
@@ -1059,7 +1370,7 @@ type ListDriftEventsRequest struct {
 
 func (x *ListDriftEventsRequest) Reset() {
 	*x = ListDriftEventsRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[13]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1071,7 +1382,7 @@ func (x *ListDriftEventsRequest) String() string {
 func (*ListDriftEventsRequest) ProtoMessage() {}
 
 func (x *ListDriftEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[13]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1084,7 +1395,7 @@ func (x *ListDriftEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDriftEventsRequest.ProtoReflect.Descriptor instead.
 func (*ListDriftEventsRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{13}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListDriftEventsRequest) GetTarget() string {
@@ -1107,7 +1418,7 @@ type DriftEvent struct {
 
 func (x *DriftEvent) Reset() {
 	*x = DriftEvent{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[14]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1119,7 +1430,7 @@ func (x *DriftEvent) String() string {
 func (*DriftEvent) ProtoMessage() {}
 
 func (x *DriftEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[14]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1132,7 +1443,7 @@ func (x *DriftEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftEvent.ProtoReflect.Descriptor instead.
 func (*DriftEvent) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{14}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DriftEvent) GetId() int64 {
@@ -1179,7 +1490,7 @@ type ListDriftEventsResponse struct {
 
 func (x *ListDriftEventsResponse) Reset() {
 	*x = ListDriftEventsResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[15]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1191,7 +1502,7 @@ func (x *ListDriftEventsResponse) String() string {
 func (*ListDriftEventsResponse) ProtoMessage() {}
 
 func (x *ListDriftEventsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[15]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1204,7 +1515,7 @@ func (x *ListDriftEventsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDriftEventsResponse.ProtoReflect.Descriptor instead.
 func (*ListDriftEventsResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{15}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListDriftEventsResponse) GetEvents() []*DriftEvent {
@@ -1223,7 +1534,7 @@ type AcceptBaselineRequest struct {
 
 func (x *AcceptBaselineRequest) Reset() {
 	*x = AcceptBaselineRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[16]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1546,7 @@ func (x *AcceptBaselineRequest) String() string {
 func (*AcceptBaselineRequest) ProtoMessage() {}
 
 func (x *AcceptBaselineRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[16]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1559,7 @@ func (x *AcceptBaselineRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcceptBaselineRequest.ProtoReflect.Descriptor instead.
 func (*AcceptBaselineRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{16}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *AcceptBaselineRequest) GetTarget() string {
@@ -1266,7 +1577,7 @@ type AcceptBaselineResponse struct {
 
 func (x *AcceptBaselineResponse) Reset() {
 	*x = AcceptBaselineResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[17]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1278,7 +1589,7 @@ func (x *AcceptBaselineResponse) String() string {
 func (*AcceptBaselineResponse) ProtoMessage() {}
 
 func (x *AcceptBaselineResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[17]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1291,7 +1602,7 @@ func (x *AcceptBaselineResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcceptBaselineResponse.ProtoReflect.Descriptor instead.
 func (*AcceptBaselineResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{17}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{20}
 }
 
 type BaselineTargetRequest struct {
@@ -1306,7 +1617,7 @@ type BaselineTargetRequest struct {
 
 func (x *BaselineTargetRequest) Reset() {
 	*x = BaselineTargetRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[18]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1318,7 +1629,7 @@ func (x *BaselineTargetRequest) String() string {
 func (*BaselineTargetRequest) ProtoMessage() {}
 
 func (x *BaselineTargetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[18]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1331,7 +1642,7 @@ func (x *BaselineTargetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BaselineTargetRequest.ProtoReflect.Descriptor instead.
 func (*BaselineTargetRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{18}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BaselineTargetRequest) GetTarget() string {
@@ -1364,7 +1675,7 @@ type BaselineTargetResponse struct {
 
 func (x *BaselineTargetResponse) Reset() {
 	*x = BaselineTargetResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[19]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1376,7 +1687,7 @@ func (x *BaselineTargetResponse) String() string {
 func (*BaselineTargetResponse) ProtoMessage() {}
 
 func (x *BaselineTargetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[19]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1389,7 +1700,7 @@ func (x *BaselineTargetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BaselineTargetResponse.ProtoReflect.Descriptor instead.
 func (*BaselineTargetResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{19}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BaselineTargetResponse) GetRunId() string {
@@ -1410,7 +1721,7 @@ type GetTargetStatusRequest struct {
 
 func (x *GetTargetStatusRequest) Reset() {
 	*x = GetTargetStatusRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[20]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1422,7 +1733,7 @@ func (x *GetTargetStatusRequest) String() string {
 func (*GetTargetStatusRequest) ProtoMessage() {}
 
 func (x *GetTargetStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[20]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1435,7 +1746,7 @@ func (x *GetTargetStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTargetStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetTargetStatusRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{20}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetTargetStatusRequest) GetTarget() string {
@@ -1465,7 +1776,7 @@ type AppliedMigration struct {
 
 func (x *AppliedMigration) Reset() {
 	*x = AppliedMigration{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[21]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1477,7 +1788,7 @@ func (x *AppliedMigration) String() string {
 func (*AppliedMigration) ProtoMessage() {}
 
 func (x *AppliedMigration) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[21]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1490,7 +1801,7 @@ func (x *AppliedMigration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppliedMigration.ProtoReflect.Descriptor instead.
 func (*AppliedMigration) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{21}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AppliedMigration) GetVersion() int64 {
@@ -1538,7 +1849,7 @@ type PendingMigration struct {
 
 func (x *PendingMigration) Reset() {
 	*x = PendingMigration{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[22]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1550,7 +1861,7 @@ func (x *PendingMigration) String() string {
 func (*PendingMigration) ProtoMessage() {}
 
 func (x *PendingMigration) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[22]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1563,7 +1874,7 @@ func (x *PendingMigration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PendingMigration.ProtoReflect.Descriptor instead.
 func (*PendingMigration) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{22}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *PendingMigration) GetVersion() int64 {
@@ -1591,7 +1902,7 @@ type DriftBaseline struct {
 
 func (x *DriftBaseline) Reset() {
 	*x = DriftBaseline{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[23]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1603,7 +1914,7 @@ func (x *DriftBaseline) String() string {
 func (*DriftBaseline) ProtoMessage() {}
 
 func (x *DriftBaseline) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[23]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1616,7 +1927,7 @@ func (x *DriftBaseline) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftBaseline.ProtoReflect.Descriptor instead.
 func (*DriftBaseline) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{23}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DriftBaseline) GetTakenAt() *timestamppb.Timestamp {
@@ -1656,7 +1967,7 @@ type GetTargetStatusResponse struct {
 
 func (x *GetTargetStatusResponse) Reset() {
 	*x = GetTargetStatusResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[24]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1668,7 +1979,7 @@ func (x *GetTargetStatusResponse) String() string {
 func (*GetTargetStatusResponse) ProtoMessage() {}
 
 func (x *GetTargetStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[24]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1681,7 +1992,7 @@ func (x *GetTargetStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTargetStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetTargetStatusResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{24}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GetTargetStatusResponse) GetTarget() string {
@@ -1752,7 +2063,7 @@ type ListAuditRequest struct {
 
 func (x *ListAuditRequest) Reset() {
 	*x = ListAuditRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[25]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1764,7 +2075,7 @@ func (x *ListAuditRequest) String() string {
 func (*ListAuditRequest) ProtoMessage() {}
 
 func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[25]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1777,7 +2088,7 @@ func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAuditRequest.ProtoReflect.Descriptor instead.
 func (*ListAuditRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{25}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListAuditRequest) GetTarget() string {
@@ -1807,7 +2118,7 @@ type AuditEntry struct {
 	At    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
 	// Token name behind the call.
 	Actor string `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`
-	// target.register, target.baseline, run.create, run.revert, run.resume, run.park, run.confirm or drift.accept.
+	// target.register, target.baseline, run.create, run.revert, run.resume, run.park, run.confirm, drift.accept, plan.create or plan.supersede.
 	Action string `protobuf:"bytes,4,opt,name=action,proto3" json:"action,omitempty"`
 	RunId  string `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Target string `protobuf:"bytes,6,opt,name=target,proto3" json:"target,omitempty"`
@@ -1819,7 +2130,7 @@ type AuditEntry struct {
 
 func (x *AuditEntry) Reset() {
 	*x = AuditEntry{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[26]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1831,7 +2142,7 @@ func (x *AuditEntry) String() string {
 func (*AuditEntry) ProtoMessage() {}
 
 func (x *AuditEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[26]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1844,7 +2155,7 @@ func (x *AuditEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEntry.ProtoReflect.Descriptor instead.
 func (*AuditEntry) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{26}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *AuditEntry) GetId() int64 {
@@ -1905,7 +2216,7 @@ type ListAuditResponse struct {
 
 func (x *ListAuditResponse) Reset() {
 	*x = ListAuditResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[27]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1917,7 +2228,7 @@ func (x *ListAuditResponse) String() string {
 func (*ListAuditResponse) ProtoMessage() {}
 
 func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[27]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1930,7 +2241,7 @@ func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAuditResponse.ProtoReflect.Descriptor instead.
 func (*ListAuditResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{27}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListAuditResponse) GetEntries() []*AuditEntry {
@@ -1949,7 +2260,7 @@ type GetRunRequest struct {
 
 func (x *GetRunRequest) Reset() {
 	*x = GetRunRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[28]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1961,7 +2272,7 @@ func (x *GetRunRequest) String() string {
 func (*GetRunRequest) ProtoMessage() {}
 
 func (x *GetRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[28]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1974,7 +2285,7 @@ func (x *GetRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRunRequest.ProtoReflect.Descriptor instead.
 func (*GetRunRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{28}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetRunRequest) GetRunId() string {
@@ -1993,7 +2304,7 @@ type GetRunResponse struct {
 
 func (x *GetRunResponse) Reset() {
 	*x = GetRunResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[29]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2005,7 +2316,7 @@ func (x *GetRunResponse) String() string {
 func (*GetRunResponse) ProtoMessage() {}
 
 func (x *GetRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[29]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2018,7 +2329,7 @@ func (x *GetRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRunResponse.ProtoReflect.Descriptor instead.
 func (*GetRunResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{29}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetRunResponse) GetRun() *Run {
@@ -2037,7 +2348,7 @@ type ListRunsRequest struct {
 
 func (x *ListRunsRequest) Reset() {
 	*x = ListRunsRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[30]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2049,7 +2360,7 @@ func (x *ListRunsRequest) String() string {
 func (*ListRunsRequest) ProtoMessage() {}
 
 func (x *ListRunsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[30]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2062,7 +2373,7 @@ func (x *ListRunsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRunsRequest.ProtoReflect.Descriptor instead.
 func (*ListRunsRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{30}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ListRunsRequest) GetTarget() string {
@@ -2081,7 +2392,7 @@ type ListRunsResponse struct {
 
 func (x *ListRunsResponse) Reset() {
 	*x = ListRunsResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[31]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2093,7 +2404,7 @@ func (x *ListRunsResponse) String() string {
 func (*ListRunsResponse) ProtoMessage() {}
 
 func (x *ListRunsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[31]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2106,7 +2417,7 @@ func (x *ListRunsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRunsResponse.ProtoReflect.Descriptor instead.
 func (*ListRunsResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{31}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ListRunsResponse) GetRuns() []*Run {
@@ -2125,7 +2436,7 @@ type WatchRunRequest struct {
 
 func (x *WatchRunRequest) Reset() {
 	*x = WatchRunRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[32]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2137,7 +2448,7 @@ func (x *WatchRunRequest) String() string {
 func (*WatchRunRequest) ProtoMessage() {}
 
 func (x *WatchRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[32]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2150,7 +2461,7 @@ func (x *WatchRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRunRequest.ProtoReflect.Descriptor instead.
 func (*WatchRunRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{32}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *WatchRunRequest) GetRunId() string {
@@ -2169,7 +2480,7 @@ type WatchRunResponse struct {
 
 func (x *WatchRunResponse) Reset() {
 	*x = WatchRunResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[33]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2181,7 +2492,7 @@ func (x *WatchRunResponse) String() string {
 func (*WatchRunResponse) ProtoMessage() {}
 
 func (x *WatchRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[33]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2194,7 +2505,7 @@ func (x *WatchRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRunResponse.ProtoReflect.Descriptor instead.
 func (*WatchRunResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{33}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *WatchRunResponse) GetRun() *Run {
@@ -2213,7 +2524,7 @@ type ResumeRunRequest struct {
 
 func (x *ResumeRunRequest) Reset() {
 	*x = ResumeRunRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[34]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2225,7 +2536,7 @@ func (x *ResumeRunRequest) String() string {
 func (*ResumeRunRequest) ProtoMessage() {}
 
 func (x *ResumeRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[34]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2238,7 +2549,7 @@ func (x *ResumeRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRunRequest.ProtoReflect.Descriptor instead.
 func (*ResumeRunRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{34}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ResumeRunRequest) GetRunId() string {
@@ -2256,7 +2567,7 @@ type ResumeRunResponse struct {
 
 func (x *ResumeRunResponse) Reset() {
 	*x = ResumeRunResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[35]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2268,7 +2579,7 @@ func (x *ResumeRunResponse) String() string {
 func (*ResumeRunResponse) ProtoMessage() {}
 
 func (x *ResumeRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[35]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2281,7 +2592,7 @@ func (x *ResumeRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRunResponse.ProtoReflect.Descriptor instead.
 func (*ResumeRunResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{35}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{38}
 }
 
 type ParkRunRequest struct {
@@ -2294,7 +2605,7 @@ type ParkRunRequest struct {
 
 func (x *ParkRunRequest) Reset() {
 	*x = ParkRunRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[36]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2306,7 +2617,7 @@ func (x *ParkRunRequest) String() string {
 func (*ParkRunRequest) ProtoMessage() {}
 
 func (x *ParkRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[36]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2319,7 +2630,7 @@ func (x *ParkRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParkRunRequest.ProtoReflect.Descriptor instead.
 func (*ParkRunRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{36}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ParkRunRequest) GetRunId() string {
@@ -2344,7 +2655,7 @@ type ParkRunResponse struct {
 
 func (x *ParkRunResponse) Reset() {
 	*x = ParkRunResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[37]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2356,7 +2667,7 @@ func (x *ParkRunResponse) String() string {
 func (*ParkRunResponse) ProtoMessage() {}
 
 func (x *ParkRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[37]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2369,7 +2680,7 @@ func (x *ParkRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ParkRunResponse.ProtoReflect.Descriptor instead.
 func (*ParkRunResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{37}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{40}
 }
 
 type ConfirmRolloutRequest struct {
@@ -2381,7 +2692,7 @@ type ConfirmRolloutRequest struct {
 
 func (x *ConfirmRolloutRequest) Reset() {
 	*x = ConfirmRolloutRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[38]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2393,7 +2704,7 @@ func (x *ConfirmRolloutRequest) String() string {
 func (*ConfirmRolloutRequest) ProtoMessage() {}
 
 func (x *ConfirmRolloutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[38]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2406,7 +2717,7 @@ func (x *ConfirmRolloutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmRolloutRequest.ProtoReflect.Descriptor instead.
 func (*ConfirmRolloutRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{38}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ConfirmRolloutRequest) GetRunId() string {
@@ -2424,7 +2735,7 @@ type ConfirmRolloutResponse struct {
 
 func (x *ConfirmRolloutResponse) Reset() {
 	*x = ConfirmRolloutResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[39]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2436,7 +2747,7 @@ func (x *ConfirmRolloutResponse) String() string {
 func (*ConfirmRolloutResponse) ProtoMessage() {}
 
 func (x *ConfirmRolloutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[39]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2449,7 +2760,7 @@ func (x *ConfirmRolloutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmRolloutResponse.ProtoReflect.Descriptor instead.
 func (*ConfirmRolloutResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{39}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{42}
 }
 
 type RevertRunRequest struct {
@@ -2467,7 +2778,7 @@ type RevertRunRequest struct {
 
 func (x *RevertRunRequest) Reset() {
 	*x = RevertRunRequest{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[40]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2479,7 +2790,7 @@ func (x *RevertRunRequest) String() string {
 func (*RevertRunRequest) ProtoMessage() {}
 
 func (x *RevertRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[40]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2492,7 +2803,7 @@ func (x *RevertRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevertRunRequest.ProtoReflect.Descriptor instead.
 func (*RevertRunRequest) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{40}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *RevertRunRequest) GetRunId() string {
@@ -2540,7 +2851,7 @@ type RevertRunResponse struct {
 
 func (x *RevertRunResponse) Reset() {
 	*x = RevertRunResponse{}
-	mi := &file_godwit_v1_godwit_proto_msgTypes[41]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2552,7 +2863,7 @@ func (x *RevertRunResponse) String() string {
 func (*RevertRunResponse) ProtoMessage() {}
 
 func (x *RevertRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_godwit_v1_godwit_proto_msgTypes[41]
+	mi := &file_godwit_v1_godwit_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2565,7 +2876,7 @@ func (x *RevertRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevertRunResponse.ProtoReflect.Descriptor instead.
 func (*RevertRunResponse) Descriptor() ([]byte, []int) {
-	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{41}
+	return file_godwit_v1_godwit_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *RevertRunResponse) GetRunId() string {
@@ -2582,7 +2893,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x16godwit/v1/godwit.proto\x12\tgodwit.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"7\n" +
 	"\rMigrationFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04body\x18\x02 \x01(\tR\x04body\"\xe7\x03\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body\"\x80\x04\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06target\x18\x02 \x01(\tR\x06target\x12)\n" +
@@ -2602,7 +2913,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x04kind\x18\r \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +
 	"created_by\x18\x0e \x01(\tR\tcreatedBy\x12\x16\n" +
-	"\x06source\x18\x0f \x01(\tR\x06source\"\x90\x02\n" +
+	"\x06source\x18\x0f \x01(\tR\x06source\x12\x17\n" +
+	"\aplan_id\x18\x10 \x01(\tR\x06planId\"\xb3\x02\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -2613,7 +2925,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"vault_path\x18\x05 \x01(\tR\tvaultPath\x12%\n" +
 	"\x0evault_template\x18\x06 \x01(\tR\rvaultTemplate\x12!\n" +
 	"\flock_timeout\x18\a \x01(\tR\vlockTimeout\x12+\n" +
-	"\x11statement_timeout\x18\b \x01(\tR\x10statementTimeout\"\x18\n" +
+	"\x11statement_timeout\x18\b \x01(\tR\x10statementTimeout\x12!\n" +
+	"\frequire_plan\x18\t \x01(\bR\vrequirePlan\"\x18\n" +
 	"\x16RegisterTargetResponse\"\xe3\x02\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
@@ -2624,16 +2937,39 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\flock_timeout\x18\x06 \x01(\tR\vlockTimeout\x12+\n" +
 	"\x11statement_timeout\x18\a \x01(\tR\x10statementTimeout\x12+\n" +
 	"\x12allow_out_of_order\x18\b \x01(\bR\x0fallowOutOfOrder\x12\x16\n" +
-	"\x06source\x18\t \x01(\tR\x06source\"*\n" +
+	"\x06source\x18\t \x01(\tR\x06source\"C\n" +
 	"\x11CreateRunResponse\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\xf9\x01\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\"\xab\x02\n" +
 	"\x0ePlanRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
 	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\x12/\n" +
 	"\x13acknowledge_hazards\x18\x03 \x03(\tR\x12acknowledgeHazards\x12'\n" +
 	"\x0fskip_validation\x18\x04 \x01(\bR\x0eskipValidation\x12\x18\n" +
 	"\arollout\x18\x05 \x01(\tR\arollout\x12+\n" +
-	"\x12allow_out_of_order\x18\x06 \x01(\bR\x0fallowOutOfOrder\";\n" +
+	"\x12allow_out_of_order\x18\x06 \x01(\bR\x0fallowOutOfOrder\x12\x18\n" +
+	"\apersist\x18\a \x01(\bR\apersist\x12\x16\n" +
+	"\x06source\x18\b \x01(\tR\x06source\"\xdb\x01\n" +
+	"\x0fPlanObservation\x12!\n" +
+	"\fhistory_hash\x18\x01 \x01(\tR\vhistoryHash\x12-\n" +
+	"\x12schema_fingerprint\x18\x02 \x01(\tR\x11schemaFingerprint\x12#\n" +
+	"\rapplied_count\x18\x03 \x01(\x05R\fappliedCount\x12%\n" +
+	"\x0enewest_applied\x18\x04 \x01(\x03R\rnewestApplied\x12*\n" +
+	"\x02at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"\xbf\x01\n" +
+	"\tPlanStale\x12\x17\n" +
+	"\aplan_id\x18\x01 \x01(\tR\x06planId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12#\n" +
+	"\rhistory_added\x18\x03 \x03(\tR\fhistoryAdded\x12'\n" +
+	"\x0fhistory_removed\x18\x04 \x03(\tR\x0ehistoryRemoved\x12\x1f\n" +
+	"\vschema_diff\x18\x05 \x01(\tR\n" +
+	"schemaDiff\x12\x12\n" +
+	"\x04hint\x18\x06 \x01(\tR\x04hint\"\x81\x01\n" +
+	"\fPlanRequired\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12(\n" +
+	"\x10nearest_plan_ids\x18\x03 \x03(\tR\x0enearestPlanIds\x12\x1d\n" +
+	"\n" +
+	"files_diff\x18\x04 \x01(\tR\tfilesDiff\";\n" +
 	"\rPlannedHazard\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x16\n" +
 	"\x06detail\x18\x02 \x01(\tR\x06detail\"m\n" +
@@ -2649,14 +2985,18 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x05phase\x18\x05 \x01(\tR\x05phase\x12;\n" +
 	"\n" +
 	"statements\x18\x06 \x03(\v2\x1b.godwit.v1.PlannedStatementR\n" +
-	"statements\"\x9e\x01\n" +
+	"statements\"\xa0\x02\n" +
 	"\x0fPlanRunResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x18\n" +
 	"\arollout\x18\x02 \x01(\tR\arollout\x12;\n" +
 	"\n" +
 	"migrations\x18\x03 \x03(\v2\x1b.godwit.v1.PlannedMigrationR\n" +
 	"migrations\x12\x1c\n" +
-	"\tvalidated\x18\x04 \x01(\bR\tvalidated\"+\n" +
+	"\tvalidated\x18\x04 \x01(\bR\tvalidated\x12\x17\n" +
+	"\aplan_id\x18\x05 \x01(\tR\x06planId\x12\x19\n" +
+	"\bplan_key\x18\x06 \x01(\tR\aplanKey\x126\n" +
+	"\bobserved\x18\a \x01(\v2\x1a.godwit.v1.PlanObservationR\bobserved\x12\x14\n" +
+	"\x05drift\x18\b \x01(\tR\x05drift\"+\n" +
 	"\x11CheckDriftRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\"B\n" +
 	"\x12CheckDriftResponse\x12\x18\n" +
@@ -2796,7 +3136,7 @@ func file_godwit_v1_godwit_proto_rawDescGZIP() []byte {
 }
 
 var file_godwit_v1_godwit_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_godwit_v1_godwit_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
+var file_godwit_v1_godwit_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_godwit_v1_godwit_proto_goTypes = []any{
 	(RunState)(0),                   // 0: godwit.v1.RunState
 	(*MigrationFile)(nil),           // 1: godwit.v1.MigrationFile
@@ -2806,105 +3146,110 @@ var file_godwit_v1_godwit_proto_goTypes = []any{
 	(*CreateRunRequest)(nil),        // 5: godwit.v1.CreateRunRequest
 	(*CreateRunResponse)(nil),       // 6: godwit.v1.CreateRunResponse
 	(*PlanRunRequest)(nil),          // 7: godwit.v1.PlanRunRequest
-	(*PlannedHazard)(nil),           // 8: godwit.v1.PlannedHazard
-	(*PlannedStatement)(nil),        // 9: godwit.v1.PlannedStatement
-	(*PlannedMigration)(nil),        // 10: godwit.v1.PlannedMigration
-	(*PlanRunResponse)(nil),         // 11: godwit.v1.PlanRunResponse
-	(*CheckDriftRequest)(nil),       // 12: godwit.v1.CheckDriftRequest
-	(*CheckDriftResponse)(nil),      // 13: godwit.v1.CheckDriftResponse
-	(*ListDriftEventsRequest)(nil),  // 14: godwit.v1.ListDriftEventsRequest
-	(*DriftEvent)(nil),              // 15: godwit.v1.DriftEvent
-	(*ListDriftEventsResponse)(nil), // 16: godwit.v1.ListDriftEventsResponse
-	(*AcceptBaselineRequest)(nil),   // 17: godwit.v1.AcceptBaselineRequest
-	(*AcceptBaselineResponse)(nil),  // 18: godwit.v1.AcceptBaselineResponse
-	(*BaselineTargetRequest)(nil),   // 19: godwit.v1.BaselineTargetRequest
-	(*BaselineTargetResponse)(nil),  // 20: godwit.v1.BaselineTargetResponse
-	(*GetTargetStatusRequest)(nil),  // 21: godwit.v1.GetTargetStatusRequest
-	(*AppliedMigration)(nil),        // 22: godwit.v1.AppliedMigration
-	(*PendingMigration)(nil),        // 23: godwit.v1.PendingMigration
-	(*DriftBaseline)(nil),           // 24: godwit.v1.DriftBaseline
-	(*GetTargetStatusResponse)(nil), // 25: godwit.v1.GetTargetStatusResponse
-	(*ListAuditRequest)(nil),        // 26: godwit.v1.ListAuditRequest
-	(*AuditEntry)(nil),              // 27: godwit.v1.AuditEntry
-	(*ListAuditResponse)(nil),       // 28: godwit.v1.ListAuditResponse
-	(*GetRunRequest)(nil),           // 29: godwit.v1.GetRunRequest
-	(*GetRunResponse)(nil),          // 30: godwit.v1.GetRunResponse
-	(*ListRunsRequest)(nil),         // 31: godwit.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),        // 32: godwit.v1.ListRunsResponse
-	(*WatchRunRequest)(nil),         // 33: godwit.v1.WatchRunRequest
-	(*WatchRunResponse)(nil),        // 34: godwit.v1.WatchRunResponse
-	(*ResumeRunRequest)(nil),        // 35: godwit.v1.ResumeRunRequest
-	(*ResumeRunResponse)(nil),       // 36: godwit.v1.ResumeRunResponse
-	(*ParkRunRequest)(nil),          // 37: godwit.v1.ParkRunRequest
-	(*ParkRunResponse)(nil),         // 38: godwit.v1.ParkRunResponse
-	(*ConfirmRolloutRequest)(nil),   // 39: godwit.v1.ConfirmRolloutRequest
-	(*ConfirmRolloutResponse)(nil),  // 40: godwit.v1.ConfirmRolloutResponse
-	(*RevertRunRequest)(nil),        // 41: godwit.v1.RevertRunRequest
-	(*RevertRunResponse)(nil),       // 42: godwit.v1.RevertRunResponse
-	(*timestamppb.Timestamp)(nil),   // 43: google.protobuf.Timestamp
+	(*PlanObservation)(nil),         // 8: godwit.v1.PlanObservation
+	(*PlanStale)(nil),               // 9: godwit.v1.PlanStale
+	(*PlanRequired)(nil),            // 10: godwit.v1.PlanRequired
+	(*PlannedHazard)(nil),           // 11: godwit.v1.PlannedHazard
+	(*PlannedStatement)(nil),        // 12: godwit.v1.PlannedStatement
+	(*PlannedMigration)(nil),        // 13: godwit.v1.PlannedMigration
+	(*PlanRunResponse)(nil),         // 14: godwit.v1.PlanRunResponse
+	(*CheckDriftRequest)(nil),       // 15: godwit.v1.CheckDriftRequest
+	(*CheckDriftResponse)(nil),      // 16: godwit.v1.CheckDriftResponse
+	(*ListDriftEventsRequest)(nil),  // 17: godwit.v1.ListDriftEventsRequest
+	(*DriftEvent)(nil),              // 18: godwit.v1.DriftEvent
+	(*ListDriftEventsResponse)(nil), // 19: godwit.v1.ListDriftEventsResponse
+	(*AcceptBaselineRequest)(nil),   // 20: godwit.v1.AcceptBaselineRequest
+	(*AcceptBaselineResponse)(nil),  // 21: godwit.v1.AcceptBaselineResponse
+	(*BaselineTargetRequest)(nil),   // 22: godwit.v1.BaselineTargetRequest
+	(*BaselineTargetResponse)(nil),  // 23: godwit.v1.BaselineTargetResponse
+	(*GetTargetStatusRequest)(nil),  // 24: godwit.v1.GetTargetStatusRequest
+	(*AppliedMigration)(nil),        // 25: godwit.v1.AppliedMigration
+	(*PendingMigration)(nil),        // 26: godwit.v1.PendingMigration
+	(*DriftBaseline)(nil),           // 27: godwit.v1.DriftBaseline
+	(*GetTargetStatusResponse)(nil), // 28: godwit.v1.GetTargetStatusResponse
+	(*ListAuditRequest)(nil),        // 29: godwit.v1.ListAuditRequest
+	(*AuditEntry)(nil),              // 30: godwit.v1.AuditEntry
+	(*ListAuditResponse)(nil),       // 31: godwit.v1.ListAuditResponse
+	(*GetRunRequest)(nil),           // 32: godwit.v1.GetRunRequest
+	(*GetRunResponse)(nil),          // 33: godwit.v1.GetRunResponse
+	(*ListRunsRequest)(nil),         // 34: godwit.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),        // 35: godwit.v1.ListRunsResponse
+	(*WatchRunRequest)(nil),         // 36: godwit.v1.WatchRunRequest
+	(*WatchRunResponse)(nil),        // 37: godwit.v1.WatchRunResponse
+	(*ResumeRunRequest)(nil),        // 38: godwit.v1.ResumeRunRequest
+	(*ResumeRunResponse)(nil),       // 39: godwit.v1.ResumeRunResponse
+	(*ParkRunRequest)(nil),          // 40: godwit.v1.ParkRunRequest
+	(*ParkRunResponse)(nil),         // 41: godwit.v1.ParkRunResponse
+	(*ConfirmRolloutRequest)(nil),   // 42: godwit.v1.ConfirmRolloutRequest
+	(*ConfirmRolloutResponse)(nil),  // 43: godwit.v1.ConfirmRolloutResponse
+	(*RevertRunRequest)(nil),        // 44: godwit.v1.RevertRunRequest
+	(*RevertRunResponse)(nil),       // 45: godwit.v1.RevertRunResponse
+	(*timestamppb.Timestamp)(nil),   // 46: google.protobuf.Timestamp
 }
 var file_godwit_v1_godwit_proto_depIdxs = []int32{
 	0,  // 0: godwit.v1.Run.state:type_name -> godwit.v1.RunState
-	43, // 1: godwit.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	43, // 2: godwit.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
+	46, // 1: godwit.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	46, // 2: godwit.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: godwit.v1.CreateRunRequest.files:type_name -> godwit.v1.MigrationFile
 	1,  // 4: godwit.v1.PlanRunRequest.files:type_name -> godwit.v1.MigrationFile
-	8,  // 5: godwit.v1.PlannedStatement.hazards:type_name -> godwit.v1.PlannedHazard
-	9,  // 6: godwit.v1.PlannedMigration.statements:type_name -> godwit.v1.PlannedStatement
-	10, // 7: godwit.v1.PlanRunResponse.migrations:type_name -> godwit.v1.PlannedMigration
-	43, // 8: godwit.v1.DriftEvent.detected_at:type_name -> google.protobuf.Timestamp
-	43, // 9: godwit.v1.DriftEvent.resolved_at:type_name -> google.protobuf.Timestamp
-	15, // 10: godwit.v1.ListDriftEventsResponse.events:type_name -> godwit.v1.DriftEvent
-	1,  // 11: godwit.v1.BaselineTargetRequest.files:type_name -> godwit.v1.MigrationFile
-	1,  // 12: godwit.v1.GetTargetStatusRequest.files:type_name -> godwit.v1.MigrationFile
-	43, // 13: godwit.v1.AppliedMigration.applied_at:type_name -> google.protobuf.Timestamp
-	43, // 14: godwit.v1.DriftBaseline.taken_at:type_name -> google.protobuf.Timestamp
-	22, // 15: godwit.v1.GetTargetStatusResponse.applied:type_name -> godwit.v1.AppliedMigration
-	23, // 16: godwit.v1.GetTargetStatusResponse.pending:type_name -> godwit.v1.PendingMigration
-	2,  // 17: godwit.v1.GetTargetStatusResponse.last_run:type_name -> godwit.v1.Run
-	24, // 18: godwit.v1.GetTargetStatusResponse.drift_baseline:type_name -> godwit.v1.DriftBaseline
-	43, // 19: godwit.v1.AuditEntry.at:type_name -> google.protobuf.Timestamp
-	27, // 20: godwit.v1.ListAuditResponse.entries:type_name -> godwit.v1.AuditEntry
-	2,  // 21: godwit.v1.GetRunResponse.run:type_name -> godwit.v1.Run
-	2,  // 22: godwit.v1.ListRunsResponse.runs:type_name -> godwit.v1.Run
-	2,  // 23: godwit.v1.WatchRunResponse.run:type_name -> godwit.v1.Run
-	3,  // 24: godwit.v1.GodwitService.RegisterTarget:input_type -> godwit.v1.RegisterTargetRequest
-	5,  // 25: godwit.v1.GodwitService.CreateRun:input_type -> godwit.v1.CreateRunRequest
-	7,  // 26: godwit.v1.GodwitService.PlanRun:input_type -> godwit.v1.PlanRunRequest
-	29, // 27: godwit.v1.GodwitService.GetRun:input_type -> godwit.v1.GetRunRequest
-	31, // 28: godwit.v1.GodwitService.ListRuns:input_type -> godwit.v1.ListRunsRequest
-	33, // 29: godwit.v1.GodwitService.WatchRun:input_type -> godwit.v1.WatchRunRequest
-	35, // 30: godwit.v1.GodwitService.ResumeRun:input_type -> godwit.v1.ResumeRunRequest
-	37, // 31: godwit.v1.GodwitService.ParkRun:input_type -> godwit.v1.ParkRunRequest
-	39, // 32: godwit.v1.GodwitService.ConfirmRollout:input_type -> godwit.v1.ConfirmRolloutRequest
-	41, // 33: godwit.v1.GodwitService.RevertRun:input_type -> godwit.v1.RevertRunRequest
-	12, // 34: godwit.v1.GodwitService.CheckDrift:input_type -> godwit.v1.CheckDriftRequest
-	14, // 35: godwit.v1.GodwitService.ListDriftEvents:input_type -> godwit.v1.ListDriftEventsRequest
-	17, // 36: godwit.v1.GodwitService.AcceptBaseline:input_type -> godwit.v1.AcceptBaselineRequest
-	19, // 37: godwit.v1.GodwitService.BaselineTarget:input_type -> godwit.v1.BaselineTargetRequest
-	21, // 38: godwit.v1.GodwitService.GetTargetStatus:input_type -> godwit.v1.GetTargetStatusRequest
-	26, // 39: godwit.v1.GodwitService.ListAudit:input_type -> godwit.v1.ListAuditRequest
-	4,  // 40: godwit.v1.GodwitService.RegisterTarget:output_type -> godwit.v1.RegisterTargetResponse
-	6,  // 41: godwit.v1.GodwitService.CreateRun:output_type -> godwit.v1.CreateRunResponse
-	11, // 42: godwit.v1.GodwitService.PlanRun:output_type -> godwit.v1.PlanRunResponse
-	30, // 43: godwit.v1.GodwitService.GetRun:output_type -> godwit.v1.GetRunResponse
-	32, // 44: godwit.v1.GodwitService.ListRuns:output_type -> godwit.v1.ListRunsResponse
-	34, // 45: godwit.v1.GodwitService.WatchRun:output_type -> godwit.v1.WatchRunResponse
-	36, // 46: godwit.v1.GodwitService.ResumeRun:output_type -> godwit.v1.ResumeRunResponse
-	38, // 47: godwit.v1.GodwitService.ParkRun:output_type -> godwit.v1.ParkRunResponse
-	40, // 48: godwit.v1.GodwitService.ConfirmRollout:output_type -> godwit.v1.ConfirmRolloutResponse
-	42, // 49: godwit.v1.GodwitService.RevertRun:output_type -> godwit.v1.RevertRunResponse
-	13, // 50: godwit.v1.GodwitService.CheckDrift:output_type -> godwit.v1.CheckDriftResponse
-	16, // 51: godwit.v1.GodwitService.ListDriftEvents:output_type -> godwit.v1.ListDriftEventsResponse
-	18, // 52: godwit.v1.GodwitService.AcceptBaseline:output_type -> godwit.v1.AcceptBaselineResponse
-	20, // 53: godwit.v1.GodwitService.BaselineTarget:output_type -> godwit.v1.BaselineTargetResponse
-	25, // 54: godwit.v1.GodwitService.GetTargetStatus:output_type -> godwit.v1.GetTargetStatusResponse
-	28, // 55: godwit.v1.GodwitService.ListAudit:output_type -> godwit.v1.ListAuditResponse
-	40, // [40:56] is the sub-list for method output_type
-	24, // [24:40] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	46, // 5: godwit.v1.PlanObservation.at:type_name -> google.protobuf.Timestamp
+	11, // 6: godwit.v1.PlannedStatement.hazards:type_name -> godwit.v1.PlannedHazard
+	12, // 7: godwit.v1.PlannedMigration.statements:type_name -> godwit.v1.PlannedStatement
+	13, // 8: godwit.v1.PlanRunResponse.migrations:type_name -> godwit.v1.PlannedMigration
+	8,  // 9: godwit.v1.PlanRunResponse.observed:type_name -> godwit.v1.PlanObservation
+	46, // 10: godwit.v1.DriftEvent.detected_at:type_name -> google.protobuf.Timestamp
+	46, // 11: godwit.v1.DriftEvent.resolved_at:type_name -> google.protobuf.Timestamp
+	18, // 12: godwit.v1.ListDriftEventsResponse.events:type_name -> godwit.v1.DriftEvent
+	1,  // 13: godwit.v1.BaselineTargetRequest.files:type_name -> godwit.v1.MigrationFile
+	1,  // 14: godwit.v1.GetTargetStatusRequest.files:type_name -> godwit.v1.MigrationFile
+	46, // 15: godwit.v1.AppliedMigration.applied_at:type_name -> google.protobuf.Timestamp
+	46, // 16: godwit.v1.DriftBaseline.taken_at:type_name -> google.protobuf.Timestamp
+	25, // 17: godwit.v1.GetTargetStatusResponse.applied:type_name -> godwit.v1.AppliedMigration
+	26, // 18: godwit.v1.GetTargetStatusResponse.pending:type_name -> godwit.v1.PendingMigration
+	2,  // 19: godwit.v1.GetTargetStatusResponse.last_run:type_name -> godwit.v1.Run
+	27, // 20: godwit.v1.GetTargetStatusResponse.drift_baseline:type_name -> godwit.v1.DriftBaseline
+	46, // 21: godwit.v1.AuditEntry.at:type_name -> google.protobuf.Timestamp
+	30, // 22: godwit.v1.ListAuditResponse.entries:type_name -> godwit.v1.AuditEntry
+	2,  // 23: godwit.v1.GetRunResponse.run:type_name -> godwit.v1.Run
+	2,  // 24: godwit.v1.ListRunsResponse.runs:type_name -> godwit.v1.Run
+	2,  // 25: godwit.v1.WatchRunResponse.run:type_name -> godwit.v1.Run
+	3,  // 26: godwit.v1.GodwitService.RegisterTarget:input_type -> godwit.v1.RegisterTargetRequest
+	5,  // 27: godwit.v1.GodwitService.CreateRun:input_type -> godwit.v1.CreateRunRequest
+	7,  // 28: godwit.v1.GodwitService.PlanRun:input_type -> godwit.v1.PlanRunRequest
+	32, // 29: godwit.v1.GodwitService.GetRun:input_type -> godwit.v1.GetRunRequest
+	34, // 30: godwit.v1.GodwitService.ListRuns:input_type -> godwit.v1.ListRunsRequest
+	36, // 31: godwit.v1.GodwitService.WatchRun:input_type -> godwit.v1.WatchRunRequest
+	38, // 32: godwit.v1.GodwitService.ResumeRun:input_type -> godwit.v1.ResumeRunRequest
+	40, // 33: godwit.v1.GodwitService.ParkRun:input_type -> godwit.v1.ParkRunRequest
+	42, // 34: godwit.v1.GodwitService.ConfirmRollout:input_type -> godwit.v1.ConfirmRolloutRequest
+	44, // 35: godwit.v1.GodwitService.RevertRun:input_type -> godwit.v1.RevertRunRequest
+	15, // 36: godwit.v1.GodwitService.CheckDrift:input_type -> godwit.v1.CheckDriftRequest
+	17, // 37: godwit.v1.GodwitService.ListDriftEvents:input_type -> godwit.v1.ListDriftEventsRequest
+	20, // 38: godwit.v1.GodwitService.AcceptBaseline:input_type -> godwit.v1.AcceptBaselineRequest
+	22, // 39: godwit.v1.GodwitService.BaselineTarget:input_type -> godwit.v1.BaselineTargetRequest
+	24, // 40: godwit.v1.GodwitService.GetTargetStatus:input_type -> godwit.v1.GetTargetStatusRequest
+	29, // 41: godwit.v1.GodwitService.ListAudit:input_type -> godwit.v1.ListAuditRequest
+	4,  // 42: godwit.v1.GodwitService.RegisterTarget:output_type -> godwit.v1.RegisterTargetResponse
+	6,  // 43: godwit.v1.GodwitService.CreateRun:output_type -> godwit.v1.CreateRunResponse
+	14, // 44: godwit.v1.GodwitService.PlanRun:output_type -> godwit.v1.PlanRunResponse
+	33, // 45: godwit.v1.GodwitService.GetRun:output_type -> godwit.v1.GetRunResponse
+	35, // 46: godwit.v1.GodwitService.ListRuns:output_type -> godwit.v1.ListRunsResponse
+	37, // 47: godwit.v1.GodwitService.WatchRun:output_type -> godwit.v1.WatchRunResponse
+	39, // 48: godwit.v1.GodwitService.ResumeRun:output_type -> godwit.v1.ResumeRunResponse
+	41, // 49: godwit.v1.GodwitService.ParkRun:output_type -> godwit.v1.ParkRunResponse
+	43, // 50: godwit.v1.GodwitService.ConfirmRollout:output_type -> godwit.v1.ConfirmRolloutResponse
+	45, // 51: godwit.v1.GodwitService.RevertRun:output_type -> godwit.v1.RevertRunResponse
+	16, // 52: godwit.v1.GodwitService.CheckDrift:output_type -> godwit.v1.CheckDriftResponse
+	19, // 53: godwit.v1.GodwitService.ListDriftEvents:output_type -> godwit.v1.ListDriftEventsResponse
+	21, // 54: godwit.v1.GodwitService.AcceptBaseline:output_type -> godwit.v1.AcceptBaselineResponse
+	23, // 55: godwit.v1.GodwitService.BaselineTarget:output_type -> godwit.v1.BaselineTargetResponse
+	28, // 56: godwit.v1.GodwitService.GetTargetStatus:output_type -> godwit.v1.GetTargetStatusResponse
+	31, // 57: godwit.v1.GodwitService.ListAudit:output_type -> godwit.v1.ListAuditResponse
+	42, // [42:58] is the sub-list for method output_type
+	26, // [26:42] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_godwit_v1_godwit_proto_init() }
@@ -2918,7 +3263,7 @@ func file_godwit_v1_godwit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_godwit_v1_godwit_proto_rawDesc), len(file_godwit_v1_godwit_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   42,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

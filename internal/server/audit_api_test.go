@@ -69,7 +69,7 @@ func TestAuditEndToEnd(t *testing.T) {
 		t.Fatalf("audit:\n got %s\nwant %s", strings.Join(got, "|"), want)
 	}
 	createEntry, revertEntry := all.Msg.Entries[2], all.Msg.Entries[1]
-	if createEntry.RunId != run.Id || createEntry.Detail != "rollout=direct migrations=1 acked= source="+source {
+	if createEntry.RunId != run.Id || createEntry.Detail != "rollout=direct migrations=1 acked= source="+source+" plan=" {
 		t.Fatalf("create entry = %+v", createEntry)
 	}
 	if revertEntry.RunId != reverted.Msg.RunId || revertEntry.Detail != "reverts="+run.Id+" acked=H002" {
@@ -78,7 +78,7 @@ func TestAuditEndToEnd(t *testing.T) {
 	if all.Msg.Entries[0].RunId != baselined.Msg.RunId || all.Msg.Entries[0].Detail != "version=1 migrations=1" {
 		t.Fatalf("baseline entry = %+v", all.Msg.Entries[0])
 	}
-	if all.Msg.Entries[4].Detail != "provider=static lock_timeout= statement_timeout=" {
+	if all.Msg.Entries[4].Detail != "provider=static lock_timeout= statement_timeout= require_plan=false" {
 		t.Fatalf("register entry = %+v", all.Msg.Entries[4])
 	}
 

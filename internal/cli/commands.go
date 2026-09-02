@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 
+	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -54,12 +55,59 @@ type planItem struct {
 	phase   string
 }
 
+type planObservation struct {
+	HistoryHash       string `json:"history_hash"`
+	SchemaFingerprint string `json:"schema_fingerprint"`
+	AppliedCount      int32  `json:"applied_count"`
+	NewestApplied     int64  `json:"newest_applied"`
+	At                string `json:"at"`
+}
+
 type planReport struct {
 	live      bool
 	target    string
 	rollout   string
 	validated bool
+	planID    string
+	planKey   string
+	observed  *planObservation
+	drift     string
 	items     []planItem
+}
+
+func (r planReport) headline() string {
+	if r.planID != "" {
+		return fmt.Sprintf("plan %s on %s (rollout %s, %s)", r.planID, r.target, r.rollout, validatedLabel(r.validated))
+	}
+
+	return fmt.Sprintf("dry run on %s (rollout %s, %s)", r.target, r.rollout, validatedLabel(r.validated))
+}
+
+func (r planReport) contract() []string {
+	if r.planID == "" {
+		return nil
+	}
+	lines := []string{"key: " + r.planKey}
+	if o := r.observed; o != nil {
+		lines = append(lines, fmt.Sprintf("observed: %d applied, newest %d, history %s, schema %s, at %s",
+			o.AppliedCount, o.NewestApplied, o.HistoryHash, o.SchemaFingerprint, o.At))
+	}
+
+	return lines
+}
+
+func (r planReport) driftBlock(indent, open, close string) string {
+	if r.drift == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("drift since baseline:\n" + open)
+	for _, l := range strings.Split(r.drift, "\n") {
+		b.WriteString(indent + l + "\n")
+	}
+	b.WriteString(close)
+
+	return b.String()
 }
 
 var planFormats = map[string]func(io.Writer, planReport){
@@ -70,14 +118,25 @@ var planFormats = map[string]func(io.Writer, planReport){
 
 func newPlanCmd() *cobra.Command {
 	flags := &targetFlags{}
+	remote := &clientFlags{}
+	req := &godwitv1.PlanRunRequest{}
 	var format string
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Parse migrations and print classified statements with hazards",
+		Short: "Parse migrations and print classified statements with hazards; with --target, store the plan on the service",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			write, ok := planFormats[format]
 			if !ok {
 				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			}
+			if req.Target != "" {
+				files, err := migrationFiles(flags.dir)
+				if err != nil {
+					return err
+				}
+				req.Files = files
+
+				return remote.persistPlan(cmd, req, write)
 			}
 			migs, err := engine.LoadDir(flags.dir)
 			if err != nil {
@@ -99,14 +158,26 @@ func newPlanCmd() *cobra.Command {
 		},
 	}
 	flags.register(cmd, false)
+	remote.register(cmd)
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
+	cmd.Flags().StringVar(&req.Target, "target", "", "target name; plans against the live database and stores the plan on the service")
+	cmd.Flags().StringVar(&req.Rollout, "rollout", "direct", "rollout policy: direct or expand-contract")
+	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
+	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
+	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "plan pending versions older than the newest applied one instead of refusing them")
+	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the plan (e.g. github.com/org/repo@<sha>:db/migrations)")
+	configKeys(cmd, "target", "rollout", "allow-out-of-order")
 
 	return cmd
 }
 
 func writePlanText(w io.Writer, r planReport) {
 	if r.live {
-		fmt.Fprintf(w, "dry run on %s (rollout %s, %s)\n", r.target, r.rollout, validatedLabel(r.validated))
+		fmt.Fprintln(w, r.headline())
+		for _, l := range r.contract() {
+			fmt.Fprintln(w, l)
+		}
+		fmt.Fprint(w, r.driftBlock("  ", "", ""))
 	}
 	for _, p := range r.items {
 		fmt.Fprintf(w, "%d_%s (%s): %d statement(s)%s\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements), p.liveSuffix())
@@ -121,9 +192,17 @@ func writePlanText(w io.Writer, r planReport) {
 
 func writePlanMarkdown(w io.Writer, r planReport) {
 	if r.live {
-		fmt.Fprintln(w, "## godwit dry run")
+		fmt.Fprintln(w, "## godwit "+r.kind())
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "Target `%s`, rollout `%s`, %s.\n", r.target, r.rollout, validatedLabel(r.validated))
+		for _, l := range r.contract() {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, l)
+		}
+		if block := r.driftBlock("", "\n```diff\n", "```\n"); block != "" {
+			fmt.Fprintln(w)
+			fmt.Fprint(w, block)
+		}
 	} else {
 		fmt.Fprintln(w, "## godwit plan")
 	}
@@ -153,6 +232,14 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 		return
 	}
 	fmt.Fprintln(w, "✅ no hazards")
+}
+
+func (r planReport) kind() string {
+	if r.planID != "" {
+		return "plan " + r.planID
+	}
+
+	return "dry run"
 }
 
 func validatedLabel(validated bool) string {
@@ -241,10 +328,14 @@ type livePlanJSON struct {
 }
 
 type dryRunJSON struct {
-	Target     string         `json:"target"`
-	Rollout    string         `json:"rollout"`
-	Validated  bool           `json:"validated"`
-	Migrations []livePlanJSON `json:"migrations"`
+	Target     string           `json:"target"`
+	Rollout    string           `json:"rollout"`
+	Validated  bool             `json:"validated"`
+	PlanID     string           `json:"plan_id,omitempty"`
+	PlanKey    string           `json:"plan_key,omitempty"`
+	Observed   *planObservation `json:"observed,omitempty"`
+	Drift      string           `json:"drift,omitempty"`
+	Migrations []livePlanJSON   `json:"migrations"`
 }
 
 func toPlanJSON(p engine.Plan) planJSON {
@@ -263,7 +354,10 @@ func toPlanJSON(p engine.Plan) planJSON {
 func writePlanJSON(w io.Writer, r planReport) {
 	var out any
 	if r.live {
-		live := dryRunJSON{Target: r.target, Rollout: r.rollout, Validated: r.validated, Migrations: []livePlanJSON{}}
+		live := dryRunJSON{
+			Target: r.target, Rollout: r.rollout, Validated: r.validated, Migrations: []livePlanJSON{},
+			PlanID: r.planID, PlanKey: r.planKey, Observed: r.observed, Drift: r.drift,
+		}
 		for _, p := range r.items {
 			live.Migrations = append(live.Migrations, livePlanJSON{planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase})
 		}

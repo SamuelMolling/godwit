@@ -85,6 +85,7 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.SecretPath, "secret-path", "", "mounted secret file (kubernetes provider)")
 	cmd.Flags().StringVar(&req.VaultPath, "vault-path", "", "Vault secret path under /v1 (vault provider)")
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
+	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for runs on this target")
 	_ = cmd.MarkFlagRequired("provider")
 
@@ -120,6 +121,9 @@ func newMigrateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !flags.json {
+				fmt.Fprintln(cmd.OutOrStdout(), bindLine(created.Msg.PlanId))
+			}
 
 			return flags.watch(cmd, client, created.Msg.RunId)
 		}),
@@ -140,6 +144,14 @@ func newMigrateCmd() *cobra.Command {
 	return cmd
 }
 
+func bindLine(planID string) string {
+	if planID == "" {
+		return "no stored plan for this set: implicit plan"
+	}
+
+	return "plan " + planID + ": bound"
+}
+
 func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, req *godwitv1.CreateRunRequest, write func(io.Writer, planReport)) error {
 	res, err := client.PlanRun(cmd.Context(), connect.NewRequest(&godwitv1.PlanRunRequest{
 		Target: req.Target, Files: req.Files, AcknowledgeHazards: req.AcknowledgeHazards, SkipValidation: req.SkipValidation,
@@ -158,8 +170,37 @@ func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitSe
 	return nil
 }
 
+func (f *clientFlags) persistPlan(cmd *cobra.Command, req *godwitv1.PlanRunRequest, write func(io.Writer, planReport)) error {
+	client, err := f.client()
+	if err != nil {
+		return err
+	}
+	req.Persist = true
+	res, err := client.PlanRun(cmd.Context(), connect.NewRequest(req))
+	if err != nil {
+		return apiError(err)
+	}
+	if f.json {
+		f.print(cmd, res.Msg, "")
+
+		return nil
+	}
+	write(cmd.OutOrStdout(), planReportFromProto(res.Msg))
+
+	return nil
+}
+
 func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
-	r := planReport{live: true, target: m.Target, rollout: m.Rollout, validated: m.Validated, items: make([]planItem, 0, len(m.Migrations))}
+	r := planReport{
+		live: true, target: m.Target, rollout: m.Rollout, validated: m.Validated, items: make([]planItem, 0, len(m.Migrations)),
+		planID: m.PlanId, planKey: m.PlanKey, drift: m.Drift,
+	}
+	if m.Observed != nil {
+		r.observed = &planObservation{
+			HistoryHash: m.Observed.HistoryHash, SchemaFingerprint: m.Observed.SchemaFingerprint,
+			AppliedCount: m.Observed.AppliedCount, NewestApplied: m.Observed.NewestApplied, At: stamp(m.Observed.At),
+		}
+	}
 	for _, pm := range m.Migrations {
 		p := engine.Plan{
 			Migration: engine.Migration{Version: pm.Version, Name: pm.Name, Checksum: pm.Checksum},

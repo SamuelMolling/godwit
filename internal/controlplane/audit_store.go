@@ -18,6 +18,8 @@ const (
 	AuditRunPark        = "run.park"
 	AuditRunConfirm     = "run.confirm"
 	AuditDriftAccept    = "drift.accept"
+	AuditPlanCreate     = "plan.create"
+	AuditPlanSupersede  = "plan.supersede"
 )
 
 // AuditEntry is one recorded mutation: who did what to which target or run.

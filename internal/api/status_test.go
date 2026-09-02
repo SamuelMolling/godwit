@@ -16,11 +16,16 @@ import (
 
 type stubInspector struct {
 	status controlplane.TargetStatus
+	obs    controlplane.Observation
 	err    error
 }
 
 func (i stubInspector) Status(context.Context, string) (controlplane.TargetStatus, error) {
 	return i.status, i.err
+}
+
+func (i stubInspector) Observe(context.Context, string) (controlplane.Observation, error) {
+	return i.obs, i.err
 }
 
 func TestGetTargetStatus(t *testing.T) {
