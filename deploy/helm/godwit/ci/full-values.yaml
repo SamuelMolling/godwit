@@ -1,0 +1,101 @@
+replicaCount: 3
+image:
+  repository: registry.example.com/platform/godwit
+  tag: 0.0.1-rc1
+imagePullSecrets:
+  - name: registry-pull
+existingSecret:
+  name: godwit-credentials
+  keys:
+    masterKey: master-key
+    tokens: tokens
+    storeDSN: store-dsn
+serve:
+  port: 9000
+  driftInterval: 1m
+  skipValidation: true
+  logFormat: text
+  logLevel: debug
+  extraArgs: ["--drift-interval=2m"]
+vault:
+  addr: https://vault.example.com
+  k8sRole: godwit
+  k8sMount: kubernetes-prod
+  tokenSecret:
+    name: godwit-vault
+    key: token
+notifications:
+  webhookUrl: https://hooks.example.com/godwit
+extraEnv:
+  - name: HTTPS_PROXY
+    value: http://proxy:3128
+extraEnvFrom:
+  - secretRef:
+      name: godwit-extra
+extraVolumes:
+  - name: orders-dsn
+    secret:
+      secretName: orders-dsn
+extraVolumeMounts:
+  - name: orders-dsn
+    mountPath: /secrets/orders
+    readOnly: true
+serviceAccount:
+  name: godwit-sa
+  annotations:
+    iam.gke.io/gcp-service-account: godwit@project.iam.gserviceaccount.com
+podAnnotations:
+  prometheus.io/scrape: "false"
+podLabels:
+  team: dbre
+service:
+  type: ClusterIP
+  port: 80
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+  hosts:
+    - host: godwit.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: godwit-tls
+      hosts: [godwit.example.com]
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  scrapeTimeout: 5s
+  labels:
+    release: kube-prometheus-stack
+  relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+podDisruptionBudget:
+  minAvailable: 2
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: platform
+    effect: NoSchedule
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: godwit
+podAntiAffinity: hard

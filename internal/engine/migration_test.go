@@ -31,6 +31,9 @@ func TestLoadDir(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("subdir", filepath.Join(dir, "..data")); err != nil {
+		t.Fatal(err)
+	}
 
 	migs, err := LoadDir(dir)
 	if err != nil {

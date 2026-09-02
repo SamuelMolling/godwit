@@ -468,6 +468,53 @@ func TestRunResumeAndConfirm(t *testing.T) {
 	}
 }
 
+func TestRunConfirmLatest(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{runs: []*godwitv1.Run{
+		run("r3", godwitv1.RunState_RUN_STATE_SUCCEEDED, 1),
+		run("r2", godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, 1),
+		run("r1", godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, 1),
+	}}
+	url := startStub(t, stub)
+
+	code, out, _ := runCLI("run", "confirm", "--latest", "--target", "app", "--server", url)
+	if code != 0 || out != "run r2: contract confirmed\n" || stub.confirmed != "r2" || stub.listed.Target != "app" {
+		t.Fatalf("code = %d, out = %q, confirmed = %q, listed = %v", code, out, stub.confirmed, stub.listed)
+	}
+
+	for _, tc := range []struct{ args, want string }{
+		{"r1 --latest --target app", "pass a run id or --latest, not both"},
+		{"--latest", "--latest requires --target (or target in godwit.yaml)"},
+		{"", "a run id or --latest is required"},
+	} {
+		args := append([]string{"run", "confirm"}, strings.Fields(tc.args)...)
+		code, _, errOut := runCLI(append(args, "--server", url)...)
+		if code != 1 || errOut != "godwit: "+tc.want+"\n" {
+			t.Fatalf("%q: code = %d, stderr = %q", tc.args, code, errOut)
+		}
+	}
+
+	stub.runs = stub.runs[:1]
+	code, _, errOut := runCLI("run", "confirm", "--latest", "--target", "app", "--server", url)
+	if code != 1 || errOut != "godwit: target app: no run awaiting contract\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	stub.confirmed = ""
+	code, out, _ = runCLI("run", "confirm", "--latest", "--target", "app", "--allow-none", "--server", url)
+	if code != 0 || out != "target app: no run awaiting contract\n" || stub.confirmed != "" {
+		t.Fatalf("code = %d, out = %q, confirmed = %q", code, out, stub.confirmed)
+	}
+	code, out, _ = runCLI("run", "confirm", "--latest", "--target", "app", "--allow-none", "--json", "--server", url)
+	if code != 0 || len(decodeJSON(t, out)["runs"].([]any)) != 1 {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	stub.err = connect.NewError(connect.CodeUnavailable, errors.New("store down"))
+	if code, _, errOut := runCLI("run", "confirm", "--latest", "--target", "app", "--server", url); code != 1 || errOut != "godwit: store down\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
 func TestRuns(t *testing.T) {
 	t.Parallel()
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)

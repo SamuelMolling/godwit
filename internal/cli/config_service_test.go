@@ -39,6 +39,9 @@ func TestConfigFileDrivesServiceCommands(t *testing.T) {
 	if code, _, errOut := runCLI("runs"); code != 0 || stub.listed.Target != "" {
 		t.Fatalf("runs: code = %d, stderr = %s, filter = %q", code, errOut, stub.listed.Target)
 	}
+	if code, out, errOut := runCLI("run", "confirm", "--latest", "--allow-none"); code != 0 || out != "target orders: no run awaiting contract\n" {
+		t.Fatalf("confirm: code = %d, out = %q, stderr = %s", code, out, errOut)
+	}
 	if code, _, errOut := runCLI("lint"); code != 1 || !strings.Contains(errOut, "blocking") {
 		t.Fatalf("lint must read dir from the file: code = %d, stderr = %s", code, errOut)
 	}

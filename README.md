@@ -31,6 +31,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
 | Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
 | Logging | Structured `slog` output (JSON or text, level control) with one key set across the service: every API call, run lifecycle, per-statement timing, drift checks. Never a DSN, token, secret or SQL body. |
+| Deploy | Helm chart (two replicas, probes, PDB, ServiceMonitor, Ingress) and ArgoCD PreSync/PostSync hook examples — see [Deploy](#deploy). |
 
 ## Hazards
 
@@ -98,10 +99,10 @@ One binary, two modes. Local commands talk to a database directly (dev loop, no 
 |---|---|
 | `plan [--format markdown]` — classify statements, show hazards; `lint [--base origin/main] [--format markdown]` — PR gate, exit 1 on unacked hazards or edited migrations | `target add <name> --provider static\|kubernetes\|vault` |
 | `apply` — apply pending migrations | `migrate --target <t> [--dir] [--rollout] [--ack H001,H003] [--skip-validation]` |
-| `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `runs [--target]` |
+| `status` — applied state per migration | `revert <run-id>`, `run get\|watch\|resume\|confirm <id>`, `run confirm --latest --target <t> [--allow-none]`, `runs [--target]` |
 | `down --version <v> --yes` — revert one (dev only) | `drift check\|accept <target>` |
 
-`--server` and `--token` fall back to `GODWIT_SERVER` and `GODWIT_TOKEN`; `--json` prints the raw API response. `migrate` and `revert` stream the run until it settles and exit 0 on `succeeded`/`awaiting_contract`, 1 on `failed`/`needs_attention`.
+`--server` and `--token` fall back to `GODWIT_SERVER` and `GODWIT_TOKEN`; `--json` prints the raw API response. `migrate` and `revert` stream the run until it settles and exit 0 on `succeeded`/`awaiting_contract`, 1 on `failed`/`needs_attention`. `run confirm --latest` confirms the newest run on the target still in `awaiting_contract` when no run id is at hand (a PostSync hook, a shell); it fails when there is none unless `--allow-none` makes that a no-op.
 
 ```bash
 export GODWIT_SERVER=https://godwit.internal GODWIT_TOKEN=$CI_TOKEN
@@ -142,6 +143,12 @@ steps:
 Inputs: `command` (`lint`|`plan`|`migrate`), `dir`, `base`, `ack`, `server`, `token`, `target`, `rollout`, `comment` (`true`), `github-token`, `go-version` (`1.26`). Anything left empty falls back to `godwit.yaml`. Outputs: `run-id`, `blocking`, `summary-path`. The runner needs `gcc` (cgo), `jq` and `gh` — all present on `ubuntu-latest`.
 
 Until the repository goes public only the owner's repositories can `uses:` it; anywhere else, `go install github.com/SamuelMolling/godwit/cmd/godwit@main` and call the same commands (`--format markdown` on `lint` and `plan`).
+
+## Deploy
+
+[deploy/helm/godwit](deploy/helm/godwit) runs the service on Kubernetes: two replicas, credentials from an existing Secret, `/readyz` and `/healthz` probes, a PodDisruptionBudget, optional ServiceMonitor and Ingress. Build the image with `docker build -t <registry>/godwit:<tag> .` and push it to your registry; there is no public image yet. `make helm-lint` lints and renders the chart with default and full values.
+
+[deploy/argocd](deploy/argocd) wraps an application's sync with `godwit migrate --rollout expand-contract` as a PreSync hook and `godwit run confirm --latest --allow-none` as PostSync, so the contract phase is released only after the new pods are healthy.
 
 ## Metrics
 
