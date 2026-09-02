@@ -1,0 +1,66 @@
+name: migrate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - db/migrations/**   # your migration directory
+      - godwit.yaml
+
+permissions:
+  contents: read
+
+concurrency: migrate-orders   # one pipeline per target at a time
+
+jobs:
+  expand:
+    runs-on: ubuntu-latest
+    outputs:
+      run-id: ${{ steps.migrate.outputs.run-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Queue the run (expand phase applies now, contract waits)
+        id: migrate
+        uses: SamuelMolling/godwit@main
+        with:
+          command: migrate
+          dir: db/migrations                            # drop when godwit.yaml sets dir
+          server: https://godwit.internal               # your godwit service URL
+          token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}   # token with the pipeline scope
+          target: orders                                # target registered on the service
+          rollout: expand-contract
+          # Provenance stored on the run; this is also the default when omitted.
+          source: ${{ github.server_url }}/${{ github.repository }}@${{ github.sha }}:db/migrations
+
+      - run: echo "run ${{ steps.migrate.outputs.run-id }}"
+
+  contract:
+    needs: expand
+    runs-on: ubuntu-latest
+    # A GitHub environment with required reviewers turns this job into a manual gate:
+    # approve it once the application version that handles both schemas is deployed.
+    environment: production-contract
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: SamuelMolling/godwit
+          ref: main
+          path: .godwit
+          # token: ${{ secrets.GODWIT_REPO_TOKEN }}   # only when the godwit repository is private for this workflow
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: .godwit/go.sum
+
+      - name: Build the godwit CLI
+        working-directory: .godwit
+        run: CGO_ENABLED=1 go build -o "${RUNNER_TEMP}/godwit" ./cmd/godwit
+
+      - name: Confirm the contract phase of run ${{ needs.expand.outputs.run-id }}
+        env:
+          GODWIT_SERVER: https://godwit.internal               # your godwit service URL
+          GODWIT_TOKEN: ${{ secrets.GODWIT_TOKEN_PIPELINE }}   # token with the pipeline scope
+        run: |
+          "${RUNNER_TEMP}/godwit" run confirm --latest --allow-none --target orders

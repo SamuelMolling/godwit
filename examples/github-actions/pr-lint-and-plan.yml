@@ -1,0 +1,31 @@
+name: migrations
+
+on:
+  pull_request:
+    paths:
+      - db/migrations/**   # your migration directory
+      - godwit.yaml
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint migrations added since main
+        uses: SamuelMolling/godwit@main
+        with:
+          command: lint
+          dir: db/migrations   # drop when godwit.yaml sets dir
+          base: origin/main    # the branch pull requests merge into
+          # ack: H003          # hazard codes reviewed and accepted on purpose
+
+      - name: Plan (offline, no service)
+        uses: SamuelMolling/godwit@main
+        with:
+          command: plan
+          dir: db/migrations
