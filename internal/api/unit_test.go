@@ -109,10 +109,10 @@ func TestCheckHazards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkHazards([]engine.Plan{p}, nil); err == nil || !strings.Contains(err.Error(), "H002") {
+	if err := NewServer(nil, nil, nil, nil).checkHazards([]engine.Plan{p}, nil); err == nil || !strings.Contains(err.Error(), "H002") {
 		t.Fatalf("err = %v", err)
 	}
-	if err := checkHazards([]engine.Plan{p}, []string{"H002"}); err != nil {
+	if err := NewServer(nil, nil, nil, nil).checkHazards([]engine.Plan{p}, []string{"H002"}); err != nil {
 		t.Fatalf("acked: %v", err)
 	}
 }

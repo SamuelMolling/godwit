@@ -105,14 +105,14 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("lease should be gone: err = %v", err)
 	}
 
-	if err := s.Resume(ctx, r.ID); err != nil {
+	if _, err := s.Resume(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	r, _ = s.Run(ctx, r.ID)
 	if r.State != StateQueued || r.Attempts != 0 || r.Error != "" {
 		t.Fatalf("resumed run = %+v", r)
 	}
-	if err := s.Resume(ctx, r.ID); !errors.Is(err, ErrNotResumable) {
+	if _, err := s.Resume(ctx, r.ID); !errors.Is(err, ErrNotResumable) {
 		t.Fatalf("resume queued: err = %v", err)
 	}
 
@@ -176,7 +176,7 @@ func TestCreateRevert(t *testing.T) {
 	if r, _ = s.Run(ctx, second); r.State != StateSucceeded {
 		t.Fatalf("failed revert must leave the original alone: %+v", r)
 	}
-	if err := s.Resume(ctx, revert); err != nil {
+	if _, err := s.Resume(ctx, revert); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Finish(ctx, revert, StateSucceeded, ""); err != nil {
@@ -300,7 +300,10 @@ func TestStoreQueryErrors(t *testing.T) {
 	if err := s.Finish(ctx, "id", StateFailed, ""); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.Resume(ctx, "id"); err == nil {
+	if _, err := s.Resume(ctx, "id"); err == nil {
+		t.Fatal("want error")
+	}
+	if _, err := s.RunStats(ctx); err == nil {
 		t.Fatal("want error")
 	}
 	if err := s.CreateRevert(ctx, "id", "id"); err == nil {

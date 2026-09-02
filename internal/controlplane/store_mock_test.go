@@ -50,3 +50,17 @@ func TestRunFilesRowError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRunStatsRowError(t *testing.T) {
+	t.Parallel()
+	mock, s := newMockStore(t)
+
+	mock.ExpectQuery("SELECT target, state, count").
+		WillReturnRows(pgxmock.NewRows([]string{"target", "state", "count", "extract"}).
+			AddRow("app", StateQueued, 1, 0.5).RowError(0, errBoom))
+
+	if _, err := s.RunStats(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "read run stats") {
+		t.Fatalf("err = %v", err)
+	}
+}

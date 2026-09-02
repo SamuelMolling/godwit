@@ -114,10 +114,14 @@ func TestStatementFailureMarksRun(t *testing.T) {
 		Version: 1, Name: "bad", Checksum: "c",
 		UpSQL: "CREATE TABLE ok (id int);\nSELECT 1/0;", DownSQL: "DROP TABLE ok;",
 	}
-	exec := New(conn, Options{})
+	var events []StatementEvent
+	exec := New(conn, Options{}, WithObserver(func(ev StatementEvent) { events = append(events, ev) }))
 	if _, err := exec.Up(ctx, buildPlanT(t, m, DirectionUp)); err == nil ||
 		!strings.Contains(err.Error(), "statement 1") {
 		t.Fatalf("err = %v", err)
+	}
+	if len(events) != 2 || events[0].Err != nil || events[1].Index != 1 || events[1].Err == nil {
+		t.Fatalf("events = %+v", events)
 	}
 
 	var state, errText string

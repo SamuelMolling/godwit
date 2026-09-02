@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,7 +116,8 @@ func TestAPIResumeAndParkFlow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	storeDSN := newDatabase(t, "st")
-	client := newClient(startService(t, storeDSN, "r1", nil), "")
+	baseURL := startService(t, storeDSN, "r1", nil)
+	client := newClient(baseURL, "")
 
 	targetDSN := newDatabase(t, "tg")
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
@@ -163,6 +167,36 @@ func TestAPIResumeAndParkFlow(t *testing.T) {
 	if parked.Error != "manual hold" {
 		t.Fatalf("parked error = %q", parked.Error)
 	}
+
+	body := scrapeMetrics(t, baseURL)
+	for _, want := range []string{
+		`godwit_runs{state="needs_attention",target="app"} 1`,
+		`godwit_run_age_seconds{state="needs_attention",target="app"}`,
+		`godwit_run_resumes_total{source="manual",target="app"} 1`,
+		`godwit_run_duration_seconds_count{result="failed",target="app"} 2`,
+		`godwit_statement_failures_total{reason="sqlstate_22012",target="app"} 2`,
+		`godwit_api_requests_total{code="ok",method="ResumeRun"} 1`,
+		`godwit_api_requests_total{code="ok",method="CreateRun"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func scrapeMetrics(t *testing.T, baseURL string) string {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, err = %v", resp.StatusCode, err)
+	}
+
+	return string(body)
 }
 
 func TestAPIStreamingAuthAndCancel(t *testing.T) {

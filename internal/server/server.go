@@ -16,6 +16,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
@@ -49,10 +50,14 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	store := controlplane.NewStore(pool)
 
+	m := metrics.New()
+	m.WatchRuns(store.RunStats)
+
 	cfg.Scheduler.Holder = cfg.Holder
-	eng := controlplane.PGEngine{}
+	eng := controlplane.PGEngine{Metrics: m}
 	sched := controlplane.NewScheduler(store, creds.Registry(cfg.MasterKey),
 		eng, controlplane.Policies(), cfg.Scheduler, cfg.Log)
+	sched.Metrics = m
 	go sched.Run(ctx)
 
 	var notifier notify.Notifier = notify.None{}
@@ -77,8 +82,10 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.OnReady(ln.Addr())
 	}
 
+	apiSrv := api.NewServer(store, drift, validator, cfg.MasterKey)
+	apiSrv.Metrics = m
 	srv := &http.Server{
-		Handler:           api.Handler(api.NewServer(store, drift, validator, cfg.MasterKey), cfg.Tokens),
+		Handler:           api.Handler(apiSrv, cfg.Tokens),
 		ReadHeaderTimeout: 10 * time.Second,
 		Protocols:         h2cProtocols(),
 	}

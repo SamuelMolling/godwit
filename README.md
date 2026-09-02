@@ -29,6 +29,7 @@ Meanwhile there is **no Backstage plugin for database migrations at all** — ev
 | Credentials | Pluggable providers: `static` (AES-GCM-encrypted in the store), `kubernetes` (mounted secret) and `vault` (KV or dynamic database credentials, token or Kubernetes auth). |
 | API | gRPC and JSON over one connect endpoint, bearer-token auth, `WatchRun` streaming. |
 | CLI | The same binary drives the service: `godwit migrate` streams a run to completion with pipeline exit codes; `target`, `run`, `runs`, `revert` and `drift` cover the rest. |
+| Metrics | Prometheus on `/metrics`: runs per state with age, resumes by source, attempts, run and statement latency, lock/statement timeouts, hazards, validation refusals, drift outcomes, API calls. |
 
 ## Rollout policies
 
@@ -99,6 +100,23 @@ godwit run confirm "$RUN_ID"
 - run: go install github.com/SamuelMolling/godwit/cmd/godwit@latest
 - run: godwit lint --base origin/main --format markdown >> "$GITHUB_STEP_SUMMARY"
 ```
+
+## Metrics
+
+`godwit serve` exposes Prometheus metrics on `/metrics` (same listener, no auth). What to alert on:
+
+| Metric | Question it answers |
+|---|---|
+| `godwit_runs{target,state}`, `godwit_run_age_seconds{target,state}` | Anything parked in `needs_attention`? An `awaiting_contract` nobody confirmed? A `queued` run nobody claims? |
+| `godwit_run_resumes_total{target,source}` | `reconciler` = a replica died mid-run and another took over; `manual` = an operator hit `ResumeRun`. |
+| `godwit_run_attempts`, `godwit_heartbeat_failures_total` | How often runs need more than one attempt; heartbeats failing without the lease expiring means a slow store. |
+| `godwit_run_duration_seconds{target,result}`, `godwit_statement_duration_seconds{target,kind}` | How long migrations hold the target, per statement (`tx` / `no_tx`). |
+| `godwit_statement_failures_total{target,reason}` | `lock_timeout` and `statement_timeout` are contention on a live database; other SQLSTATEs are bugs in the migration. |
+| `godwit_hazards_total{code,acked}`, `godwit_validation_failures_total{target}` | Is the gate doing work, or is everything acknowledged blindly? |
+| `godwit_drift_checks_total{target,result}` | `clean`, `drifted` or `accepted` per check. |
+| `godwit_api_requests_total{method,code}`, `godwit_api_request_duration_seconds{method}`, `godwit_build_info` | The service itself. |
+
+Per-migration and per-statement series are deliberately absent — that detail lives in the run journal, not in label cardinality.
 
 ## Engines
 
