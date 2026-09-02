@@ -80,7 +80,7 @@ func TestAPITimeoutsEnforced(t *testing.T) {
 
 	deadline := time.Now().Add(20 * time.Second)
 	var run *godwitv1.Run
-	for run == nil || run.State != godwitv1.RunState_RUN_STATE_FAILED {
+	for run == nil || run.State != godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION {
 		if time.Now().After(deadline) {
 			t.Fatalf("run = %+v", run)
 		}
@@ -91,10 +91,10 @@ func TestAPITimeoutsEnforced(t *testing.T) {
 		run = got.Msg.Run
 		time.Sleep(50 * time.Millisecond)
 	}
-	if run.LockTimeout != "" || run.StatementTimeout != "200ms" || !strings.Contains(run.Error, "statement timeout") {
+	if run.LockTimeout != "" || run.StatementTimeout != "200ms" || !strings.Contains(run.Error, "statement timeout") || run.Retries != 4 {
 		t.Fatalf("run = %+v", run)
 	}
-	if body := scrapeMetrics(t, baseURL); !strings.Contains(body, `godwit_statement_failures_total{reason="statement_timeout",target="app"} 1`) {
+	if body := scrapeMetrics(t, baseURL); !strings.Contains(body, `godwit_statement_failures_total{reason="statement_timeout",target="app"} 5`) {
 		t.Fatalf("metrics:\n%s", body)
 	}
 }

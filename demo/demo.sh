@@ -232,7 +232,7 @@ done
 echo "state: $STATE (credentials resolved from Vault at claim time)"
 
 echo
-echo "==> timeouts: the target caps lock waits at 2s; this run also caps every statement at 1s, so pg_sleep(3) fails fast"
+echo "==> timeouts: the target caps lock waits at 2s; this run also caps every statement at 1s, so pg_sleep(3) times out, and a timeout is transient: the run retries with backoff instead of failing"
 TO_ID=$(rpc CreateRun '{
   "target": "app-vault",
   "statementTimeout": "1s",
@@ -242,12 +242,11 @@ TO_ID=$(rpc CreateRun '{
   ]
 }' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
 for _ in $(seq 1 30); do
-  STATE=$(rpc GetRun "{\"runId\": \"$TO_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
-  [ "$STATE" = "RUN_STATE_FAILED" ] && break
+  rpc GetRun "{\"runId\": \"$TO_ID\"}" 18475 | grep -q '"retries":' && break
   sleep 1
 done
 docker compose exec -T godwit-2 /godwit run get "$TO_ID" --server http://localhost:8474 --token demo-token
-curl -s localhost:18475/metrics | grep -E '^godwit_statement_failures_total'
+curl -s localhost:18475/metrics | grep -E '^godwit_(statement_failures|run_retries)_total'
 
 echo
 echo "==> baseline: adopting a database that already has a schema, without replaying it"

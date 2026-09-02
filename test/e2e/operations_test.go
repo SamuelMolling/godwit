@@ -19,7 +19,7 @@ func columnExists(t *testing.T, dsn, table, column string) bool {
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)`, table, column)
 }
 
-func TestLockTimeoutFailsThenResumes(t *testing.T) {
+func TestLockTimeoutRetriesThenSucceeds(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, 1)
 	r.addTarget("t")
@@ -35,29 +35,43 @@ func TestLockTimeoutFailsThenResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir := migrationDir(t, migration{v2, "add_x", "ALTER TABLE t ADD COLUMN x int;", "ALTER TABLE t DROP COLUMN x;"})
-	code, _, errOut := r.migrate(dir)
-	if code != 1 {
-		t.Fatalf("migrate exit = %d, want 1", code)
+	addX := migration{v2, "add_x", "ALTER TABLE t ADD COLUMN x int;", "ALTER TABLE t DROP COLUMN x;"}
+	dir := migrationDir(t, addX)
+	r.mustCLI("plan", "--target", r.target, "--dir", dir)
+	first, err := r.client().CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: r.target, Files: files(addX), LockTimeout: "500ms"}))
+	if err != nil || first.Msg.PlanId == "" || first.Msg.Reattached {
+		t.Fatalf("first = %+v, err = %v", first, err)
 	}
-	expectContains(t, errOut, "failed", "SQLSTATE 55P03")
-	run := r.latestRun()
-	if run.State != godwitv1.RunState_RUN_STATE_FAILED {
-		t.Fatalf("state = %s, want failed", run.State)
+	id := first.Msg.RunId
+	waitUntil(t, 20*time.Second, "first transient retry", func() bool { return r.getRun(id).Retries >= 1 })
+	retrying := r.getRun(id)
+	expectContains(t, retrying.Error, "transient:", "SQLSTATE 55P03")
+	if retrying.State == godwitv1.RunState_RUN_STATE_FAILED || retrying.State == godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION {
+		t.Fatalf("state = %s while retrying", retrying.State)
 	}
-	expectContains(t, run.Error, "SQLSTATE 55P03")
+
+	again, err := r.client().CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: r.target, Files: files(addX), LockTimeout: "500ms"}))
+	if err != nil || !again.Msg.Reattached || again.Msg.RunId != id {
+		t.Fatalf("again = %+v, err = %v", again, err)
+	}
+	if runs := r.listRuns(); len(runs) != 2 {
+		t.Fatalf("runs = %d, want the table run and one retried run", len(runs))
+	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	r.mustCLI("run", "resume", run.Id)
-	expectContains(t, r.mustCLI("run", "watch", run.Id), "succeeded")
+	expectContains(t, r.mustCLI("run", "watch", id), "succeeded")
+	run := r.getRun(id)
+	if run.Retries < 1 || run.NotBefore != nil || run.Error != "" {
+		t.Fatalf("run = %+v", run)
+	}
 	if !columnExists(t, r.appDSN, "t", "x") {
-		t.Fatal("column x missing after resume")
+		t.Fatal("column x missing after retry")
 	}
 	expectContains(t, r.metrics(),
-		`godwit_statement_failures_total{reason="lock_timeout",target="t"} 1`,
-		`godwit_run_resumes_total{source="manual",target="t"} 1`)
+		`godwit_statement_failures_total{reason="lock_timeout",target="t"}`,
+		`godwit_run_retries_total{code="55P03",target="t"}`)
 }
 
 func TestExpandContractConfirm(t *testing.T) {

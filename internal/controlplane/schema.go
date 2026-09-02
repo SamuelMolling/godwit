@@ -217,6 +217,23 @@ DROP TABLE cp_plan_files;
 DROP TABLE cp_plans;`,
 	},
 	{
+		Version:  20260901000010,
+		Name:     "retry",
+		Checksum: "cp-retry-v1",
+		UpSQL: `
+ALTER TABLE cp_runs ADD COLUMN not_before timestamptz, ADD COLUMN retries int NOT NULL DEFAULT 0;
+ALTER TABLE cp_plans ADD COLUMN files_hash text NOT NULL DEFAULT '';
+UPDATE cp_plans p SET files_hash = h.hash FROM (
+	SELECT plan_id, encode(sha256(convert_to(string_agg(name || E'\n' || body || E'\n', '' ORDER BY name COLLATE "C"), 'UTF8')), 'hex') AS hash
+	FROM cp_plan_files GROUP BY plan_id) h
+WHERE h.plan_id = p.id;
+CREATE INDEX cp_plans_files_hash_idx ON cp_plans (target, rollout, files_hash) WHERE state = 'bound';`,
+		DownSQL: `
+DROP INDEX cp_plans_files_hash_idx;
+ALTER TABLE cp_plans DROP COLUMN files_hash;
+ALTER TABLE cp_runs DROP COLUMN not_before, DROP COLUMN retries;`,
+	},
+	{
 		Version:  20260901000011,
 		Name:     "plan_retention",
 		Checksum: "cp-plan-retention-v1",

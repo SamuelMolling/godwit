@@ -130,7 +130,7 @@ func newMigrateCmd() *cobra.Command {
 				return err
 			}
 			if !flags.json {
-				fmt.Fprintln(cmd.OutOrStdout(), bindLine(created.Msg.PlanId))
+				fmt.Fprintln(cmd.OutOrStdout(), bindLine(created.Msg))
 			}
 
 			return flags.watch(cmd, client, created.Msg.RunId)
@@ -153,12 +153,15 @@ func newMigrateCmd() *cobra.Command {
 	return cmd
 }
 
-func bindLine(planID string) string {
-	if planID == "" {
+func bindLine(res *godwitv1.CreateRunResponse) string {
+	switch {
+	case res.Reattached:
+		return "re-attached to run " + res.RunId
+	case res.PlanId == "":
 		return "no stored plan for this set: implicit plan"
+	default:
+		return "plan " + res.PlanId + ": bound"
 	}
-
-	return "plan " + planID + ": bound"
 }
 
 func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, req *godwitv1.CreateRunRequest, write func(io.Writer, planReport)) error {
@@ -312,6 +315,9 @@ func runLine(r *godwitv1.Run) string {
 	}
 	if r.Error != "" {
 		line += ": " + r.Error
+	}
+	if wait := time.Until(r.NotBefore.AsTime()).Round(time.Second); r.NotBefore != nil && wait > 0 {
+		line += fmt.Sprintf(" (retry in %s)", wait)
 	}
 
 	return line

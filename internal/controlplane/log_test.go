@@ -75,13 +75,13 @@ func TestSchedulerNeverLogsPassword(t *testing.T) {
 	queueRun(t, s, id, goodFiles())
 
 	sink, log := captureLog()
-	sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}}, PGEngine{Log: log}, Policies(), Config{Holder: "h"}, log)
+	sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}}, PGEngine{Log: log}, Policies(), Config{Holder: "h", MaxAttempts: 1}, log)
 	sched.Tick(ctx)
-	r := waitState(t, s, id, StateFailed)
+	r := waitState(t, s, id, StateNeedsAttention)
 
 	out := sink.String()
 	if !strings.Contains(out, `"msg":"run claimed"`) || !strings.Contains(out, `"msg":"run finished"`) ||
-		!strings.Contains(out, `"state":"failed"`) || !strings.Contains(out, `"run":"`+id+`"`) {
+		!strings.Contains(out, `"state":"needs_attention"`) || !strings.Contains(out, `"run":"`+id+`"`) {
 		t.Fatalf("lifecycle lines missing:\n%s", out)
 	}
 	if strings.Contains(out, password) || strings.Contains(r.Error, password) {

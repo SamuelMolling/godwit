@@ -48,7 +48,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--drift-interval` | `5m` | how often every snapshotted target is fingerprinted |
 | `--lease-ttl` | `30s` | how long a claimed run stays leased without a heartbeat; heartbeats run every third of it |
 | `--tick-interval` | `2s` | how often the scheduler looks for runnable runs |
-| `--max-attempts` | `3` | claims a run may take before it is finished as `needs_attention` |
+| `--max-attempts` | `5` | attempts a run may take (lost leases and transient failures alike) before it is finished as `needs_attention` |
 | `--skip-validation` | `false` | disable the scratch-database validation at admission (also disables `validated` in `PlanRun`) |
 | `--require-plan` | `false` | refuse every `CreateRun` that does not bind to a stored plan, on every target (targets registered with `--require-plan` refuse on their own) |
 | `--plan-ttl` | `720h` | stored plans older than this are ignored at `CreateRun` (treated as no plan) |
@@ -138,7 +138,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit drift accept <target>` | | operator |
 | `godwit audit` | `--target`, `--run`, `--limit` | read |
 
-`migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound` or `no stored plan for this set: implicit plan` before streaming; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
+`migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 
 ## GitHub Action inputs
 

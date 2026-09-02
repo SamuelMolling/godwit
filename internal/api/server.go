@@ -210,6 +210,9 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	if err != nil {
 		return nil, err
 	}
+	if b.reattached != "" {
+		return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: b.reattached, PlanId: b.planID, Reattached: true}), nil
+	}
 	if b.adm == nil {
 		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, ""); err != nil {
 			return nil, err
@@ -407,12 +410,16 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 		CreatedBy: r.Provenance.CreatedBy,
 		Source:    r.Provenance.Source,
 		PlanId:    r.PlanID,
+		Retries:   int32(r.Retries),
 		CreatedAt: timestamppb.New(r.CreatedAt),
 
 		LockTimeout: r.Timeouts.Lock, StatementTimeout: r.Timeouts.Statement,
 	}
 	if r.FinishedAt != nil {
 		out.FinishedAt = timestamppb.New(*r.FinishedAt)
+	}
+	if r.NotBefore != nil {
+		out.NotBefore = timestamppb.New(*r.NotBefore)
 	}
 
 	return out

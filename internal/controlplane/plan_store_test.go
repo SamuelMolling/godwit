@@ -205,7 +205,7 @@ func TestPlanStoreErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", "k1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(17)...).WillReturnError(errBoom)
+	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(18)...).WillReturnError(errBoom)
 	if err := s.SavePlan(ctx, storedPlan(planA), nil); err == nil || !strings.Contains(err.Error(), "save plan") {
 		t.Fatalf("err = %v", err)
 	}
@@ -248,7 +248,7 @@ func TestPlanStoreErrors(t *testing.T) {
 	}
 	mock.ExpectExec("UPDATE cp_plans SET state = 'superseded'").WithArgs(planA).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", "k1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(17)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(18)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec("UPDATE cp_plans SET superseded_by").WithArgs(planA, planB).WillReturnError(errBoom)
 	if err := s.SupersedePlan(ctx, planA, storedPlan(planB), nil); err == nil || !strings.Contains(err.Error(), "link superseded plan") {
 		t.Fatalf("err = %v", err)

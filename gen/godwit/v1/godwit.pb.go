@@ -164,7 +164,11 @@ type Run struct {
 	// Free-text provenance given at creation, e.g. github.com/org/repo@<sha>:db/migrations.
 	Source string `protobuf:"bytes,15,opt,name=source,proto3" json:"source,omitempty"`
 	// Id of the stored plan this run applies; empty for implicit runs.
-	PlanId        string `protobuf:"bytes,16,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	PlanId string `protobuf:"bytes,16,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	// Earliest time the scheduler will pick the run up again after a transient failure; unset when not waiting.
+	NotBefore *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
+	// Transient failures the scheduler retried on its own.
+	Retries       int32 `protobuf:"varint,18,opt,name=retries,proto3" json:"retries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -309,6 +313,20 @@ func (x *Run) GetPlanId() string {
 		return x.PlanId
 	}
 	return ""
+}
+
+func (x *Run) GetNotBefore() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NotBefore
+	}
+	return nil
+}
+
+func (x *Run) GetRetries() int32 {
+	if x != nil {
+		return x.Retries
+	}
+	return 0
 }
 
 type RegisterTargetRequest struct {
@@ -589,7 +607,9 @@ type CreateRunResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	// Id of the plan the run was bound to; empty for implicit runs.
-	PlanId        string `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	PlanId string `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	// True when run_id names an existing run for the same files instead of a new one.
+	Reattached    bool `protobuf:"varint,3,opt,name=reattached,proto3" json:"reattached,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -636,6 +656,13 @@ func (x *CreateRunResponse) GetPlanId() string {
 		return x.PlanId
 	}
 	return ""
+}
+
+func (x *CreateRunResponse) GetReattached() bool {
+	if x != nil {
+		return x.Reattached
+	}
+	return false
 }
 
 type PlanRunRequest struct {
@@ -3299,7 +3326,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x16godwit/v1/godwit.proto\x12\tgodwit.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"7\n" +
 	"\rMigrationFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04body\x18\x02 \x01(\tR\x04body\"\x80\x04\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body\"\xd5\x04\n" +
 	"\x03Run\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06target\x18\x02 \x01(\tR\x06target\x12)\n" +
@@ -3320,7 +3347,10 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\n" +
 	"created_by\x18\x0e \x01(\tR\tcreatedBy\x12\x16\n" +
 	"\x06source\x18\x0f \x01(\tR\x06source\x12\x17\n" +
-	"\aplan_id\x18\x10 \x01(\tR\x06planId\"\xb3\x02\n" +
+	"\aplan_id\x18\x10 \x01(\tR\x06planId\x129\n" +
+	"\n" +
+	"not_before\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\tnotBefore\x12\x18\n" +
+	"\aretries\x18\x12 \x01(\x05R\aretries\"\xb3\x02\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -3345,10 +3375,13 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x12allow_out_of_order\x18\b \x01(\bR\x0fallowOutOfOrder\x12\x16\n" +
 	"\x06source\x18\t \x01(\tR\x06source\x12\x17\n" +
 	"\aplan_id\x18\n" +
-	" \x01(\tR\x06planId\"C\n" +
+	" \x01(\tR\x06planId\"c\n" +
 	"\x11CreateRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
-	"\aplan_id\x18\x02 \x01(\tR\x06planId\"\xab\x02\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1e\n" +
+	"\n" +
+	"reattached\x18\x03 \x01(\bR\n" +
+	"reattached\"\xab\x02\n" +
 	"\x0ePlanRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
 	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\x12/\n" +
@@ -3643,75 +3676,76 @@ var file_godwit_v1_godwit_proto_depIdxs = []int32{
 	0,  // 0: godwit.v1.Run.state:type_name -> godwit.v1.RunState
 	51, // 1: godwit.v1.Run.created_at:type_name -> google.protobuf.Timestamp
 	51, // 2: godwit.v1.Run.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 3: godwit.v1.CreateRunRequest.files:type_name -> godwit.v1.MigrationFile
-	1,  // 4: godwit.v1.PlanRunRequest.files:type_name -> godwit.v1.MigrationFile
-	51, // 5: godwit.v1.PlanObservation.at:type_name -> google.protobuf.Timestamp
-	11, // 6: godwit.v1.PlannedStatement.hazards:type_name -> godwit.v1.PlannedHazard
-	12, // 7: godwit.v1.PlannedMigration.statements:type_name -> godwit.v1.PlannedStatement
-	13, // 8: godwit.v1.PlanRunResponse.migrations:type_name -> godwit.v1.PlannedMigration
-	8,  // 9: godwit.v1.PlanRunResponse.observed:type_name -> godwit.v1.PlanObservation
-	8,  // 10: godwit.v1.Plan.observed:type_name -> godwit.v1.PlanObservation
-	13, // 11: godwit.v1.Plan.migrations:type_name -> godwit.v1.PlannedMigration
-	51, // 12: godwit.v1.Plan.created_at:type_name -> google.protobuf.Timestamp
-	15, // 13: godwit.v1.GetPlanResponse.plan:type_name -> godwit.v1.Plan
-	15, // 14: godwit.v1.ListPlansResponse.plans:type_name -> godwit.v1.Plan
-	51, // 15: godwit.v1.DriftEvent.detected_at:type_name -> google.protobuf.Timestamp
-	51, // 16: godwit.v1.DriftEvent.resolved_at:type_name -> google.protobuf.Timestamp
-	23, // 17: godwit.v1.ListDriftEventsResponse.events:type_name -> godwit.v1.DriftEvent
-	1,  // 18: godwit.v1.BaselineTargetRequest.files:type_name -> godwit.v1.MigrationFile
-	1,  // 19: godwit.v1.GetTargetStatusRequest.files:type_name -> godwit.v1.MigrationFile
-	51, // 20: godwit.v1.AppliedMigration.applied_at:type_name -> google.protobuf.Timestamp
-	51, // 21: godwit.v1.DriftBaseline.taken_at:type_name -> google.protobuf.Timestamp
-	30, // 22: godwit.v1.GetTargetStatusResponse.applied:type_name -> godwit.v1.AppliedMigration
-	31, // 23: godwit.v1.GetTargetStatusResponse.pending:type_name -> godwit.v1.PendingMigration
-	2,  // 24: godwit.v1.GetTargetStatusResponse.last_run:type_name -> godwit.v1.Run
-	32, // 25: godwit.v1.GetTargetStatusResponse.drift_baseline:type_name -> godwit.v1.DriftBaseline
-	51, // 26: godwit.v1.AuditEntry.at:type_name -> google.protobuf.Timestamp
-	35, // 27: godwit.v1.ListAuditResponse.entries:type_name -> godwit.v1.AuditEntry
-	2,  // 28: godwit.v1.GetRunResponse.run:type_name -> godwit.v1.Run
-	2,  // 29: godwit.v1.ListRunsResponse.runs:type_name -> godwit.v1.Run
-	2,  // 30: godwit.v1.WatchRunResponse.run:type_name -> godwit.v1.Run
-	3,  // 31: godwit.v1.GodwitService.RegisterTarget:input_type -> godwit.v1.RegisterTargetRequest
-	5,  // 32: godwit.v1.GodwitService.CreateRun:input_type -> godwit.v1.CreateRunRequest
-	7,  // 33: godwit.v1.GodwitService.PlanRun:input_type -> godwit.v1.PlanRunRequest
-	37, // 34: godwit.v1.GodwitService.GetRun:input_type -> godwit.v1.GetRunRequest
-	39, // 35: godwit.v1.GodwitService.ListRuns:input_type -> godwit.v1.ListRunsRequest
-	41, // 36: godwit.v1.GodwitService.WatchRun:input_type -> godwit.v1.WatchRunRequest
-	43, // 37: godwit.v1.GodwitService.ResumeRun:input_type -> godwit.v1.ResumeRunRequest
-	45, // 38: godwit.v1.GodwitService.ParkRun:input_type -> godwit.v1.ParkRunRequest
-	47, // 39: godwit.v1.GodwitService.ConfirmRollout:input_type -> godwit.v1.ConfirmRolloutRequest
-	49, // 40: godwit.v1.GodwitService.RevertRun:input_type -> godwit.v1.RevertRunRequest
-	20, // 41: godwit.v1.GodwitService.CheckDrift:input_type -> godwit.v1.CheckDriftRequest
-	22, // 42: godwit.v1.GodwitService.ListDriftEvents:input_type -> godwit.v1.ListDriftEventsRequest
-	25, // 43: godwit.v1.GodwitService.AcceptBaseline:input_type -> godwit.v1.AcceptBaselineRequest
-	27, // 44: godwit.v1.GodwitService.BaselineTarget:input_type -> godwit.v1.BaselineTargetRequest
-	29, // 45: godwit.v1.GodwitService.GetTargetStatus:input_type -> godwit.v1.GetTargetStatusRequest
-	34, // 46: godwit.v1.GodwitService.ListAudit:input_type -> godwit.v1.ListAuditRequest
-	16, // 47: godwit.v1.GodwitService.GetPlan:input_type -> godwit.v1.GetPlanRequest
-	18, // 48: godwit.v1.GodwitService.ListPlans:input_type -> godwit.v1.ListPlansRequest
-	4,  // 49: godwit.v1.GodwitService.RegisterTarget:output_type -> godwit.v1.RegisterTargetResponse
-	6,  // 50: godwit.v1.GodwitService.CreateRun:output_type -> godwit.v1.CreateRunResponse
-	14, // 51: godwit.v1.GodwitService.PlanRun:output_type -> godwit.v1.PlanRunResponse
-	38, // 52: godwit.v1.GodwitService.GetRun:output_type -> godwit.v1.GetRunResponse
-	40, // 53: godwit.v1.GodwitService.ListRuns:output_type -> godwit.v1.ListRunsResponse
-	42, // 54: godwit.v1.GodwitService.WatchRun:output_type -> godwit.v1.WatchRunResponse
-	44, // 55: godwit.v1.GodwitService.ResumeRun:output_type -> godwit.v1.ResumeRunResponse
-	46, // 56: godwit.v1.GodwitService.ParkRun:output_type -> godwit.v1.ParkRunResponse
-	48, // 57: godwit.v1.GodwitService.ConfirmRollout:output_type -> godwit.v1.ConfirmRolloutResponse
-	50, // 58: godwit.v1.GodwitService.RevertRun:output_type -> godwit.v1.RevertRunResponse
-	21, // 59: godwit.v1.GodwitService.CheckDrift:output_type -> godwit.v1.CheckDriftResponse
-	24, // 60: godwit.v1.GodwitService.ListDriftEvents:output_type -> godwit.v1.ListDriftEventsResponse
-	26, // 61: godwit.v1.GodwitService.AcceptBaseline:output_type -> godwit.v1.AcceptBaselineResponse
-	28, // 62: godwit.v1.GodwitService.BaselineTarget:output_type -> godwit.v1.BaselineTargetResponse
-	33, // 63: godwit.v1.GodwitService.GetTargetStatus:output_type -> godwit.v1.GetTargetStatusResponse
-	36, // 64: godwit.v1.GodwitService.ListAudit:output_type -> godwit.v1.ListAuditResponse
-	17, // 65: godwit.v1.GodwitService.GetPlan:output_type -> godwit.v1.GetPlanResponse
-	19, // 66: godwit.v1.GodwitService.ListPlans:output_type -> godwit.v1.ListPlansResponse
-	49, // [49:67] is the sub-list for method output_type
-	31, // [31:49] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	51, // 3: godwit.v1.Run.not_before:type_name -> google.protobuf.Timestamp
+	1,  // 4: godwit.v1.CreateRunRequest.files:type_name -> godwit.v1.MigrationFile
+	1,  // 5: godwit.v1.PlanRunRequest.files:type_name -> godwit.v1.MigrationFile
+	51, // 6: godwit.v1.PlanObservation.at:type_name -> google.protobuf.Timestamp
+	11, // 7: godwit.v1.PlannedStatement.hazards:type_name -> godwit.v1.PlannedHazard
+	12, // 8: godwit.v1.PlannedMigration.statements:type_name -> godwit.v1.PlannedStatement
+	13, // 9: godwit.v1.PlanRunResponse.migrations:type_name -> godwit.v1.PlannedMigration
+	8,  // 10: godwit.v1.PlanRunResponse.observed:type_name -> godwit.v1.PlanObservation
+	8,  // 11: godwit.v1.Plan.observed:type_name -> godwit.v1.PlanObservation
+	13, // 12: godwit.v1.Plan.migrations:type_name -> godwit.v1.PlannedMigration
+	51, // 13: godwit.v1.Plan.created_at:type_name -> google.protobuf.Timestamp
+	15, // 14: godwit.v1.GetPlanResponse.plan:type_name -> godwit.v1.Plan
+	15, // 15: godwit.v1.ListPlansResponse.plans:type_name -> godwit.v1.Plan
+	51, // 16: godwit.v1.DriftEvent.detected_at:type_name -> google.protobuf.Timestamp
+	51, // 17: godwit.v1.DriftEvent.resolved_at:type_name -> google.protobuf.Timestamp
+	23, // 18: godwit.v1.ListDriftEventsResponse.events:type_name -> godwit.v1.DriftEvent
+	1,  // 19: godwit.v1.BaselineTargetRequest.files:type_name -> godwit.v1.MigrationFile
+	1,  // 20: godwit.v1.GetTargetStatusRequest.files:type_name -> godwit.v1.MigrationFile
+	51, // 21: godwit.v1.AppliedMigration.applied_at:type_name -> google.protobuf.Timestamp
+	51, // 22: godwit.v1.DriftBaseline.taken_at:type_name -> google.protobuf.Timestamp
+	30, // 23: godwit.v1.GetTargetStatusResponse.applied:type_name -> godwit.v1.AppliedMigration
+	31, // 24: godwit.v1.GetTargetStatusResponse.pending:type_name -> godwit.v1.PendingMigration
+	2,  // 25: godwit.v1.GetTargetStatusResponse.last_run:type_name -> godwit.v1.Run
+	32, // 26: godwit.v1.GetTargetStatusResponse.drift_baseline:type_name -> godwit.v1.DriftBaseline
+	51, // 27: godwit.v1.AuditEntry.at:type_name -> google.protobuf.Timestamp
+	35, // 28: godwit.v1.ListAuditResponse.entries:type_name -> godwit.v1.AuditEntry
+	2,  // 29: godwit.v1.GetRunResponse.run:type_name -> godwit.v1.Run
+	2,  // 30: godwit.v1.ListRunsResponse.runs:type_name -> godwit.v1.Run
+	2,  // 31: godwit.v1.WatchRunResponse.run:type_name -> godwit.v1.Run
+	3,  // 32: godwit.v1.GodwitService.RegisterTarget:input_type -> godwit.v1.RegisterTargetRequest
+	5,  // 33: godwit.v1.GodwitService.CreateRun:input_type -> godwit.v1.CreateRunRequest
+	7,  // 34: godwit.v1.GodwitService.PlanRun:input_type -> godwit.v1.PlanRunRequest
+	37, // 35: godwit.v1.GodwitService.GetRun:input_type -> godwit.v1.GetRunRequest
+	39, // 36: godwit.v1.GodwitService.ListRuns:input_type -> godwit.v1.ListRunsRequest
+	41, // 37: godwit.v1.GodwitService.WatchRun:input_type -> godwit.v1.WatchRunRequest
+	43, // 38: godwit.v1.GodwitService.ResumeRun:input_type -> godwit.v1.ResumeRunRequest
+	45, // 39: godwit.v1.GodwitService.ParkRun:input_type -> godwit.v1.ParkRunRequest
+	47, // 40: godwit.v1.GodwitService.ConfirmRollout:input_type -> godwit.v1.ConfirmRolloutRequest
+	49, // 41: godwit.v1.GodwitService.RevertRun:input_type -> godwit.v1.RevertRunRequest
+	20, // 42: godwit.v1.GodwitService.CheckDrift:input_type -> godwit.v1.CheckDriftRequest
+	22, // 43: godwit.v1.GodwitService.ListDriftEvents:input_type -> godwit.v1.ListDriftEventsRequest
+	25, // 44: godwit.v1.GodwitService.AcceptBaseline:input_type -> godwit.v1.AcceptBaselineRequest
+	27, // 45: godwit.v1.GodwitService.BaselineTarget:input_type -> godwit.v1.BaselineTargetRequest
+	29, // 46: godwit.v1.GodwitService.GetTargetStatus:input_type -> godwit.v1.GetTargetStatusRequest
+	34, // 47: godwit.v1.GodwitService.ListAudit:input_type -> godwit.v1.ListAuditRequest
+	16, // 48: godwit.v1.GodwitService.GetPlan:input_type -> godwit.v1.GetPlanRequest
+	18, // 49: godwit.v1.GodwitService.ListPlans:input_type -> godwit.v1.ListPlansRequest
+	4,  // 50: godwit.v1.GodwitService.RegisterTarget:output_type -> godwit.v1.RegisterTargetResponse
+	6,  // 51: godwit.v1.GodwitService.CreateRun:output_type -> godwit.v1.CreateRunResponse
+	14, // 52: godwit.v1.GodwitService.PlanRun:output_type -> godwit.v1.PlanRunResponse
+	38, // 53: godwit.v1.GodwitService.GetRun:output_type -> godwit.v1.GetRunResponse
+	40, // 54: godwit.v1.GodwitService.ListRuns:output_type -> godwit.v1.ListRunsResponse
+	42, // 55: godwit.v1.GodwitService.WatchRun:output_type -> godwit.v1.WatchRunResponse
+	44, // 56: godwit.v1.GodwitService.ResumeRun:output_type -> godwit.v1.ResumeRunResponse
+	46, // 57: godwit.v1.GodwitService.ParkRun:output_type -> godwit.v1.ParkRunResponse
+	48, // 58: godwit.v1.GodwitService.ConfirmRollout:output_type -> godwit.v1.ConfirmRolloutResponse
+	50, // 59: godwit.v1.GodwitService.RevertRun:output_type -> godwit.v1.RevertRunResponse
+	21, // 60: godwit.v1.GodwitService.CheckDrift:output_type -> godwit.v1.CheckDriftResponse
+	24, // 61: godwit.v1.GodwitService.ListDriftEvents:output_type -> godwit.v1.ListDriftEventsResponse
+	26, // 62: godwit.v1.GodwitService.AcceptBaseline:output_type -> godwit.v1.AcceptBaselineResponse
+	28, // 63: godwit.v1.GodwitService.BaselineTarget:output_type -> godwit.v1.BaselineTargetResponse
+	33, // 64: godwit.v1.GodwitService.GetTargetStatus:output_type -> godwit.v1.GetTargetStatusResponse
+	36, // 65: godwit.v1.GodwitService.ListAudit:output_type -> godwit.v1.ListAuditResponse
+	17, // 66: godwit.v1.GodwitService.GetPlan:output_type -> godwit.v1.GetPlanResponse
+	19, // 67: godwit.v1.GodwitService.ListPlans:output_type -> godwit.v1.ListPlansResponse
+	50, // [50:68] is the sub-list for method output_type
+	32, // [32:50] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_godwit_v1_godwit_proto_init() }

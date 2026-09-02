@@ -28,6 +28,7 @@ const (
 	RunAwaitingContract = "awaiting_contract"
 	RunConfirmed        = "confirmed"
 	RunResumed          = "resumed"
+	RunRetrying         = "retrying"
 	RunParked           = "parked"
 	RunReverted         = "reverted"
 )

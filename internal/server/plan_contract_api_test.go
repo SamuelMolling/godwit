@@ -157,7 +157,7 @@ func TestCreateRun_BindsFreshPlan(t *testing.T) {
 		t.Fatalf("run = %+v", run)
 	}
 	again, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: "app", Files: all, AcknowledgeHazards: []string{"H003"}}))
-	if err != nil || again.Msg.PlanId != "" {
+	if err != nil || !again.Msg.Reattached || again.Msg.RunId != created.RunId || again.Msg.PlanId != plan.PlanId {
 		t.Fatalf("again = %+v, err = %v", again, err)
 	}
 	res, err := client.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{RunId: created.RunId}))
@@ -240,7 +240,7 @@ func TestCreateRun_ExplainedHistory(t *testing.T) {
 		t.Fatalf("created = %+v, err = %v", created, err)
 	}
 	waitRun(t, client, created.RunId)
-	if again, err := createRun(t, client, mine, false); err != nil || again.PlanId != "" {
+	if again, err := createRun(t, client, mine, false); err != nil || !again.Reattached || again.RunId != created.RunId {
 		t.Fatalf("again = %+v, err = %v", again, err)
 	}
 }

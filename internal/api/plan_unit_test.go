@@ -57,7 +57,12 @@ func expectApplied(mock pgxmock.PgxPoolIface, versions ...int64) {
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(rows)
 }
 
+func expectNoBound(mock pgxmock.PgxPoolIface) {
+	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
+}
+
 func expectReadyPlan(mock pgxmock.PgxPoolIface, fingerprint string, applied []engine.Applied, migs []controlplane.PlanMigration) {
+	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "drift", "plan",
@@ -151,11 +156,13 @@ func TestBindStoreErrors(t *testing.T) {
 	obs := controlplane.Observation{Fingerprint: "f2", Definition: "table b\n"}
 	s, mock := planServer(t, obs, nil)
 
+	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errors.New("plans down"))
 	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("ready plan error: %v", err)
 	}
 
+	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("app").WillReturnError(errors.New("targets down"))
 	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
@@ -163,6 +170,7 @@ func TestBindStoreErrors(t *testing.T) {
 	}
 
 	s.RequirePlan = true
+	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
 	expectTarget(mock)
 	mock.ExpectQuery("ORDER BY created_at DESC, id LIMIT").WithArgs("app", 3).WillReturnError(errors.New("list down"))
