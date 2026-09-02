@@ -1,6 +1,6 @@
 # godwit demo
 
-Two godwit replicas, a control-plane Postgres and a target Postgres — enough to see crash-safe execution with your own eyes.
+Two godwit replicas, a control-plane Postgres, a target Postgres and a dev-mode Vault — enough to see crash-safe execution with your own eyes.
 
 ```bash
 cd demo
@@ -19,6 +19,7 @@ The script:
 7. Detects a manual out-of-band change (drift) and blesses it as the new baseline.
 8. Runs an `expand-contract` rollout: the added column lands, the drop waits in `awaiting_contract` until `ConfirmRollout`.
 9. Reverts that run with `RevertRun`: `plan` comes back, `plan_v2` goes, the original run is marked `reverted`.
+10. Registers the target again through a Vault KV secret (`vault` provider with a DSN template) and runs a migration with credentials resolved at claim time.
 
 Poke around:
 

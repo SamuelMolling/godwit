@@ -35,8 +35,13 @@ func TestAPIValidationAndErrors(t *testing.T) {
 
 			return err
 		}},
-		{"register unknown provider", func() error {
+		{"register vault without path", func() error {
 			_, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{Name: "a", Provider: "vault"}))
+
+			return err
+		}},
+		{"register unknown provider", func() error {
+			_, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{Name: "a", Provider: "nope"}))
 
 			return err
 		}},

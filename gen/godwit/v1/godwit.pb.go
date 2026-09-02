@@ -261,10 +261,14 @@ func (x *Run) GetReverts() string {
 type RegisterTargetRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Credential provider: "static" (dsn, encrypted at rest) or "kubernetes" (secret_path).
-	Provider      string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
-	Dsn           string `protobuf:"bytes,3,opt,name=dsn,proto3" json:"dsn,omitempty"`
-	SecretPath    string `protobuf:"bytes,4,opt,name=secret_path,json=secretPath,proto3" json:"secret_path,omitempty"`
+	// Credential provider: "static" (dsn, encrypted at rest), "kubernetes" (secret_path) or "vault" (vault_path).
+	Provider   string `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	Dsn        string `protobuf:"bytes,3,opt,name=dsn,proto3" json:"dsn,omitempty"`
+	SecretPath string `protobuf:"bytes,4,opt,name=secret_path,json=secretPath,proto3" json:"secret_path,omitempty"`
+	// Vault secret path under /v1, e.g. secret/data/app or database/creds/app.
+	VaultPath string `protobuf:"bytes,5,opt,name=vault_path,json=vaultPath,proto3" json:"vault_path,omitempty"`
+	// Optional DSN template over the secret's fields, e.g. postgres://{{username}}:{{password}}@db/app; default {{dsn}}.
+	VaultTemplate string `protobuf:"bytes,6,opt,name=vault_template,json=vaultTemplate,proto3" json:"vault_template,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -323,6 +327,20 @@ func (x *RegisterTargetRequest) GetDsn() string {
 func (x *RegisterTargetRequest) GetSecretPath() string {
 	if x != nil {
 		return x.SecretPath
+	}
+	return ""
+}
+
+func (x *RegisterTargetRequest) GetVaultPath() string {
+	if x != nil {
+		return x.VaultPath
+	}
+	return ""
+}
+
+func (x *RegisterTargetRequest) GetVaultTemplate() string {
+	if x != nil {
+		return x.VaultTemplate
 	}
 	return ""
 }
@@ -1464,13 +1482,16 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\arollout\x18\b \x01(\tR\arollout\x12\x14\n" +
 	"\x05phase\x18\t \x01(\tR\x05phase\x12\x18\n" +
 	"\areverts\x18\n" +
-	" \x01(\tR\areverts\"z\n" +
+	" \x01(\tR\areverts\"\xc0\x01\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
 	"\x03dsn\x18\x03 \x01(\tR\x03dsn\x12\x1f\n" +
 	"\vsecret_path\x18\x04 \x01(\tR\n" +
-	"secretPath\"\x18\n" +
+	"secretPath\x12\x1d\n" +
+	"\n" +
+	"vault_path\x18\x05 \x01(\tR\tvaultPath\x12%\n" +
+	"\x0evault_template\x18\x06 \x01(\tR\rvaultTemplate\"\x18\n" +
 	"\x16RegisterTargetResponse\"\xce\x01\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
