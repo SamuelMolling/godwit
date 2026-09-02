@@ -20,6 +20,7 @@ const (
 	AuditDriftAccept    = "drift.accept"
 	AuditPlanCreate     = "plan.create"
 	AuditPlanSupersede  = "plan.supersede"
+	AuditRunReattach    = "run.reattach"
 )
 
 // AuditEntry is one recorded mutation: who did what to which target or run.

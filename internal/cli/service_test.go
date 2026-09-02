@@ -51,6 +51,7 @@ type stubService struct {
 	plansListed *godwitv1.ListPlansRequest
 	stored      *godwitv1.Plan
 	plans       []*godwitv1.Plan
+	reattached  bool
 	err         error
 }
 
@@ -95,7 +96,7 @@ func (s *stubService) CreateRun(_ context.Context, req *connect.Request[godwitv1
 		return nil, err
 	}
 
-	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: "r1", PlanId: s.planID}), nil
+	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: "r1", PlanId: s.planID, Reattached: s.reattached}), nil
 }
 
 func (s *stubService) PlanRun(_ context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
@@ -556,6 +557,21 @@ func TestMigrateBoundPlan(t *testing.T) {
 
 	code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t))
 	if code != 0 || out != "plan p1: bound\nrun r1: succeeded (attempt 1)\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+}
+
+func TestMigrateReattached(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{planID: "p1", reattached: true, events: []*godwitv1.Run{
+		{Id: "r1", State: godwitv1.RunState_RUN_STATE_QUEUED, Attempts: 1, Error: "transient: lock", NotBefore: timestamppb.New(time.Now().Add(90 * time.Second))},
+		run("r1", godwitv1.RunState_RUN_STATE_SUCCEEDED, 2),
+	}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 || !strings.HasPrefix(out, "re-attached to run r1\nrun r1: queued (attempt 1): transient: lock (retry in 1m") ||
+		!strings.HasSuffix(out, "run r1: succeeded (attempt 2)\n") {
 		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
 	}
 }

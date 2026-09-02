@@ -322,8 +322,8 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce"}).
-			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", ""))
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before"}).
+			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", "", 0, (*time.Time)(nil)))
 
 	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	s.watchInterval = time.Hour

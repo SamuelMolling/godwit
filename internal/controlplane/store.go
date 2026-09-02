@@ -69,6 +69,8 @@ type Run struct {
 	Timeouts   Timeouts
 	Provenance Provenance
 	PlanID     string
+	Retries    int
+	NotBefore  *time.Time
 	CreatedAt  time.Time
 	FinishedAt *time.Time
 }
@@ -205,12 +207,14 @@ func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeout
 }
 
 const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
-	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source, coalesce(plan_id::text, '')`
+	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source, coalesce(plan_id::text, ''),
+	retries, not_before`
 
 func (r *Run) fields() []any {
 	return []any{
 		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
 		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt, &r.Provenance.CreatedBy, &r.Provenance.Source, &r.PlanID,
+		&r.Retries, &r.NotBefore,
 	}
 }
 
@@ -323,6 +327,7 @@ func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Ru
 			SELECT r.id FROM cp_runs r
 			LEFT JOIN cp_leases l ON l.run_id = r.id
 			WHERE r.state IN ('queued', 'running')
+			  AND (r.not_before IS NULL OR r.not_before <= now())
 			  AND (l.run_id IS NULL OR l.expires_at <= now())
 			  AND NOT EXISTS (
 				SELECT 1 FROM cp_runs r2
@@ -336,7 +341,7 @@ func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Ru
 			SELECT id, $1, now() + $2 FROM candidate
 			ON CONFLICT (run_id) DO UPDATE SET holder = EXCLUDED.holder, expires_at = EXCLUDED.expires_at
 		)
-		UPDATE cp_runs SET state = 'running', attempts = attempts + 1, updated_at = now()
+		UPDATE cp_runs SET state = 'running', attempts = attempts + 1, not_before = NULL, updated_at = now()
 		WHERE id IN (SELECT id FROM candidate)
 		RETURNING `+runColumns, holder, ttl))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -383,11 +388,27 @@ func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 	return nil
 }
 
+// Retry requeues a running run after a transient failure, holding it back for wait and releasing its lease.
+func (s *Store) Retry(ctx context.Context, id, errText string, wait time.Duration) error {
+	tag, err := s.pool.Exec(ctx, `
+		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1)
+		UPDATE cp_runs SET state = 'queued', error = $2, not_before = now() + $3, retries = retries + 1, updated_at = now()
+		WHERE id = $1 AND state = 'running'`, id, errText, wait)
+	if err != nil {
+		return fmt.Errorf("retry run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("run %q: %w", id, ErrNotFound)
+	}
+
+	return nil
+}
+
 // Resume requeues a failed or parked run and returns it.
 func (s *Store) Resume(ctx context.Context, id string) (Run, error) {
 	run, err := scanRun(s.pool.QueryRow(ctx, `
 		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1)
-		UPDATE cp_runs SET state = 'queued', attempts = 0, error = NULL, finished_at = NULL, updated_at = now()
+		UPDATE cp_runs SET state = 'queued', attempts = 0, error = NULL, finished_at = NULL, not_before = NULL, updated_at = now()
 		WHERE id = $1 AND state IN ('failed', 'needs_attention')
 		RETURNING `+runColumns, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -435,7 +456,7 @@ func (s *Store) RunStats(ctx context.Context) ([]metrics.RunStat, error) {
 // Confirm requeues an awaiting_contract run for its contract phase.
 func (s *Store) Confirm(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, updated_at = now()
+		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, not_before = NULL, updated_at = now()
 		WHERE id = $1 AND state = 'awaiting_contract'`, id)
 	if err != nil {
 		return fmt.Errorf("confirm rollout: %w", err)

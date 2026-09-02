@@ -44,6 +44,7 @@ type Metrics struct {
 	runs               *prometheus.Desc
 	runAge             *prometheus.Desc
 	resumes            *prometheus.CounterVec
+	retries            *prometheus.CounterVec
 	attempts           prometheus.Histogram
 	heartbeatFailures  prometheus.Counter
 	runDuration        *prometheus.HistogramVec
@@ -68,6 +69,9 @@ func New() *Metrics {
 		resumes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "godwit_run_resumes_total", Help: "Runs resumed, by who asked for it.",
 		}, []string{"target", "source"}),
+		retries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "godwit_run_retries_total", Help: "Transient failures the scheduler retried on its own, by failure code.",
+		}, []string{"target", "code"}),
 		attempts: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name: "godwit_run_attempts", Help: "Attempts a run needed to settle.",
 			Buckets: []float64{1, 2, 3, 4, 5},
@@ -110,7 +114,7 @@ func New() *Metrics {
 		Name: "godwit_build_info", Help: "Build metadata; always 1.",
 	}, []string{"version", "commit"})
 	buildInfo.WithLabelValues(version.Version, version.Commit).Set(1)
-	m.registry.MustRegister(buildInfo, m.resumes, m.attempts, m.heartbeatFailures, m.runDuration,
+	m.registry.MustRegister(buildInfo, m.resumes, m.retries, m.attempts, m.heartbeatFailures, m.runDuration,
 		m.statementDuration, m.statementFailures, m.hazards, m.validationFailures, m.driftChecks,
 		m.apiRequests, m.apiDuration, m.notifications)
 
@@ -162,6 +166,11 @@ func (m *Metrics) RunClaimed(target string, attempts int) {
 // RunResumed records an operator resume.
 func (m *Metrics) RunResumed(target string) {
 	m.resumes.WithLabelValues(target, SourceManual).Inc()
+}
+
+// RunRetried records a transient failure the scheduler will retry.
+func (m *Metrics) RunRetried(target, code string) {
+	m.retries.WithLabelValues(target, code).Inc()
 }
 
 // RunFinished records how one attempt settled.

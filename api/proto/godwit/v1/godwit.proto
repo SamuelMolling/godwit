@@ -48,6 +48,10 @@ message Run {
   string source = 15;
   // Id of the stored plan this run applies; empty for implicit runs.
   string plan_id = 16;
+  // Earliest time the scheduler will pick the run up again after a transient failure; unset when not waiting.
+  google.protobuf.Timestamp not_before = 17;
+  // Transient failures the scheduler retried on its own.
+  int32 retries = 18;
 }
 
 message RegisterTargetRequest {
@@ -95,6 +99,8 @@ message CreateRunResponse {
   string run_id = 1;
   // Id of the plan the run was bound to; empty for implicit runs.
   string plan_id = 2;
+  // True when run_id names an existing run for the same files instead of a new one.
+  bool reattached = 3;
 }
 
 message PlanRunRequest {

@@ -2,9 +2,13 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,19 +33,20 @@ func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) e
 	if _, err := s.pool.Exec(ctx, `
 		WITH p AS (
 			INSERT INTO cp_plans (id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition,
-				drift, plan, validated, acked, allow_out_of_order, created_by, source)
-			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash)
+			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18)
 			ON CONFLICT (target, key) WHERE state = 'ready' DO UPDATE SET
 				id = EXCLUDED.id, rollout = EXCLUDED.rollout, history_hash = EXCLUDED.history_hash, applied = EXCLUDED.applied,
 				schema_fingerprint = EXCLUDED.schema_fingerprint, schema_definition = EXCLUDED.schema_definition,
 				drift = EXCLUDED.drift, plan = EXCLUDED.plan, validated = EXCLUDED.validated, acked = EXCLUDED.acked,
 				allow_out_of_order = EXCLUDED.allow_out_of_order, created_by = EXCLUDED.created_by, source = EXCLUDED.source,
-				created_at = now()
+				files_hash = EXCLUDED.files_hash, created_at = now()
 			RETURNING id)
 		INSERT INTO cp_plan_files (plan_id, name, body)
 		SELECT (SELECT id FROM p), n, b FROM unnest($16::text[], $17::text[]) AS f (n, b)`,
 		p.ID, p.Target, p.Key, p.Rollout, p.HistoryHash, jsonOf(p.Applied), p.SchemaFingerprint, p.SchemaDefinition,
-		p.Drift, jsonOf(p.Migrations), p.Validated, append([]string{}, p.Acked...), p.AllowOutOfOrder, p.CreatedBy, p.Source, names, bodies); err != nil {
+		p.Drift, jsonOf(p.Migrations), p.Validated, append([]string{}, p.Acked...), p.AllowOutOfOrder, p.CreatedBy, p.Source, names, bodies,
+		FilesHash(files)); err != nil {
 		return fmt.Errorf("save plan: %w", err)
 	}
 
@@ -60,6 +65,34 @@ func (s *Store) ReadyPlan(ctx context.Context, target, key string, since time.Ti
 	}
 
 	return p, nil
+}
+
+// BoundPlan returns the newest bound plan on a target whose rollout and submitted files match.
+func (s *Store) BoundPlan(ctx context.Context, target, rollout, filesHash string) (Plan, error) {
+	p, err := scanPlan(s.pool.QueryRow(ctx, `SELECT `+planColumns+` FROM cp_plans
+		WHERE target = $1 AND rollout = $2 AND files_hash = $3 AND state = 'bound'
+		ORDER BY created_at DESC, id LIMIT 1`, target, rollout, filesHash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Plan{}, fmt.Errorf("bound plan for %s: %w", target, ErrNotFound)
+	}
+	if err != nil {
+		return Plan{}, fmt.Errorf("load bound plan: %w", err)
+	}
+
+	return p, nil
+}
+
+// RetirePlan marks a bound plan superseded so a later job with the same files plans afresh.
+func (s *Store) RetirePlan(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE cp_plans SET state = 'superseded' WHERE id = $1 AND state = 'bound'`, id)
+	if err != nil {
+		return fmt.Errorf("retire plan: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("bound plan %q: %w", id, ErrNotFound)
+	}
+
+	return nil
 }
 
 // Plan returns one plan by id.
@@ -198,6 +231,17 @@ func scanPlan(row pgx.Row) (Plan, error) {
 		&p.CreatedAt, &p.RunID, &p.SupersededBy)
 
 	return p, err
+}
+
+// FilesHash identifies a set of submitted files independent of what is pending; the retry migration computes the same value in SQL.
+func FilesHash(files map[string]string) string {
+	names := slices.Sorted(maps.Keys(files))
+	h := sha256.New()
+	for _, name := range names {
+		h.Write([]byte(name + "\n" + files[name] + "\n"))
+	}
+
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func jsonOf(v any) []byte {

@@ -19,6 +19,8 @@ type Config struct {
 	TTL         time.Duration
 	Interval    time.Duration
 	MaxAttempts int
+	// Jitter returns a value in [0, 1) that spreads retry backoff; nil means random.
+	Jitter func() float64
 }
 
 func (c Config) withDefaults() Config {
@@ -29,7 +31,10 @@ func (c Config) withDefaults() Config {
 		c.Interval = 2 * time.Second
 	}
 	if c.MaxAttempts <= 0 {
-		c.MaxAttempts = 3
+		c.MaxAttempts = 5
+	}
+	if c.Jitter == nil {
+		c.Jitter = defaultJitter
 	}
 
 	return c
@@ -129,7 +134,7 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 
 	held, err := s.applyRun(ctx, run)
 	if err != nil {
-		finish(StateFailed, err.Error())
+		s.fail(ctx, run, err, finish)
 
 		return
 	}
@@ -142,6 +147,32 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 		return
 	}
 	finish(StateSucceeded, "")
+}
+
+func (s *Scheduler) fail(ctx context.Context, run Run, err error, finish func(state, errText string)) {
+	code, transient := classify(err)
+	if !transient {
+		finish(StateFailed, FailureDetail(err))
+
+		return
+	}
+	if run.Attempts >= s.cfg.MaxAttempts {
+		finish(StateNeedsAttention, fmt.Sprintf("transient: gave up after %d attempts: %v", run.Attempts, err))
+
+		return
+	}
+	wait := Backoff(s.cfg.Interval, run.Attempts, s.cfg.Jitter)
+	detail := retryDetail(err, wait)
+	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
+	if err := s.store.Retry(ctx, run.ID, FailureDetail(err), wait); err != nil {
+		log.Error("retry not recorded; lease expiry will requeue the run", "error", err)
+
+		return
+	}
+	s.Metrics.RunRetried(run.Target, code)
+	run.State = StateQueued
+	notify.Emit(ctx, s.Notifier, log, RunEvent(run, notify.RunRetrying, detail))
+	log.Warn("run retrying", "wait", wait, "error", err)
 }
 
 // RunEvent builds the notification for a run at its current state.

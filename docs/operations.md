@@ -9,9 +9,10 @@ Every replica runs the same four loops: API, scheduler, drift monitor, validator
 - **Runs** are serialised per target by a lease row in `cp_leases` (one lease per target at a time, `FOR UPDATE SKIP LOCKED` on claim). Any replica claims a `queued` run, or a `running` one whose lease expired; a claim increments `attempts`. Heartbeats renew the lease every `lease-ttl/3`. A replica that dies mid-run loses its lease after `--lease-ttl`; the next claim resumes from the journal in the target ([concepts: leases](concepts.md#leases)).
 - **Drift** is checked by every replica on its own `--drift-interval`; the partial unique index `cp_drift_events_open_idx` keeps duplicate open events out, so two replicas detecting the same diff produce one row.
 - **Notifications** are per replica and in-memory (queue of 256 per provider); Slack thread ids live in `cp_notifications`, so any replica continues a thread.
+- **Transient failures** (`SQLSTATE 40001`, `40P01`, `55P03`, `57014`, `53300`, `57P01`–`57P03`, class `08`, connection resets, deadline exceeded): the run goes back to `queued` with `not_before = now + backoff` (`--tick-interval` doubled per attempt, capped at 5 minutes, ±20% jitter) and `retries + 1`; nobody is paged, `godwit_run_retries_total` counts it, the run's `error` starts with `transient:`. Any other SQL error finishes the run as `failed` at once with `sql:` in front.
 - **Store outage**: `/readyz` fails (it pings the store), the scheduler logs and retries on the next tick, in-flight statements finish or fail on their own timeouts. No run is lost: the journal is in the target, the run row in the store.
 
-Defaults that matter: `replicaCount: 2`, a PodDisruptionBudget with `minAvailable: 1`, soft pod anti-affinity, `terminationGracePeriodSeconds: 30`, graceful HTTP shutdown of 5s. A rolling update kills a replica with a run in flight; the run stays `running` until its lease expires (30s by default), then another replica takes it, and `godwit_run_resumes_total{source="reconciler"}` goes up by one. Set `--lease-ttl` above your longest expected GC pause and below how long you tolerate a stalled run; `--max-attempts` bounds how many times a run is re-claimed before it is finished as `needs_attention` (`gave up after N attempts`).
+Defaults that matter: `replicaCount: 2`, a PodDisruptionBudget with `minAvailable: 1`, soft pod anti-affinity, `terminationGracePeriodSeconds: 30`, graceful HTTP shutdown of 5s. A rolling update kills a replica with a run in flight; the run stays `running` until its lease expires (30s by default), then another replica takes it, and `godwit_run_resumes_total{source="reconciler"}` goes up by one. Set `--lease-ttl` above your longest expected GC pause and below how long you tolerate a stalled run; `--max-attempts` (5) bounds how many attempts a run gets, whether they ended in a lost lease or a transient failure, before it is finished as `needs_attention` (`transient: gave up after N attempts`).
 
 ## The store
 
@@ -26,7 +27,7 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 | `cp_snapshots` | one per target: schema fingerprint and definition after the last successful run or baseline | targets |
 | `cp_drift_events` | one per detected diff, `resolved_at` when it goes away or is accepted | drift |
 | `cp_notifications` | Slack root message ts per run / drift key | runs |
-| `cp_audit` | one per admitted mutation (`target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`) | mutations |
+| `cp_audit` | one per admitted mutation (`target.register`, `target.baseline`, `run.create`, `run.reattach`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`) | mutations |
 
 Privileges for the store role:
 
@@ -108,6 +109,7 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 | `godwit_runs` | gauge | `target`, `state` | current run count, computed at scrape time |
 | `godwit_run_age_seconds` | gauge | `target`, `state` | age of the oldest run in that state |
 | `godwit_run_resumes_total` | counter | `target`, `source` | `reconciler` (lease expired) or `manual` (`ResumeRun`) |
+| `godwit_run_retries_total` | counter | `target`, `code` | transient failures retried on their own; `code` is the SQLSTATE, `network` or `timeout` |
 | `godwit_run_attempts` | histogram | — | attempts a finished run took (buckets 1–5) |
 | `godwit_heartbeat_failures_total` | counter | — | lease renewals that failed |
 | `godwit_run_duration_seconds` | histogram | `target`, `result` | wall time of an attempt |
@@ -168,7 +170,7 @@ groups:
     labels: {severity: page}
 ```
 
-`GodwitRunFailed` is a ticket, not a page: a `failed` run is a migration that errored on SQL; the service does not retry it and the pipeline that created it already failed loudly.
+`GodwitRunFailed` is a ticket, not a page: a `failed` run is a migration that errored on SQL (`sql:` in its error); transient errors never reach `failed`, they retry with backoff and the run says `retrying` in the meantime. The pipeline that created it already failed loudly.
 
 ## Notifications
 
@@ -176,7 +178,7 @@ Configured by environment only ([configuration](configuration.md#environment)). 
 
 | `kind` | `type` |
 |---|---|
-| `run` | `created`, `running`, `succeeded`, `failed`, `needs_attention`, `awaiting_contract`, `confirmed`, `resumed`, `parked`, `reverted` |
+| `run` | `created`, `running`, `retrying`, `succeeded`, `failed`, `needs_attention`, `awaiting_contract`, `confirmed`, `resumed`, `parked`, `reverted` |
 | `drift` | `detected`, `resolved`, `accepted` |
 
 **Webhook** (`GODWIT_WEBHOOK_URL`): one `POST` per event, `Content-Type: application/json`, 10s timeout, any status ≥ 300 counts as `failed`. Body:
@@ -216,6 +218,8 @@ Delivery is asynchronous: one worker per provider with a queue of 256 events; a 
 | `run created`, `revert created`, `run resumed`, `run parked`, `rollout confirmed`, `target registered`, `baseline accepted` | info | `run`, `target`, `actor` |
 | `run refused by hazard gate`, `run refused by validation` | warn | `target`, `actor`, `error` |
 | `run claimed` | info | `run`, `target`, `attempt`, `rollout`, `phase`, `reverts` |
+| `run retrying` | warn | `run`, `target`, `attempt`, `wait`, `error` |
+| `run re-attached` | info | `run`, `target`, `state`, `plan`, `resumed` |
 | `run finished` | info, error when the run errored | `run`, `target`, `attempt`, `state`, `duration_ms`, `error` |
 | `statement applied` / `statement failed` | debug / warn | `run`, `target`, `version`, `stmt`, `kind`, `duration_ms`, `error` |
 | `heartbeat lost` | warn | `run`, `error` |

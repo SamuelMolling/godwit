@@ -68,7 +68,7 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&driftInterval, "drift-interval", 5*time.Minute, "how often to check targets for schema drift")
 	cmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "how long a claimed run stays leased without a heartbeat")
 	cmd.Flags().DurationVar(&tickInterval, "tick-interval", 2*time.Second, "how often the scheduler looks for runnable runs")
-	cmd.Flags().IntVar(&maxAttempts, "max-attempts", 3, "claims a run may take before it parks as needs_attention")
+	cmd.Flags().IntVar(&maxAttempts, "max-attempts", 5, "claims a run may take before it parks as needs_attention")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "disable scratch-database validation at run admission")
 	cmd.Flags().BoolVar(&requirePlan, "require-plan", false, "refuse runs without a stored plan on every target")
 	cmd.Flags().DurationVar(&planTTL, "plan-ttl", 720*time.Hour, "how long a stored plan stays bindable")

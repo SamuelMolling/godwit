@@ -6,7 +6,7 @@ Two ids per run: the store's `cp_runs.id` (what the CLI and alerts show) and the
 
 ## Run in `needs_attention`
 
-**Meaning.** Either the scheduler gave up (`error = 'gave up after N attempts'`: the run was claimed `--max-attempts`+1 times, each attempt lost its lease before finishing) or an operator called `ParkRun`. Nothing runs against the target; the lease is gone.
+**Meaning.** Either the scheduler gave up (`error = 'transient: gave up after N attempts: ...'`: the run used its `--max-attempts` (5) attempts, each one lost its lease or hit a transient error such as a lock timeout, deadlock or lost connection, and the backoff between them did not help) or an operator called `ParkRun`. Nothing runs against the target; the lease is gone.
 
 ```sql
 SELECT id, target, state, attempts, error, rollout, phase, created_by, source, created_at, finished_at
@@ -39,7 +39,7 @@ Resume is safe: the next attempt reopens the same `godwit.runs` row, skips every
 
 ## Run `failed`
 
-**Meaning.** A statement returned an error. The service does not retry SQL failures; the error is in `cp_runs.error` and in `godwit.runs.error`. Everything before the failing statement is committed (`tx` statements commit one by one).
+**Meaning.** A statement returned a genuine SQL error (`error` starts with `sql:`). Transient errors never land here: they retry on their own with backoff (`retrying` notification, `godwit_run_retries_total`) and only park as `needs_attention` when `--max-attempts` is exhausted. The error is in `cp_runs.error` and in `godwit.runs.error`. Everything before the failing statement is committed (`tx` statements commit one by one).
 
 ```sql
 SELECT error FROM cp_runs WHERE id = :'run';
@@ -71,7 +71,7 @@ Take a [restore point](operations.md#backups-and-pitr) first. If the deploy was 
 
 ## Lock timeouts
 
-**Symptom.** `godwit_statement_failures_total{reason="lock_timeout"}` rises, runs fail with `canceling statement due to lock timeout (SQLSTATE 55P03)`.
+**Symptom.** `godwit_statement_failures_total{reason="lock_timeout"}` and `godwit_run_retries_total{code="55P03"}` rise, runs show `transient: ... canceling statement due to lock timeout (SQLSTATE 55P03) (retry in 4s)` and go back to `queued`.
 
 **Meaning.** The statement waited longer than the run's `lock_timeout` (the target's registered default, 5s unless set, or the value passed to `migrate`) for a lock held by application sessions. Failing fast is the point: a DDL waiting on a lock queues every later query behind it.
 
@@ -86,7 +86,7 @@ FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
 WHERE NOT l.granted OR l.mode LIKE '%Exclusive%';
 ```
 
-**Action.** End or wait out the long transaction (`idle in transaction` sessions are the usual holder), then `godwit run resume <run-id>`. If contention is structural, run the migration with a longer wait in a quiet window: `godwit migrate --lock-timeout 30s` for that run, or `godwit target add` again with a different `--lock-timeout` to change the default. A `statement_timeout` failure (`SQLSTATE 57014`) is the same procedure with the other knob.
+**Action.** End or wait out the long transaction (`idle in transaction` sessions are the usual holder); the run retries by itself (backoff doubles per attempt from `--tick-interval`, capped at 5 minutes) and only needs `godwit run resume <run-id>` once it parked as `needs_attention`. If contention is structural, run the migration with a longer wait in a quiet window: `godwit migrate --lock-timeout 30s` for that run, or `godwit target add` again with a different `--lock-timeout` to change the default. A `statement_timeout` failure (`SQLSTATE 57014`) is the same procedure with the other knob.
 
 ## Replica lost mid-run
 

@@ -154,6 +154,7 @@ type binding struct {
 	acked           []string
 	allowOutOfOrder bool
 	superseded      string
+	reattached      string
 	adm             *admission
 }
 
@@ -165,6 +166,11 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	obs, err := s.Inspector.Observe(ctx, m.Target)
 	if err != nil {
 		return b, rpcErr(err)
+	}
+	if run, ok, err := s.reattach(ctx, m, spec, obs); err != nil || ok {
+		b.reattached, b.planID = run.ID, run.PlanID
+
+		return b, err
 	}
 	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied)
 	if err != nil {

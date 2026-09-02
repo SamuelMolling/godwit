@@ -97,11 +97,13 @@ A **run** is one request to apply a set of files to one target. `cp_runs` carrie
 | `running` | a replica holds the lease and is executing | no |
 | `succeeded` | every statement of the phase applied | yes (until reverted) |
 | `awaiting_contract` | `expand-contract` run: expand phase done, contract statements held back | until `ConfirmRollout` |
-| `failed` | a statement failed (SQL error, timeout, provider error); the journal keeps the progress | until `ResumeRun` |
-| `needs_attention` | the resume budget is exhausted (`gave up after N attempts`) or an operator parked it with `ParkRun` | until `ResumeRun` |
+| `failed` | a statement failed with a genuine SQL error (`sql:`); the journal keeps the progress | until `ResumeRun` |
+| `needs_attention` | the attempt budget is exhausted (`transient: gave up after N attempts`) or an operator parked it with `ParkRun` | until `ResumeRun` |
 | `reverted` | a later revert run of this run succeeded | yes |
 
-A SQL failure goes straight to `failed`; the scheduler does not retry on its own. `needs_attention` is reached by the crash loop (a replica keeps dying and the run is re-claimed more than `--max-attempts` times) or by `ParkRun`. `ResumeRun` puts either back in `queued` with `attempts = 0`.
+A genuine SQL failure goes straight to `failed`. A transient one (`40001`, `40P01`, `55P03`, `57014`, `53300`, `57P01`–`57P03`, class `08`, a lost connection, a deadline) puts the run back in `queued` with `not_before` set: the wait is `--tick-interval` doubled per attempt, capped at 5 minutes, with ±20% jitter, and `retries` counts them. `needs_attention` is reached when the run has used `--max-attempts` attempts, whether lost leases or transient failures, or by `ParkRun`. `ResumeRun` puts either back in `queued` with `attempts = 0` and no wait.
+
+A pipeline re-run does not queue a second run: `CreateRun` with the same files, target and rollout as a bound plan re-attaches to that plan's run (`reattached` in the response, `run.reattach` in the audit). A `queued`, `running` or `awaiting_contract` run is simply followed; a `succeeded` one is followed too if the target still has everything it applied; a `failed` or `needs_attention` one is resumed when the only history the plan did not know is the run's own progress; a `reverted` one releases the plan and a fresh run is created. An explicit `--plan <id>` skips re-attaching.
 
 `kind` is `migrate` or `baseline`; `phase` is `expand` or `contract`; `reverts` links a revert run to the run it undoes.
 
@@ -113,7 +115,7 @@ Runs are executed by whichever replica claims them. Every replica ticks every `-
 - Heartbeat every `ttl / 3` while executing. A heartbeat that fails (store unreachable, lease taken by another holder) logs `heartbeat lost`, counts `godwit_heartbeat_failures_total` and stops renewing; the attempt itself keeps running.
 - On finish, delete the lease and set the final state.
 
-A replica that dies stops heartbeating; after `--lease-ttl` (30s) another replica claims the same run, `attempts` becomes 2, and the executor resumes from the journal. If `attempts` exceeds `--max-attempts` (3) at claim time the run is finished as `needs_attention` without executing. `holder` is the replica's hostname.
+A replica that dies stops heartbeating; after `--lease-ttl` (30s) another replica claims the same run, `attempts` becomes 2, and the executor resumes from the journal. If `attempts` exceeds `--max-attempts` (5) at claim time the run is finished as `needs_attention` without executing; a run held back by `not_before` is not claimed until the store's clock passes it. `holder` is the replica's hostname.
 
 One target executes one run at a time: the claim query hands out one lease per target, and the advisory lock on the target itself serialises executors that end up overlapping (a stalled replica whose lease expired and its successor), so the second one waits rather than interleaving statements.
 

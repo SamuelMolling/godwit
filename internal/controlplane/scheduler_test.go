@@ -243,6 +243,7 @@ func TestSchedulerErrorBranches(t *testing.T) {
 		target  map[string]string
 		provs   map[string]creds.Provider
 		wantErr string
+		parked  bool
 	}{
 		{
 			name:    "bad migration files",
@@ -277,7 +278,8 @@ func TestSchedulerErrorBranches(t *testing.T) {
 			files:   goodFiles(),
 			target:  map[string]string{"dsn": "postgres://bad:bad@127.0.0.1:1/x"},
 			provs:   map[string]creds.Provider{"plain": plainProvider{}},
-			wantErr: "connect target",
+			wantErr: "transient: gave up after 1 attempts: connect target",
+			parked:  true,
 		},
 	}
 	for i, tc := range cases {
@@ -289,9 +291,13 @@ func TestSchedulerErrorBranches(t *testing.T) {
 			}
 			id := "22222222-0000-0000-0000-00000000000" + string(rune('1'+i))
 			queueRun(t, s, id, tc.files)
-			sched := NewScheduler(s, tc.provs, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
+			sched := NewScheduler(s, tc.provs, PGEngine{}, Policies(), Config{Holder: "h", MaxAttempts: 1}, testLog)
 			sched.Tick(ctx)
-			r := waitState(t, s, id, StateFailed)
+			want := StateFailed
+			if tc.parked {
+				want = StateNeedsAttention
+			}
+			r := waitState(t, s, id, want)
 			if !strings.Contains(r.Error, tc.wantErr) {
 				t.Fatalf("error = %q, want containing %q", r.Error, tc.wantErr)
 			}
