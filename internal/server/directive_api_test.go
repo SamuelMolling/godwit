@@ -543,3 +543,140 @@ func TestTargetKeepOldDefault(t *testing.T) {
 		t.Fatalf("keep_old=true must keep the old column: %v", notes)
 	}
 }
+
+// shopFiles is what the simple directives act on: a nullable column, an index to drop, a table to reference.
+func shopFiles() []*godwitv1.MigrationFile {
+	return []*godwitv1.MigrationFile{
+		{Name: "20260901120000_shop.up.sql", Body: "CREATE TABLE public.shop (id bigserial PRIMARY KEY, tag text, price integer);\n" +
+			"CREATE TABLE public.item (id bigserial PRIMARY KEY, shop_id bigint);\n" +
+			"CREATE INDEX shop_price_idx ON public.shop (price);\n" +
+			"INSERT INTO public.shop (tag, price) SELECT g::text, g FROM generate_series(1, 50) g;\n" +
+			"INSERT INTO public.item (shop_id) SELECT g FROM generate_series(1, 50) g;"},
+		{Name: "20260901120000_shop.down.sql", Body: "DROP TABLE public.item;\nDROP TABLE public.shop;"},
+	}
+}
+
+func shopService(t *testing.T) (godwitv1connect.GodwitServiceClient, string) {
+	t.Helper()
+	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
+	targetDSN := newDatabase(t, "tg")
+	registerTarget(t, client, targetDSN)
+	runToSuccess(t, client, shopFiles(), []string{"H001"})
+
+	return client, targetDSN
+}
+
+func directiveFiles(version, body, down string) []*godwitv1.MigrationFile {
+	return []*godwitv1.MigrationFile{
+		{Name: version + "_simple.up.sql", Body: body},
+		{Name: version + "_simple.down.sql", Body: down},
+	}
+}
+
+func scalar[T any](t *testing.T, dsn, query string) T {
+	t.Helper()
+	var out T
+	if err := targetConn(t, dsn).QueryRow(context.Background(), query).Scan(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	return out
+}
+
+// TestCreateRunAppliesTheSimpleDirectives walks every expand-phase operation end to end against a real
+// target, one migration each, in the order that lets the later ones use what the earlier ones built.
+func TestCreateRunAppliesTheSimpleDirectives(t *testing.T) {
+	t.Parallel()
+	client, targetDSN := shopService(t)
+	for _, tc := range []struct {
+		version, directive, down, query string
+		want                            bool
+	}{
+		{
+			version: "20260901130000", directive: "add-column shop.zone text default='''eu''' not-null",
+			down:  "ALTER TABLE public.shop DROP COLUMN zone;",
+			query: `SELECT count(*) = 50 FROM public.shop WHERE zone = 'eu'`,
+		},
+		{
+			version: "20260901130100", directive: "add-not-null shop.tag", down: "ALTER TABLE public.shop ALTER COLUMN tag DROP NOT NULL;",
+			query: `SELECT attnotnull FROM pg_attribute WHERE attrelid = 'public.shop'::regclass AND attname = 'tag'`,
+		},
+		{
+			version: "20260901130200", directive: "add-index shop (tag) unique", down: "DROP INDEX public.shop_tag_idx;",
+			query: `SELECT indisvalid AND indisunique FROM pg_index WHERE indexrelid = 'public.shop_tag_idx'::regclass`,
+		},
+		{
+			version: "20260901130300", directive: "drop-index shop_price_idx", down: "CREATE INDEX shop_price_idx ON public.shop (price);",
+			query: `SELECT count(*) = 0 FROM pg_class WHERE relname = 'shop_price_idx'`,
+		},
+		{
+			version: "20260901130400", directive: "add-fk item.shop_id -> shop.id on-delete=cascade",
+			down:  "ALTER TABLE public.item DROP CONSTRAINT item_shop_id_fkey;",
+			query: `SELECT convalidated FROM pg_constraint WHERE conname = 'item_shop_id_fkey'`,
+		},
+		{
+			version: "20260901130500", directive: "add-check shop shop_price_positive 'price > 0'",
+			down:  "ALTER TABLE public.shop DROP CONSTRAINT shop_price_positive;",
+			query: `SELECT convalidated FROM pg_constraint WHERE conname = 'shop_price_positive'`,
+		},
+	} {
+		t.Run(tc.directive, func(t *testing.T) {
+			files := directiveFiles(tc.version, "-- godwit: "+tc.directive+"\n", tc.down)
+			planWith(t, client, files)
+			runToSuccess(t, client, files, nil)
+			if !scalar[bool](t, targetDSN, tc.query) {
+				t.Fatalf("%s did not take effect: %s", tc.directive, tc.query)
+			}
+		})
+	}
+}
+
+// TestCreateRunDropColumnHoldsTheContractPhase proves the one operation that lands in the contract phase:
+// the run parks until a human confirms, and only then does the column go.
+func TestCreateRunDropColumnHoldsTheContractPhase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client, targetDSN := shopService(t)
+	files := directiveFiles("20260901130000", "-- godwit: drop-column shop.price\n",
+		"ALTER TABLE public.shop ADD COLUMN price integer;")
+
+	msg := planWith(t, client, files)
+	var phases []string
+	for _, m := range msg.Migrations {
+		for _, st := range m.Statements {
+			phases = append(phases, st.Phase)
+		}
+	}
+	if len(phases) != 1 || phases[0] != controlplane.PhaseContract {
+		t.Fatalf("phases = %v", phases)
+	}
+
+	runID := startRun(t, client, files)
+	waitState(t, client, runID, godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT)
+	if scalar[bool](t, targetDSN, `SELECT count(*) = 0 FROM pg_attribute
+		WHERE attrelid = 'public.shop'::regclass AND attname = 'price' AND NOT attisdropped`) {
+		t.Fatal("the column must survive until the contract phase is confirmed")
+	}
+	if _, err := client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: runID})); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, client, runID, godwitv1.RunState_RUN_STATE_SUCCEEDED)
+	if !scalar[bool](t, targetDSN, `SELECT count(*) = 0 FROM pg_attribute
+		WHERE attrelid = 'public.shop'::regclass AND attname = 'price' AND NOT attisdropped`) {
+		t.Fatal("the column must be gone after the contract phase")
+	}
+}
+
+func TestCreateRunDropColumnUnderDirectRolloutRefuses(t *testing.T) {
+	t.Parallel()
+	client, _ := shopService(t)
+	_, err := client.CreateRun(context.Background(), connect.NewRequest(&godwitv1.CreateRunRequest{
+		Target:  "app",
+		Files:   directiveFiles("20260901130000", "-- godwit: drop-column shop.price\n", "ALTER TABLE public.shop ADD COLUMN price integer;"),
+		Rollout: controlplane.RolloutDirect,
+	}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "use rollout: expand-contract") {
+		t.Fatalf("err = %v", err)
+	}
+}

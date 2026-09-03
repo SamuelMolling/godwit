@@ -301,6 +301,27 @@ The `UPDATE` is one plan statement with a `BatchSpec`, not N unrolled ones: the 
 cursor with the rows, and resumes from the cursor after a crash. `$1::bigint` is explicit because a key narrower
 than `bigint` would otherwise refuse the `int8` the executor binds.
 
+The other operations are the cheap half of the same machinery — no trigger, no batches except where a value has
+to be filled in, and only `drop-column` produces a contract statement:
+
+| Op | Expands into | Phase |
+|---|---|---|
+| `add-not-null <t>.<c>` | `ADD CONSTRAINT <c>_not_null CHECK (<c> IS NOT NULL) NOT VALID` → `VALIDATE CONSTRAINT` → `SET NOT NULL` → `DROP CONSTRAINT`. Only the `VALIDATE` reads the rows, and it does so under a lock that lets writes through. | expand |
+| `add-column <t>.<c> <type>` | `ADD COLUMN` nullable, then `ALTER COLUMN <c> SET DEFAULT` when `default=` is given. With `not-null`, a batched backfill of the rows that already exist and then the `add-not-null` block; `not-null` without `default=` is refused. | expand |
+| `add-index <t> (<cols>)` | `DROP INDEX CONCURRENTLY IF EXISTS` when an **invalid** index of that name is left over from an interrupted build, then `CREATE [UNIQUE] INDEX CONCURRENTLY`. The name is `name=` or `<t>_<cols>_idx`, the same one the H001 recipe prints. | expand |
+| `drop-index <name>` | `DROP INDEX CONCURRENTLY IF EXISTS`, so a retry after an interrupted drop is a no-op. | expand |
+| `add-fk <t>.<c> -> <rt>.<rc>` | `ADD CONSTRAINT <name> FOREIGN KEY … NOT VALID` → `VALIDATE CONSTRAINT`. The name is `name=` or `<t>_<c>_fkey`. | expand |
+| `add-check <t> <name> '<expr>'` | `ADD CONSTRAINT <name> CHECK (<expr>) NOT VALID` → `VALIDATE CONSTRAINT`. | expand |
+| `drop-column <t>.<c>` | `ALTER TABLE … DROP COLUMN`, in the **contract** phase — so the run parks at `awaiting_contract` until a human confirms, and `rollout: direct` is refused. | contract |
+
+The generated names are the ones the #40 recipes already print, so a hazard's recipe and the directive that
+replaces it produce the same schema. `add-not-null` and `add-column`'s `not-null` reuse a CHECK that already says
+the column is not null instead of adding a second one, and drop it afterwards only when it carries godwit's own
+`<c>_not_null` name — a constraint someone else wrote is validated, used and left alone.
+
+`-- godwit: revert` generates the inverse for every operation but `drop-index`, `drop-column` and `backfill`,
+which have none that is lossless.
+
 Expand statements are spliced where the directive stood; contract statements are appended at the **end** of the
 body, so the contract phase is always a suffix and `Plan.HoldFrom` can name a single index. The generated
 statements carry no hazards: godwit wrote them, and the hazard gate speaks about what the author wrote.
@@ -361,7 +382,14 @@ Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, n
 | two directives naming the same subject in one migration | ambiguous order |
 | a directive in a migration whose own SQL carries H002, H003 or H008 | the contract block is a suffix, so the destructive statement would run in the expand phase; split them |
 | a directive that splits a statement in two | a directive sits between whole statements |
-| `-- godwit: revert` with `keep-old=false`, or against a `backfill` | there is no lossless inverse; write the `.down.sql` by hand |
+| `add-not-null` on a column that is already `NOT NULL` | the migration would do nothing |
+| `add-column` naming a column the table already has | the expansion would collide |
+| `add-column … not-null` with no `default=` | nothing would fill the rows that already exist |
+| `add-index` whose name is taken by a valid index, or by anything that is not an index | only an **invalid** leftover is cleared automatically |
+| `drop-index` naming something that is not an index, or an index that backs a constraint | drop the constraint instead |
+| `add-fk` pointing at a column with no single-column unique index | PostgreSQL cannot point a foreign key at it |
+| `add-fk` or `add-check` whose constraint name the table already carries | pass `name=` to choose another |
+| `-- godwit: revert` with `keep-old=false`, or against a `backfill`, a `drop-index` or a `drop-column` | there is no lossless inverse; write the `.down.sql` by hand |
 | `skip_validation` | no scratch, no catalog, no expansion |
 | a directive in a repeatable, or in a `.down.sql` beyond the sentinel | `E004`, above |
 

@@ -387,6 +387,46 @@ docker compose exec -T target-db psql -U app -d legacy \
 echo "==> quantity is bigint, quantity_old is the rollback godwit kept and recorded as retired"
 
 echo
+echo "==> the simple directives: an index built concurrently and a NOT NULL taken without a table scan"
+SD_FILES='[
+    {"name": "20260901191000_simple.up.sql", "body": "-- godwit: add-index public.orders (status)\n-- godwit: add-not-null public.orders.total\n"},
+    {"name": "20260901191000_simple.down.sql", "body": "-- godwit: revert\n"}
+  ]'
+rpc PlanRun "{\"target\": \"legacy\", \"persist\": true, \"files\": $SD_FILES}" 18475 \
+  | tr ',' '\n' | grep -E '"sql"' | head -10
+SD_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $SD_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$SD_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+
+echo
+echo "==> drop-column is the one that lands in the contract phase: the rollback column goes only after a human confirms"
+DC_FILES='[
+    {"name": "20260901192000_drop_old.up.sql", "body": "-- godwit: drop-column public.orders.quantity_old\n"},
+    {"name": "20260901192000_drop_old.down.sql", "body": "ALTER TABLE orders ADD COLUMN quantity_old integer;\n"}
+  ]'
+DC_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"files\": $DC_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$DC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_AWAITING_CONTRACT" ] && break
+  sleep 1
+done
+echo "state: $STATE  (quantity_old is still there)"
+rpc ConfirmRollout "{\"runId\": \"$DC_ID\"}" 18475
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$DC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'orders' ORDER BY column_name;" \
+  -c "SELECT indexname FROM pg_indexes WHERE tablename = 'orders' ORDER BY indexname;"
+
+echo
 echo "==> per-target search_path: unqualified names land in the application's schema, the journal never moves"
 docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE tenant;" > /dev/null
 docker compose exec -T target-db psql -U app -d tenant -c "CREATE SCHEMA tenant;" > /dev/null
