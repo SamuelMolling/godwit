@@ -14,7 +14,7 @@ import (
 
 var errDiffDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("schema diff is not enabled"))
 
-// Diff generates the migration between the target's live schema and the desired DDL, in both directions.
+// Diff generates the migration between the requested base and the desired DDL, in both directions.
 func (s *Server) Diff(ctx context.Context, req *connect.Request[godwitv1.DiffRequest]) (*connect.Response[godwitv1.DiffResponse], error) {
 	m := req.Msg
 	if m.Target == "" {
@@ -26,10 +26,23 @@ func (s *Server) Diff(ctx context.Context, req *connect.Request[godwitv1.DiffReq
 	if s.Differ == nil {
 		return nil, errDiffDisabled
 	}
-	d, err := s.Differ.Diff(ctx, m.Target, m.Schema)
+	base, files := controlplane.DiffBaseLive, map[string]string{}
+	if m.Base == godwitv1.DiffBase_DIFF_BASE_FILES {
+		if len(m.Files) == 0 {
+			return nil, invalid("files is required for base DIFF_BASE_FILES")
+		}
+		base = controlplane.DiffBaseFiles
+		for _, f := range m.Files {
+			files[f.Name] = f.Body
+		}
+	}
+	d, err := s.Differ.Diff(ctx, m.Target, m.Schema, base, files)
 	if err != nil {
-		if errors.Is(err, controlplane.ErrDesiredSchema) {
+		if errors.Is(err, controlplane.ErrDesiredSchema) || errors.Is(err, controlplane.ErrMigrationFiles) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		if errors.Is(err, controlplane.ErrValidationDisabled) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		}
 
 		return nil, rpcErr(err)

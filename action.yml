@@ -25,13 +25,13 @@ inputs:
     description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002)"
     default: ""
   server:
-    description: "godwit service URL (plan, apply, verify, revert, migrate, diff; default: server from godwit.yaml or GODWIT_SERVER)"
+    description: "godwit service URL (lint, plan, apply, verify, revert, migrate, diff; lint uses it for the schema_source check, warning W002 without it; default: server from godwit.yaml or GODWIT_SERVER)"
     default: ""
   token:
-    description: "Bearer token for the service (plan, verify, diff: read scope; apply, confirm, revert, migrate: pipeline scope)"
+    description: "Bearer token for the service (lint, plan, verify, diff: read scope; apply, confirm, revert, migrate: pipeline scope)"
     default: ""
   target:
-    description: "Target name (plan, apply, verify, migrate, diff; confirm and revert narrow the run search with it; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
+    description: "Target name (lint, plan, apply, verify, migrate, diff; confirm and revert narrow the run search with it; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
     default: ""
   rollout:
     description: "Rollout policy for plan, apply and migrate: direct or expand-contract (default: godwit.yaml, else direct)"

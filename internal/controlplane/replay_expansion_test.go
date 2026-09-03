@@ -163,7 +163,7 @@ func TestDiffReplaysAppliedDirectives(t *testing.T) {
 	succeededRun(t, s, "app", peopleFiles(), nil)
 	applyDirective(t, s, v, "app", "change-type public.people.age bigint batch=500", revertDown)
 
-	out, err := d.Diff(ctx, "app", peopleUp)
+	out, err := d.Diff(ctx, "app", peopleUp, DiffBaseLive, nil)
 	if err != nil {
 		t.Fatalf("diff after a change-type: %v", err)
 	}

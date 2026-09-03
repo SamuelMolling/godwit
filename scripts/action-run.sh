@@ -251,6 +251,8 @@ case "${COMMAND}" in
   lint)
     args=(${dir_args[@]+"${dir_args[@]}"})
     if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
+    if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+    if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
     if [ -n "${BASE}" ]; then
       ensure_base
       args+=(--base "${BASE}")

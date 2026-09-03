@@ -151,6 +151,61 @@ func TestDiff_IndexConcurrently(t *testing.T) {
 	}, nil)
 }
 
+func TestDiff_BaseFiles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client, _, _ := diffTarget(t, false)
+
+	files := orderedFiles()
+	desired := "CREATE TABLE t (id int, a int, b int);"
+	res, err := client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: desired, Base: godwitv1.DiffBase_DIFF_BASE_FILES, Files: files,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Msg.UpSql != "" || res.Msg.DownSql != "" {
+		t.Fatalf("committed files already express the schema: up = %q, down = %q", res.Msg.UpSql, res.Msg.DownSql)
+	}
+
+	live := diffSchema(t, client, desired)
+	if !strings.Contains(live.UpSql, `ADD COLUMN "b"`) {
+		t.Fatalf("the live base still owes the pending migration: %s", live.UpSql)
+	}
+
+	files[4].Body = "ALTER TABLE t ADD COLUMN c int;"
+	res, err = client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: desired, Base: godwitv1.DiffBase_DIFF_BASE_FILES, Files: files,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Msg.UpSql, `ADD COLUMN "b"`) || !strings.Contains(res.Msg.UpSql, `DROP COLUMN "c"`) {
+		t.Fatalf("a hand-edited generated file must show as residue: %s", res.Msg.UpSql)
+	}
+
+	res, err = client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: "CREATE TABLE t (id int, a int, b int, email text);",
+		Base: godwitv1.DiffBase_DIFF_BASE_FILES, Files: orderedFiles(),
+	}))
+	if err != nil || !strings.Contains(res.Msg.UpSql, `ADD COLUMN "email"`) {
+		t.Fatalf("a schema changed without regenerating: up = %q, err = %v", res.Msg.UpSql, err)
+	}
+}
+
+func TestDiff_BaseFilesNeedsValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client, _, _ := diffTarget(t, true)
+
+	_, err := client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: "CREATE TABLE t (id int);", Base: godwitv1.DiffBase_DIFF_BASE_FILES, Files: orderedFiles(),
+	}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "needs validation") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestDiff_Errors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

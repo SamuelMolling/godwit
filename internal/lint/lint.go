@@ -22,11 +22,13 @@ const (
 
 // Finding codes that are not planner hazards.
 const (
-	CodeLoad      = "E001"
-	CodeParse     = "E002"
-	CodeModified  = "E003"
-	CodeDirective = "E004"
-	CodeNoOpDown  = "W001"
+	CodeLoad        = "E001"
+	CodeParse       = "E002"
+	CodeModified    = "E003"
+	CodeDirective   = "E004"
+	CodeSchemaDrift = "E005"
+	CodeNoOpDown    = "W001"
+	CodeUnchecked   = "W002"
 )
 
 // Finding is one lint result attached to a migration file.
@@ -47,10 +49,24 @@ type Report struct {
 // GitFunc runs git with args inside dir and returns its stdout.
 type GitFunc func(dir string, args ...string) ([]byte, error)
 
+// DiffFunc returns the SQL the desired schema still needs on top of what files produce; empty means they match.
+type DiffFunc func(files map[string]string) (string, error)
+
+// SchemaCheck compares the committed migrations against the schema source godwit.yaml declares.
+type SchemaCheck struct {
+	// Path names the ORM schema in the finding.
+	Path string
+	// Diff is nil when no server was given, which downgrades the check to W002.
+	Diff DiffFunc
+	// Warn reports a stale migration as a warning, as schema_source.lint false asks.
+	Warn bool
+}
+
 // Options tunes Check.
 type Options struct {
-	Base string
-	Git  GitFunc
+	Base   string
+	Git    GitFunc
+	Schema *SchemaCheck
 }
 
 var (
@@ -84,8 +100,44 @@ func Check(dir string, acked []string, opts Options) (Report, error) {
 			rep.checkMigration(m, ackSet)
 		}
 	}
+	if err := rep.checkSchema(opts.Schema, migs); err != nil {
+		return Report{}, err
+	}
 
 	return rep, nil
+}
+
+// checkSchema asks the service what the desired schema still needs once the committed files have run.
+func (r *Report) checkSchema(c *SchemaCheck, migs []engine.Migration) error {
+	if c == nil {
+		return nil
+	}
+	if c.Diff == nil {
+		r.add(Finding{File: c.Path, Level: LevelWarning, Code: CodeUnchecked, Message: c.Path + " not checked: no server configured"})
+
+		return nil
+	}
+	files := map[string]string{}
+	for _, m := range migs {
+		files[m.UpFile()], files[m.DownFile()] = m.UpSQL, m.DownSQL
+	}
+	residue, err := c.Diff(files)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(residue) == "" {
+		return nil
+	}
+	level := LevelError
+	if c.Warn {
+		level = LevelWarning
+	}
+	r.add(Finding{
+		File: c.Path, Level: level, Code: CodeSchemaDrift,
+		Message: "the migration generated from " + c.Path + " is out of date", Recipe: residue,
+	})
+
+	return nil
 }
 
 func loadFinding(dir string, err error) Finding {
