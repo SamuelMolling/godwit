@@ -50,6 +50,7 @@ spec:
             {{- end }}
             {{- if .Values.serve.ui.enabled }}
             - --ui
+            - --ui-scope={{ .Values.serve.ui.scope }}
             {{- end }}
             {{- range .Values.serve.extraArgs }}
             - {{ . | quote }}

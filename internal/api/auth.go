@@ -33,6 +33,15 @@ func (s Scope) allows(required Scope) bool {
 	return ok && scopeRank[s] >= r
 }
 
+// ParseScope returns s as a Scope, refusing anything outside the known set.
+func ParseScope(s string) (Scope, error) {
+	if _, ok := scopeRank[Scope(s)]; !ok {
+		return "", fmt.Errorf("unknown scope %q, want read, pipeline, operator or admin", s)
+	}
+
+	return Scope(s), nil
+}
+
 var procedureScopes = map[string]Scope{
 	godwitv1connect.GodwitServiceGetRunProcedure:          ScopeRead,
 	godwitv1connect.GodwitServiceListRunsProcedure:        ScopeRead,
@@ -78,8 +87,8 @@ func ParseTokens(specs []string) ([]Token, error) {
 		if t.Name == "" || t.Secret == "" {
 			return nil, fmt.Errorf("token #%d: want name:scope:secret, name:secret or a bare secret", i+1)
 		}
-		if _, ok := scopeRank[t.Scope]; !ok {
-			return nil, fmt.Errorf("token #%d (%s): unknown scope %q, want read, pipeline, operator or admin", i+1, t.Name, t.Scope)
+		if _, err := ParseScope(string(t.Scope)); err != nil {
+			return nil, fmt.Errorf("token #%d (%s): %w", i+1, t.Name, err)
 		}
 		if other, dup := seen[t.Secret]; dup {
 			return nil, fmt.Errorf("token #%d (%s): secret already used by %s", i+1, t.Name, other)
@@ -150,16 +159,25 @@ func (a *auth) actor(header string) (Principal, bool) {
 	return p, ok
 }
 
+// Authorize is the scope decision the interceptor makes, for callers that reach a handler without one.
+func Authorize(procedure string, p Principal) error {
+	required := procedureScopes[procedure]
+	if p.Scope.allows(required) {
+		return nil
+	}
+	method := procedure[strings.LastIndex(procedure, "/")+1:]
+
+	return connect.NewError(connect.CodePermissionDenied,
+		fmt.Errorf("%s requires scope %s; token %s has scope %s", method, required, p.Name, p.Scope))
+}
+
 func (a *auth) authorize(ctx context.Context, procedure, header string) (context.Context, error) {
 	p, ok := a.actor(header)
 	if !ok {
 		return ctx, errUnauthenticated
 	}
-	if required := procedureScopes[procedure]; !p.Scope.allows(required) {
-		method := procedure[strings.LastIndex(procedure, "/")+1:]
-
-		return ctx, connect.NewError(connect.CodePermissionDenied,
-			fmt.Errorf("%s requires scope %s; token %s has scope %s", method, required, p.Name, p.Scope))
+	if err := Authorize(procedure, p); err != nil {
+		return ctx, err
 	}
 
 	return WithPrincipal(ctx, p), nil

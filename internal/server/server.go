@@ -49,10 +49,12 @@ type Config struct {
 	PlanTTL time.Duration
 	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
 	PlanRetention time.Duration
-	// UI serves the operator web UI under /ui/; UIUser and UIPassword put it behind basic auth.
+	// UI serves the operator web UI under /ui/. Any Tokens secret is accepted as the basic-auth password;
+	// UIUser and UIPassword add a shared identity whose rights are UIScope (default operator).
 	UI         bool
 	UIUser     string
 	UIPassword string
+	UIScope    string
 	Log        *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
@@ -71,6 +73,14 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if (cfg.UIUser == "") != (cfg.UIPassword == "") {
 		return errors.New("ui user and ui password must be set together")
+	}
+	uiScope := api.ScopeOperator
+	if cfg.UIScope != "" {
+		s, err := api.ParseScope(cfg.UIScope)
+		if err != nil {
+			return fmt.Errorf("ui scope: %w", err)
+		}
+		uiScope = s
 	}
 	tokens, err := api.ParseTokens(cfg.Tokens)
 	if err != nil {
@@ -135,13 +145,13 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	handler := api.Handler(apiSrv, tokens)
 	if cfg.UI {
-		if cfg.UIUser == "" {
+		if cfg.UIUser == "" && len(tokens) == 0 {
 			log.Warn("ui enabled without basic auth")
 		}
 		mux := http.NewServeMux()
 		mux.Handle("/", handler)
 		mux.Handle("/ui/", ui.New(apiSrv, ui.Config{
-			Replica: cfg.Holder, User: cfg.UIUser, Password: cfg.UIPassword,
+			Replica: cfg.Holder, Tokens: tokens, User: cfg.UIUser, Password: cfg.UIPassword, Scope: uiScope,
 		}))
 		handler = mux
 	}

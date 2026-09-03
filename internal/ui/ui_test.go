@@ -155,6 +155,18 @@ func want(t *testing.T, rec *httptest.ResponseRecorder, code int, parts ...strin
 	}
 }
 
+func absent(t *testing.T, rec *httptest.ResponseRecorder, parts ...string) {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body:\n%s", rec.Code, rec.Body.String())
+	}
+	for _, p := range parts {
+		if strings.Contains(rec.Body.String(), p) {
+			t.Fatalf("unexpected %q in:\n%s", p, rec.Body.String())
+		}
+	}
+}
+
 func redirect(t *testing.T, rec *httptest.ResponseRecorder, location string) {
 	t.Helper()
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != location {
@@ -397,6 +409,120 @@ func TestBasicAuth(t *testing.T) {
 	if s.actor != "ui:sam" {
 		t.Fatalf("actor = %q", s.actor)
 	}
+}
+
+var uiTokens = []api.Token{
+	{Name: "viewer", Scope: api.ScopeRead, Secret: "s-read"},
+	{Name: "ci", Scope: api.ScopePipeline, Secret: "s-pipe"},
+	{Name: "sam", Scope: api.ScopeOperator, Secret: "s-op"},
+}
+
+const noAction = `method="post"`
+
+func TestTokenSignIn(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	h := newUI(s, Config{Tokens: uiTokens})
+
+	rec := do(h, http.MethodGet, "/ui/", nil, "Authorization", basic("whoever", "s-read"))
+	want(t, rec, http.StatusOK, "Signed in as", "viewer", `class="chip">read<`)
+	absent(t, rec, noAction)
+	if s.actor != "ui:viewer" {
+		t.Fatalf("actor = %q", s.actor)
+	}
+
+	rec = do(h, http.MethodGet, "/ui/", nil, "Authorization", basic("whoever", "s-op"))
+	want(t, rec, http.StatusOK, "sam", `class="chip">operator<`, "/ui/runs/r-wait-0001/confirm", "/ui/runs/r-bad-00001/resume")
+	if s.actor != "ui:sam" {
+		t.Fatalf("actor = %q", s.actor)
+	}
+
+	for _, hdr := range []string{"", basic("viewer", "s-nope"), "Bearer s-read"} {
+		rec := do(h, http.MethodGet, "/ui/", nil, "Authorization", hdr)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != `Basic realm="godwit"` {
+			t.Fatalf("%q: code = %d headers = %v", hdr, rec.Code, rec.Header())
+		}
+	}
+}
+
+func TestScopeGatesActions(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	h := newUI(s, Config{Tokens: uiTokens})
+
+	read := []string{"Authorization", basic("x", "s-read")}
+	for _, path := range []string{"/ui/runs/r-bad-00001", "/ui/runs/r-wait-0001", "/ui/runs/r-ok-000001", "/ui/drift"} {
+		rec := do(h, http.MethodGet, path, nil, read...)
+		want(t, rec, http.StatusOK, "Actions on this page need a wider scope")
+		absent(t, rec, noAction)
+	}
+	absent(t, do(h, http.MethodGet, "/ui/runs/r-run-00001", nil, read...),
+		"Actions on this page need a wider scope")
+
+	pipe := []string{"Authorization", basic("x", "s-pipe")}
+	want(t, do(h, http.MethodGet, "/ui/runs/r-wait-0001", nil, pipe...), http.StatusOK, "/ui/runs/r-wait-0001/confirm")
+	want(t, do(h, http.MethodGet, "/ui/runs/r-ok-000001", nil, pipe...), http.StatusOK, "/ui/runs/r-ok-000001/revert")
+	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil, pipe...), http.StatusOK, "Actions on this page need a wider scope")
+	want(t, do(h, http.MethodGet, "/ui/drift", nil, pipe...), http.StatusOK, "Actions on this page need a wider scope")
+
+	op := []string{"Authorization", basic("x", "s-op")}
+	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil, op...), http.StatusOK,
+		"/ui/runs/r-bad-00001/resume", "/ui/runs/r-bad-00001/park")
+	want(t, do(h, http.MethodGet, "/ui/drift", nil, op...), http.StatusOK,
+		"/ui/drift/app/check", "/ui/drift/app/accept")
+}
+
+func TestScopeRefusesAction(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	h := newUI(s, Config{Tokens: uiTokens})
+
+	rec := do(h, http.MethodPost, "/ui/runs/r-bad-00001/resume", nil, "Authorization", basic("x", "s-read"))
+	want(t, rec, http.StatusForbidden, "ResumeRun requires scope operator; token ui:viewer has scope read")
+	rec = do(h, http.MethodPost, "/ui/drift/app/accept", nil, "Authorization", basic("x", "s-pipe"))
+	want(t, rec, http.StatusForbidden, "AcceptBaseline requires scope operator; token ui:ci has scope pipeline")
+	rec = do(h, http.MethodPost, "/ui/drift/app/check", nil, "Authorization", basic("x", "s-pipe"))
+	want(t, rec, http.StatusForbidden, "CheckDrift requires scope operator")
+	rec = do(h, http.MethodPost, "/ui/runs/r-ok-000001/revert", nil, "Authorization", basic("x", "s-read"))
+	want(t, rec, http.StatusForbidden, "RevertRun requires scope pipeline")
+	if s.calls != nil {
+		t.Fatalf("refused actions must not reach the service: %v", s.calls)
+	}
+
+	redirect(t, do(h, http.MethodPost, "/ui/runs/r-wait-0001/confirm", nil, "Authorization", basic("x", "s-pipe")), "/ui/runs/r-wait-0001")
+	if s.actor != "ui:ci" {
+		t.Fatalf("actor = %q", s.actor)
+	}
+}
+
+func TestSharedIdentityScope(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	h := newUI(s, Config{Tokens: uiTokens, User: "sam", Password: "pw", Scope: api.ScopeRead})
+
+	rec := do(h, http.MethodGet, "/ui/", nil, "Authorization", basic("sam", "pw"))
+	want(t, rec, http.StatusOK, "Signed in as", "sam", `class="chip">read<`)
+	absent(t, rec, noAction)
+	if s.actor != "ui:sam" {
+		t.Fatalf("actor = %q", s.actor)
+	}
+	if rec := do(h, http.MethodGet, "/ui/", nil, "Authorization", basic("eve", "pw")); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d", rec.Code)
+	}
+
+	half := newUI(s, Config{Tokens: uiTokens, User: "sam"})
+	if rec := do(half, http.MethodGet, "/ui/", nil, "Authorization", basic("sam", "")); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a password-less shared identity must not sign in: code = %d", rec.Code)
+	}
+
+	admin := newUI(fixture(), Config{User: "sam", Password: "pw", Scope: api.ScopeAdmin})
+	want(t, do(admin, http.MethodGet, "/ui/runs/r-bad-00001", nil, "Authorization", basic("sam", "pw")),
+		http.StatusOK, "/ui/runs/r-bad-00001/resume")
+
+	open := newUI(fixture(), Config{Scope: api.ScopeRead})
+	rec = do(open, http.MethodGet, "/ui/", nil)
+	want(t, rec, http.StatusOK, "No sign-in configured")
+	absent(t, rec, noAction)
 }
 
 func TestRenderError(t *testing.T) {

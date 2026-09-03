@@ -1,7 +1,7 @@
 {{define "drift.html"}}{{template "head" .}}
 <header class="ph">
   <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Drift</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Drift</h1></div>
-  {{if .Target}}<div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn pri"><svg class="ic"><use href="#i-refresh"/></svg>Check {{.Target}} now</button></form></div>{{end}}
+  {{if and .Target .Can.check}}<div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn pri"><svg class="ic"><use href="#i-refresh"/></svg>Check {{.Target}} now</button></form></div>{{end}}
 </header>
 <div class="body">
 {{if .Tabs}}
@@ -14,16 +14,17 @@
     <div class="banner drifted">
       <div class="icw"><svg class="ic"><use href="#i-ne"/></svg></div>
       <div><b>{{.Target}} drifted from its baseline</b><span>Detected {{ago .Open.DetectedAt}}{{if eq .Checked "drifted"}} · confirmed by the check you just ran{{end}} · the diff is in the events below</span></div>
-      <div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form><form method="post" action="/ui/drift/{{.Target}}/accept"><button class="btn dng">Accept as baseline</button></form></div>
+      <div class="acts">{{if .Can.check}}<form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form>{{end}}{{if .Can.accept}}<form method="post" action="/ui/drift/{{.Target}}/accept"><button class="btn dng">Accept as baseline</button></form>{{end}}</div>
     </div>
-    <p class="note"><b>Accept as baseline</b> records the current schema as the new reference for {{.Target}}. It does not change the database; future checks compare against it.</p>
+    {{if .Can.accept}}<p class="note"><b>Accept as baseline</b> records the current schema as the new reference for {{.Target}}. It does not change the database; future checks compare against it.</p>{{end}}
     {{else}}
     <div class="banner clean">
       <div class="icw"><svg class="ic"><use href="#i-check"/></svg></div>
       <div><b>{{.Target}} matches its baseline</b><span>{{if eq .Checked "clean"}}Checked just now{{else}}No open drift event{{end}} · the monitor fingerprints it on every interval and after every successful run</span></div>
-      <div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form></div>
+      <div class="acts">{{if .Can.check}}<form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form>{{end}}</div>
     </div>
     {{end}}
+    {{if .Locked}}{{template "scope-note" .}}{{end}}
   </div>
 
   <div class="sec">

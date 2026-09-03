@@ -29,11 +29,14 @@ import (
 //go:embed templates/*.html
 var files embed.FS
 
-// Config names the replica and, when User and Password are both set, puts every page behind HTTP basic auth.
+// Config names the replica and how /ui authenticates: a basic-auth password matching one of Tokens
+// resolves to that token's name and scope, and User with Password is the shared identity, which carries Scope.
 type Config struct {
 	Replica  string
+	Tokens   []api.Token
 	User     string
 	Password string
+	Scope    api.Scope
 }
 
 // Handler renders the UI by calling svc in-process with a ui:<user> principal.
@@ -47,6 +50,9 @@ type Handler struct {
 
 // New mounts the UI under /ui/.
 func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
+	if cfg.Scope == "" {
+		cfg.Scope = api.ScopeOperator
+	}
 	h := &Handler{svc: svc, cfg: cfg, mux: http.NewServeMux(), now: time.Now}
 	h.tmpl = template.Must(template.New("").Funcs(h.funcs()).ParseFS(files, "templates/*.html"))
 	h.mux.HandleFunc("GET /ui/{$}", h.index)
@@ -63,8 +69,12 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	return h
 }
 
-func (h *Handler) protected() bool {
+func (h *Handler) shared() bool {
 	return h.cfg.User != "" && h.cfg.Password != ""
+}
+
+func (h *Handler) protected() bool {
+	return len(h.cfg.Tokens) > 0 || h.shared()
 }
 
 func digestEqual(a, b string) int {
@@ -73,21 +83,93 @@ func digestEqual(a, b string) int {
 	return subtle.ConstantTimeCompare(x[:], y[:])
 }
 
+func (h *Handler) principal(r *http.Request) (api.Principal, bool) {
+	if !h.protected() {
+		return api.Principal{Name: "ui:" + api.AnonymousActor, Scope: h.cfg.Scope}, true
+	}
+	user, pass, ok := r.BasicAuth()
+	if !ok {
+		return api.Principal{}, false
+	}
+	for _, t := range h.cfg.Tokens {
+		if digestEqual(pass, t.Secret) == 1 {
+			return api.Principal{Name: "ui:" + t.Name, Scope: t.Scope}, true
+		}
+	}
+	if h.shared() && digestEqual(user, h.cfg.User)&digestEqual(pass, h.cfg.Password) == 1 {
+		return api.Principal{Name: "ui:" + user, Scope: h.cfg.Scope}, true
+	}
+
+	return api.Principal{}, false
+}
+
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	name := api.AnonymousActor
-	if h.protected() {
-		user, pass, ok := r.BasicAuth()
-		if !ok || digestEqual(user, h.cfg.User)&digestEqual(pass, h.cfg.Password) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="godwit"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+	p, ok := h.principal(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Basic realm="godwit"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 
-			return
-		}
-		name = user
+		return
 	}
-	ctx := api.WithPrincipal(r.Context(), api.Principal{Name: "ui:" + name, Scope: api.ScopeOperator})
-	h.mux.ServeHTTP(w, r.WithContext(ctx))
+	h.mux.ServeHTTP(w, r.WithContext(api.WithPrincipal(r.Context(), p)))
+}
+
+// call runs the scope decision the auth interceptor would have made, then the handler in process.
+func call[Req, Resp any](ctx context.Context, procedure string, msg *Req,
+	fn func(context.Context, *connect.Request[Req]) (*connect.Response[Resp], error),
+) (*Resp, error) {
+	if err := api.Authorize(procedure, api.Caller(ctx)); err != nil {
+		return nil, err
+	}
+	resp, err := fn(ctx, connect.NewRequest(msg))
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Msg, nil
+}
+
+var uiActions = map[string]string{
+	"resume":  godwitv1connect.GodwitServiceResumeRunProcedure,
+	"park":    godwitv1connect.GodwitServiceParkRunProcedure,
+	"confirm": godwitv1connect.GodwitServiceConfirmRolloutProcedure,
+	"revert":  godwitv1connect.GodwitServiceRevertRunProcedure,
+	"check":   godwitv1connect.GodwitServiceCheckDriftProcedure,
+	"accept":  godwitv1connect.GodwitServiceAcceptBaselineProcedure,
+}
+
+func allowed(p api.Principal) map[string]bool {
+	out := make(map[string]bool, len(uiActions))
+	for name, procedure := range uiActions {
+		out[name] = api.Authorize(procedure, p) == nil
+	}
+
+	return out
+}
+
+func stateActions(s godwitv1.RunState) []string {
+	switch s {
+	case godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION, godwitv1.RunState_RUN_STATE_FAILED:
+		return []string{"resume", "park"}
+	case godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT:
+		return []string{"confirm"}
+	case godwitv1.RunState_RUN_STATE_SUCCEEDED:
+		return []string{"revert"}
+	default:
+		return nil
+	}
+}
+
+func locked(s godwitv1.RunState, can map[string]bool) bool {
+	offered := stateActions(s)
+	for _, a := range offered {
+		if can[a] {
+			return false
+		}
+	}
+
+	return len(offered) > 0
 }
 
 func state(s godwitv1.RunState) string {
@@ -206,6 +288,9 @@ type page struct {
 	Replica   string
 	Version   string
 	User      string
+	Scope     string
+	Can       map[string]bool
+	Locked    bool
 	Targets   []target
 	Attention int
 	Target    string
@@ -229,9 +314,13 @@ func needsHuman(r *godwitv1.Run) bool {
 }
 
 func (h *Handler) bare(r *http.Request, nav string) page {
-	p := page{Nav: nav, Replica: h.cfg.Replica, Version: version.Version, Partial: r.Header.Get("HX-Request") != ""}
+	who := api.Caller(r.Context())
+	p := page{
+		Nav: nav, Replica: h.cfg.Replica, Version: version.Version,
+		Scope: string(who.Scope), Can: allowed(who), Partial: r.Header.Get("HX-Request") != "",
+	}
 	if h.protected() {
-		p.User = h.cfg.User
+		p.User = strings.TrimPrefix(who.Name, "ui:")
 	}
 
 	return p
@@ -239,12 +328,12 @@ func (h *Handler) bare(r *http.Request, nav string) page {
 
 func (h *Handler) frame(ctx context.Context, r *http.Request, nav string) (page, []*godwitv1.Run, error) {
 	p := h.bare(r, nav)
-	resp, err := h.svc.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{}))
+	resp, err := call(ctx, godwitv1connect.GodwitServiceListRunsProcedure, &godwitv1.ListRunsRequest{}, h.svc.ListRuns)
 	if err != nil {
 		return p, nil, err
 	}
 	bad := map[string]bool{}
-	for _, run := range resp.Msg.Runs {
+	for _, run := range resp.Runs {
 		if _, seen := bad[run.Target]; !seen {
 			bad[run.Target] = false
 		}
@@ -258,7 +347,7 @@ func (h *Handler) frame(ctx context.Context, r *http.Request, nav string) (page,
 	}
 	sort.Slice(p.Targets, func(i, j int) bool { return p.Targets[i].Name < p.Targets[j].Name })
 
-	return p, resp.Msg.Runs, nil
+	return p, resp.Runs, nil
 }
 
 func (h *Handler) render(w http.ResponseWriter, status int, name string, data page) {
@@ -280,8 +369,11 @@ func (h *Handler) fail(w http.ResponseWriter, p page, err error) {
 		p.Error = cerr.Message()
 	}
 	status := http.StatusBadGateway
-	if connect.CodeOf(err) == connect.CodeNotFound {
+	switch connect.CodeOf(err) {
+	case connect.CodeNotFound:
 		status = http.StatusNotFound
+	case connect.CodePermissionDenied:
+		status = http.StatusForbidden
 	}
 	h.render(w, status, "error.html", p)
 }
@@ -344,26 +436,29 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	resp, err := h.svc.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: r.PathValue("id")}))
+	resp, err := call(ctx, godwitv1connect.GodwitServiceGetRunProcedure,
+		&godwitv1.GetRunRequest{RunId: r.PathValue("id")}, h.svc.GetRun)
 	if err != nil {
 		h.fail(w, p, err)
 
 		return
 	}
-	audit, err := h.svc.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{RunId: resp.Msg.Run.Id}))
+	audit, err := call(ctx, godwitv1connect.GodwitServiceListAuditProcedure,
+		&godwitv1.ListAuditRequest{RunId: resp.Run.Id}, h.svc.ListAudit)
 	if err != nil {
 		h.fail(w, p, err)
 
 		return
 	}
-	plan, err := h.plan(ctx, resp.Msg.Run.PlanId)
+	plan, err := h.plan(ctx, resp.Run.PlanId)
 	if err != nil {
 		h.fail(w, p, err)
 
 		return
 	}
-	p.Run, p.Steps = resp.Msg.Run, timeline(resp.Msg.Run, audit.Msg.Entries)
+	p.Run, p.Steps = resp.Run, timeline(resp.Run, audit.Entries)
 	p.Plan, p.Planned = plan, plannedOf(plan)
+	p.Locked = locked(resp.Run.State, p.Can)
 	h.render(w, http.StatusOK, "run.html", p)
 }
 
@@ -372,7 +467,7 @@ func (h *Handler) plan(ctx context.Context, id string) (*godwitv1.Plan, error) {
 	if id == "" {
 		return nil, nil
 	}
-	resp, err := h.svc.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: id}))
+	resp, err := call(ctx, godwitv1connect.GodwitServiceGetPlanProcedure, &godwitv1.GetPlanRequest{PlanId: id}, h.svc.GetPlan)
 	if err != nil {
 		if connect.CodeOf(err) == connect.CodeNotFound {
 			return nil, nil
@@ -381,7 +476,7 @@ func (h *Handler) plan(ctx context.Context, id string) (*godwitv1.Plan, error) {
 		return nil, err
 	}
 
-	return resp.Msg.Plan, nil
+	return resp.Plan, nil
 }
 
 func plannedOf(p *godwitv1.Plan) []planned {
@@ -473,18 +568,21 @@ func (h *Handler) runAction(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch r.PathValue("action") {
 	case "resume":
-		_, err = h.svc.ResumeRun(ctx, connect.NewRequest(&godwitv1.ResumeRunRequest{RunId: id}))
+		_, err = call(ctx, godwitv1connect.GodwitServiceResumeRunProcedure,
+			&godwitv1.ResumeRunRequest{RunId: id}, h.svc.ResumeRun)
 	case "park":
-		_, err = h.svc.ParkRun(ctx, connect.NewRequest(&godwitv1.ParkRunRequest{RunId: id, Reason: r.FormValue("reason")}))
+		_, err = call(ctx, godwitv1connect.GodwitServiceParkRunProcedure,
+			&godwitv1.ParkRunRequest{RunId: id, Reason: r.FormValue("reason")}, h.svc.ParkRun)
 	case "confirm":
-		_, err = h.svc.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: id}))
+		_, err = call(ctx, godwitv1connect.GodwitServiceConfirmRolloutProcedure,
+			&godwitv1.ConfirmRolloutRequest{RunId: id}, h.svc.ConfirmRollout)
 	case "revert":
-		var resp *connect.Response[godwitv1.RevertRunResponse]
-		resp, err = h.svc.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{
+		var resp *godwitv1.RevertRunResponse
+		resp, err = call(ctx, godwitv1connect.GodwitServiceRevertRunProcedure, &godwitv1.RevertRunRequest{
 			RunId: id, AcknowledgeHazards: splitCSV(r.FormValue("ack")),
-		}))
+		}, h.svc.RevertRun)
 		if err == nil {
-			id = resp.Msg.RunId
+			id = resp.RunId
 		}
 	default:
 		http.NotFound(w, r)
@@ -507,14 +605,15 @@ func (h *Handler) drift(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	events, err := h.svc.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{}))
+	events, err := call(ctx, godwitv1connect.GodwitServiceListDriftEventsProcedure,
+		&godwitv1.ListDriftEventsRequest{}, h.svc.ListDriftEvents)
 	if err != nil {
 		h.fail(w, p, err)
 
 		return
 	}
 	open := map[string]*godwitv1.DriftEvent{}
-	for _, e := range events.Msg.Events {
+	for _, e := range events.Events {
 		if e.ResolvedAt == nil && open[e.Target] == nil {
 			open[e.Target] = e
 		}
@@ -526,8 +625,8 @@ func (h *Handler) drift(w http.ResponseWriter, r *http.Request) {
 	if p.Target == "" && len(p.Tabs) > 0 {
 		p.Target = p.Tabs[0].Name
 	}
-	p.Open = open[p.Target]
-	for _, e := range events.Msg.Events {
+	p.Open, p.Locked = open[p.Target], !p.Can["check"]
+	for _, e := range events.Events {
 		if e.Target == p.Target {
 			p.Events = append(p.Events, e)
 		}
@@ -540,18 +639,20 @@ func (h *Handler) driftAction(w http.ResponseWriter, r *http.Request) {
 	dest := "/ui/drift?target=" + tgt
 	switch r.PathValue("action") {
 	case "check":
-		resp, err := h.svc.CheckDrift(ctx, connect.NewRequest(&godwitv1.CheckDriftRequest{Target: tgt}))
+		resp, err := call(ctx, godwitv1connect.GodwitServiceCheckDriftProcedure,
+			&godwitv1.CheckDriftRequest{Target: tgt}, h.svc.CheckDrift)
 		if err != nil {
 			h.fail(w, p, err)
 
 			return
 		}
 		dest += "&checked=clean"
-		if resp.Msg.Drifted {
+		if resp.Drifted {
 			dest = "/ui/drift?target=" + tgt + "&checked=drifted"
 		}
 	case "accept":
-		if _, err := h.svc.AcceptBaseline(ctx, connect.NewRequest(&godwitv1.AcceptBaselineRequest{Target: tgt})); err != nil {
+		if _, err := call(ctx, godwitv1connect.GodwitServiceAcceptBaselineProcedure,
+			&godwitv1.AcceptBaselineRequest{Target: tgt}, h.svc.AcceptBaseline); err != nil {
 			h.fail(w, p, err)
 
 			return

@@ -22,6 +22,7 @@ serve:
   ui:
     enabled: true
     basicAuth: true
+    scope: read
   extraArgs: ["--drift-interval=2m"]
 vault:
   addr: https://vault.example.com

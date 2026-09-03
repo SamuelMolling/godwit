@@ -14,7 +14,7 @@ import (
 )
 
 func newServeCmd() *cobra.Command {
-	var listen, storeDSN, logFormat, logLevel, uiUser, uiPassword string
+	var listen, storeDSN, logFormat, logLevel, uiUser, uiPassword, uiScope string
 	var driftInterval, leaseTTL, tickInterval time.Duration
 	var maxAttempts int
 	var skipValidation, requirePlan, withUI bool
@@ -27,7 +27,8 @@ func newServeCmd() *cobra.Command {
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level),\n" +
-			"GODWIT_UI=true (web UI at /ui), GODWIT_UI_USER and GODWIT_UI_PASSWORD (basic auth for /ui).",
+			"GODWIT_UI=true (web UI at /ui), any bearer token's secret signs in to /ui as that token,\n" +
+			"GODWIT_UI_USER and GODWIT_UI_PASSWORD (a shared /ui identity) and GODWIT_UI_SCOPE (what that identity may do).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			log, err := server.NewLogger(cmd.ErrOrStderr(), logFormat, logLevel)
 			if err != nil {
@@ -63,6 +64,7 @@ func newServeCmd() *cobra.Command {
 				UI:             withUI || os.Getenv("GODWIT_UI") == "true",
 				UIUser:         uiUser,
 				UIPassword:     uiPassword,
+				UIScope:        uiScope,
 				Log:            log,
 			})
 		},
@@ -82,6 +84,7 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&withUI, "ui", false, "serve the operator web UI at /ui (or GODWIT_UI=true)")
 	cmd.Flags().StringVar(&uiUser, "ui-user", os.Getenv("GODWIT_UI_USER"), "basic auth user for /ui (or GODWIT_UI_USER)")
 	cmd.Flags().StringVar(&uiPassword, "ui-password", os.Getenv("GODWIT_UI_PASSWORD"), "basic auth password for /ui (or GODWIT_UI_PASSWORD)")
+	cmd.Flags().StringVar(&uiScope, "ui-scope", envOr("GODWIT_UI_SCOPE", "operator"), "scope of the --ui-user identity: read, pipeline, operator or admin (or GODWIT_UI_SCOPE)")
 	_ = cmd.MarkFlagRequired("store-dsn")
 
 	return cmd

@@ -69,3 +69,12 @@ func TestServeUICredentialsMustPair(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 }
+
+func TestServeBadUIScope(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	t.Setenv("GODWIT_UI_SCOPE", "boss")
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--ui")
+	if code != 1 || !strings.Contains(errOut, `ui scope: unknown scope "boss"`) {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}

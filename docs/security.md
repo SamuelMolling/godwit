@@ -65,7 +65,19 @@ Notifications carry the same fields as the log plus the error text; a webhook UR
 
 ## Web UI
 
-`serve --ui` mounts the operator UI at `/ui` on the same plaintext listener. It does not use bearer tokens: with `--ui-user` and `--ui-password` (or `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD`) every UI request needs HTTP basic auth, compared in constant time, and the audit trail names the actor `ui:<user>`. Without the pair the UI is open to anyone who reaches the port with full operator rights (resume, park, confirm rollout, revert a succeeded run, check drift, accept baseline) and `serve` logs `ui enabled without basic auth`; treat that as a development setting. Basic auth sends the password on every request, so the TLS termination below is not optional when the UI is on. The password is never logged.
+`serve --ui` mounts the operator UI at `/ui` on the same plaintext listener. It authenticates with HTTP basic auth — browsers send it natively, so there is no login page, no cookie and no session store — and it resolves to a `Principal` exactly like a bearer token does:
+
+| Password | Identity | Scope |
+|---|---|---|
+| the secret of one of `GODWIT_TOKENS` (the username is ignored) | `ui:<token name>` | that token's scope |
+| `--ui-password`, with `--ui-user` as the username | `ui:<user>` | `--ui-scope` (default `operator`) |
+| anything else | refused with `401` and `WWW-Authenticate: Basic realm="godwit"` | — |
+
+Every secret is compared in constant time as a SHA-256 digest, and the password is never logged. The UI is protected as soon as the service has tokens **or** the `--ui-user` / `--ui-password` pair; with neither it is open to anyone who reaches the port, acts as `ui:anonymous` with `--ui-scope`, and `serve` logs `ui enabled without basic auth` — treat that as a development setting.
+
+The UI calls the service in process, so its actions appear in `cp_audit` under `ui:<name>` rather than under the token that a browser would have used over HTTP. That in-process path does **not** pass the auth interceptor, so the UI runs the same decision itself: every call goes through `api.Authorize(procedure, principal)`, the identical `procedure → scope` table the interceptor uses. A page therefore renders only the actions the scope allows, and a request posted around the page — `POST /ui/runs/<id>/resume` typed by hand — is refused with `403` and the scope message (`ResumeRun requires scope operator; token ui:viewer has scope read`). Scopes reach the UI as: `read` sees every page and can press nothing; `pipeline` adds confirm rollout and revert; `operator` adds resume, park, check drift and accept baseline, which is everything the UI offers; `admin` adds nothing, because the UI calls no admin RPC.
+
+Basic auth sends the password on every request, so the TLS termination below is not optional when the UI is on.
 
 ## Network
 
