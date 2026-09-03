@@ -259,6 +259,13 @@ ALTER TABLE cp_runs DROP CONSTRAINT cp_runs_plan_id_fkey,
 		UpSQL:    `ALTER TABLE cp_plans ADD COLUMN search_path text NOT NULL DEFAULT '';`,
 		DownSQL:  `ALTER TABLE cp_plans DROP COLUMN search_path;`,
 	},
+	{
+		Version:  20260902000013,
+		Name:     "plan_repeatables",
+		Checksum: "cp-plan-repeatables-v1",
+		UpSQL:    `ALTER TABLE cp_plans ADD COLUMN repeatables jsonb NOT NULL DEFAULT '[]'::jsonb;`,
+		DownSQL:  `ALTER TABLE cp_plans DROP COLUMN repeatables;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

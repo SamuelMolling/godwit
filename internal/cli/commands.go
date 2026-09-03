@@ -221,7 +221,7 @@ func writePlanText(w io.Writer, r planReport) {
 		fmt.Fprint(w, r.driftBlock("drift since baseline:", "  ", "", ""))
 	}
 	for _, p := range r.items {
-		fmt.Fprintf(w, "%d_%s (%s): %d statement(s)%s\n", p.Migration.Version, p.Migration.Name, p.Direction, len(p.Statements), p.liveSuffix())
+		fmt.Fprintf(w, "%s (%s): %d statement(s)%s\n", p.Migration.ID(), p.Direction, len(p.Statements), p.liveSuffix())
 		for i, st := range p.Statements {
 			fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(st), firstLine(st.SQL))
 			for _, h := range st.Hazards {
@@ -261,7 +261,7 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 				codes = append(codes, fmt.Sprintf("%s: %s", h.Code, h.Detail))
 			}
 			hazards += len(st.Hazards)
-			fmt.Fprintf(w, "| `%d_%s` | %s | %d | %s | `%s` | %s |%s\n", p.Migration.Version, p.Migration.Name, p.Direction, i,
+			fmt.Fprintf(w, "| `%s` | %s | %d | %s | `%s` | %s |%s\n", p.Migration.ID(), p.Direction, i,
 				statementMode(st), markdownCell(oneLine(st.SQL)), markdownCell(strings.Join(codes, "; ")), p.liveCells(r.live))
 		}
 	}
@@ -271,7 +271,7 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	for _, p := range r.items {
 		for i, st := range p.Statements {
 			for _, h := range st.Hazards {
-				writeRecipeDetails(w, fmt.Sprintf("recipe for %s in `%d_%s` (%s) #%d", h.Code, p.Migration.Version, p.Migration.Name, p.Direction, i), h.Recipe)
+				writeRecipeDetails(w, fmt.Sprintf("recipe for %s in `%s` (%s) #%d", h.Code, p.Migration.ID(), p.Direction, i), h.Recipe)
 			}
 		}
 	}
@@ -322,8 +322,8 @@ func (r planReport) alreadyAppliedBlock() string {
 		if !p.alreadyApplied {
 			continue
 		}
-		fmt.Fprintf(&b, "`%d_%s` is already applied by hand; migrate records it without executing:\n\n```diff\n%s\n```\n\n",
-			p.Migration.Version, p.Migration.Name, p.effect)
+		fmt.Fprintf(&b, "`%s` is already applied by hand; migrate records it without executing:\n\n```diff\n%s\n```\n\n",
+			p.Migration.ID(), p.effect)
 	}
 
 	return b.String()
@@ -331,6 +331,8 @@ func (r planReport) alreadyAppliedBlock() string {
 
 func (p planItem) status() string {
 	switch {
+	case p.applied && p.Migration.Repeatable:
+		return "unchanged"
 	case p.applied:
 		return "applied"
 	case p.alreadyApplied:
@@ -374,6 +376,7 @@ func oneLine(sql string) string {
 type planJSON struct {
 	Version    int64           `json:"version"`
 	Name       string          `json:"name"`
+	Repeatable bool            `json:"repeatable,omitempty"`
 	Direction  string          `json:"direction"`
 	Statements []statementJSON `json:"statements"`
 }
@@ -412,7 +415,10 @@ type dryRunJSON struct {
 }
 
 func toPlanJSON(p engine.Plan) planJSON {
-	pj := planJSON{Version: p.Migration.Version, Name: p.Migration.Name, Direction: string(p.Direction), Statements: []statementJSON{}}
+	pj := planJSON{
+		Version: p.Migration.Version, Name: p.Migration.Name, Repeatable: p.Migration.Repeatable,
+		Direction: string(p.Direction), Statements: []statementJSON{},
+	}
 	for _, st := range p.Statements {
 		hazards := make([]hazardJSON, 0, len(st.Hazards))
 		for _, h := range st.Hazards {
@@ -520,7 +526,7 @@ func printResult(cmd *cobra.Command, m engine.Migration, res engine.Result) {
 	if res.Skipped {
 		state = "skipped"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%d_%s: %s\n", m.Version, m.Name, state)
+	fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", m.ID(), state)
 }
 
 func newStatusCmd() *cobra.Command {
@@ -545,13 +551,16 @@ func newStatusCmd() *cobra.Command {
 			}
 			for _, r := range rows {
 				state := "pending"
-				if r.Applied {
+				switch {
+				case r.Applied && r.Migration.Repeatable:
+					state = "unchanged since " + r.AppliedAt.UTC().Format(time.RFC3339)
+				case r.Applied:
 					state = "applied " + r.AppliedAt.UTC().Format(time.RFC3339)
 				}
 				if r.Drifted {
 					state += " (checksum drift!)"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%d_%s: %s\n", r.Version, r.Name, state)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", r.Migration.ID(), state)
 			}
 
 			return nil
@@ -578,7 +587,7 @@ func newDownCmd() *cobra.Command {
 				return err
 			}
 			for _, m := range migs {
-				if m.Version != version {
+				if m.Repeatable || m.Version != version {
 					continue
 				}
 				p, err := engine.BuildPlan(m, engine.DirectionDown)

@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -37,8 +36,8 @@ func (b *Baseliner) Baseline(ctx context.Context, runID, target string, migs []e
 func migrationFiles(migs []engine.Migration) map[string]string {
 	files := make(map[string]string, 2*len(migs))
 	for _, m := range migs {
-		files[fmt.Sprintf("%014d_%s.up.sql", m.Version, m.Name)] = m.UpSQL
-		files[fmt.Sprintf("%014d_%s.down.sql", m.Version, m.Name)] = m.DownSQL
+		files[m.UpFile()] = m.UpSQL
+		files[m.DownFile()] = m.DownSQL
 	}
 
 	return files

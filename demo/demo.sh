@@ -311,6 +311,35 @@ docker compose exec -T target-db psql -U app -d legacy \
   -c "SELECT r.version, m.name, r.stmt_count, r.state FROM godwit.runs r JOIN godwit.migrations m USING (version) ORDER BY r.version;"
 
 echo
+echo "==> repeatable migration: R__ has no version and re-applies whenever its body changes"
+rep_files() {
+  cat <<JSON
+[
+    {"name": "R__order_totals.up.sql", "body": "CREATE OR REPLACE VIEW order_totals AS SELECT id, total$1 FROM orders;"},
+    {"name": "R__order_totals.down.sql", "body": "DROP VIEW IF EXISTS order_totals;"}
+  ]
+JSON
+}
+run_and_wait() {
+  local id
+  id=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $1}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+  for _ in $(seq 1 30); do
+    STATE=$(rpc GetRun "{\"runId\": \"$id\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+    [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+    sleep 1
+  done
+  echo "state: $STATE"
+}
+run_and_wait "$(rep_files '')"
+echo "==> same file again: the checksum matches, so the plan reports it unchanged and nothing runs"
+rpc PlanRun "{\"target\": \"legacy\", \"files\": $(rep_files '')}" 18475 | sed -E 's/.*("repeatable":true[^}]*).*/\1/'
+echo "==> edit the view body and it applies again, under the same name"
+run_and_wait "$(rep_files ' * 2 AS doubled')"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT name, left(checksum, 12) AS checksum FROM godwit.repeatables;" \
+  -c "SELECT pg_get_viewdef('order_totals'::regclass, true);"
+
+echo
 echo "==> schema diff: describe the whole database you want, godwit writes the migration from what legacy has now to it"
 rpc Diff '{
   "target": "legacy",

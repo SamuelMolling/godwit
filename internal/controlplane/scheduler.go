@@ -257,10 +257,10 @@ func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.
 	if err != nil {
 		return nil, fmt.Errorf("bound plan %s: %w", planID, err)
 	}
-	marked := map[int64]bool{}
+	marked := map[string]bool{}
 	for _, m := range plan.Migrations {
 		if m.AlreadyApplied {
-			marked[m.Version] = true
+			marked[m.ID()] = true
 		}
 	}
 	if len(marked) == 0 {
@@ -272,17 +272,27 @@ func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.
 	}
 	pending := false
 	for i := range plans {
-		if !marked[plans[i].Migration.Version] {
+		if !marked[plans[i].Migration.ID()] {
 			continue
 		}
 		plans[i].MarkOnly = true
-		pending = pending || !slices.ContainsFunc(obs.Applied, func(a engine.Applied) bool { return a.Version == plans[i].Migration.Version })
+		pending = pending || !recordedOn(obs, plans[i].Migration)
 	}
 	if pending && obs.Fingerprint != plan.SchemaFingerprint {
 		return nil, fmt.Errorf("target schema changed since plan %s was taken; re-plan before recording %d migration(s) as already applied", planID, len(marked))
 	}
 
 	return plans, nil
+}
+
+func recordedOn(obs Observation, m engine.Migration) bool {
+	if m.Repeatable {
+		return slices.ContainsFunc(obs.Repeatables, func(r engine.Repeatable) bool {
+			return r.Name == m.Name && r.Checksum == m.Checksum
+		})
+	}
+
+	return slices.ContainsFunc(obs.Applied, func(a engine.Applied) bool { return a.Version == m.Version })
 }
 
 func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error) {

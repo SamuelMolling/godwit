@@ -20,17 +20,58 @@ type Applied struct {
 	AppliedAt time.Time `json:"applied_at"`
 }
 
+// Repeatable is one row of the target's godwit.repeatables table: the content last applied under that name.
+type Repeatable struct {
+	Name      string    `json:"name"`
+	Checksum  string    `json:"checksum"`
+	AppliedAt time.Time `json:"applied_at"`
+}
+
 // ListApplied reads the applied versions without creating godwit's tables; a database never migrated reports none.
 func ListApplied(ctx context.Context, db DB) ([]Applied, error) {
-	var present bool
-	if err := db.QueryRow(ctx, `SELECT to_regclass('godwit.migrations') IS NOT NULL`).Scan(&present); err != nil {
-		return nil, fmt.Errorf("probe godwit schema: %w", err)
-	}
-	if !present {
-		return nil, nil
+	present, err := hasTable(ctx, db, "godwit.migrations")
+	if err != nil || !present {
+		return nil, err
 	}
 
 	return readApplied(ctx, db)
+}
+
+// ListRepeatables reads the recorded repeatables without creating godwit's tables.
+func ListRepeatables(ctx context.Context, db DB) ([]Repeatable, error) {
+	present, err := hasTable(ctx, db, "godwit.repeatables")
+	if err != nil || !present {
+		return nil, err
+	}
+
+	return readRepeatables(ctx, db)
+}
+
+func hasTable(ctx context.Context, db DB, name string) (bool, error) {
+	var present bool
+	if err := db.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, name).Scan(&present); err != nil {
+		return false, fmt.Errorf("probe godwit schema: %w", err)
+	}
+
+	return present, nil
+}
+
+func readRepeatables(ctx context.Context, db DB) ([]Repeatable, error) {
+	rows, err := db.Query(ctx, `SELECT name, checksum, applied_at FROM godwit.repeatables ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("list repeatables: %w", err)
+	}
+	var out []Repeatable
+	var r Repeatable
+	if _, err := pgx.ForEachRow(rows, []any{&r.Name, &r.Checksum, &r.AppliedAt}, func() error {
+		out = append(out, r)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read repeatables: %w", err)
+	}
+
+	return out, nil
 }
 
 func readApplied(ctx context.Context, db DB) ([]Applied, error) {
@@ -54,7 +95,7 @@ func readApplied(ctx context.Context, db DB) ([]Applied, error) {
 // Snapshot renders a canonical description of the schema plus its sha256 fingerprint.
 func Snapshot(ctx context.Context, db DB) (definition, fingerprint string, err error) {
 	// godwit's own tables are invisible to drift.
-	const ownTables = `('migrations', 'runs', 'journal')`
+	const ownTables = `('migrations', 'repeatables', 'runs', 'journal')`
 	queries := []struct {
 		kind string
 		sql  string

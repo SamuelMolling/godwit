@@ -36,6 +36,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | Hazard gate | `H001`–`H010` from a real PostgreSQL parser (`libpg_query`): non-concurrent indexes, destructive drops, rewrites, unvalidated constraints, renames. Refused unless acknowledged in the run. |
 | Safe-DDL recipes | Every hazard carries the safe form as ready-to-copy SQL with the real names from the statement (`CREATE INDEX CONCURRENTLY ...`, `CHECK ... NOT VALID` → `VALIDATE` → `SET NOT NULL`, add column → backfill → swap for a type change), in `lint`, `plan` and the API. |
 | Validation | Every run replays the target's recorded history plus the new files on a scratch database before it is queued. |
+| Repeatable migrations | `R__<name>.up.sql` / `.down.sql` have no version: applied after the run's versioned files, in name order, whenever the content differs from what the target recorded in `godwit.repeatables`, and skipped when it does not. Same hazard gate, same journal, same plan contract; `lint`'s edited-after-merge check does not apply to them. |
 | Rollout policies | `direct`, or `expand-contract`: destructive migrations wait in `awaiting_contract` until `ConfirmRollout`. |
 | Revert, baseline, status | `RevertRun` runs the down side through the same gate; `BaselineTarget` adopts an existing database; `GetTargetStatus` answers applied/pending/last run/drift in one call. |
 | Drift detection | Fingerprint after every successful run, periodic monitor, events, accept. |
@@ -57,7 +58,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | | |
 |---|---|
 | [Getting started](docs/getting-started.md) | dev loop, service, first run, CI |
-| [Concepts](docs/concepts.md) | journal protocol and crash timeline, run states, leases, hazards, validation, rollouts, revert, drift, baseline, migrations from a schema |
+| [Concepts](docs/concepts.md) | journal protocol and crash timeline, run states, leases, hazards, validation, repeatables, rollouts, revert, drift, baseline, migrations from a schema |
 | [Configuration](docs/configuration.md) | every `godwit.yaml` key, `serve` flag and environment variable, token spec, CLI reference |
 | [Operations](docs/operations.md) | HA, store sizing and privileges, backups, retention, upgrades, metrics and alert rules, notifications, logging |
 | [Runbook](docs/runbook.md) | per symptom: the SQL to look at and the command to run |

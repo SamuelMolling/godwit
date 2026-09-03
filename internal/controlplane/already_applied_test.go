@@ -126,7 +126,7 @@ func detectFixture(t *testing.T, sql ...string) ([]PlanMigration, []engine.Plan,
 		val.Fingerprints = append(val.Fingerprints, "f"+string(rune('1'+i)))
 	}
 
-	return BuildPlanMigrations(RolloutDirect, plans, nil), plans, val
+	return BuildPlanMigrations(RolloutDirect, plans, AppliedSet{}), plans, val
 }
 
 func TestDetectPrefix(t *testing.T) {

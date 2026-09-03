@@ -116,10 +116,10 @@ Global: `--config <path>`. Every service command: `--server`, `--token`, `--json
 |---|---|---|
 | `godwit version` | | prints `godwit <version> (<commit>)` |
 | `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline; with `--target` it becomes a service command (below) |
-| `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>` | with `--base`, only migrations added since the ref are checked and files modified since it are `E003`; blocking findings exit 1 |
+| `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>` | with `--base`, only migrations added since the ref are checked and versioned files modified since it are `E003` (never an `R__` file); blocking findings exit 1 |
 | `godwit apply` | `--dsn` (required), `--dir`, `--lock-timeout`, `--statement-timeout` | runs the executor directly against a database |
-| `godwit status` | `--dsn` (required), `--dir`, timeouts as above | `applied <ts>`, `pending`, `applied <ts> (checksum drift!)` per migration; bootstraps the `godwit` schema |
-| `godwit down` | `--dsn` (required), `--dir`, `--version` (required), `--yes` | applies one migration's down side; refuses without `--yes` |
+| `godwit status` | `--dsn` (required), `--dir`, timeouts as above | `applied <ts>`, `pending`, `applied <ts> (checksum drift!)` per versioned migration, `unchanged since <ts>` or `pending` per repeatable; bootstraps the `godwit` schema |
+| `godwit down` | `--dsn` (required), `--dir`, `--version` (required), `--yes` | applies one versioned migration's down side; refuses without `--yes`; repeatables have no version and are reverted with the run that applied them |
 
 Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migration modified after merge (needs `--base`), `H001`–`H010` unacknowledged hazards on the up side, `W001` no-op down migration (warning, never blocking). Hazard findings carry a `recipe` (the safe SQL, [concepts: hazards](concepts.md#hazards)): indented under the finding in text, a `<details>` block per finding in markdown, a field in JSON.
 
@@ -158,7 +158,7 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 
 `godwit target status <name>` prints all four.
 
-`migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
+`migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` or `R__<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 
 ## GitHub Action inputs
 

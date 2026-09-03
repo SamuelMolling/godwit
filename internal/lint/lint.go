@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	pgquery "github.com/pganalyze/pg_query_go/v6"
@@ -53,7 +52,10 @@ type Options struct {
 	Git  GitFunc
 }
 
-var fileRe = regexp.MustCompile(`^(\d{14})_[a-z0-9_]+\.(up|down)\.sql$`)
+var (
+	fileRe   = regexp.MustCompile(`^(\d{14})_[a-z0-9_]+\.(up|down)\.sql$`)
+	repeatRe = regexp.MustCompile(`^R__[a-z0-9_]+\.(up|down)\.sql$`)
+)
 
 // Check lints dir; with opts.Base set, only migrations added since that git ref are reported.
 func Check(dir string, acked []string, opts Options) (Report, error) {
@@ -77,7 +79,7 @@ func Check(dir string, acked []string, opts Options) (Report, error) {
 		ackSet[strings.ToUpper(strings.TrimSpace(code))] = true
 	}
 	for _, m := range migs {
-		if sc.includes(m.Version) {
+		if sc.includes(m) {
 			rep.checkMigration(m, ackSet)
 		}
 	}
@@ -93,8 +95,7 @@ func (r *Report) add(f Finding) {
 }
 
 func (r *Report) checkMigration(m engine.Migration, acked map[string]bool) {
-	upFile := fmt.Sprintf("%d_%s.up.sql", m.Version, m.Name)
-	downFile := fmt.Sprintf("%d_%s.down.sql", m.Version, m.Name)
+	upFile, downFile := m.UpFile(), m.DownFile()
 
 	up, err := engine.BuildPlan(m, engine.DirectionUp)
 	if err != nil {
@@ -131,12 +132,12 @@ func noOp(p engine.Plan) bool {
 }
 
 type scope struct {
-	added    map[int64]bool
+	added    map[string]bool
 	modified []string
 }
 
-func (s scope) includes(version int64) bool {
-	return s.added == nil || s.added[version]
+func (s scope) includes(m engine.Migration) bool {
+	return s.added == nil || s.added[m.ID()]
 }
 
 func newScope(dir string, opts Options) (scope, error) {
@@ -156,13 +157,24 @@ func newScope(dir string, opts Options) (scope, error) {
 		return scope{}, err
 	}
 
-	sc := scope{added: map[int64]bool{}, modified: modified}
+	// A repeatable is meant to be edited in place; only versioned files are frozen once merged.
+	sc := scope{added: map[string]bool{}}
+	for _, f := range modified {
+		if !repeatRe.MatchString(f) {
+			sc.modified = append(sc.modified, f)
+		}
+	}
 	for _, f := range added {
-		version, _ := strconv.ParseInt(fileRe.FindStringSubmatch(f)[1], 10, 64)
-		sc.added[version] = true
+		sc.added[migrationID(f)] = true
 	}
 
 	return sc, nil
+}
+
+func migrationID(file string) string {
+	id := strings.TrimSuffix(file, ".sql")
+
+	return strings.TrimSuffix(strings.TrimSuffix(id, ".up"), ".down")
 }
 
 func changedFiles(git GitFunc, dir, base, filter string) ([]string, error) {
@@ -172,7 +184,7 @@ func changedFiles(git GitFunc, dir, base, filter string) ([]string, error) {
 	}
 	var files []string
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		if name := filepath.Base(line); fileRe.MatchString(name) {
+		if name := filepath.Base(line); fileRe.MatchString(name) || repeatRe.MatchString(name) {
 			files = append(files, name)
 		}
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const planColumns = `id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition, search_path, drift, plan,
+const planColumns = `id, target, key, rollout, state, history_hash, applied, repeatables, schema_fingerprint, schema_definition, search_path, drift, plan,
 	validated, acked, allow_out_of_order, created_by, source, created_at, coalesce(run_id::text, ''), coalesce(superseded_by::text, '')`
 
 // SavePlan stores a ready plan with its files; a ready plan with the same key on the target is replaced.
@@ -33,10 +33,11 @@ func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) e
 	if _, err := s.pool.Exec(ctx, `
 		WITH p AS (
 			INSERT INTO cp_plans (id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition,
-				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash, search_path)
-			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18, $19)
+				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash, search_path, repeatables)
+			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18, $19, $20)
 			ON CONFLICT (target, key) WHERE state = 'ready' DO UPDATE SET
 				id = EXCLUDED.id, rollout = EXCLUDED.rollout, history_hash = EXCLUDED.history_hash, applied = EXCLUDED.applied,
+				repeatables = EXCLUDED.repeatables,
 				schema_fingerprint = EXCLUDED.schema_fingerprint, schema_definition = EXCLUDED.schema_definition,
 				drift = EXCLUDED.drift, plan = EXCLUDED.plan, validated = EXCLUDED.validated, acked = EXCLUDED.acked,
 				allow_out_of_order = EXCLUDED.allow_out_of_order, created_by = EXCLUDED.created_by, source = EXCLUDED.source,
@@ -46,7 +47,7 @@ func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) e
 		SELECT (SELECT id FROM p), n, b FROM unnest($16::text[], $17::text[]) AS f (n, b)`,
 		p.ID, p.Target, p.Key, p.Rollout, p.HistoryHash, jsonOf(p.Applied), p.SchemaFingerprint, p.SchemaDefinition,
 		p.Drift, jsonOf(p.Migrations), p.Validated, append([]string{}, p.Acked...), p.AllowOutOfOrder, p.CreatedBy, p.Source, names, bodies,
-		FilesHash(files), p.SearchPath); err != nil {
+		FilesHash(files), p.SearchPath, jsonOf(p.Repeatables)); err != nil {
 		return fmt.Errorf("save plan: %w", err)
 	}
 
@@ -200,21 +201,22 @@ func (s *Store) SupersedePlan(ctx context.Context, id string, next Plan, files m
 	return nil
 }
 
-// RunsApplying maps each version held by a succeeded run of the target created after since to that run's id.
-func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time) (map[int64]string, error) {
+// RunsApplying maps each migration held by a succeeded run of the target created after since to that run's id,
+// keyed the way engine.Migration.ID renders it.
+func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time) (map[string]string, error) {
+	const migrationID = `regexp_replace(f.name, '\.(up|down)\.sql$', '')`
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT ON (version) left(f.name, 14)::bigint AS version, r.id
+		SELECT DISTINCT ON (`+migrationID+`) `+migrationID+`, r.id
 		FROM cp_runs r JOIN cp_run_files f ON f.run_id = r.id
 		WHERE r.target = $1 AND r.state = 'succeeded' AND r.created_at > $2
-		ORDER BY version, r.created_at`, target, since)
+		ORDER BY `+migrationID+`, r.created_at`, target, since)
 	if err != nil {
 		return nil, fmt.Errorf("list applying runs: %w", err)
 	}
-	out := map[int64]string{}
-	var v int64
-	var id string
-	if _, err := pgx.ForEachRow(rows, []any{&v, &id}, func() error {
-		out[v] = id
+	out := map[string]string{}
+	var mid, id string
+	if _, err := pgx.ForEachRow(rows, []any{&mid, &id}, func() error {
+		out[mid] = id
 
 		return nil
 	}); err != nil {
@@ -226,7 +228,7 @@ func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time
 
 func scanPlan(row pgx.Row) (Plan, error) {
 	var p Plan
-	err := row.Scan(&p.ID, &p.Target, &p.Key, &p.Rollout, &p.State, &p.HistoryHash, &p.Applied, &p.SchemaFingerprint,
+	err := row.Scan(&p.ID, &p.Target, &p.Key, &p.Rollout, &p.State, &p.HistoryHash, &p.Applied, &p.Repeatables, &p.SchemaFingerprint,
 		&p.SchemaDefinition, &p.SearchPath, &p.Drift, &p.Migrations, &p.Validated, &p.Acked, &p.AllowOutOfOrder, &p.CreatedBy,
 		&p.Source, &p.CreatedAt, &p.RunID, &p.SupersededBy)
 

@@ -37,7 +37,7 @@ const (
 
 // StatementEvent reports one executed statement.
 type StatementEvent struct {
-	Version   int64
+	Migration string
 	Index     int
 	Statement Statement
 	Duration  time.Duration
@@ -89,9 +89,9 @@ func New(db DB, opts Options, extra ...Option) *Executor {
 
 // Result reports what one apply did.
 type Result struct {
-	Version int64
-	Skipped bool
-	Applied int
+	Migration string
+	Skipped   bool
+	Applied   int
 }
 
 // Up applies an up plan; applied versions are checksum-checked and skipped.
@@ -113,7 +113,7 @@ func (e *Executor) Down(ctx context.Context, p Plan) (Result, error) {
 }
 
 func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
-	res := Result{Version: p.Migration.Version}
+	res := Result{Migration: p.Migration.ID()}
 
 	release, err := acquireLock(ctx, e.db)
 	if err != nil {
@@ -125,19 +125,21 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 		return res, err
 	}
 
-	applied, checksum, err := e.applied(ctx, p.Migration.Version)
+	recorded, checksum, err := e.recorded(ctx, p.Migration)
 	if err != nil {
 		return res, err
 	}
-	if p.Direction == DirectionUp && applied {
-		if checksum != p.Migration.Checksum {
+	if p.Direction == DirectionUp && recorded {
+		if checksum == p.Migration.Checksum {
+			res.Skipped = true
+
+			return res, nil
+		}
+		if !p.Migration.Repeatable {
 			return res, fmt.Errorf("version %d already applied with different content", p.Migration.Version)
 		}
-		res.Skipped = true
-
-		return res, nil
 	}
-	if p.Direction == DirectionDown && !applied {
+	if p.Direction == DirectionDown && !recorded {
 		res.Skipped = true
 
 		return res, nil
@@ -152,8 +154,8 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 
 	for i := prog.lastDone + 1; i < len(p.Statements); i++ {
-		if err := e.execStatement(ctx, prog, p.Migration.Version, i, p.Statements[i]); err != nil {
-			err = fmt.Errorf("statement %d of %d_%s (%s): %w", i, p.Migration.Version, p.Migration.Name, p.Direction, err)
+		if err := e.execStatement(ctx, prog, res.Migration, i, p.Statements[i]); err != nil {
+			err = fmt.Errorf("statement %d of %s (%s): %w", i, res.Migration, p.Direction, err)
 			markFailed(ctx, e.db, prog.runID, err)
 
 			return res, err
@@ -176,29 +178,36 @@ func (e *Executor) mark(ctx context.Context, p Plan) error {
 		return fmt.Errorf("index %s exists but is INVALID; drop it and let the migration build it", invalid[0])
 	}
 	runID := e.newID()
+	k := keyOf(p.Migration)
 	if _, err := e.db.Exec(ctx,
-		`INSERT INTO godwit.runs (id, version, direction, state, stmt_count) VALUES ($1, $2, 'up', 'running', 0)`,
-		runID, p.Migration.Version); err != nil {
+		`INSERT INTO godwit.runs (id, version, repeatable, checksum, direction, state, stmt_count)
+		 VALUES ($1, $2, $3, $4, 'up', 'running', 0)`,
+		runID, k.version, k.repeatable, k.checksum); err != nil {
 		return fmt.Errorf("insert run: %w", err)
 	}
 
 	return e.finalize(ctx, p, runID)
 }
 
-func (e *Executor) applied(ctx context.Context, version int64) (bool, string, error) {
+// recorded reports what the target holds for a migration: a version row, or a repeatable row keyed by name.
+func (e *Executor) recorded(ctx context.Context, m Migration) (bool, string, error) {
+	query, arg := `SELECT checksum FROM godwit.migrations WHERE version = $1`, any(m.Version)
+	if m.Repeatable {
+		query, arg = `SELECT checksum FROM godwit.repeatables WHERE name = $1`, any(m.Name)
+	}
 	var checksum string
-	err := e.db.QueryRow(ctx, `SELECT checksum FROM godwit.migrations WHERE version = $1`, version).Scan(&checksum)
+	err := e.db.QueryRow(ctx, query, arg).Scan(&checksum)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, "", nil
 	}
 	if err != nil {
-		return false, "", fmt.Errorf("check applied version %d: %w", version, err)
+		return false, "", fmt.Errorf("check applied %s: %w", m.ID(), err)
 	}
 
 	return true, checksum, nil
 }
 
-func (e *Executor) execStatement(ctx context.Context, prog runProgress, version int64, idx int, st Statement) error {
+func (e *Executor) execStatement(ctx context.Context, prog runProgress, migration string, idx int, st Statement) error {
 	e.hook(HookBeforeStatement, idx)
 	start := time.Now()
 	var err error
@@ -207,7 +216,7 @@ func (e *Executor) execStatement(ctx context.Context, prog runProgress, version 
 	} else {
 		err = e.execTx(ctx, prog, idx, st)
 	}
-	e.observe(StatementEvent{Version: version, Index: idx, Statement: st, Duration: time.Since(start), Err: err})
+	e.observe(StatementEvent{Migration: migration, Index: idx, Statement: st, Duration: time.Since(start), Err: err})
 
 	return err
 }
@@ -284,15 +293,8 @@ func (e *Executor) finalize(ctx context.Context, p Plan, runID string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if p.Direction == DirectionUp {
-		_, err = tx.Exec(ctx,
-			`INSERT INTO godwit.migrations (version, name, checksum) VALUES ($1, $2, $3) ON CONFLICT (version) DO NOTHING`,
-			p.Migration.Version, p.Migration.Name, p.Migration.Checksum)
-	} else {
-		_, err = tx.Exec(ctx, `DELETE FROM godwit.migrations WHERE version = $1`, p.Migration.Version)
-	}
-	if err != nil {
-		return fmt.Errorf("record migration: %w", err)
+	if err := record(ctx, tx, p); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE godwit.runs SET state = 'succeeded', finished_at = now() WHERE id = $1`, runID); err != nil {
@@ -305,16 +307,40 @@ func (e *Executor) finalize(ctx context.Context, p Plan, runID string) error {
 	return nil
 }
 
+func record(ctx context.Context, tx DB, p Plan) error {
+	m := p.Migration
+	var err error
+	switch {
+	case p.Direction == DirectionUp && m.Repeatable:
+		_, err = tx.Exec(ctx,
+			`INSERT INTO godwit.repeatables (name, checksum) VALUES ($1, $2)
+			 ON CONFLICT (name) DO UPDATE SET checksum = EXCLUDED.checksum, applied_at = now()`,
+			m.Name, m.Checksum)
+	case p.Direction == DirectionUp:
+		_, err = tx.Exec(ctx,
+			`INSERT INTO godwit.migrations (version, name, checksum) VALUES ($1, $2, $3) ON CONFLICT (version) DO NOTHING`,
+			m.Version, m.Name, m.Checksum)
+	case m.Repeatable:
+		_, err = tx.Exec(ctx, `DELETE FROM godwit.repeatables WHERE name = $1`, m.Name)
+	default:
+		_, err = tx.Exec(ctx, `DELETE FROM godwit.migrations WHERE version = $1`, m.Version)
+	}
+	if err != nil {
+		return fmt.Errorf("record migration: %w", err)
+	}
+
+	return nil
+}
+
 // StatusRow is the applied state of one loaded migration.
 type StatusRow struct {
-	Version   int64
-	Name      string
+	Migration Migration
 	Applied   bool
 	Drifted   bool
 	AppliedAt time.Time
 }
 
-// Status reports the applied state of migs against the target.
+// Status reports the applied state of migs against the target; a repeatable whose content changed reads as pending.
 func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, error) {
 	if err := bootstrap(ctx, e.db); err != nil {
 		return nil, err
@@ -323,18 +349,30 @@ func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, e
 	if err != nil {
 		return nil, err
 	}
-	appliedBy := make(map[int64]Applied, len(applied))
+	reps, err := readRepeatables(ctx, e.db)
+	if err != nil {
+		return nil, err
+	}
+	byVersion := make(map[int64]Applied, len(applied))
 	for _, a := range applied {
-		appliedBy[a.Version] = a
+		byVersion[a.Version] = a
+	}
+	byName := make(map[string]Repeatable, len(reps))
+	for _, r := range reps {
+		byName[r.Name] = r
 	}
 
 	out := make([]StatusRow, 0, len(migs))
 	for _, m := range migs {
-		row := StatusRow{Version: m.Version, Name: m.Name}
-		if a, ok := appliedBy[m.Version]; ok {
-			row.Applied = true
-			row.Drifted = a.Checksum != m.Checksum
-			row.AppliedAt = a.AppliedAt
+		row := StatusRow{Migration: m}
+		switch r, ok := byName[m.Name]; {
+		case m.Repeatable && ok:
+			row.Applied, row.AppliedAt = r.Checksum == m.Checksum, r.AppliedAt
+		case m.Repeatable:
+		default:
+			if a, ok := byVersion[m.Version]; ok {
+				row.Applied, row.Drifted, row.AppliedAt = true, a.Checksum != m.Checksum, a.AppliedAt
+			}
 		}
 		out = append(out, row)
 	}

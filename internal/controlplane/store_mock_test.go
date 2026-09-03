@@ -72,8 +72,23 @@ func TestAppliedVersionsRowError(t *testing.T) {
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").
 		WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)).RowError(0, errBoom))
 
-	if _, err := s.AppliedVersions(context.Background(), "app"); err == nil ||
+	if _, err := s.Applied(context.Background(), "app"); err == nil ||
 		!strings.Contains(err.Error(), "read applied versions") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAppliedRepeatablesRowError(t *testing.T) {
+	t.Parallel()
+	mock, s := newMockStore(t)
+
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").
+		WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	mock.ExpectQuery("SELECT DISTINCT ON").WithArgs("app").
+		WillReturnRows(pgxmock.NewRows([]string{"name", "body"}).AddRow("R__v.up.sql", "SELECT 1;").RowError(0, errBoom))
+
+	if _, err := s.Applied(context.Background(), "app"); err == nil ||
+		!strings.Contains(err.Error(), "read applied repeatables") {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -28,10 +28,23 @@ db/migrations/
 ├── 20260901120000_create_orders.up.sql
 ├── 20260901120000_create_orders.down.sql
 ├── 20260901120500_orders_customer_idx.up.sql
-└── 20260901120500_orders_customer_idx.down.sql
+├── 20260901120500_orders_customer_idx.down.sql
+├── R__order_stats.up.sql
+└── R__order_stats.down.sql
 ```
 
-File names must match `<14-digit timestamp>_<snake_name>.{up,down}.sql`. Both sides are required and must not be empty; a version with two different names, or an unexpected file, fails the load. Entries starting with `.` are ignored.
+File names must match `<14-digit timestamp>_<snake_name>.{up,down}.sql`, or `R__<snake_name>.{up,down}.sql` for a **repeatable** migration. Both sides are required and must not be empty; a version with two different names, or an unexpected file, fails the load. Entries starting with `.` are ignored.
+
+A repeatable has no version: it runs after the versioned files of the same run, in name order, whenever its content differs from what the target last recorded under that name, and is skipped when it does not. Use it for objects the file describes in full — a view, a function, a trigger body — and write both sides so they can run more than once:
+
+```sql
+-- R__order_stats.up.sql
+CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
+-- R__order_stats.down.sql
+DROP VIEW IF EXISTS order_stats;
+```
+
+The down side runs only when the run that applied the repeatable is reverted; godwit does not keep previous bodies, so roll forward by editing the file. See [concepts: repeatable migrations](concepts.md#repeatable-migrations).
 
 ```sql
 -- 20260901120000_create_orders.up.sql

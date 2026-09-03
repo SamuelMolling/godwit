@@ -392,7 +392,7 @@ func (s *Server) audit(ctx context.Context, action, runID, target, detail string
 }
 
 type admission struct {
-	applied    []int64
+	applied    controlplane.AppliedSet
 	validated  bool
 	validation *controlplane.Validation
 }
@@ -407,11 +407,11 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	if _, _, err := s.store.Target(ctx, target); err != nil {
 		return admission{}, rpcErr(err)
 	}
-	applied, err := s.store.AppliedVersions(ctx, target)
+	applied, err := s.store.Applied(ctx, target)
 	if err != nil {
 		return admission{}, rpcErr(err)
 	}
-	if err := s.checkOrder(target, plans, applied, allowOutOfOrder); err != nil {
+	if err := s.checkOrder(target, plans, applied.Versions, allowOutOfOrder); err != nil {
 		return admission{}, err
 	}
 	adm := admission{applied: applied}
@@ -600,7 +600,8 @@ func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
 	return nil
 }
 
-// checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it logs them.
+// checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it
+// logs them; repeatables carry no version and are never out of order.
 func (s *Server) checkOrder(target string, plans []engine.Plan, applied []int64, allow bool) error {
 	if len(applied) == 0 {
 		return nil
@@ -609,7 +610,7 @@ func (s *Server) checkOrder(target string, plans []engine.Plan, applied []int64,
 	var behind []string
 	for _, p := range plans {
 		v := p.Migration.Version
-		if v < latest && !slices.Contains(applied, v) {
+		if !p.Migration.Repeatable && v < latest && !slices.Contains(applied, v) {
 			behind = append(behind, strconv.FormatInt(v, 10))
 		}
 	}

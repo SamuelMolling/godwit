@@ -191,6 +191,7 @@ type step struct {
 type planned struct {
 	Version        int64
 	Name           string
+	Repeatable     bool
 	Phase          string
 	Applied        bool
 	AlreadyApplied bool
@@ -387,7 +388,7 @@ func plannedOf(p *godwitv1.Plan) []planned {
 	var out []planned
 	for _, m := range p.GetMigrations() {
 		v := planned{
-			Version: m.Version, Name: m.Name, Phase: m.Phase, Applied: m.Applied,
+			Version: m.Version, Name: m.Name, Repeatable: m.Repeatable, Phase: m.Phase, Applied: m.Applied,
 			AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
 			Statements: len(m.Statements),
 		}

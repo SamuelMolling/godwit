@@ -211,7 +211,7 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 	r.observed = observationFromProto(m.Observed)
 	for _, pm := range m.Migrations {
 		p := engine.Plan{
-			Migration: engine.Migration{Version: pm.Version, Name: pm.Name, Checksum: pm.Checksum},
+			Migration: engine.Migration{Version: pm.Version, Name: pm.Name, Repeatable: pm.Repeatable, Checksum: pm.Checksum},
 			Direction: engine.DirectionUp,
 		}
 		for _, ps := range pm.Statements {
@@ -248,8 +248,8 @@ func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {
 	files := make([]*godwitv1.MigrationFile, 0, 2*len(migs))
 	for _, m := range migs {
 		files = append(files,
-			&godwitv1.MigrationFile{Name: fmt.Sprintf("%014d_%s.up.sql", m.Version, m.Name), Body: m.UpSQL},
-			&godwitv1.MigrationFile{Name: fmt.Sprintf("%014d_%s.down.sql", m.Version, m.Name), Body: m.DownSQL},
+			&godwitv1.MigrationFile{Name: m.UpFile(), Body: m.UpSQL},
+			&godwitv1.MigrationFile{Name: m.DownFile(), Body: m.DownSQL},
 		)
 	}
 

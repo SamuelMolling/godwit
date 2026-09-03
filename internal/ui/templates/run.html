@@ -41,7 +41,7 @@
         <ul class="tl">
           {{range $.Planned}}
           <li><i class="{{if .AlreadyApplied}}warn{{else if .Hazards}}bad{{else}}ok{{end}}"></i><div>
-            <div class="d"><span class="mono">{{.Version}}</span> {{.Name}}{{with .Phase}} <span class="chip">{{.}}</span>{{end}}{{if .Applied}} <span class="chip">in history</span>{{end}}{{if .AlreadyApplied}} <span class="chip">already applied by hand</span>{{end}}</div>
+            <div class="d">{{if .Repeatable}}<span class="mono">R__</span>{{else}}<span class="mono">{{.Version}}</span> {{end}}{{.Name}}{{with .Phase}} <span class="chip">{{.}}</span>{{end}}{{if .Applied}} <span class="chip">{{if .Repeatable}}unchanged{{else}}in history{{end}}</span>{{end}}{{if .AlreadyApplied}} <span class="chip">already applied by hand</span>{{end}}</div>
             <div class="t">{{if .AlreadyApplied}}recorded without executing, {{plural .Statements "statement"}} skipped{{else}}{{plural .Statements "statement"}}{{end}}</div>
             {{with .Effect}}<pre>{{.}}</pre>{{end}}
             {{with .Note}}<div class="d">{{.}}</div>{{end}}
