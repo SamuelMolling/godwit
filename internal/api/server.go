@@ -444,7 +444,7 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	}
 	adm := admission{applied: applied, plans: plans}
 	if s.validator == nil || skipValidation {
-		if id := directiveID(plans); id != "" {
+		if id := directiveID(plans, applied); id != "" {
 			return admission{}, invalid(id + " carries a godwit directive: directives need validation, so drop --skip-validation")
 		}
 
@@ -470,9 +470,10 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	return adm, nil
 }
 
-func directiveID(plans []engine.Plan) string {
+// directiveID names a directive migration still to apply; one the target holds is never expanded again.
+func directiveID(plans []engine.Plan, applied controlplane.AppliedSet) string {
 	for _, p := range plans {
-		if len(p.Migration.Directives) > 0 {
+		if len(p.Migration.Directives) > 0 && !applied.Has(p.Migration) {
 			return p.Migration.ID()
 		}
 	}

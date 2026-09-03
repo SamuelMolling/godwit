@@ -79,6 +79,7 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 		return Validation{}, err
 	}
 
+	replayed := map[string]bool{}
 	for i, run := range history {
 		histPlans, err := PlansFromFiles(run.Files, engine.DirectionUp)
 		if err != nil {
@@ -87,12 +88,26 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 		if histPlans, err = ExpandUp(histPlans, run.Expansions); err != nil {
 			return Validation{}, fmt.Errorf("history run %d: %w", i, err)
 		}
-		if _, err := applyPlans(ctx, conn, engine.Options{}, histPlans); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans)); err != nil {
 			return Validation{}, fmt.Errorf("replay history run %d: %w", i, err)
+		}
+		for _, p := range histPlans {
+			replayed[p.Migration.ID()] = true
 		}
 	}
 
-	return expander.validateEach(ctx, conn, plans)
+	return expander.validateEach(ctx, conn, plans, replayed)
+}
+
+// recordUnexpanded marks a history plan no run ever expanded — a baseline records without running — so the replay records it too.
+func recordUnexpanded(plans []engine.Plan) []engine.Plan {
+	for i, p := range plans {
+		if len(p.Statements) == 0 && len(p.Migration.Directives) > 0 {
+			plans[i].MarkOnly = true
+		}
+	}
+
+	return plans
 }
 
 // expander applies the target's keep_old default over the service's; a directive can still override it.
@@ -136,14 +151,14 @@ func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) er
 
 // validateEach applies the plans in order, expanding each directive migration against the catalog the
 // ones before it left behind, and snapshots the schema after every step.
-func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan) (Validation, error) {
+func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan, replayed map[string]bool) (Validation, error) {
 	def, fp, err := snapshotScratch(ctx, conn)
 	if err != nil {
 		return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
 	}
 	val := Validation{Base: def, Fingerprints: []string{fp}, Expansions: map[string]Expansion{}, Plans: slices.Clone(plans)}
 	for i, p := range val.Plans {
-		if p, err = v.expandPlan(ctx, conn, p, val.Expansions); err != nil {
+		if p, err = v.expandPlan(ctx, conn, p, val.Expansions, replayed); err != nil {
 			return Validation{}, err
 		}
 		val.Plans[i] = p
@@ -162,9 +177,10 @@ func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []en
 	return val, nil
 }
 
-// expandPlan renders an up plan's directives; a down plan is already carrying the inverse its run froze.
-func (v *Validator) expandPlan(ctx context.Context, conn engine.DB, p engine.Plan, into map[string]Expansion) (engine.Plan, error) {
-	if len(p.Migration.Directives) == 0 || p.Direction != engine.DirectionUp {
+// expandPlan renders an up plan's directives; a down plan already carries the inverse its run froze, and a
+// migration the history replayed keeps the expansion its own run froze.
+func (v *Validator) expandPlan(ctx context.Context, conn engine.DB, p engine.Plan, into map[string]Expansion, replayed map[string]bool) (engine.Plan, error) {
+	if len(p.Migration.Directives) == 0 || p.Direction != engine.DirectionUp || replayed[p.Migration.ID()] {
 		return p, nil
 	}
 	exp, err := v.Expander.Expand(ctx, conn, p.Migration)

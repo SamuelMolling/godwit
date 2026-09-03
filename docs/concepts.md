@@ -332,6 +332,16 @@ request showed. The plan key stays a pure function of the files, but `shape()` c
 re-plan whose expansion changed — a column appeared, the primary key moved — fails `SameStatements` and refuses
 with `PlanStale{history}` at bind. `godwit.migrations` records the checksum of the **file**, never of the expansion.
 
+**A directive is expanded once.** The validator replays the target's history on the scratch database before it
+looks at the submitted files, and a migration that replay already carried is left exactly as its own run left it:
+no fresh expansion, no entry in the plan's `expansions`, no statements. Otherwise every plan, `migrate --dry-run`
+and `migrate` on the target would be re-computing the recipe against a catalog that already holds what the
+migration created, and every refusal in the table below — `<c>_old already exists`, `already NOT NULL`, `does not
+exist in the schema this migration starts from` — would fire forever on a migration nobody is going to run again.
+The same holds for the executor: a migration the target has recorded is skipped whatever its body says. A target
+that has *not* applied it yet expands it as usual, so the same directory can be pending on one target and history
+on another.
+
 **A directive does not need a stored plan.** In an implicit run the expansion is computed at admission through the
 same code path and recorded in the run's audit detail and notification (`expands <id> <hash>`). `require_plan` on
 the target still applies as usual.
@@ -390,7 +400,7 @@ Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, n
 | `add-fk` pointing at a column with no single-column unique index | PostgreSQL cannot point a foreign key at it |
 | `add-fk` or `add-check` whose constraint name the table already carries | pass `name=` to choose another |
 | `-- godwit: revert` with `keep-old=false`, or against a `backfill`, a `drop-index` or a `drop-column` | there is no lossless inverse; write the `.down.sql` by hand |
-| `skip_validation` | no scratch, no catalog, no expansion |
+| `skip_validation` with a directive migration still to apply | no scratch, no catalog, no expansion; one the target already holds passes, it is never expanded again |
 | a directive in a repeatable, or in a `.down.sql` beyond the sentinel | `E004`, above |
 
 ## Repeatable migrations

@@ -290,6 +290,15 @@ jobs:
           docker exec "${POSTGRES_ID}" psql -U godwit -d two -tAc \
             'SELECT count(*) FROM public.people WHERE age <> age_old' | grep -qx 0
 
+      - name: verify passes on the target that applied the change-type
+        id: twoverify
+        uses: ./
+        with:
+          command: verify
+          dir: testdata/action/two-phase
+          target: two
+          token: smoke-read
+
       - name: confirm with nothing awaiting the contract phase fails
         id: nothing
         continue-on-error: true
@@ -470,6 +479,8 @@ jobs:
           CONTRACT_PHASE: ${{ steps.contract.outputs.phase }}
           CONTRACT_RUN: ${{ steps.contract.outputs.run-id }}
           CONTRACT_SUMMARY: ${{ steps.contract.outputs.summary-path }}
+          TWOVERIFY_PENDING: ${{ steps.twoverify.outputs.pending }}
+          TWOVERIFY_SUMMARY: ${{ steps.twoverify.outputs.summary-path }}
           NOTHING_OUTCOME: ${{ steps.nothing.outcome }}
           NOTHING_PHASE: ${{ steps.nothing.outputs.phase }}
           NOTHING_RUN: ${{ steps.nothing.outputs.run-id }}
@@ -550,6 +561,9 @@ jobs:
           test "${CONTRACT_PHASE}" = "contract"
           grep -q "^## godwit confirm$" "${CONTRACT_SUMMARY}"
           grep -q "^run \`${CONTRACT_RUN}\`: \*\*succeeded\*\* (plan \`${TWOPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${CONTRACT_SUMMARY}"
+          test "${TWOVERIFY_PENDING}" = "0"
+          grep -q '^## godwit verify$' "${TWOVERIFY_SUMMARY}"
+          grep -q "^target \`two\`: 2 migrations, all applied$" "${TWOVERIFY_SUMMARY}"
           test "${NOTHING_OUTCOME}" = "failure"
           test -z "${NOTHING_RUN}"
           test -z "${NOTHING_PHASE}"

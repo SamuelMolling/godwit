@@ -24,21 +24,44 @@ func directivePlan(t *testing.T, dir Direction) Plan {
 
 func TestApplyRefusesUnexpandedDirectives(t *testing.T) {
 	t.Parallel()
-	_, exec := newMockExec(t)
+	ctx := context.Background()
 	for _, dir := range []Direction{DirectionUp, DirectionDown} {
+		mock, exec := newMockExec(t)
 		p := directivePlan(t, dir)
 		if len(p.Statements) != 0 {
 			t.Fatalf("%s: a directive body has no statements of its own", dir)
 		}
-		var err error
-		if dir == DirectionUp {
-			_, err = exec.Up(context.Background(), p)
-		} else {
-			_, err = exec.Down(context.Background(), p)
+		expectLock(mock)
+		expectBootstrap(mock)
+		expectNotApplied(mock)
+		run := exec.Up
+		if dir == DirectionDown {
+			expectHeldLookup(mock).WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("held"))
+			run = exec.Down
 		}
-		if err == nil || !strings.Contains(err.Error(), "never expanded") {
+		if _, err := run(ctx, p); err == nil || !strings.Contains(err.Error(), "never expanded") {
 			t.Fatalf("%s err = %v", dir, err)
 		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A migration the target already recorded is skipped whatever its body: its own run is what expanded it.
+func TestApplySkipsRecordedDirectiveMigration(t *testing.T) {
+	t.Parallel()
+	mock, exec := newMockExec(t)
+	expectLock(mock)
+	expectBootstrap(mock)
+	mock.ExpectQuery("SELECT checksum FROM godwit.migrations").WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"checksum"}).AddRow("c"))
+	res, err := exec.Up(context.Background(), directivePlan(t, DirectionUp))
+	if err != nil || !res.Skipped {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
