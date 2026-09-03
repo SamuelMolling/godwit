@@ -95,8 +95,8 @@ func flakyFiles(code string) map[string]string {
 func TestSchedulerTransientRequeuesWithBackoff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s, _ := newStore(t)
-	sched, targetDSN := newScheduler(t, s, Config{Holder: "h1", Interval: 300 * time.Millisecond, Jitter: func() float64 { return 0.5 }})
+	s, pool := newStore(t)
+	sched, targetDSN := newScheduler(t, s, Config{Holder: "h1", Interval: 10 * time.Second, Jitter: func() float64 { return 0.5 }})
 	notifier := &recordingNotifier{}
 	sched.Notifier = notifier
 	const id = "44444444-0000-0000-0000-000000000001"
@@ -108,21 +108,26 @@ func TestSchedulerTransientRequeuesWithBackoff(t *testing.T) {
 		!strings.Contains(r.Error, "SQLSTATE 40001") || strings.Contains(r.Error, "retry in") {
 		t.Fatalf("run = %+v", r)
 	}
-	if !tableExists(t, targetDSN, "flaky") {
-		t.Fatal("first migration should stay applied across the retry")
-	}
 	sched.Tick(ctx)
 	if again, _ := s.Run(ctx, id); again.Attempts != 1 || again.State != StateQueued {
 		t.Fatalf("claimed before not_before: %+v", again)
 	}
-	r = tickUntil(t, sched, s, id, StateSucceeded)
+	if !tableExists(t, targetDSN, "flaky") {
+		t.Fatal("first migration should stay applied across the retry")
+	}
+	// Expiring not_before in the store's own clock is what lets the next tick claim without racing the host's.
+	if _, err := pool.Exec(ctx, "UPDATE cp_runs SET not_before = now() WHERE id = $1", id); err != nil {
+		t.Fatal(err)
+	}
+	sched.Tick(ctx)
+	r = waitState(t, s, id, StateSucceeded)
 	if r.Attempts != 2 || r.Retries != 1 || r.Error != "" || r.NotBefore != nil {
 		t.Fatalf("run = %+v", r)
 	}
 	if got := notifier.types(); got != "run:running run:retrying run:running run:succeeded" {
 		t.Fatalf("notifications = %q", got)
 	}
-	if e := notifier.events[1]; e.State != StateQueued || !strings.HasPrefix(e.Detail, "transient: ") || !strings.Contains(e.Detail, "(retry in 300ms)") {
+	if e := notifier.events[1]; e.State != StateQueued || !strings.HasPrefix(e.Detail, "transient: ") || !strings.Contains(e.Detail, "(retry in 10s)") {
 		t.Fatalf("retrying event = %+v", e)
 	}
 	if out := scrape(t, sched.Metrics); !strings.Contains(out, `godwit_run_retries_total{code="40001",target="app"} 1`) {
