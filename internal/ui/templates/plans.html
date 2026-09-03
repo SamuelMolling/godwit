@@ -1,0 +1,35 @@
+{{define "plans.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Plans</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Plans</h1></div>
+  <div class="acts"><a class="btn ghost" href="/ui/plans{{if .Target}}?target={{.Target}}{{end}}"><svg class="ic"><use href="#i-refresh"/></svg>Refresh</a></div>
+</header>
+<div class="body">
+  <div class="tabs">
+    {{range .Plans.Filters}}<a href="{{.Href}}" {{if .On}}class="on"{{end}}>{{.Name}} <span class="cnt">{{.Count}}</span></a>{{end}}
+  </div>
+
+  <div class="sec" style="margin-top:24px">
+    <div class="sec-hd"><h2>{{if .Target}}Plans on {{.Target}}{{else}}All plans{{end}} <span class="n">{{len .Plans.Rows}}</span></h2><div class="right">Newest first</div></div>
+    {{if .Plans.Rows}}
+    <div class="tbl"><table>
+      <thead><tr><th>Plan</th><th>Target</th><th>State</th><th>Rollout</th><th class="r">Migrations</th><th>Run</th><th>Created</th></tr></thead>
+      <tbody>
+        {{range .Plans.Rows}}
+        <tr>
+          <td class="id"><a href="/ui/plans/{{.Id}}">{{short .Id}}</a><span class="sub">key {{short .Key}}{{with .CreatedBy}} · by {{.}}{{end}}{{with .Source}} · {{.}}{{end}}</span></td>
+          <td><span class="chip">{{.Target}}</span></td>
+          <td><span class="pill {{.Tone}}">{{.State}}</span>{{with .SupersededBy}}<span class="sub">by <a href="/ui/plans/{{.}}">{{short .}}</a></span>{{end}}</td>
+          <td class="ago">{{.Rollout}}{{if not .Validated}} <small>not validated</small>{{end}}</td>
+          <td class="r num">{{.Total}}{{if .Pending}} <small class="faint">{{.Pending}} pending</small>{{end}}</td>
+          <td class="id">{{with .RunId}}<a href="/ui/runs/{{.}}">{{short .}}</a>{{else}}<span class="faint">not bound</span>{{end}}</td>
+          <td class="ago num">{{ago .CreatedAt}}<small>{{clock .CreatedAt}}</small></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table></div>
+    {{else}}
+    <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>No plans{{if .Plans.State}} in state {{.Plans.State}}{{end}}</b><p><span class="mono">godwit plan --target &lt;name&gt; --dir ./migrations</span> stores one; a run then binds it.</p></div>
+    {{end}}
+  </div>
+</div>
+{{template "foot" .}}{{end}}

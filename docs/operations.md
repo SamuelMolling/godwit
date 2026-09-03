@@ -99,6 +99,21 @@ Never delete a `running` or `failed` row from `godwit.runs`: the next attempt re
 
 Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXISTS` on first contact, no explicit step.
 
+## Web UI
+
+`serve --ui` mounts an operator UI at `/ui`. Sign-in and what each scope may press are in [security.md](security.md#web-ui); the pages themselves are read-mostly and every action they offer is an RPC the same token could call.
+
+| Page | What it answers |
+|---|---|
+| `/ui/` | what is running, what needs a human, every run newest first; `?target=` filters |
+| `/ui/runs/{id}` | one run's timeline from `cp_audit`, its error, the plan it is bound to, and resume / park / confirm / revert |
+| `/ui/plans` | every stored plan newest first, filtered by target (`?target=`) and state (`?state=ready\|bound\|superseded`), with the key prefix, rollout, author, migration count and the run each one is bound to |
+| `/ui/plans/{id}` | one plan in full: statements per migration grouped by phase, every hazard with its recipe, `already applied by hand` with the effect it recorded, the directives a migration carried and the expansion they produced, the observation the plan was taken against, and the drift the target had at that moment |
+| `/ui/drift` | drift events per target, with check and accept-baseline |
+| `/ui/diff` | the desired schema pasted as DDL against a target, answered with the up/down migration and the filenames to save it under |
+
+The plan list asks `ListPlans` once per target, so a target with no run yet does not appear until it has one. A plan that retention has swept renders as *pruned* rather than a `404`: the run keeps the record of what it applied.
+
 ## Metrics
 
 `GET /metrics`, Prometheus text format, unauthenticated, no access-log line. Every series is in `internal/metrics/metrics.go`.
