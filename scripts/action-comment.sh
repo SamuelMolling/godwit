@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Env: GH_TOKEN SUMMARY COMMAND DRY_RUN COMMENT COMMENT_ON_PUSH EVENT_NAME REPOSITORY SHA PR_NUMBER HEAD_SHA STATUS STALE RUN_ID RUN_URL SKIPPED RUNNER_TEMP
+# Env: GH_TOKEN SUMMARY COMMAND DRY_RUN COMMENT COMMENT_ON_PUSH EVENT_NAME REPOSITORY SHA PR_NUMBER HEAD_SHA STATUS STALE PHASE RUN_ID RUN_URL SKIPPED RUNNER_TEMP
 if [ "${SKIPPED:-false}" = "true" ]; then
   exit 0
 fi
 case "${COMMENT}:${COMMAND}" in
-  true:*|*:apply|*:revert) ;;
+  true:*|*:apply|*:confirm|*:revert) ;;
   *) exit 0 ;;
 esac
 
@@ -14,7 +14,7 @@ case "${COMMAND}" in
   migrate)
     if [ "${DRY_RUN}" = "true" ]; then marker="dry-run"; else marker="migrate"; fi
     ;;
-  apply|revert) marker="migrate" ;;
+  apply|confirm|revert) marker="migrate" ;;
   *) marker="${COMMAND}" ;;
 esac
 MARKER="<!-- godwit:${marker} -->"
@@ -29,7 +29,7 @@ merged_pulls() {
 }
 
 case "${COMMAND}" in
-  apply|revert)
+  apply|confirm|revert)
     numbers="${PR_NUMBER}"
     ;;
   verify)
@@ -88,15 +88,31 @@ for number in ${numbers}; do
 done
 
 case "${COMMAND}" in
-  apply|revert) ;;
+  apply|confirm|revert) ;;
   *) exit 0 ;;
 esac
 
 short="${RUN_ID:0:8}"
 case "${COMMAND}:${STATUS}:${STALE}" in
-  apply:0:*)  state=success; description="applied by run ${short}; merge when the review is done" ;;
+  apply:0:*)
+    if [ "${PHASE:-}" = "awaiting-contract" ]; then
+      state=pending
+      description="expand applied; comment /godwit confirm to run the contract phase"
+    else
+      state=success
+      description="applied by run ${short}; merge when the review is done"
+    fi
+    ;;
   apply:*:true) state=failure; description="plan stale or missing: re-plan on the pull request, then /godwit apply again" ;;
   apply:*) state=failure; description="apply failed${RUN_ID:+ (run ${short})}; see the pull request comment" ;;
+  confirm:0:*) state=success; description="contract applied by run ${short}; merge when the review is done" ;;
+  confirm:*)
+    if [ -z "${RUN_ID}" ]; then
+      exit 0
+    fi
+    state=failure
+    description="contract phase failed (run ${short}); see the pull request comment"
+    ;;
   revert:0:*)
     if [ -z "${RUN_ID}" ]; then
       exit 0

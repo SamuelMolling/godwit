@@ -222,6 +222,83 @@ jobs:
           schema: testdata/action/schema.sql
           name: users_from_schema
 
+      - name: Register a second target for the two-phase flow
+        shell: bash
+        env:
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          docker exec "${POSTGRES_ID}" psql -U godwit -c 'CREATE DATABASE two'
+          "${RUNNER_TEMP}/godwit" target add two --token smoke-admin --provider static \
+            --dsn 'postgres://godwit@127.0.0.1:5432/two?sslmode=disable'
+
+      - name: plan the migration carrying a directive
+        id: twoplan
+        uses: ./
+        with:
+          command: plan
+          dir: testdata/action/two-phase
+          target: two
+          token: smoke-read
+          rollout: expand-contract
+
+      - name: apply runs the expand phase and holds the contract one
+        id: expand
+        uses: ./
+        with:
+          command: apply
+          dir: testdata/action/two-phase
+          target: two
+          token: smoke-pipe
+          rollout: expand-contract
+
+      - name: the column is not swapped while the run awaits the contract phase
+        shell: bash
+        env:
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          columns() {
+            docker exec "${POSTGRES_ID}" psql -U godwit -d two -tAc \
+              "SELECT attname || ' ' || format_type(atttypid, atttypmod) FROM pg_attribute
+               WHERE attrelid = 'public.people'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+          }
+          columns | grep -qx 'age integer'
+          columns | grep -qx 'age_new bigint'
+
+      - name: confirm runs the contract phase from the pull request
+        id: contract
+        uses: ./
+        with:
+          command: confirm
+          target: two
+          token: smoke-pipe
+
+      - name: the contract phase swapped the column and kept the old one
+        shell: bash
+        env:
+          POSTGRES_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          columns() {
+            docker exec "${POSTGRES_ID}" psql -U godwit -d two -tAc \
+              "SELECT attname || ' ' || format_type(atttypid, atttypmod) FROM pg_attribute
+               WHERE attrelid = 'public.people'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum"
+          }
+          columns | grep -qx 'age bigint'
+          columns | grep -qx 'age_old integer'
+          docker exec "${POSTGRES_ID}" psql -U godwit -d two -tAc \
+            'SELECT count(*) FROM public.people WHERE age <> age_old' | grep -qx 0
+
+      - name: confirm with nothing awaiting the contract phase fails
+        id: nothing
+        continue-on-error: true
+        uses: ./
+        with:
+          command: confirm
+          target: two
+          token: smoke-pipe
+
       - name: verify on push after the revert
         id: pending
         shell: bash
@@ -311,6 +388,12 @@ jobs:
           COMMAND=revert context; expect rc=0; expect skipped=false; expect pr-number=7
           COMMAND=revert comment created ',"pull_request":{"url":"x"}' '/godwit apply' COLLABORATOR
           COMMAND=revert context; expect rc=0; expect skipped=true
+          COMMAND=confirm comment created ',"pull_request":{"url":"x"}' '/godwit confirm' MEMBER
+          COMMAND=confirm context; expect rc=0; expect skipped=false; expect pr-number=7
+          COMMAND=confirm comment created ',"pull_request":{"url":"x"}' '/godwit confirm' CONTRIBUTOR
+          COMMAND=confirm context; expect rc=1; absent '^skipped='
+          COMMAND=confirm comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
+          COMMAND=confirm context; expect rc=0; expect skipped=true
 
           export EVENT_NAME=pull_request_review
           review approved '' COLLABORATOR
@@ -335,6 +418,7 @@ jobs:
           APPLY_ON=never context; expect rc=2
           MODE=apply-on-merge context; expect rc=2
           MODE=apply-on-merge COMMAND=revert context; expect rc=2
+          MODE=apply-on-merge COMMAND=confirm context; expect rc=2
           MODE=apply-on-merge COMMAND=migrate context; expect rc=0; expect skipped=false; expect "head-sha=${GITHUB_SHA}"
           MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request printf '{"pull_request":{"number":7,"head":{"sha":"abc"}}}' >"${EVENT_PATH}"
           MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request context; expect rc=0; expect pr-number=7; expect head-sha=abc
@@ -378,6 +462,18 @@ jobs:
           DIFF_CHANGED: ${{ steps.diff.outputs.changed }}
           DIFF_FILES: ${{ steps.diff.outputs.files }}
           DIFF_SUMMARY: ${{ steps.diff.outputs.summary-path }}
+          TWOPLAN_ID: ${{ steps.twoplan.outputs.plan-id }}
+          EXPAND_PHASE: ${{ steps.expand.outputs.phase }}
+          EXPAND_RUN: ${{ steps.expand.outputs.run-id }}
+          EXPAND_PLAN: ${{ steps.expand.outputs.plan-id }}
+          EXPAND_SUMMARY: ${{ steps.expand.outputs.summary-path }}
+          CONTRACT_PHASE: ${{ steps.contract.outputs.phase }}
+          CONTRACT_RUN: ${{ steps.contract.outputs.run-id }}
+          CONTRACT_SUMMARY: ${{ steps.contract.outputs.summary-path }}
+          NOTHING_OUTCOME: ${{ steps.nothing.outcome }}
+          NOTHING_PHASE: ${{ steps.nothing.outputs.phase }}
+          NOTHING_RUN: ${{ steps.nothing.outputs.run-id }}
+          NOTHING_SUMMARY: ${{ steps.nothing.outputs.summary-path }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -445,20 +541,38 @@ jobs:
           grep -q '^drift (' "${DIFF_SUMMARY}"
           grep -q "^wrote \`$1\`, \`$2\`$" "${DIFF_SUMMARY}"
 
+          test -n "${TWOPLAN_ID}"
+          test "${EXPAND_PLAN}" = "${TWOPLAN_ID}"
+          test "${EXPAND_PHASE}" = "awaiting-contract"
+          grep -q "^run \`${EXPAND_RUN}\`: \*\*awaiting_contract\*\* (plan \`${TWOPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${EXPAND_SUMMARY}"
+          grep -qF "expand applied; comment \`/godwit confirm\` to run the contract phase" "${EXPAND_SUMMARY}"
+          test "${CONTRACT_RUN}" = "${EXPAND_RUN}"
+          test "${CONTRACT_PHASE}" = "contract"
+          grep -q "^## godwit confirm$" "${CONTRACT_SUMMARY}"
+          grep -q "^run \`${CONTRACT_RUN}\`: \*\*succeeded\*\* (plan \`${TWOPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${CONTRACT_SUMMARY}"
+          test "${NOTHING_OUTCOME}" = "failure"
+          test -z "${NOTHING_RUN}"
+          test -z "${NOTHING_PHASE}"
+          grep -q "^no run of pull request #${PR_NUMBER} is awaiting its contract phase$" "${NOTHING_SUMMARY}"
+
           cat "${GH_STUB_LOG}"
           statuses="repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA} -f state="
-          grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=applying ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
+          grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=applying ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 3
           grep -q "^api --method POST ${statuses}failure -f context=godwit/applied -f description=plan stale or missing: re-plan on the pull request, then /godwit apply again -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
           grep -q "^api --method POST ${statuses}success -f context=godwit/applied -f description=applied by run ${APPLY_RUN:0:8}; merge when the review is done -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
           grep -q "^api --method POST ${statuses}failure -f context=godwit/applied -f description=reverted by run ${REVERT_RUN:0:8}; comment /godwit apply to apply again -f target_url=" "${GH_STUB_LOG}"
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 10
+          grep -q "^api --method POST ${statuses}pending -f context=godwit/applied -f description=expand applied; comment /godwit confirm to run the contract phase -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
+          grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=confirming the contract phase of ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
+          grep -q "^api --method POST ${statuses}success -f context=godwit/applied -f description=contract applied by run ${CONTRACT_RUN:0:8}; merge when the review is done -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 16
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 8
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 12
           grep -c '^<!-- godwit:diff -->$' "${GH_STUB_LOG}" | grep -qx 2
           grep -q '^<!-- godwit:plan -->$' "${GH_STUB_LOG}"
-          grep -c '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -qx 3
-          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -c '^## godwit apply$' | grep -qx 2
+          grep -c '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -qx 6
+          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -c '^## godwit apply$' | grep -qx 3
+          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -c '^## godwit confirm$' | grep -qx 2
           grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -q '^## godwit revert$'
           grep -q "^api repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls --jq" "${GH_STUB_LOG}"
           grep -q "^api --method POST repos/${GITHUB_REPOSITORY}/issues/7/comments -F body=@" "${GH_STUB_LOG}"

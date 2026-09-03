@@ -416,6 +416,8 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 
 The split is by statement, and a migration whose statements carry no phase of their own has a single phase. A statement belongs to the contract phase when it says so (`Statement.Phase`, which only a directive expansion sets today) or, failing that, when its migration carries a contract hazard — so a hand-written migration mixing `ADD COLUMN` and `DROP COLUMN` still lands in the contract phase whole, and only an expansion splits a migration down the middle.
 
+On a pull request the GitHub Action makes the hold visible: an apply that ends `awaiting_contract` leaves the `godwit/applied` commit status at `pending` ("expand applied; comment `/godwit confirm` to run the contract phase"), so branch protection keeps the pull request unmergeable until `/godwit confirm` releases the same run and the status turns `success` ([CI/CD](ci-cd.md#pull-request-confirm-the-contract-phase)).
+
 A migration split down the middle is **not** run twice. The expand phase stops at `Plan.HoldFrom`, the index of the first held statement, and returns without recording the migration: the target's `godwit.runs` row stays `running` and no `godwit.migrations` row appears. `ConfirmRollout` re-queues the same control-plane run with `phase = contract`, which rebuilds the plan with every statement and no hold; `openRun` finds that still-open target run, `loadProgress` checks the hash of each journalled statement against the rebuilt plan — the list is identical, only the hold differed — and execution resumes at `lastDone + 1` on the same run id before finalising it. A crash anywhere in either phase resumes through the same journal, with no extra state.
 
 ## Revert

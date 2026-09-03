@@ -20,8 +20,8 @@ refuse() {
 event() { jq -r "$1" "${EVENT_PATH}"; }
 
 case "${COMMAND}" in
-  lint|plan|migrate|apply|verify|revert|diff) ;;
-  *) refuse "unknown command '${COMMAND}' (want lint, plan, migrate, apply, verify, revert or diff)" 2 ;;
+  lint|plan|migrate|apply|confirm|verify|revert|diff) ;;
+  *) refuse "unknown command '${COMMAND}' (want lint, plan, migrate, apply, confirm, verify, revert or diff)" 2 ;;
 esac
 case "${MODE}" in
   apply-on-pr)
@@ -31,14 +31,14 @@ case "${MODE}" in
     ;;
   apply-on-merge)
     case "${COMMAND}" in
-      apply|revert) refuse "command ${COMMAND} needs mode: apply-on-pr (mode apply-on-merge applies with command: migrate on push)" 2 ;;
+      apply|confirm|revert) refuse "command ${COMMAND} needs mode: apply-on-pr (mode apply-on-merge applies with command: migrate on push and confirms with godwit run confirm --latest)" 2 ;;
     esac
     ;;
   *) refuse "unknown mode '${MODE}' (want apply-on-pr or apply-on-merge)" 2 ;;
 esac
 
 case "${COMMAND}" in
-  apply|revert) ;;
+  apply|confirm|revert) ;;
   *)
     case "${EVENT_NAME}" in
       pull_request|pull_request_target) emit false "$(event .pull_request.number)" "$(event .pull_request.head.sha)" ;;
@@ -108,15 +108,17 @@ if [ -z "${head}" ] || [ "${head}" = "null" ]; then
 fi
 
 case "${COMMAND}" in
-  apply)
+  apply|confirm)
     if [ "${state}" != "open" ]; then
-      refuse "pull request #${number} is ${state}: nothing to apply"
+      refuse "pull request #${number} is ${state}: nothing to ${COMMAND}"
     fi
     checked_out="$(git rev-parse HEAD 2>/dev/null || true)"
     if [ "${checked_out}" != "${head}" ]; then
       refuse "checked-out commit ${checked_out:-<none>} is not the head of pull request #${number} (${head}); check out the head (ref: refs/pull/${number}/head) and, if it moved after the command, comment ${want} again"
     fi
-    STATE=pending DESCRIPTION="applying ${head:0:7} from pull request #${number}" TARGET_URL="${RUN_URL}" SHA="${head}" \
+    doing="applying"
+    if [ "${COMMAND}" = "confirm" ]; then doing="confirming the contract phase of"; fi
+    STATE=pending DESCRIPTION="${doing} ${head:0:7} from pull request #${number}" TARGET_URL="${RUN_URL}" SHA="${head}" \
       "$(dirname "$0")/action-status.sh"
     ;;
   revert)

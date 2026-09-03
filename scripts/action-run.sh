@@ -17,6 +17,7 @@ stale=false
 pending=""
 changed=""
 files=""
+phase=""
 
 ensure_base() {
   if git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
@@ -53,8 +54,13 @@ run_summary() {
     + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
 }
 
-migrate() {
-  local label="$1" hint="$2" at="$3"
+run_phase() {
+  printf '%s' "$1" | jq -r 'if .run.state == "RUN_STATE_AWAITING_CONTRACT" then "awaiting-contract"
+    elif .run.phase == "contract" then "contract" else "" end' 2>/dev/null || true
+}
+
+cmd_migrate() {
+  local label="$1" hint="$2" at="$3" held="$4"
   args=(${dir_args[@]+"${dir_args[@]}"})
   remote_args
   events="${work}/events.jsonl"
@@ -67,7 +73,11 @@ migrate() {
     stale=true
     refused "${label}" "refused: the stored plan is stale or missing, ${hint}"
   elif [ -n "${last}" ]; then
+    phase="$(run_phase "${last}")"
     { printf '## godwit %s\n\n' "${label}"; run_summary "${last}" "${at}"; } >"${summary}"
+    if [ "${phase}" = "awaiting-contract" ]; then
+      printf '\n%s\n' "${held}" >>"${summary}"
+    fi
   elif [ -s "${errors}" ]; then
     refused "${label}" "no run created"
   else
@@ -75,7 +85,7 @@ migrate() {
   fi
 }
 
-verify() {
+cmd_verify() {
   args=(${dir_args[@]+"${dir_args[@]}"})
   remote_args
   "${godwit}" migrate ${args[@]+"${args[@]}"} --dry-run --json >"${work}/plan.json" 2>"${errors}" || status=$?
@@ -101,14 +111,13 @@ verify() {
   fi
 }
 
-revert() {
-  local prefix shas ids runs id last
+pr_runs() {
   prefix="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}@"
   if ! shas="$(gh api --paginate "repos/${REPOSITORY}/pulls/${PR_NUMBER}/commits" --jq '.[].sha' | jq -R . | jq -sc .)"; then
-    printf '## godwit revert\n\ncould not list the commits of pull request #%s\n' "${PR_NUMBER}" >"${summary}"
+    printf '## godwit %s\n\ncould not list the commits of pull request #%s\n' "$1" "${PR_NUMBER}" >"${summary}"
     status=1
 
-    return 0
+    return 1
   fi
   args=()
   if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
@@ -117,8 +126,15 @@ revert() {
   "${godwit}" runs ${args[@]+"${args[@]}"} --json >"${runs}" 2>"${errors}" || status=$?
   cat "${errors}" >&2
   if [ "${status}" != "0" ]; then
-    refused revert "could not list the runs"
+    refused "$1" "could not list the runs"
 
+    return 1
+  fi
+}
+
+cmd_revert() {
+  local ids id last
+  if ! pr_runs revert; then
     return 0
   fi
   ids="$(jq -r --arg prefix "${prefix}" --argjson shas "${shas}" '.runs[]?
@@ -155,7 +171,48 @@ revert() {
   done
 }
 
-diff() {
+cmd_confirm() {
+  local id last at
+  at=" at [\`${HEAD_SHA:0:7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})"
+  if ! pr_runs confirm; then
+    return 0
+  fi
+  id="$(jq -r --arg prefix "${prefix}" --argjson shas "${shas}" '[.runs[]?
+    | select(.state == "RUN_STATE_AWAITING_CONTRACT")
+    | select(.source as $src | $shas | any(. as $sha | $src == ($prefix + $sha) or ($src | startswith($prefix + $sha + ":"))))
+    | .id] | first // empty' "${runs}")"
+  if [ -z "${id}" ]; then
+    printf '## godwit confirm\n\nno run of pull request #%s is awaiting its contract phase\n' "${PR_NUMBER}" >"${summary}"
+    status=1
+
+    return 0
+  fi
+  args=()
+  if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+  "${godwit}" run confirm "${id}" ${args[@]+"${args[@]}"} >/dev/null 2>"${errors}" || status=$?
+  cat "${errors}" >&2
+  if [ "${status}" != "0" ]; then
+    refused confirm "run ${id} was not released"
+
+    return 0
+  fi
+  run_id="${id}"
+  events="${work}/events.jsonl"
+  "${godwit}" run watch "${id}" ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
+  cat "${errors}" >&2
+  last="$(tail -n 1 "${events}" 2>/dev/null || true)"
+  if [ -z "${last}" ]; then
+    refused confirm "run ${id} could not be watched"
+    status=1
+
+    return 0
+  fi
+  plan_id="$(printf '%s' "${last}" | jq -r '.run.planId // empty' 2>/dev/null || true)"
+  phase="$(run_phase "${last}")"
+  { printf '## godwit confirm\n\n'; run_summary "${last}" "${at}"; } >"${summary}"
+}
+
+cmd_diff() {
   args=(${dir_args[@]+"${dir_args[@]}"})
   if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
   if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
@@ -224,24 +281,29 @@ case "${COMMAND}" in
         refused "dry run" refused
       fi
     else
-      migrate migrate "push to the pull request to re-plan" ""
+      cmd_migrate migrate "push to the pull request to re-plan" "" \
+        "expand applied; run \`godwit run confirm --latest --target ${TARGET:-<target>}\` to run the contract phase"
     fi
     ;;
   apply)
-    migrate apply "re-run the pull request workflow (re-plan) or push, then comment \`/godwit apply\` again" \
-      " at [\`${HEAD_SHA:0:7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})"
+    cmd_migrate apply "re-run the pull request workflow (re-plan) or push, then comment \`/godwit apply\` again" \
+      " at [\`${HEAD_SHA:0:7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})" \
+      "expand applied; comment \`/godwit confirm\` to run the contract phase"
+    ;;
+  confirm)
+    cmd_confirm
     ;;
   verify)
-    verify
+    cmd_verify
     ;;
   revert)
-    revert
+    cmd_revert
     ;;
   diff)
-    diff
+    cmd_diff
     ;;
   *)
-    echo "unknown command '${COMMAND}' (want lint, plan, migrate, apply, verify, revert or diff)" >&2
+    echo "unknown command '${COMMAND}' (want lint, plan, migrate, apply, confirm, verify, revert or diff)" >&2
     exit 2
     ;;
 esac
@@ -255,6 +317,7 @@ cat "${summary}" >>"${GITHUB_STEP_SUMMARY}"
   printf 'plan-id=%s\n' "${plan_id}"
   printf 'plan-key=%s\n' "${plan_key}"
   printf 'stale=%s\n' "${stale}"
+  printf 'phase=%s\n' "${phase}"
   printf 'pending=%s\n' "${pending}"
   printf 'changed=%s\n' "${changed}"
   printf 'files=%s\n' "${files}"
