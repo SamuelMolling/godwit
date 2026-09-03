@@ -124,8 +124,22 @@ func (x *Expander) one(ctx context.Context, conn engine.DB, d engine.Directive) 
 		return x.changeType(ctx, conn, d)
 	case "backfill":
 		return x.backfill(ctx, conn, d)
+	case "add-column":
+		return x.addColumn(ctx, conn, d)
+	case "add-not-null":
+		return addNotNull(ctx, conn, d)
+	case "add-index":
+		return addIndex(ctx, conn, d)
+	case "drop-index":
+		return dropIndex(ctx, conn, d)
+	case "add-fk":
+		return addForeignKey(ctx, conn, d)
+	case "add-check":
+		return addCheck(ctx, conn, d)
+	case "drop-column":
+		return dropColumn(ctx, conn, d)
 	default:
-		return built{}, refuse(d, "%s is parsed but not expanded yet", d.Op)
+		return built{}, refuse(d, "%s has no expansion", d.Op)
 	}
 }
 
@@ -157,10 +171,7 @@ func checkDestructive(m engine.Migration) error {
 func checkDuplicates(ds []engine.Directive) error {
 	seen := map[string]int{}
 	for _, d := range ds {
-		target := strings.Join(d.Args, " ")
-		if len(d.Args) > 0 {
-			target = d.Args[0]
-		}
+		target := subject(d)
 		if line, ok := seen[target]; ok {
 			return refuse(d, "%s is already the subject of the directive on line %d", target, line)
 		}
@@ -168,6 +179,25 @@ func checkDuplicates(ds []engine.Directive) error {
 	}
 
 	return nil
+}
+
+// subject names what a directive acts on, so two directives on it are ambiguous. For most operations the
+// first argument is the object; the ones whose first argument is only the table need the finer name.
+func subject(d engine.Directive) string {
+	switch {
+	case len(d.Args) == 0:
+		return d.Op
+	case d.Op == "add-index":
+		if name, ok := d.Opts["name"]; ok {
+			return name
+		}
+
+		return d.Args[0] + " " + d.Args[1]
+	case d.Op == "add-check":
+		return d.Args[0] + " " + d.Args[1]
+	default:
+		return d.Args[0]
+	}
 }
 
 // spliceExpansion replaces each directive line with its expand statements and appends every contract
@@ -417,6 +447,343 @@ func (x *Expander) backfill(ctx context.Context, conn engine.DB, d engine.Direct
 	}, nil
 }
 
+// addColumn adds the column nullable and, when it must end up NOT NULL, fills it in batches before the
+// H007 recipe constrains it. The default is set in its own statement: an inline DEFAULT on a volatile
+// expression rewrites the whole table under an ACCESS EXCLUSIVE lock.
+func (x *Expander) addColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	col, err := resolveNewColumn(ctx, conn, d, d.Args[0])
+	if err != nil {
+		return built{}, err
+	}
+	def, defaulted := d.Opts["default"]
+	if d.Opts["not-null"] == "true" && !defaulted {
+		return built{}, refuse(d, "%s.%s is declared not-null but has no default= to fill the rows that already exist",
+			col.ref(), col.Column)
+	}
+	b := built{expand: []step{{sql: fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", col.rel(), engine.Ident(col.Column), d.Args[1])}}}
+	if defaulted {
+		b.expand = append(b.expand, step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s",
+			col.rel(), engine.Ident(col.Column), def)})
+	}
+	if d.Opts["not-null"] == "true" {
+		spec, err := x.cursor(ctx, conn, d, col)
+		if err != nil {
+			return built{}, err
+		}
+		b.expand = append(b.expand, step{
+			sql:   backfillSQL(col, spec, engine.Ident(col.Column)+" = "+def, engine.Ident(col.Column)+" IS NULL"),
+			batch: spec,
+		})
+		steps, notes, err := notNullSteps(ctx, conn, col)
+		if err != nil {
+			return built{}, err
+		}
+		b.expand = append(b.expand, steps...)
+		b.notes = append(b.notes, notes...)
+		b.notes = append(b.notes, fmt.Sprintf("fills %s.%s in batches of %d over %s before constraining it",
+			col.rel(), engine.Ident(col.Column), spec.Size, spec.Key))
+	}
+	b.down = []string{fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;", col.rel(), engine.Ident(col.Column))}
+	b.downHeld = b.down
+
+	return b, nil
+}
+
+// addNotNull constrains an existing column without the scan a bare SET NOT NULL takes.
+func addNotNull(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	col, err := resolveColumn(ctx, conn, d, d.Args[0])
+	if err != nil {
+		return built{}, err
+	}
+	if col.NotNull {
+		return built{}, refuse(d, "%s.%s is already NOT NULL", col.ref(), col.Column)
+	}
+	steps, notes, err := notNullSteps(ctx, conn, col)
+	if err != nil {
+		return built{}, err
+	}
+	down := []string{
+		fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;", col.rel(), engine.Ident(col.Column+"_not_null")),
+		fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL;", col.rel(), engine.Ident(col.Column)),
+	}
+
+	return built{expand: steps, notes: notes, down: down, downHeld: down}, nil
+}
+
+// notNullSteps is the H007 recipe: a CHECK validated on its own lets SET NOT NULL skip the table scan.
+// A CHECK already saying the same thing is reused, and only godwit's own name is dropped afterwards.
+func notNullSteps(ctx context.Context, conn engine.DB, col columnFacts) ([]step, []string, error) {
+	generated := col.Column + "_not_null"
+	name, valid, found, err := notNullCheck(ctx, conn, col)
+	if err != nil {
+		return nil, nil, err
+	}
+	var steps []step
+	var notes []string
+	if found {
+		notes = append(notes, fmt.Sprintf("reuses the CHECK %s already on %s.%s instead of adding one",
+			engine.Ident(name), col.rel(), engine.Ident(col.Column)))
+	} else {
+		name = generated
+		steps = append(steps, step{sql: fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s IS NOT NULL) NOT VALID",
+			col.rel(), engine.Ident(name), engine.Ident(col.Column))})
+	}
+	if !valid {
+		steps = append(steps, step{sql: fmt.Sprintf("ALTER TABLE %s VALIDATE CONSTRAINT %s", col.rel(), engine.Ident(name))})
+	}
+	steps = append(steps, step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", col.rel(), engine.Ident(col.Column))})
+	if name == generated {
+		steps = append(steps, step{sql: fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", col.rel(), engine.Ident(name))})
+	}
+
+	return steps, notes, nil
+}
+
+// notNullCheck finds a single-column CHECK on col that already says it is not null.
+func notNullCheck(ctx context.Context, conn engine.DB, col columnFacts) (string, bool, bool, error) {
+	var name string
+	var valid bool
+	err := conn.QueryRow(ctx, `
+		SELECT k.conname, k.convalidated
+		FROM pg_constraint k
+		JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+		WHERE k.conrelid = to_regclass($1) AND k.contype = 'c' AND k.conkey = ARRAY[a.attnum]
+		  AND replace(replace(replace(pg_get_constraintdef(k.oid), ' NOT VALID', ''), '(', ''), ')', '')
+		      = 'CHECK ' || quote_ident($2) || ' IS NOT NULL'
+		ORDER BY k.conname LIMIT 1`, col.rel(), col.Column).Scan(&name, &valid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, fmt.Errorf("inspect %s.%s check constraints: %w", col.ref(), col.Column, err)
+	}
+
+	return name, valid, true, nil
+}
+
+// addIndex builds the index without blocking writes, clearing first the invalid leftover a previous
+// CREATE INDEX CONCURRENTLY leaves behind when it is interrupted.
+func addIndex(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	tbl, err := resolveTable(ctx, conn, d, d.Args[0])
+	if err != nil {
+		return built{}, err
+	}
+	name := d.Opts["name"]
+	if name == "" {
+		name = tbl.Table + "_" + strings.Join(indexColumns(d.Args[1]), "_") + "_idx"
+	}
+	drop := fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s", quoteRef(tbl.Schema, name))
+	b := built{down: []string{drop + ";"}}
+	b.downHeld = b.down
+	leftover, err := invalidIndex(ctx, conn, d, tbl, name)
+	if err != nil {
+		return built{}, err
+	}
+	if leftover {
+		b.expand = append(b.expand, step{sql: drop})
+		b.notes = append(b.notes, fmt.Sprintf("drops the invalid %s left by an interrupted index build before rebuilding it",
+			quoteRef(tbl.Schema, name)))
+	}
+	head := "CREATE INDEX CONCURRENTLY"
+	if d.Opts["unique"] == "true" {
+		head = "CREATE UNIQUE INDEX CONCURRENTLY"
+	}
+	sql := fmt.Sprintf("%s %s ON %s", head, engine.Ident(name), tbl.rel())
+	if using, ok := d.Opts["using"]; ok {
+		sql += " USING " + engine.Ident(using)
+	}
+	sql += " " + d.Args[1]
+	if where, ok := d.Opts["where"]; ok {
+		sql += " WHERE " + where
+	}
+	b.expand = append(b.expand, step{sql: sql})
+
+	return b, nil
+}
+
+// indexColumns names the parts of a column list the grammar has already parsed; an expression is "expr",
+// which is how the H010 recipe names it too.
+func indexColumns(cols string) []string {
+	res, err := pgquery.Parse("CREATE INDEX ON t " + cols)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, p := range res.Stmts[0].Stmt.GetIndexStmt().GetIndexParams() {
+		name := p.GetIndexElem().GetName()
+		if name == "" {
+			name = "expr"
+		}
+		out = append(out, name)
+	}
+
+	return out
+}
+
+func invalidIndex(ctx context.Context, conn engine.DB, d engine.Directive, tbl columnFacts, name string) (bool, error) {
+	var relkind string
+	var valid bool
+	err := conn.QueryRow(ctx, `
+		SELECT c.relkind, coalesce(i.indisvalid, false)
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_index i ON i.indexrelid = c.oid
+		WHERE n.nspname = $1 AND c.relname = $2`, tbl.Schema, name).Scan(&relkind, &valid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", quoteRef(tbl.Schema, name), err)
+	}
+	if relkind != "i" {
+		return false, refuse(d, "%s already exists and is not an index (relkind %s)", quoteRef(tbl.Schema, name), relkind)
+	}
+	if valid {
+		return false, refuse(d, "index %s already exists; drop it first or pass name=", quoteRef(tbl.Schema, name))
+	}
+
+	return true, nil
+}
+
+// dropIndex removes the index without blocking reads; IF EXISTS makes the retry after an interrupted
+// concurrent drop a no-op.
+func dropIndex(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	schema, name := splitRef(d.Args[0])
+	var nspname, relkind, constraint string
+	err := conn.QueryRow(ctx, `
+		SELECT n.nspname, c.relkind, coalesce(k.conname, '')
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_constraint k ON k.conindid = c.oid
+		WHERE c.oid = to_regclass($1)`, quoteRef(schema, name)).Scan(&nspname, &relkind, &constraint)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return built{}, refuse(d, "%s does not exist in the schema this migration starts from", d.Args[0])
+	}
+	if err != nil {
+		return built{}, fmt.Errorf("inspect %s: %w", d.Args[0], err)
+	}
+	if relkind != "i" {
+		return built{}, refuse(d, "%s is not an index (relkind %s)", d.Args[0], relkind)
+	}
+	if constraint != "" {
+		return built{}, refuse(d, "%s backs the constraint %s; drop the constraint instead", d.Args[0], constraint)
+	}
+
+	return built{
+		expand:  []step{{sql: "DROP INDEX CONCURRENTLY IF EXISTS " + quoteRef(nspname, name)}},
+		downWhy: "a drop-index has no generated inverse; write the CREATE INDEX in the .down.sql by hand",
+	}, nil
+}
+
+var fkDeleteActions = map[string]string{
+	"cascade": "CASCADE", "restrict": "RESTRICT", "set-null": "SET NULL",
+	"set-default": "SET DEFAULT", "no-action": "NO ACTION",
+}
+
+// addForeignKey adds the constraint unvalidated so that only the VALIDATE reads the rows, under a lock
+// that lets writes through.
+func addForeignKey(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	col, err := resolveColumn(ctx, conn, d, d.Args[0])
+	if err != nil {
+		return built{}, err
+	}
+	ref, err := resolveColumn(ctx, conn, d, d.Args[2])
+	if err != nil {
+		return built{}, err
+	}
+	name := d.Opts["name"]
+	if name == "" {
+		name = col.Table + "_" + col.Column + "_fkey"
+	}
+	if err := col.constraintFree(ctx, conn, d, name); err != nil {
+		return built{}, err
+	}
+	unique, err := uniquelyIndexed(ctx, conn, ref)
+	if err != nil {
+		return built{}, err
+	}
+	if !unique {
+		return built{}, refuse(d, "%s.%s has no single-column unique index; PostgreSQL cannot point a foreign key at it",
+			ref.ref(), ref.Column)
+	}
+	sql := fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+		col.rel(), engine.Ident(name), engine.Ident(col.Column), ref.rel(), engine.Ident(ref.Column))
+	if action, ok := fkDeleteActions[d.Opts["on-delete"]]; ok {
+		sql += " ON DELETE " + action
+	}
+
+	return constraintSteps(col, name, sql), nil
+}
+
+// addCheck adds the constraint unvalidated so the scan never holds the lock that blocks writes.
+func addCheck(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	tbl, err := resolveTable(ctx, conn, d, d.Args[0])
+	if err != nil {
+		return built{}, err
+	}
+	name := d.Args[1]
+	if err := tbl.constraintFree(ctx, conn, d, name); err != nil {
+		return built{}, err
+	}
+
+	return constraintSteps(tbl, name, fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)",
+		tbl.rel(), engine.Ident(name), d.Args[2])), nil
+}
+
+func constraintSteps(t columnFacts, name, add string) built {
+	down := []string{fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s;", t.rel(), engine.Ident(name))}
+
+	return built{
+		expand: []step{
+			{sql: add + " NOT VALID"},
+			{sql: fmt.Sprintf("ALTER TABLE %s VALIDATE CONSTRAINT %s", t.rel(), engine.Ident(name))},
+		},
+		down:     down,
+		downHeld: down,
+	}
+}
+
+// dropColumn is the one operation in the contract phase: the column goes only after a human confirms the
+// application that reads it is gone.
+func dropColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
+	col, err := resolveColumn(ctx, conn, d, d.Args[0])
+	if err != nil {
+		return built{}, err
+	}
+
+	return built{
+		contract: []step{{sql: fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", col.rel(), engine.Ident(col.Column))}},
+		notes: []string{fmt.Sprintf("drops %s.%s in the contract phase; deploy the application version that no longer reads it first",
+			col.rel(), engine.Ident(col.Column))},
+		downWhy: "a drop-column has no generated inverse; the rows go with the column",
+	}, nil
+}
+
+func (c columnFacts) constraintFree(ctx context.Context, conn engine.DB, d engine.Directive, name string) error {
+	var n int
+	if err := conn.QueryRow(ctx,
+		`SELECT count(*) FROM pg_constraint WHERE conrelid = to_regclass($1) AND conname = $2`,
+		c.rel(), name).Scan(&n); err != nil {
+		return fmt.Errorf("inspect %s constraints: %w", c.ref(), err)
+	}
+	if n > 0 {
+		return refuse(d, "%s already has a constraint named %s; pass name= to choose another", c.ref(), name)
+	}
+
+	return nil
+}
+
+func uniquelyIndexed(ctx context.Context, conn engine.DB, c columnFacts) (bool, error) {
+	var ok bool
+	if err := conn.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
+			WHERE i.indrelid = to_regclass($1) AND i.indisunique AND i.indnatts = 1 AND i.indpred IS NULL
+			  AND a.attname = $2)`, c.rel(), c.Column).Scan(&ok); err != nil {
+		return false, fmt.Errorf("inspect %s.%s unique indexes: %w", c.ref(), c.Column, err)
+	}
+
+	return ok, nil
+}
+
 // backfillSQL renders one batch: the cursor picks at most Size keys, the update touches those rows and
 // returns their keys so the executor can advance and resume.
 func backfillSQL(t columnFacts, spec *engine.BatchSpec, set, where string) string {
@@ -544,6 +911,22 @@ func resolveColumn(ctx context.Context, conn engine.DB, d engine.Directive, ref 
 	return facts, nil
 }
 
+// resolveNewColumn locates the table of a column the migration is about to create, and refuses the name
+// the table already carries.
+func resolveNewColumn(ctx context.Context, conn engine.DB, d engine.Directive, ref string) (columnFacts, error) {
+	parts := strings.Split(ref, ".")
+	facts, err := resolveTable(ctx, conn, d, strings.Join(parts[:len(parts)-1], "."))
+	if err != nil {
+		return columnFacts{}, err
+	}
+	facts.Column = parts[len(parts)-1]
+	if err := facts.free(ctx, conn, d, facts.Column); err != nil {
+		return columnFacts{}, err
+	}
+
+	return facts, nil
+}
+
 func (c columnFacts) free(ctx context.Context, conn engine.DB, d engine.Directive, names ...string) error {
 	rows, err := conn.Query(ctx, `
 		SELECT a.attname FROM pg_attribute a
@@ -600,6 +983,17 @@ func (x *Expander) cursor(ctx context.Context, conn engine.DB, d engine.Directiv
 	}, nil
 }
 
+// keyed lists the operations whose directive can override the batching key.
+var keyed = map[string]bool{"change-type": true, "backfill": true}
+
+func keyAdvice(op string) string {
+	if keyed[op] {
+		return "; pass key=<column>"
+	}
+
+	return ""
+}
+
 func quoteLiteral(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
@@ -611,7 +1005,7 @@ func primaryKey(ctx context.Context, conn engine.DB, d engine.Directive, t colum
 		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
 		WHERE i.indrelid = to_regclass($1) AND i.indisprimary AND i.indnatts = 1`, t.rel()).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", refuse(d, "%s has no single-column primary key to batch on; pass key=<column>", t.ref())
+		return "", refuse(d, "%s has no single-column primary key to batch on%s", t.ref(), keyAdvice(d.Op))
 	}
 	if err != nil {
 		return "", fmt.Errorf("inspect %s primary key: %w", t.ref(), err)
