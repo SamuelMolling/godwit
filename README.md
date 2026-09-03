@@ -35,6 +35,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | Leased service | Any replica claims a run; lost leases are taken over and resumed from the journal; transient failures (lock timeout, deadlock, lost connection) retry with backoff, a pipeline re-run re-attaches to the existing run, and `--max-attempts` parks a run as `needs_attention`. |
 | Hazard gate | `H001`–`H010` from a real PostgreSQL parser (`libpg_query`): non-concurrent indexes, destructive drops, rewrites, unvalidated constraints, renames. Refused unless acknowledged in the run. |
 | Safe-DDL recipes | Every hazard carries the safe form as ready-to-copy SQL with the real names from the statement (`CREATE INDEX CONCURRENTLY ...`, `CHECK ... NOT VALID` → `VALIDATE` → `SET NOT NULL`, add column → backfill → swap for a type change), in `lint`, `plan` and the API. |
+| Directives | A `-- godwit: <op> ...` comment line in a migration declares the intent (`change-type`, `backfill`, `add-not-null`, `add-column`, `add-index`, `drop-index`, `add-fk`, `add-check`, `drop-column`) instead of the lock-safe SQL. Parsed offline at load time and checked by `lint` (`E004`); every hazard recipe prints the equivalent directive. |
 | Validation | Every run replays the target's recorded history plus the new files on a scratch database before it is queued. |
 | Repeatable migrations | `R__<name>.up.sql` / `.down.sql` have no version: applied after the run's versioned files, in name order, whenever the content differs from what the target recorded in `godwit.repeatables`, and skipped when it does not. Same hazard gate, same journal, same plan contract; `lint`'s edited-after-merge check does not apply to them. |
 | Batched statements | A backfill is one plan statement with a cursor journalled beside it: each batch commits its rows and the new cursor together, with a configurable size and pause. A kill mid-backfill resumes from the cursor, so no row is redone and none is skipped. |
@@ -59,7 +60,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | | |
 |---|---|
 | [Getting started](docs/getting-started.md) | dev loop, service, first run, CI |
-| [Concepts](docs/concepts.md) | journal protocol and crash timeline, run states, leases, hazards, validation, repeatables, rollouts, revert, drift, baseline, migrations from a schema |
+| [Concepts](docs/concepts.md) | journal protocol and crash timeline, run states, leases, hazards, directives, validation, repeatables, rollouts, revert, drift, baseline, migrations from a schema |
 | [Configuration](docs/configuration.md) | every `godwit.yaml` key, `serve` flag and environment variable, token spec, CLI reference |
 | [Operations](docs/operations.md) | HA, store sizing and privileges, backups, retention, upgrades, metrics and alert rules, notifications, logging |
 | [Runbook](docs/runbook.md) | per symptom: the SQL to look at and the command to run |

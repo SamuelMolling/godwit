@@ -22,10 +22,11 @@ const (
 
 // Finding codes that are not planner hazards.
 const (
-	CodeLoad     = "E001"
-	CodeParse    = "E002"
-	CodeModified = "E003"
-	CodeNoOpDown = "W001"
+	CodeLoad      = "E001"
+	CodeParse     = "E002"
+	CodeModified  = "E003"
+	CodeDirective = "E004"
+	CodeNoOpDown  = "W001"
 )
 
 // Finding is one lint result attached to a migration file.
@@ -70,7 +71,7 @@ func Check(dir string, acked []string, opts Options) (Report, error) {
 
 	migs, err := engine.LoadDir(dir)
 	if err != nil {
-		rep.add(Finding{File: dir, Level: LevelError, Code: CodeLoad, Message: err.Error()})
+		rep.add(loadFinding(dir, err))
 
 		return rep, nil
 	}
@@ -85,6 +86,15 @@ func Check(dir string, acked []string, opts Options) (Report, error) {
 	}
 
 	return rep, nil
+}
+
+func loadFinding(dir string, err error) Finding {
+	var de *engine.DirectiveError
+	if errors.As(err, &de) {
+		return Finding{File: de.File, Level: LevelError, Code: CodeDirective, Message: err.Error()}
+	}
+
+	return Finding{File: dir, Level: LevelError, Code: CodeLoad, Message: err.Error()}
 }
 
 func (r *Report) add(f Finding) {
@@ -107,6 +117,10 @@ func (r *Report) checkMigration(m engine.Migration, acked map[string]bool) {
 				r.add(Finding{File: upFile, Level: LevelError, Code: h.Code, Message: h.Detail, Recipe: h.Recipe})
 			}
 		}
+	}
+
+	if m.RevertDirective {
+		return
 	}
 
 	down, err := engine.BuildPlan(m, engine.DirectionDown)

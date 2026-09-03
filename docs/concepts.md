@@ -166,7 +166,7 @@ The planner tags statements that hurt a live database. Each code names the safe 
 | H009 | `DROP INDEX` without `CONCURRENTLY` | one `DROP INDEX CONCURRENTLY <name>;` per index | expand |
 | H010 | `ADD PRIMARY KEY` / `UNIQUE` without `USING INDEX` | `CREATE UNIQUE INDEX CONCURRENTLY <n>_idx ON <t> (...);` then `ADD CONSTRAINT <n> PRIMARY KEY USING INDEX <n>_idx;` | expand |
 
-Contract hazards (H002, H003, H008) are the ones after which the previous application version stops working; the others block or fail while the statement runs and are covered by acknowledgement and timeouts. H007 fires even when the matching CHECK already exists: the planner is offline and has no catalog. `godwit lint` reports the up side only. The recipe is a hint, never executed by godwit: the H004 backfill names `id` as the batching key because the planner has no catalog to read the primary key from, and the `$1` placeholders are yours to fill.
+Contract hazards (H002, H003, H008) are the ones after which the previous application version stops working; the others block or fail while the statement runs and are covered by acknowledgement and timeouts. H007 fires even when the matching CHECK already exists: the planner is offline and has no catalog. `godwit lint` reports the up side only. The recipe is a hint, never executed by godwit: the H004 backfill names `id` as the batching key because the planner has no catalog to read the primary key from, and the `$1` placeholders are yours to fill. Where the safe form can be stated as a [directive](#directives), the recipe opens with it.
 
 ```
 $ godwit lint --dir db/migrations
@@ -179,6 +179,90 @@ $ godwit lint --dir db/migrations
     ALTER TABLE users DROP CONSTRAINT email_not_null;
 2 finding(s), 2 blocking
 ```
+
+### Directives
+
+A hazard recipe hands over the safe SQL as text. A **directive** is the other direction: the migration says what it
+wants and lets godwit produce the lock-safe statements. It is a SQL line comment, so the file stays a plain `.sql`
+that any other tool can read (the syntax precedent is Atlas's `-- atlas:txmode none`).
+
+```sql
+-- godwit: change-type users.age bigint using='age::bigint' batch=5000 pause=100ms
+-- godwit: backfill users set='age_new = age::bigint' where='age_new IS NULL' key=id batch=5000
+-- godwit: add-not-null users.email
+-- godwit: add-column users.joined 'timestamp with time zone' not-null
+-- godwit: add-index users (email) where='deleted_at IS NULL'
+-- godwit: drop-index users_email_idx
+-- godwit: add-fk orders.user_id -> users.id on-delete=cascade
+-- godwit: add-check users users_age_check 'age > 0'
+-- godwit: drop-column users.age_old
+```
+
+**Grammar.** A line whose first non-space text is `-- godwit:`, then the operation, its positional arguments, then
+`key=value` options and bare flags. One directive per line, and the line must be its own: a `-- godwit:` that trails
+a statement is an error, and one inside a string literal, a dollar-quoted body or a `/* */` block is not a directive
+at all. Values containing spaces are single-quoted and `''` is a literal quote; a parenthesised list counts as one
+argument, so `numeric(10, 2)` and `(email, id)` need no quotes. A directive occupies the **position in the file**
+where its statements are spliced, so directives compose with ordinary SQL in the same file.
+
+| Op | Arguments | Options | Flags |
+|---|---|---|---|
+| `change-type` | `<t>.<c> <type>` | `using=` `key=` `batch=` `pause=` `keep-old=` | `not-null` |
+| `backfill` | `<t>` | `set=` (required) `where=` `key=` `batch=` `pause=` | |
+| `add-column` | `<t>.<c> <type>` | `default=` | `not-null` |
+| `add-not-null` | `<t>.<c>` | | |
+| `add-index` | `<t> (<cols>)` | `name=` `using=` `where=` | `unique` |
+| `drop-index` | `<name>` | | |
+| `add-fk` | `<t>.<c> -> <rt>.<rc>` | `name=` `on-delete=` | |
+| `add-check` | `<t> <name> '<expr>'` | | |
+| `drop-column` | `<t>.<c>` | | |
+| `revert` | | | |
+
+`rename-column`, `rename-table` and `drop-table` have no directive: a safe rename needs the application to read
+either name during the transition, which pgroll buys with versioned views over the physical table. godwit's unit is
+a versioned SQL file and it will not start owning the application's view of the schema; `add-column` + `backfill` +
+`drop-column` expresses the same change in three reviewable migrations behind the expand/contract gate.
+
+`batch=`, `key=` and `pause=` are the knobs of a [batched statement](#batched-statements): the cursor column, the
+rows per batch and the sleep between them.
+
+`keep-old=` defaults to `true`: a `change-type` leaves `<c>_old` in place as the rollback, and a later migration
+removes it with `-- godwit: drop-column <t>.<c>_old`. `keep-old=false` drops it in the contract phase and makes
+that phase irreversible.
+
+**Parsed offline, expanded on the plan.** Loading a migration parses its directives with no database in sight:
+the operation must be known, the arity right, the option names known, durations and integers parseable, and
+`<table>.<column>` well formed. That is exactly what `godwit lint` runs, and a failure is **`E004`**. Turning a
+directive into statements is a separate stage on the control plane, against the scratch database that already has
+the target's history replayed — the expansion needs the primary key, the column type, `relkind` and function
+volatility, and `internal/engine` is offline by design. That is also why the H004 recipe has to name `id` as its
+batching key while an expansion reads the real one.
+
+The file checksum is unchanged: `Checksum` stays `sha256(UpSQL)` of the file as committed, and the plan key stays a
+pure function of the files and the pending set. The expansion is derived, never committed.
+
+**Where a directive may not appear.** `E004` covers placement as well as syntax:
+
+- in an `R__` repeatable — a repeatable re-applies on every content change, and a phased directive cannot;
+- in a `.down.sql`, except the lone `-- godwit: revert` sentinel, which asks for the generated inverse. A down side
+  is either hand-written SQL or that sentinel, never both.
+
+**Recipes point at them.** Every hazard whose safe form a directive can express prints it as the recipe's first
+line, so the reader can copy either the SQL or the one-liner:
+
+```
+-- or let godwit run it: -- godwit: add-not-null users.email
+ALTER TABLE users ADD CONSTRAINT email_not_null CHECK (email IS NOT NULL) NOT VALID;
+ALTER TABLE users VALIDATE CONSTRAINT email_not_null;
+ALTER TABLE users ALTER COLUMN email SET NOT NULL;
+ALTER TABLE users DROP CONSTRAINT email_not_null;
+```
+
+H001, H003, H004, H005, H006, H007 and H009 carry the full equivalent. H010 carries `-- or let godwit run the index
+build:` instead, because `add-index ... unique` builds the concurrent index but the `ADD CONSTRAINT ... USING INDEX`
+that follows it stays yours. A recipe whose statement the grammar cannot express — a multi-column foreign key, an
+index with an ordering or an operator class, a `DROP INDEX` naming several indexes, an `ADD COLUMN` carrying more
+than `NOT NULL` — prints no directive line rather than a lossy one.
 
 ## Repeatable migrations
 
