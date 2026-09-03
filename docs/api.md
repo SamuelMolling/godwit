@@ -35,7 +35,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 | Scope | RPCs |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListDriftEvents`, `ListAudit` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListDriftEvents`, `ListAudit`, `Diff` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
 | `admin` | + `RegisterTarget` |
