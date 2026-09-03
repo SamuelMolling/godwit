@@ -119,10 +119,6 @@ func (e *Executor) Down(ctx context.Context, p Plan) (Result, error) {
 
 func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	res := Result{Migration: p.Migration.ID()}
-	if len(p.Statements) == 0 && awaitsExpansion(p.Migration, p.Direction) {
-		return res, fmt.Errorf("%s (%s): its godwit directives were never expanded", res.Migration, p.Direction)
-	}
-
 	release, err := acquireLock(ctx, e.db)
 	if err != nil {
 		return res, err
@@ -160,6 +156,10 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 	if p.MarkOnly {
 		return res, e.mark(ctx, p)
+	}
+	// After the skips: a migration that is recorded, or only being recorded, never runs its body.
+	if len(p.Statements) == 0 && awaitsExpansion(p.Migration, p.Direction) {
+		return res, fmt.Errorf("%s (%s): its godwit directives were never expanded", res.Migration, p.Direction)
 	}
 
 	prog, err := openRun(ctx, e.db, p, e.newID())

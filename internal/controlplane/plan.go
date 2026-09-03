@@ -202,7 +202,8 @@ type AppliedSet struct {
 	Repeatables map[string]string
 }
 
-func (a AppliedSet) has(m engine.Migration) bool {
+// Has reports whether the target already holds m: the version, or the repeatable under that content.
+func (a AppliedSet) Has(m engine.Migration) bool {
 	if m.Repeatable {
 		return a.Repeatables[m.Name] == m.Checksum
 	}
@@ -221,7 +222,7 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet
 		}
 		pm := PlanMigration{
 			Version: p.Migration.Version, Name: p.Migration.Name, Repeatable: p.Migration.Repeatable,
-			Checksum: p.Migration.Checksum, Applied: applied.has(p.Migration), Phase: phase,
+			Checksum: p.Migration.Checksum, Applied: applied.Has(p.Migration), Phase: phase,
 		}
 		pm.Statements = PlanStatements(p.Statements)
 		if exp, ok := exps[pm.ID()]; ok {
