@@ -681,3 +681,31 @@ func TestCreateRunDropColumnUnderDirectRolloutRefuses(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func viewFiles() []*godwitv1.MigrationFile {
+	return []*godwitv1.MigrationFile{
+		{Name: "20260901120100_stats.up.sql", Body: "CREATE VIEW public.order_stats AS SELECT id, age FROM public.users;"},
+		{Name: "20260901120100_stats.down.sql", Body: "DROP VIEW public.order_stats;"},
+	}
+}
+
+// TestPlanRunRefusesChangeTypeWithADependentView is the incident from the walkthrough: the swap would have
+// left the view reading age_old, and nothing would have said so.
+func TestPlanRunRefusesChangeTypeWithADependentView(t *testing.T) {
+	t.Parallel()
+	client, _ := directiveService(t)
+	applied := append(usersFiles(), viewFiles()...)
+	runToSuccess(t, client, applied, nil)
+
+	_, err := client.PlanRun(context.Background(), connect.NewRequest(&godwitv1.PlanRunRequest{
+		Target:  "app",
+		Files:   append(applied, changeTypeFiles("change-type public.users.age bigint", "-- godwit: revert\n")...),
+		Rollout: controlplane.RolloutExpandContract, Persist: true,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, err = %v", connect.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "view public.order_stats depends on public.users.age") {
+		t.Fatalf("the refusal must name the view: %v", err)
+	}
+}

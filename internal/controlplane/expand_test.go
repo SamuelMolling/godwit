@@ -247,13 +247,13 @@ func TestExpandRefusals(t *testing.T) {
 		`CREATE TABLE public.parted (id bigint, age integer) PARTITION BY RANGE (id)`,
 		`CREATE TABLE public.ref (id bigint PRIMARY KEY, age integer)`,
 		`CREATE TABLE public.child (rid bigint REFERENCES public.ref (id))`,
-		`CREATE VIEW public.v AS SELECT id, age FROM public.users`,
+		`CREATE VIEW public.v AS SELECT id, email FROM public.users`,
 		`CREATE FUNCTION public.noisy(integer) RETURNS integer LANGUAGE sql VOLATILE AS $$ SELECT $1 $$`,
 	)
 	for name, tc := range map[string]struct{ up, want string }{
 		"missing table":     {"-- godwit: change-type ghost.age bigint\n", "does not exist in the schema"},
 		"missing column":    {"-- godwit: change-type users.ghost bigint\n", "does not exist in the schema"},
-		"view":              {"-- godwit: change-type v.age bigint\n", "is not an ordinary table"},
+		"view":              {"-- godwit: change-type v.email text\n", "is not an ordinary table"},
 		"partitioned":       {"-- godwit: change-type parted.age bigint\n", "is partitioned"},
 		"identity":          {"-- godwit: change-type users.id bigint\n", "is an identity column"},
 		"generated":         {"-- godwit: change-type gen.twice bigint\n", "is a generated column"},

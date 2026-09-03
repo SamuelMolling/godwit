@@ -357,6 +357,9 @@ func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Dire
 	if err := col.unreferenced(ctx, conn, d); err != nil {
 		return built{}, err
 	}
+	if err := col.undepended(ctx, conn, d); err != nil {
+		return built{}, err
+	}
 	expr := engine.Ident(col.Column) + "::" + newType
 	if using, ok := d.Opts["using"]; ok {
 		if err := checkUsing(ctx, conn, d, using, col.Table); err != nil {
@@ -399,6 +402,12 @@ func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Dire
 		b.contract = append(b.contract,
 			step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", col.rel(), engine.Ident(col.Column))},
 			step{sql: fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", col.rel(), engine.Ident(constraint))})
+	}
+	if col.Default != "" {
+		b.expand = slices.Insert(b.expand, 1, step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s",
+			col.rel(), engine.Ident(newCol), col.Default)})
+		b.notes = append(b.notes, fmt.Sprintf("carries the default %s over to %s.%s; a rename does not move it",
+			col.Default, col.rel(), engine.Ident(newCol)))
 	}
 	x.retire(&b, d, col, newCol, oldCol)
 	b.notes = append(b.notes, fmt.Sprintf("backfills %s.%s in batches of %d over %s",
@@ -748,6 +757,9 @@ func dropColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built,
 	if err != nil {
 		return built{}, err
 	}
+	if err := col.droppable(ctx, conn, d); err != nil {
+		return built{}, err
+	}
 
 	return built{
 		contract: []step{{sql: fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", col.rel(), engine.Ident(col.Column))}},
@@ -825,6 +837,7 @@ type columnFacts struct {
 	Column    string
 	RelKind   string
 	Type      string
+	Default   string
 	NotNull   bool
 	Identity  bool
 	Generated bool
@@ -897,10 +910,12 @@ func resolveColumn(ctx context.Context, conn engine.DB, d engine.Directive, ref 
 	}
 	facts.Column = parts[len(parts)-1]
 	err = conn.QueryRow(ctx, `
-		SELECT format_type(a.atttypid, a.atttypmod), a.attnotnull, a.attidentity <> '', a.attgenerated <> ''
+		SELECT format_type(a.atttypid, a.atttypmod), coalesce(pg_get_expr(ad.adbin, ad.adrelid), ''),
+		       a.attnotnull, a.attidentity <> '', a.attgenerated <> ''
 		FROM pg_attribute a
+		LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
 		WHERE a.attrelid = to_regclass($1) AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped`,
-		facts.rel(), facts.Column).Scan(&facts.Type, &facts.NotNull, &facts.Identity, &facts.Generated)
+		facts.rel(), facts.Column).Scan(&facts.Type, &facts.Default, &facts.NotNull, &facts.Identity, &facts.Generated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return columnFacts{}, refuse(d, "%s.%s does not exist in the schema this migration starts from", facts.ref(), facts.Column)
 	}
@@ -941,6 +956,174 @@ func (c columnFacts) free(ctx context.Context, conn engine.DB, d engine.Directiv
 	}
 	if len(taken) > 0 {
 		return refuse(d, "%s.%s already exists; the expansion would collide with it", c.ref(), taken[0])
+	}
+
+	return nil
+}
+
+// dependentsSQL lists every catalog object bound to one column. `auto` decides what a DROP COLUMN does to it:
+// PostgreSQL destroys an auto dependent silently and refuses to drop a column a normal one reads. `covers` is
+// how many of the table's columns the object spans, which separates an index existing only for this column from
+// one that also serves others. The column's own default, and its NOT NULL constraint on PostgreSQL 18, are
+// excluded: neither is another object.
+const dependentsSQL = `
+WITH col AS (
+	SELECT a.attrelid AS relid, a.attnum
+	FROM pg_attribute a
+	WHERE a.attrelid = to_regclass($1) AND a.attname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+), dep AS (
+	SELECT d.classid, d.objid,
+	       bool_or(d.deptype = 'a') AS auto,
+	       (SELECT count(DISTINCT d2.refobjsubid) FROM pg_depend d2
+	        WHERE d2.classid = d.classid AND d2.objid = d.objid
+	          AND d2.refclassid = 'pg_class'::regclass AND d2.refobjid = c.relid AND d2.refobjsubid > 0) AS covers
+	FROM pg_depend d, col c
+	WHERE d.refclassid = 'pg_class'::regclass AND d.refobjid = c.relid AND d.refobjsubid = c.attnum
+	  AND d.deptype IN ('a', 'n')
+	  AND NOT (d.classid = 'pg_attrdef'::regclass
+	           AND EXISTS (SELECT 1 FROM pg_attrdef ad WHERE ad.oid = d.objid AND ad.adnum = c.attnum))
+	  AND NOT (d.classid = 'pg_constraint'::regclass
+	           AND EXISTS (SELECT 1 FROM pg_constraint k WHERE k.oid = d.objid AND k.contype = 'n'))
+	GROUP BY d.classid, d.objid, c.relid
+)
+SELECT
+	CASE
+		WHEN dep.classid = 'pg_rewrite'::regclass THEN
+			CASE rwc.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' ELSE 'rule' END
+		WHEN dep.classid = 'pg_class'::regclass THEN
+			CASE cl.relkind WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' ELSE 'relation' END
+		WHEN dep.classid = 'pg_constraint'::regclass THEN
+			CASE co.contype WHEN 'f' THEN 'foreign key' WHEN 'p' THEN 'primary key' WHEN 'u' THEN 'unique constraint'
+			                WHEN 'c' THEN 'check constraint' WHEN 'x' THEN 'exclusion constraint' ELSE 'constraint' END
+		WHEN dep.classid = 'pg_trigger'::regclass THEN 'trigger'
+		WHEN dep.classid = 'pg_attrdef'::regclass THEN
+			CASE WHEN ada.attgenerated <> '' THEN 'generated column' ELSE 'column default' END
+		WHEN dep.classid = 'pg_policy'::regclass THEN 'row security policy'
+		WHEN dep.classid = 'pg_statistic_ext'::regclass THEN 'statistics object'
+		WHEN dep.classid = 'pg_publication_rel'::regclass THEN 'publication'
+		ELSE 'object'
+	END,
+	CASE
+		WHEN dep.classid = 'pg_rewrite'::regclass AND rwc.relkind IN ('v', 'm') THEN rwn.nspname || '.' || rwc.relname
+		WHEN dep.classid = 'pg_rewrite'::regclass THEN rw.rulename || ' on ' || rwn.nspname || '.' || rwc.relname
+		WHEN dep.classid = 'pg_class'::regclass THEN cln.nspname || '.' || cl.relname
+		WHEN dep.classid = 'pg_constraint'::regclass THEN co.conname || ' on ' || con.nspname || '.' || cot.relname
+		WHEN dep.classid = 'pg_trigger'::regclass THEN tg.tgname || ' on ' || tgn.nspname || '.' || tgt.relname
+		WHEN dep.classid = 'pg_attrdef'::regclass THEN adsn.nspname || '.' || adt.relname || '.' || ada.attname
+		WHEN dep.classid = 'pg_policy'::regclass THEN po.polname || ' on ' || pon.nspname || '.' || pot.relname
+		WHEN dep.classid = 'pg_statistic_ext'::regclass THEN stn.nspname || '.' || st.stxname
+		WHEN dep.classid = 'pg_publication_rel'::regclass THEN pu.pubname
+		ELSE dep.classid::regclass::text || ' ' || dep.objid::text
+	END,
+	dep.auto, dep.covers
+FROM dep
+LEFT JOIN pg_rewrite rw ON dep.classid = 'pg_rewrite'::regclass AND rw.oid = dep.objid
+LEFT JOIN pg_class rwc ON rwc.oid = rw.ev_class
+LEFT JOIN pg_namespace rwn ON rwn.oid = rwc.relnamespace
+LEFT JOIN pg_class cl ON dep.classid = 'pg_class'::regclass AND cl.oid = dep.objid
+LEFT JOIN pg_namespace cln ON cln.oid = cl.relnamespace
+LEFT JOIN pg_constraint co ON dep.classid = 'pg_constraint'::regclass AND co.oid = dep.objid
+LEFT JOIN pg_class cot ON cot.oid = co.conrelid
+LEFT JOIN pg_namespace con ON con.oid = cot.relnamespace
+LEFT JOIN pg_trigger tg ON dep.classid = 'pg_trigger'::regclass AND tg.oid = dep.objid
+LEFT JOIN pg_class tgt ON tgt.oid = tg.tgrelid
+LEFT JOIN pg_namespace tgn ON tgn.oid = tgt.relnamespace
+LEFT JOIN pg_attrdef ad ON dep.classid = 'pg_attrdef'::regclass AND ad.oid = dep.objid
+LEFT JOIN pg_class adt ON adt.oid = ad.adrelid
+LEFT JOIN pg_namespace adsn ON adsn.oid = adt.relnamespace
+LEFT JOIN pg_attribute ada ON ada.attrelid = ad.adrelid AND ada.attnum = ad.adnum
+LEFT JOIN pg_policy po ON dep.classid = 'pg_policy'::regclass AND po.oid = dep.objid
+LEFT JOIN pg_class pot ON pot.oid = po.polrelid
+LEFT JOIN pg_namespace pon ON pon.oid = pot.relnamespace
+LEFT JOIN pg_statistic_ext st ON dep.classid = 'pg_statistic_ext'::regclass AND st.oid = dep.objid
+LEFT JOIN pg_namespace stn ON stn.oid = st.stxnamespace
+LEFT JOIN pg_publication_rel pr ON dep.classid = 'pg_publication_rel'::regclass AND pr.oid = dep.objid
+LEFT JOIN pg_publication pu ON pu.oid = pr.prpubid
+ORDER BY 1, 2`
+
+type dependent struct {
+	Kind   string
+	Name   string
+	Auto   bool
+	Covers int
+}
+
+func (o dependent) String() string {
+	return o.Kind + " " + o.Name
+}
+
+func namesOf(deps []dependent) string {
+	out := make([]string, len(deps))
+	for i, o := range deps {
+		out[i] = o.String()
+	}
+
+	return strings.Join(out, ", ")
+}
+
+func verb(deps []dependent) string {
+	if len(deps) == 1 {
+		return "depends"
+	}
+
+	return "depend"
+}
+
+func (c columnFacts) dependents(ctx context.Context, conn engine.DB) ([]dependent, error) {
+	rows, err := conn.Query(ctx, dependentsSQL, c.rel(), c.Column)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s.%s dependencies: %w", c.ref(), c.Column, err)
+	}
+	deps, err := pgx.CollectRows(rows, pgx.RowToStructByPos[dependent])
+	if err != nil {
+		return nil, fmt.Errorf("read %s.%s dependencies: %w", c.ref(), c.Column, err)
+	}
+
+	return deps, nil
+}
+
+// undepended refuses a swap when anything else is bound to the column. A rename moves every dependency
+// with the physical attribute, so each dependent silently ends up reading <c>_old.
+func (c columnFacts) undepended(ctx context.Context, conn engine.DB, d engine.Directive) error {
+	deps, err := c.dependents(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if len(deps) == 0 {
+		return nil
+	}
+
+	return refuse(d, "%s %s on %s.%s; the swap renames the column and PostgreSQL moves every dependent with "+
+		"the physical attribute, so each one would silently keep reading %s.%s_old. Drop and recreate them around "+
+		"this migration, in their own migrations",
+		namesOf(deps), verb(deps), c.ref(), c.Column, c.ref(), c.Column)
+}
+
+// droppable refuses a DROP COLUMN that PostgreSQL would reject outright, and one that would silently take
+// an object also covering other columns. An auto dependent spanning this column alone goes with it by design.
+func (c columnFacts) droppable(ctx context.Context, conn engine.DB, d engine.Directive) error {
+	deps, err := c.dependents(ctx, conn)
+	if err != nil {
+		return err
+	}
+	var blocking, widened []dependent
+	for _, o := range deps {
+		switch {
+		case !o.Auto:
+			blocking = append(blocking, o)
+		case o.Covers > 1:
+			widened = append(widened, o)
+		}
+	}
+	if len(blocking) > 0 {
+		return refuse(d, "%s %s on %s.%s; PostgreSQL refuses to drop a column another object reads, so the "+
+			"contract phase would fail after you confirmed it. Drop them first, in their own migrations",
+			namesOf(blocking), verb(blocking), c.ref(), c.Column)
+	}
+	if len(widened) > 0 {
+		return refuse(d, "%s %s on %s.%s and also covers other columns; the drop would take it with the column "+
+			"and silently lose what it gives them. Replace it first, in its own migration",
+			namesOf(widened), verb(widened), c.ref(), c.Column)
 	}
 
 	return nil

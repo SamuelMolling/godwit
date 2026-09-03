@@ -139,6 +139,63 @@ SELECT datname FROM pg_database WHERE datname LIKE 'godwit_validate_%';
 DROP DATABASE godwit_validate_xxx WITH (FORCE);
 ```
 
+## A `change-type` left a view or index on `<c>_old`
+
+**Symptom.** A `change-type` applied cleanly, and something that reads the column started failing or quietly
+returning the old type. The classic is a repeatable view refusing to replace:
+
+```
+statement 0 of R__order_stats (up): exec: ERROR: cannot change data type of view column "customer_id" from bigint to text (SQLSTATE 42P16)
+```
+
+An index or constraint gives no error at all — it simply stops covering the column the application now reads.
+
+**Meaning.** The contract phase renames `<c>` to `<c>_old` and `<c>_new` to `<c>`, and PostgreSQL moves every
+dependency with the *physical* attribute. Everything that was bound to the column is now bound to `<c>_old`.
+godwit refuses this at plan time now (see [what the expander refuses](concepts.md#what-the-expander-refuses)), but a
+migration applied by an older version is already in this state.
+
+**Find everything that is still on the retired column**, before deciding anything:
+
+```sql
+SELECT DISTINCT pg_describe_object(d.classid, d.objid, d.objsubid) AS dependent, d.deptype
+FROM pg_depend d
+JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+WHERE d.refclassid = 'pg_class'::regclass
+  AND d.refobjid = 'public.orders'::regclass
+  AND a.attname = 'customer_id_old'
+  AND d.deptype IN ('a', 'n')
+ORDER BY 1;
+```
+
+Anything it lists is reading the pre-migration column. `pg_get_viewdef`, `pg_get_indexdef`,
+`pg_get_constraintdef` and `pg_get_triggerdef` on those objects will show `customer_id_old` in their bodies.
+
+**Action.** Recreate each dependent against the new column, in a new migration, one object at a time. A view
+must be **dropped and recreated**, not replaced: `CREATE OR REPLACE VIEW` cannot change a column's type, which is
+the same error above. Check what depends on the view first (`\d+`, or the query above against the view's own oid),
+because `DROP VIEW` is refused while something else reads it.
+
+```sql
+DROP VIEW IF EXISTS public.order_stats;
+CREATE VIEW public.order_stats AS SELECT customer_id, count(*) FROM public.orders GROUP BY 1;
+```
+
+An index is safest rebuilt concurrently and then swapped, which `-- godwit: add-index` and `-- godwit: drop-index`
+already generate:
+
+```sql
+-- godwit: add-index orders (customer_id) name=orders_customer_id_idx2
+-- godwit: drop-index orders_customer_id_idx
+```
+
+Do **not** rename `<c>_old` back: the dependents follow the physical attribute, so a rename moves the problem
+without fixing it. Once nothing is left on `<c>_old`, retire it with `-- godwit: drop-column orders.customer_id_old`,
+which now refuses if anything still depends on it.
+
+Two things godwit cannot see and this query will not list: a `COMMENT ON COLUMN`, which stays on `<c>_old`, and a
+`plpgsql` function body naming the column, for which PostgreSQL records no dependency. Grep your functions.
+
 ## Drift detected
 
 **Symptom.** `schema drift detected` in the log, `godwit_drift_checks_total{result="drifted"}`, a `drift detected` notification, `GodwitSchemaDrift`.
