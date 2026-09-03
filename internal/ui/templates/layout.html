@@ -253,10 +253,12 @@ pre{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:
     </div>
   </div>
   <div class="foot">
-    <div class="who">{{if .User}}<span class="lbl">Signed in as</span><span class="mono">{{.User}}</span>{{else}}<span class="lbl">No sign-in configured</span><span class="mono">--ui-user / --ui-password</span>{{end}}</div>
+    <div class="who">{{if .User}}<span class="lbl">Signed in as</span><span class="mono">{{.User}}</span><span class="chip">{{.Scope}}</span>{{else}}<span class="lbl">No sign-in configured</span><span class="mono">--ui-user or a bearer token</span><span class="chip">{{.Scope}}</span>{{end}}</div>
   </div>
 </aside>
 <main>{{end}}
+
+{{define "scope-note"}}<p class="note">Actions on this page need a wider scope than <span class="mono">{{.Scope}}</span>. Sign in with the password of a token whose scope covers them.</p>{{end}}
 
 {{define "foot"}}</main>
 </div>

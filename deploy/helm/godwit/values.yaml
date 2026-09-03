@@ -25,7 +25,7 @@ fullnameOverride: ""
 #     --from-literal=GODWIT_STORE_DSN=postgres://godwit:...@store/godwit_store
 # The DSN is injected as `--store-dsn=$(GODWIT_STORE_DSN)` so it never appears in the pod spec.
 # Add a GODWIT_SLACK_TOKEN entry and set notifications.slack.channel to enable Slack.
-# Add GODWIT_UI_USER and GODWIT_UI_PASSWORD entries and set serve.ui.basicAuth to protect the UI.
+# Add GODWIT_UI_USER and GODWIT_UI_PASSWORD entries and set serve.ui.basicAuth for a shared UI identity.
 existingSecret:
   name: godwit
   keys:
@@ -51,9 +51,13 @@ serve:
   ui:
     # --ui: serve the operator web UI at /ui on the same port.
     enabled: false
-    # Wire GODWIT_UI_USER / GODWIT_UI_PASSWORD from existingSecret so /ui asks for basic auth.
-    # Without it the UI is open to anyone who reaches the port and the service logs a warning.
+    # Wire GODWIT_UI_USER / GODWIT_UI_PASSWORD from existingSecret to add a shared /ui identity.
+    # /ui already asks for basic auth whenever GODWIT_TOKENS is set: any token secret is a valid
+    # password and signs in as that token, with its scope. Without tokens and without this pair
+    # the UI is open to anyone who reaches the port and the service logs a warning.
     basicAuth: false
+    # --ui-scope: what the shared identity may do — read, pipeline, operator or admin.
+    scope: operator
   # Appended verbatim after the flags above.
   extraArgs: []
 

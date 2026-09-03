@@ -84,10 +84,13 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--log-format` | `GODWIT_LOG_FORMAT` or `json` | `json` or `text` |
 | `--log-level` | `GODWIT_LOG_LEVEL` or `info` | `debug`, `info`, `warn` or `error` |
 | `--ui` | `false` | serve the operator web UI at `/ui` on the same listener (also `GODWIT_UI=true`) |
-| `--ui-user` | `GODWIT_UI_USER` | basic auth user for `/ui`; with `--ui-password` every UI request needs the pair |
-| `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for `/ui` |
+| `--ui-user` | `GODWIT_UI_USER` | basic auth user for a shared `/ui` identity; needs `--ui-password` |
+| `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for that shared identity |
+| `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared identity (and the anonymous one, when the UI is open) may do: `read`, `pipeline`, `operator` or `admin` |
 
-A bad log format or level, or a UI user without a password (or the reverse), fails `serve` before anything else starts. `--ui` without credentials serves the UI open and logs `ui enabled without basic auth`; UI actions are audited as `ui:<user>` (`ui:anonymous` when open).
+A bad log format or level, an unknown `--ui-scope`, or a UI user without a password (or the reverse), fails `serve` before anything else starts.
+
+`/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth` and audits as `ui:anonymous`. Pages offer only the actions the scope allows and a request beyond it is refused with `403`; see [security](security.md#web-ui).
 
 ### Environment
 
@@ -105,6 +108,7 @@ A bad log format or level, or a UI user without a password (or the reverse), fai
 | `GODWIT_UI` | no | `true` enables the web UI like `--ui` |
 | `GODWIT_UI_USER` | no | default for `--ui-user` |
 | `GODWIT_UI_PASSWORD` | no | default for `--ui-password` |
+| `GODWIT_UI_SCOPE` | no | default for `--ui-scope` |
 | `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
 | `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
 | `VAULT_K8S_ROLE` | without `VAULT_TOKEN` | role for `POST auth/<mount>/login` |
@@ -195,4 +199,4 @@ See [CI/CD](ci-cd.md#action-inputs-and-outputs); they map one-to-one onto the CL
 
 ## Helm values
 
-`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `logFormat`, `logLevel`, `ui.enabled`, `ui.basicAuth` and `extraArgs`, and every environment variable above comes from the Secret named by `existingSecret` or from `vault.*`, `notifications.*`, `extraEnv` / `extraEnvFrom`. `--lease-ttl`, `--tick-interval` and `--max-attempts` go through `serve.extraArgs`.
+`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `logFormat`, `logLevel`, `ui.enabled`, `ui.basicAuth`, `ui.scope` and `extraArgs`, and every environment variable above comes from the Secret named by `existingSecret` or from `vault.*`, `notifications.*`, `extraEnv` / `extraEnvFrom`. `--lease-ttl`, `--tick-interval` and `--max-attempts` go through `serve.extraArgs`.
