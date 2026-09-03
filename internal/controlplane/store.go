@@ -15,11 +15,12 @@ import (
 	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
-// Pool is the connection-pool surface the store needs; *pgxpool.Pool satisfies it.
+// Pool is the connection-pool surface the store needs; *pgxpool.Pool and pgx.Tx satisfy it.
 type Pool interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // Run states.
@@ -89,6 +90,24 @@ type Store struct {
 // NewStore wraps a connection pool.
 func NewStore(pool Pool) *Store {
 	return &Store{pool: pool}
+}
+
+// Transact runs fn on a store bound to one transaction; its writes stay invisible to other sessions until fn returns nil.
+func (s *Store) Transact(ctx context.Context, fn func(tx *Store) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if err := fn(&Store{pool: tx}); err != nil {
+		_ = tx.Rollback(ctx)
+
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 // Migrate applies the control-plane schema and reports how many migrations ran; the advisory lock needs a dedicated session.
@@ -453,17 +472,18 @@ func (s *Store) RunStats(ctx context.Context) ([]metrics.RunStat, error) {
 	return out, nil
 }
 
-// Confirm requeues an awaiting_contract run for its contract phase.
-func (s *Store) Confirm(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `
+// Confirm requeues an awaiting_contract run for its contract phase and returns it.
+func (s *Store) Confirm(ctx context.Context, id string) (Run, error) {
+	run, err := scanRun(s.pool.QueryRow(ctx, `
 		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, not_before = NULL, updated_at = now()
-		WHERE id = $1 AND state = 'awaiting_contract'`, id)
-	if err != nil {
-		return fmt.Errorf("confirm rollout: %w", err)
+		WHERE id = $1 AND state = 'awaiting_contract'
+		RETURNING `+runColumns, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, fmt.Errorf("run %q: %w", id, ErrNotAwaitingContract)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("run %q: %w", id, ErrNotAwaitingContract)
+	if err != nil {
+		return Run{}, fmt.Errorf("confirm rollout: %w", err)
 	}
 
-	return nil
+	return run, nil
 }

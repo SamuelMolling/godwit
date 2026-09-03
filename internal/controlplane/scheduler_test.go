@@ -355,7 +355,7 @@ func TestSchedulerExpandContract(t *testing.T) {
 		t.Fatalf("awaiting run must not be claimable: ok = %v, err = %v", ok, err)
 	}
 
-	if err := s.Confirm(ctx, id); err != nil {
+	if _, err := s.Confirm(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	sched.Tick(ctx)

@@ -539,7 +539,9 @@ func TestCreateRunInternalErrors(t *testing.T) {
 
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	mock.ExpectBegin()
 	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "", AnonymousActor, "", "").WillReturnError(errors.New("insert down"))
+	mock.ExpectRollback()
 	s = NewServer(controlplane.NewStore(mock), nil, nil, nil)
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("store error: %v", err)
