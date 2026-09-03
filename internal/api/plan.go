@@ -81,6 +81,7 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 
 func observed(p controlplane.Plan, obs controlplane.Observation) controlplane.Plan {
 	p.HistoryHash, p.Applied, p.SchemaFingerprint, p.SchemaDefinition = obs.HistoryHash(), obs.Applied, obs.Fingerprint, obs.Definition
+	p.SearchPath = obs.SearchPath
 
 	return p
 }
@@ -147,7 +148,8 @@ func statementsToProto(sts []controlplane.PlanStatement) []*godwitv1.PlannedStat
 
 func observationToProto(obs controlplane.Observation) *godwitv1.PlanObservation {
 	out := &godwitv1.PlanObservation{
-		HistoryHash: obs.HistoryHash(), SchemaFingerprint: obs.Fingerprint, AppliedCount: int32(len(obs.Applied)), At: timestamppb.New(obs.At),
+		HistoryHash: obs.HistoryHash(), SchemaFingerprint: obs.Fingerprint, AppliedCount: int32(len(obs.Applied)),
+		At: timestamppb.New(obs.At), SearchPath: obs.SearchPath,
 	}
 	for _, a := range obs.Applied {
 		out.NewestApplied = max(out.NewestApplied, a.Version)
@@ -158,6 +160,7 @@ func observationToProto(obs controlplane.Observation) *godwitv1.PlanObservation 
 
 type binding struct {
 	planID          string
+	searchPath      string
 	acked           []string
 	allowOutOfOrder bool
 	superseded      string
@@ -174,6 +177,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	if err != nil {
 		return b, rpcErr(err)
 	}
+	b.searchPath = obs.SearchPath
 	if run, ok, err := s.reattach(ctx, m, spec, obs); err != nil || ok {
 		b.reattached, b.planID = run.ID, run.PlanID
 
@@ -190,7 +194,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	b.planID = plan.ID
 	b.acked = union(plan.Acked, m.AcknowledgeHazards)
 	b.allowOutOfOrder = plan.AllowOutOfOrder || m.AllowOutOfOrder
-	if plan.HistoryHash == obs.HistoryHash() && plan.SchemaFingerprint == obs.Fingerprint {
+	if plan.HistoryHash == obs.HistoryHash() && plan.SchemaFingerprint == obs.Fingerprint && !plan.PathMoved(obs) {
 		return b, nil
 	}
 	d, err := s.attribute(ctx, plan, obs)
@@ -228,6 +232,18 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	b.planID, b.superseded, b.adm = next.ID, plan.ID, &adm
 
 	return b, nil
+}
+
+func (s *Server) observedSearchPath(ctx context.Context, target string) (string, error) {
+	if s.Inspector == nil {
+		return "", nil
+	}
+	obs, err := s.Inspector.Observe(ctx, target)
+	if err != nil {
+		return "", rpcErr(err)
+	}
+
+	return obs.SearchPath, nil
 }
 
 func (b binding) detail() string {

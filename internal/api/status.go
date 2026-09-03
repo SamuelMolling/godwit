@@ -48,7 +48,7 @@ func (s *Server) GetTargetStatus(ctx context.Context, req *connect.Request[godwi
 func statusToProto(st controlplane.TargetStatus, migs []engine.Migration) *godwitv1.GetTargetStatusResponse {
 	out := &godwitv1.GetTargetStatusResponse{
 		Target: st.Target, Provider: st.Provider,
-		LockTimeout: st.Timeouts.Lock, StatementTimeout: st.Timeouts.Statement,
+		LockTimeout: st.Timeouts.Lock, StatementTimeout: st.Timeouts.Statement, SearchPath: st.SearchPath,
 	}
 	byVersion := make(map[int64]*godwitv1.AppliedMigration, len(st.Applied))
 	for _, a := range st.Applied {

@@ -186,13 +186,21 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if m.RequirePlan {
 		config[controlplane.ConfigRequirePlan] = "true"
 	}
+	searchPath, err := controlplane.ParseSearchPath(m.SearchPath)
+	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	if searchPath != "" {
+		config[controlplane.ConfigSearchPath] = searchPath
+	}
 	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider,
-		"lock_timeout", t.Lock, "statement_timeout", t.Statement, "require_plan", m.RequirePlan)
+		"lock_timeout", t.Lock, "statement_timeout", t.Statement, "require_plan", m.RequirePlan, "search_path", searchPath)
 	s.audit(ctx, controlplane.AuditTargetRegister, "", m.Name,
-		fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s require_plan=%t", m.Provider, t.Lock, t.Statement, m.RequirePlan))
+		fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s require_plan=%t search_path=%s",
+			m.Provider, t.Lock, t.Statement, m.RequirePlan, searchPath))
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
@@ -221,7 +229,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 		return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: b.reattached, PlanId: b.planID, Reattached: true}), nil
 	}
 	if b.adm == nil {
-		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, ""); err != nil {
+		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, b.searchPath); err != nil {
 			return nil, err
 		}
 	}
@@ -308,7 +316,11 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
-	if _, err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true, ""); err != nil {
+	searchPath, err := s.observedSearchPath(ctx, orig.Target)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true, searchPath); err != nil {
 		return nil, err
 	}
 

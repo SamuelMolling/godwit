@@ -65,10 +65,10 @@ func expectReadyPlan(mock pgxmock.PgxPoolIface, fingerprint string, applied []en
 	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "drift", "plan",
+			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
 			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
 		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanReady, controlplane.HistoryHash(applied), applied,
-			fingerprint, "table a\n", "", migs, false, []string{}, false, "ci", "", time.Now(), "", ""))
+			fingerprint, "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), "", ""))
 }
 
 func expectSnapshot(mock pgxmock.PgxPoolIface, fingerprint string) {
@@ -343,5 +343,22 @@ func TestAuditTruncatesDetail(t *testing.T) {
 	s.audit(context.Background(), "x", "", "app", strings.Repeat("é", auditDetailLimit+1))
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestObservedSearchPath(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := NewServer(nil, nil, nil, nil)
+	if path, err := s.observedSearchPath(ctx, "app"); path != "" || err != nil {
+		t.Fatalf("no inspector: %q, %v", path, err)
+	}
+	s.Inspector = stubInspector{err: errors.New("target down")}
+	if _, err := s.observedSearchPath(ctx, "app"); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("observe error: %v", err)
+	}
+	s.Inspector = stubInspector{obs: controlplane.Observation{SearchPath: "app,public"}}
+	if path, err := s.observedSearchPath(ctx, "app"); path != "app,public" || err != nil {
+		t.Fatalf("path = %q, err = %v", path, err)
 	}
 }

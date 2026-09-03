@@ -46,7 +46,8 @@ func (s *Server) ListPlans(ctx context.Context, req *connect.Request[godwitv1.Li
 
 func planToProto(p controlplane.Plan) *godwitv1.Plan {
 	obs := &godwitv1.PlanObservation{
-		HistoryHash: p.HistoryHash, SchemaFingerprint: p.SchemaFingerprint, AppliedCount: int32(len(p.Applied)), At: timestamppb.New(p.CreatedAt),
+		HistoryHash: p.HistoryHash, SchemaFingerprint: p.SchemaFingerprint, AppliedCount: int32(len(p.Applied)),
+		At: timestamppb.New(p.CreatedAt), SearchPath: p.SearchPath,
 	}
 	for _, a := range p.Applied {
 		obs.NewestApplied = max(obs.NewestApplied, a.Version)

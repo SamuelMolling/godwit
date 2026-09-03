@@ -252,6 +252,13 @@ ALTER TABLE cp_plans DROP CONSTRAINT cp_plans_superseded_by_fkey,
 ALTER TABLE cp_runs DROP CONSTRAINT cp_runs_plan_id_fkey,
 	ADD CONSTRAINT cp_runs_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES cp_plans (id);`,
 	},
+	{
+		Version:  20260901000012,
+		Name:     "plan_search_path",
+		Checksum: "cp-plan-search-path-v1",
+		UpSQL:    `ALTER TABLE cp_plans ADD COLUMN search_path text NOT NULL DEFAULT '';`,
+		DownSQL:  `ALTER TABLE cp_plans DROP COLUMN search_path;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

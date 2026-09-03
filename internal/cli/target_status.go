@@ -57,8 +57,8 @@ func optionalFiles(cmd *cobra.Command, dir string) ([]*godwitv1.MigrationFile, e
 
 func statusText(st *godwitv1.GetTargetStatusResponse) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "target %s: provider %s, lock timeout %s, statement timeout %s\n",
-		st.Target, st.Provider, orNone(st.LockTimeout), orNone(st.StatementTimeout))
+	fmt.Fprintf(&b, "target %s: provider %s, lock timeout %s, statement timeout %s, search path %s\n",
+		st.Target, st.Provider, orNone(st.LockTimeout), orNone(st.StatementTimeout), orNone(st.SearchPath))
 	fmt.Fprintf(&b, "applied (%d):\n", len(st.Applied))
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, a := range st.Applied {

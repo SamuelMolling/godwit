@@ -25,8 +25,9 @@ The script:
 13. Asks `GetTargetStatus` for `legacy`: both versions applied with their checksums, nothing pending, the migrate run as last run, the drift baseline it took.
 14. Adds a column to `legacy` by hand, then plans a migration that would add it: the stored plan reports it as `alreadyApplied` with its `effect`, and the run records it with zero statements instead of executing it.
 15. Sends `Diff` the whole desired `orders` table plus an index: the response is the up SQL from what `legacy` has now to it (`ADD COLUMN`, `CREATE INDEX CONCURRENTLY`) and the down SQL back; the same schema sent again reports no changes.
-16. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API; the `KIND` column tells baseline runs from migrations.
-17. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
+16. Registers a `tenant` target with `--search-path tenant,public` and runs a migration creating an unqualified table called `migrations`: it lands in `tenant`, while `godwit.migrations` next to it is still the journal with that migration recorded in it.
+17. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API; the `KIND` column tells baseline runs from migrations.
+18. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
 
 While the stack is up, open <http://localhost:18475/ui> (user `demo`, password `demo`) to see the same runs and drift events in the operator UI.
 

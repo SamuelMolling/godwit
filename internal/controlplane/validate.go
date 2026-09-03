@@ -85,11 +85,17 @@ func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) er
 		return nil
 	}
 	schemas := strings.Split(searchPath, ",")
+	stmts := make([]string, 0, len(schemas)+1)
 	for i, schema := range schemas {
 		schemas[i] = pgx.Identifier{schema}.Sanitize()
+		if !strings.HasPrefix(schema, "pg_") {
+			stmts = append(stmts, "CREATE SCHEMA IF NOT EXISTS "+schemas[i])
+		}
 	}
-	if _, err := conn.Exec(ctx, "SET search_path TO "+strings.Join(schemas, ", ")); err != nil {
-		return fmt.Errorf("set search path: %w", err)
+	for _, stmt := range append(stmts, "SET search_path TO "+strings.Join(schemas, ", ")) {
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("mirror search path: %w", err)
+		}
 	}
 
 	return nil

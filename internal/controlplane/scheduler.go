@@ -292,9 +292,10 @@ func (s *Scheduler) targetDSN(ctx context.Context, target string) (string, error
 }
 
 type resolvedTarget struct {
-	dsn      string
-	provider string
-	timeouts Timeouts
+	dsn        string
+	provider   string
+	timeouts   Timeouts
+	searchPath string
 }
 
 func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, error) {
@@ -306,12 +307,19 @@ func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, er
 	if !ok {
 		return resolvedTarget{}, fmt.Errorf("unknown credential provider %q", providerName)
 	}
+	searchPath, err := ParseSearchPath(config[ConfigSearchPath])
+	if err != nil {
+		return resolvedTarget{}, err
+	}
 	dsn, err := provider.DSN(ctx, config)
 	if err != nil {
 		return resolvedTarget{}, err
 	}
 
-	return resolvedTarget{dsn: dsn, provider: providerName, timeouts: TargetTimeouts(config)}, nil
+	return resolvedTarget{
+		dsn: dsnWithSearchPath(dsn, searchPath), provider: providerName,
+		timeouts: TargetTimeouts(config), searchPath: searchPath,
+	}, nil
 }
 
 func (s *Scheduler) heartbeat(ctx context.Context, runID string) {

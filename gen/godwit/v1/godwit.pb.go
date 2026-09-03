@@ -345,7 +345,10 @@ type RegisterTargetRequest struct {
 	// statement_timeout for every statement on this target; default 0 (disabled).
 	StatementTimeout string `protobuf:"bytes,8,opt,name=statement_timeout,json=statementTimeout,proto3" json:"statement_timeout,omitempty"`
 	// Refuse runs whose migration set has no stored plan.
-	RequirePlan   bool `protobuf:"varint,9,opt,name=require_plan,json=requirePlan,proto3" json:"require_plan,omitempty"`
+	RequirePlan bool `protobuf:"varint,9,opt,name=require_plan,json=requirePlan,proto3" json:"require_plan,omitempty"`
+	// search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
+	// Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
+	SearchPath    string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -441,6 +444,13 @@ func (x *RegisterTargetRequest) GetRequirePlan() bool {
 		return x.RequirePlan
 	}
 	return false
+}
+
+func (x *RegisterTargetRequest) GetSearchPath() string {
+	if x != nil {
+		return x.SearchPath
+	}
+	return ""
 }
 
 type RegisterTargetResponse struct {
@@ -775,8 +785,10 @@ type PlanObservation struct {
 	AppliedCount      int32                  `protobuf:"varint,3,opt,name=applied_count,json=appliedCount,proto3" json:"applied_count,omitempty"`
 	NewestApplied     int64                  `protobuf:"varint,4,opt,name=newest_applied,json=newestApplied,proto3" json:"newest_applied,omitempty"`
 	At                *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=at,proto3" json:"at,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The search_path the target's sessions actually resolve under (current_schemas), which the plan was taken with.
+	SearchPath    string `protobuf:"bytes,6,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlanObservation) Reset() {
@@ -842,6 +854,13 @@ func (x *PlanObservation) GetAt() *timestamppb.Timestamp {
 		return x.At
 	}
 	return nil
+}
+
+func (x *PlanObservation) GetSearchPath() string {
+	if x != nil {
+		return x.SearchPath
+	}
+	return ""
 }
 
 // Error detail on failed_precondition: the stored plan no longer matches the target.
@@ -2527,7 +2546,9 @@ type GetTargetStatusResponse struct {
 	LastRun          *Run                   `protobuf:"bytes,7,opt,name=last_run,json=lastRun,proto3" json:"last_run,omitempty"`
 	DriftBaseline    *DriftBaseline         `protobuf:"bytes,8,opt,name=drift_baseline,json=driftBaseline,proto3" json:"drift_baseline,omitempty"`
 	// Stored plans still bindable on the target.
-	ReadyPlans    int32 `protobuf:"varint,9,opt,name=ready_plans,json=readyPlans,proto3" json:"ready_plans,omitempty"`
+	ReadyPlans int32 `protobuf:"varint,9,opt,name=ready_plans,json=readyPlans,proto3" json:"ready_plans,omitempty"`
+	// The search_path declared on the target; empty when it inherits the role's default.
+	SearchPath    string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2623,6 +2644,13 @@ func (x *GetTargetStatusResponse) GetReadyPlans() int32 {
 		return x.ReadyPlans
 	}
 	return 0
+}
+
+func (x *GetTargetStatusResponse) GetSearchPath() string {
+	if x != nil {
+		return x.SearchPath
+	}
+	return ""
 }
 
 type ListAuditRequest struct {
@@ -3491,7 +3519,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\aplan_id\x18\x10 \x01(\tR\x06planId\x129\n" +
 	"\n" +
 	"not_before\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\tnotBefore\x12\x18\n" +
-	"\aretries\x18\x12 \x01(\x05R\aretries\"\xb3\x02\n" +
+	"\aretries\x18\x12 \x01(\x05R\aretries\"\xd4\x02\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -3503,7 +3531,10 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x0evault_template\x18\x06 \x01(\tR\rvaultTemplate\x12!\n" +
 	"\flock_timeout\x18\a \x01(\tR\vlockTimeout\x12+\n" +
 	"\x11statement_timeout\x18\b \x01(\tR\x10statementTimeout\x12!\n" +
-	"\frequire_plan\x18\t \x01(\bR\vrequirePlan\"\x18\n" +
+	"\frequire_plan\x18\t \x01(\bR\vrequirePlan\x12\x1f\n" +
+	"\vsearch_path\x18\n" +
+	" \x01(\tR\n" +
+	"searchPath\"\x18\n" +
 	"\x16RegisterTargetResponse\"\xfc\x02\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
@@ -3531,13 +3562,15 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\arollout\x18\x05 \x01(\tR\arollout\x12+\n" +
 	"\x12allow_out_of_order\x18\x06 \x01(\bR\x0fallowOutOfOrder\x12\x18\n" +
 	"\apersist\x18\a \x01(\bR\apersist\x12\x16\n" +
-	"\x06source\x18\b \x01(\tR\x06source\"\xdb\x01\n" +
+	"\x06source\x18\b \x01(\tR\x06source\"\xfc\x01\n" +
 	"\x0fPlanObservation\x12!\n" +
 	"\fhistory_hash\x18\x01 \x01(\tR\vhistoryHash\x12-\n" +
 	"\x12schema_fingerprint\x18\x02 \x01(\tR\x11schemaFingerprint\x12#\n" +
 	"\rapplied_count\x18\x03 \x01(\x05R\fappliedCount\x12%\n" +
 	"\x0enewest_applied\x18\x04 \x01(\x03R\rnewestApplied\x12*\n" +
-	"\x02at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"\xbf\x01\n" +
+	"\x02at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x1f\n" +
+	"\vsearch_path\x18\x06 \x01(\tR\n" +
+	"searchPath\"\xbf\x01\n" +
 	"\tPlanStale\x12\x17\n" +
 	"\aplan_id\x18\x01 \x01(\tR\x06planId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12#\n" +
@@ -3669,7 +3702,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\rDriftBaseline\x125\n" +
 	"\btaken_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\atakenAt\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12)\n" +
-	"\x10unresolved_drift\x18\x03 \x01(\bR\x0funresolvedDrift\"\x98\x03\n" +
+	"\x10unresolved_drift\x18\x03 \x01(\bR\x0funresolvedDrift\"\xb9\x03\n" +
 	"\x17GetTargetStatusResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12!\n" +
@@ -3680,7 +3713,10 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\blast_run\x18\a \x01(\v2\x0e.godwit.v1.RunR\alastRun\x12?\n" +
 	"\x0edrift_baseline\x18\b \x01(\v2\x18.godwit.v1.DriftBaselineR\rdriftBaseline\x12\x1f\n" +
 	"\vready_plans\x18\t \x01(\x05R\n" +
-	"readyPlans\"W\n" +
+	"readyPlans\x12\x1f\n" +
+	"\vsearch_path\x18\n" +
+	" \x01(\tR\n" +
+	"searchPath\"W\n" +
 	"\x10ListAuditRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x14\n" +

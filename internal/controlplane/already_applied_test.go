@@ -66,8 +66,9 @@ func TestMirrorSearchPath(t *testing.T) {
 	if err := mirrorSearchPath(ctx, mock, ""); err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectExec(`SET search_path TO "godwit", "public"`).WillReturnError(errBoom)
-	if err := mirrorSearchPath(ctx, mock, "godwit,public"); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "set search path") {
+	mock.ExpectExec(`CREATE SCHEMA IF NOT EXISTS "app"`).WillReturnResult(pgxmock.NewResult("CREATE", 0))
+	mock.ExpectExec(`SET search_path TO "app", "pg_catalog"`).WillReturnError(errBoom)
+	if err := mirrorSearchPath(ctx, mock, "app,pg_catalog"); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "mirror search path") {
 		t.Fatalf("err = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

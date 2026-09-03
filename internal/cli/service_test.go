@@ -240,7 +240,7 @@ func TestTargetAdd(t *testing.T) {
 
 	code, out, errOut := runCLI("target", "add", "app", "--server", url, "--token", "tok",
 		"--provider", "vault", "--dsn", "d", "--secret-path", "s", "--vault-path", "v", "--vault-template", "tpl",
-		"--lock-timeout", "2s", "--statement-timeout", "1m")
+		"--lock-timeout", "2s", "--statement-timeout", "1m", "--search-path", "app,public")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -252,7 +252,7 @@ func TestTargetAdd(t *testing.T) {
 	}
 	r := stub.registered
 	if r.Name != "app" || r.Provider != "vault" || r.Dsn != "d" || r.SecretPath != "s" || r.VaultPath != "v" || r.VaultTemplate != "tpl" ||
-		r.LockTimeout != "2s" || r.StatementTimeout != "1m" {
+		r.LockTimeout != "2s" || r.StatementTimeout != "1m" || r.SearchPath != "app,public" {
 		t.Fatalf("request = %v", r)
 	}
 }
