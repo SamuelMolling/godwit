@@ -100,11 +100,12 @@ func Run(ctx context.Context, cfg Config) error {
 	drift.PlanRetention = cfg.PlanRetention
 	go drift.Run(ctx)
 
+	newID := func() string { return strings.ReplaceAll(uuid.NewString(), "-", "") }
 	var validator api.Validator
+	var history controlplane.HistoryReplayer
 	if !cfg.SkipValidation {
-		validator = controlplane.NewValidator(pool, store, func() string {
-			return strings.ReplaceAll(uuid.NewString(), "-", "")
-		})
+		v := controlplane.NewValidator(pool, store, newID)
+		validator, history = v, v
 	}
 
 	ln, err := net.Listen("tcp", cfg.Listen)
@@ -122,6 +123,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Notifier = notifier
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
 	apiSrv.Inspector = controlplane.NewInspector(sched)
+	apiSrv.Differ = controlplane.NewDiffer(pool, sched, history, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	srv := &http.Server{
 		Handler:           api.Handler(apiSrv, tokens),

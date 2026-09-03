@@ -160,6 +160,23 @@ call RevertRun '{"runId":"0d3c6c6e-...","acknowledgeHazards":["H002"]}'
 
 Queues a run whose plans are the down sides of the original's files, newest version first, with `reverts` set. Same admission as `CreateRun` minus the order guard. Original must be `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, be the newest non-reverted run on its target, with nothing `queued`/`running` there; baseline runs are refused.
 
+### Diff — read
+
+```bash
+call Diff '{"target":"app","schema":"CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, status text NOT NULL DEFAULT '"'"'new'"'"');"}'
+```
+
+```json
+{"target":"app",
+ "upSql":"ALTER TABLE \"public\".\"orders\" ADD COLUMN \"status\" text COLLATE \"pg_catalog\".\"default\" DEFAULT 'new'::text NOT NULL;",
+ "downSql":"ALTER TABLE \"public\".\"orders\" DROP COLUMN \"status\";",
+ "statements":[{"sql":"ALTER TABLE \"public\".\"orders\" ADD COLUMN ...","hazards":[]}],
+ "observed":{"historyHash":"...","schemaFingerprint":"...","appliedCount":"2","newestApplied":"20260901120500","at":"..."},
+ "drift":""}
+```
+
+`schema` is the whole desired database as DDL; it is applied on an empty scratch database with the target's `search_path`. `upSql` is the migration from the live target to it, `downSql` the way back, both empty when they already match. `statements` classifies `upSql` with hazards and recipes; `drift` holds the `+`/`-` lines between the target's recorded history and its live schema (empty when validation is off). `invalid_argument` with `desired schema failed to apply: <postgres error>` when the DDL does not apply; `unimplemented` on a service started without a control-plane pool.
+
 ### CheckDrift — operator
 
 ```bash

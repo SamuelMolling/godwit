@@ -311,6 +311,17 @@ docker compose exec -T target-db psql -U app -d legacy \
   -c "SELECT r.version, m.name, r.stmt_count, r.state FROM godwit.runs r JOIN godwit.migrations m USING (version) ORDER BY r.version;"
 
 echo
+echo "==> schema diff: describe the whole database you want, godwit writes the migration from what legacy has now to it"
+rpc Diff '{
+  "target": "legacy",
+  "schema": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text, customer_id bigint); CREATE INDEX orders_customer_idx ON orders (customer_id);"
+}' 18475
+echo
+echo "==> upSql adds the column and creates the index CONCURRENTLY, downSql drops both; the schema legacy already has reports no changes"
+rpc Diff '{"target": "legacy", "schema": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text);"}' 18475
+echo
+
+echo
 echo "==> the same API from the CLI: every run so far, with who created it"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
 
@@ -323,5 +334,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, target status, named tokens and an audit log, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

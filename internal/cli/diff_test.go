@@ -1,0 +1,164 @@
+package cli
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+)
+
+func diffStub() *stubService {
+	return &stubService{diff: &godwitv1.DiffResponse{
+		Target:  "app",
+		UpSql:   "ALTER TABLE \"public\".\"t\" DROP COLUMN \"a\";\nCREATE INDEX CONCURRENTLY t_b_idx ON public.t USING btree (b);",
+		DownSql: "DROP INDEX CONCURRENTLY \"public\".\"t_b_idx\";\nALTER TABLE \"public\".\"t\" ADD COLUMN \"a\" integer;",
+		Statements: []*godwitv1.PlannedStatement{
+			{Sql: "ALTER TABLE \"public\".\"t\" DROP COLUMN \"a\"", Hazards: []*godwitv1.PlannedHazard{{Code: "H003", Detail: "DROP COLUMN is destructive", Recipe: "-- expand then contract:\n-- drop t.a later"}}},
+			{Sql: "CREATE INDEX CONCURRENTLY t_b_idx ON public.t USING btree (b)", NoTx: true},
+		},
+		Drift:    "+ column public.t.extra integer null=YES default=<none>",
+		Observed: &godwitv1.PlanObservation{HistoryHash: "h", SchemaFingerprint: "f", AppliedCount: 2, NewestApplied: 20260901120002, At: timestamppb.New(time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC))},
+	}}
+}
+
+func schemaFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "schema.sql")
+	if err := os.WriteFile(path, []byte("CREATE TABLE t (id int, b int);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func TestDiffWritesMigration(t *testing.T) {
+	diffNow = func() time.Time { return time.Date(2026, 9, 2, 10, 30, 0, 0, time.UTC) }
+	defer func() { diffNow = time.Now }()
+	stub := diffStub()
+	url := startStub(t, stub)
+	dir, schema := t.TempDir(), schemaFile(t)
+
+	code, out, errOut := runCLI("diff", "--server", url, "--token", "tok", "--target", "app", "--schema", schema, "--name", "drop_a", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := "drift (the target's live schema, not its history, is the starting point):\n" +
+		"  + column public.t.extra integer null=YES default=<none>\n" +
+		"app -> " + schema + ": 2 statement(s)\n" +
+		"  [0] tx    ALTER TABLE \"public\".\"t\" DROP COLUMN \"a\"\n" +
+		"        hazard H003: DROP COLUMN is destructive\n" +
+		"          -- expand then contract:\n" +
+		"          -- drop t.a later\n" +
+		"  [1] no-tx CREATE INDEX CONCURRENTLY t_b_idx ON public.t USING btree (b)\n" +
+		"\n-- up\n" + stub.diff.UpSql + "\n-- down\n" + stub.diff.DownSql + "\n" +
+		"wrote " + filepath.Join(dir, "20260902103000_drop_a.up.sql") + "\n" +
+		"wrote " + filepath.Join(dir, "20260902103000_drop_a.down.sql") + "\n"
+	if out != want {
+		t.Fatalf("out = %q\nwant %q", out, want)
+	}
+	if stub.diffed.Target != "app" || stub.diffed.Schema != "CREATE TABLE t (id int, b int);\n" || stub.auth != "Bearer tok" {
+		t.Fatalf("request = %+v, auth = %q", stub.diffed, stub.auth)
+	}
+	up, err := os.ReadFile(filepath.Join(dir, "20260902103000_drop_a.up.sql"))
+	if err != nil || string(up) != stub.diff.UpSql+"\n" {
+		t.Fatalf("up = %q, err = %v", up, err)
+	}
+	down, err := os.ReadFile(filepath.Join(dir, "20260902103000_drop_a.down.sql"))
+	if err != nil || string(down) != stub.diff.DownSql+"\n" {
+		t.Fatalf("down = %q, err = %v", down, err)
+	}
+	if _, err := migrationFiles(dir); err != nil {
+		t.Fatalf("generated files must load: %v", err)
+	}
+}
+
+func TestDiffDryRunAndJSON(t *testing.T) {
+	t.Parallel()
+	stub := diffStub()
+	url := startStub(t, stub)
+	dir, schema := t.TempDir(), schemaFile(t)
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--dry-run")
+	if code != 0 || !strings.Contains(out, "-- up\n") || strings.Contains(out, "wrote ") {
+		t.Fatalf("code = %d, out = %q, stderr = %s", code, out, errOut)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("dry run wrote %d file(s)", len(entries))
+	}
+
+	code, out, errOut = runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--name", "drop_a", "--json")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	m := decodeJSON(t, out)
+	stmts := m["statements"].([]any)
+	files := m["files"].([]any)
+	if m["target"] != "app" || m["changed"] != true || m["up_sql"] != stub.diff.UpSql || m["down_sql"] != stub.diff.DownSql ||
+		len(stmts) != 2 || stmts[1].(map[string]any)["mode"] != "no-tx" || m["drift"] != stub.diff.Drift || len(files) != 2 ||
+		m["observed"].(map[string]any)["applied_count"] != float64(2) {
+		t.Fatalf("json = %v", m)
+	}
+	hz := stmts[0].(map[string]any)["hazards"].([]any)[0].(map[string]any)
+	if hz["code"] != "H003" || hz["recipe"] != "-- expand then contract:\n-- drop t.a later" {
+		t.Fatalf("hazard = %v", hz)
+	}
+	if _, err := os.Stat(files[0].(string)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiffNoChanges(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{diff: &godwitv1.DiffResponse{Target: "app", Observed: &godwitv1.PlanObservation{AppliedCount: 2}}}
+	url := startStub(t, stub)
+	dir, schema := t.TempDir(), schemaFile(t)
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--name", "noop")
+	if code != 0 || out != "no changes: app already matches "+schema+"\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %s", code, out, errOut)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("no-op diff wrote %d file(s)", len(entries))
+	}
+
+	code, out, _ = runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--name", "noop", "--json")
+	if m := decodeJSON(t, out); code != 0 || m["changed"] != false || len(m["files"].([]any)) != 0 || len(m["statements"].([]any)) != 0 {
+		t.Fatalf("code = %d, json = %v", code, m)
+	}
+}
+
+func TestDiffErrors(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	dir, schema := t.TempDir(), schemaFile(t)
+	base := []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no target", []string{"diff", "--server", url, "--schema", schema}, "--target"},
+		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "--schema is required"},
+		{"no name", base, "--name is required"},
+		{"bad name", append(base, "--name", "Drop-A"), "snake_case"},
+		{"missing schema file", []string{"diff", "--server", url, "--target", "app", "--schema", filepath.Join(dir, "nope.sql"), "--name", "x"}, "no such file"},
+		{"bad dir", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--name", "x", "--dir", filepath.Join(dir, "missing")}, "no such file"},
+	} {
+		if code, _, errOut := runCLI(tc.args...); code != 1 || !strings.Contains(errOut, tc.want) {
+			t.Fatalf("%s: code = %d, stderr = %q", tc.name, code, errOut)
+		}
+	}
+
+	stub.err = connect.NewError(connect.CodeInvalidArgument, errors.New("desired schema failed to apply: type nosuchtype does not exist"))
+	if code, _, errOut := runCLI(append(base, "--name", "x")...); code != 1 || !strings.Contains(errOut, "type nosuchtype does not exist") {
+		t.Fatalf("service error: code = %d, stderr = %q", code, errOut)
+	}
+}

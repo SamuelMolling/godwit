@@ -130,6 +130,45 @@ godwit target status app --dir db/migrations
 godwit audit --target app
 ```
 
+## 3b. Write the next migration from a schema
+
+When you would rather describe the database you want than the step to get there, keep a `schema.sql` with the whole DDL and let the service write the file:
+
+```bash
+godwit diff --target app --schema db/schema.sql --name orders_status --dir db/migrations
+```
+
+```
+app -> db/schema.sql: 1 statement(s)
+  [0] tx    ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL
+
+-- up
+ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL;
+-- down
+ALTER TABLE "public"."orders" DROP COLUMN "status";
+wrote db/migrations/20260902103000_orders_status.up.sql
+wrote db/migrations/20260902103000_orders_status.down.sql
+```
+
+The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift` and `files`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
+
+`--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state:
+
+```bash
+# Prisma: the whole datamodel as SQL, from nothing
+npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > db/schema.sql
+
+# GORM: dry-run AutoMigrate against an empty database and capture the DDL
+go run ./cmd/schema-dump > db/schema.sql   # db.Session(&gorm.Session{DryRun: true}).AutoMigrate(&Order{}) with a logger that records the SQL
+
+# Django: the SQL of every migration of every app, in order
+python manage.py showmigrations --plan | awk '{print $2}' | while IFS=. read app name; do python manage.py sqlmigrate "$app" "$name"; done > db/schema.sql
+
+godwit diff --target app --schema db/schema.sql --name sync_orm
+```
+
+The ORM keeps owning the model; godwit keeps owning what runs, when, under which lock and with which hazards acknowledged. The file must describe the whole database: anything the target has that the file does not is a `DROP` in the generated `up`, so a Django dump keeps its `django_*` tables and a Prisma project that also has `_prisma_migrations` on the target declares it too.
+
 ## 4. Stop repeating flags
 
 A `godwit.yaml` at the repo root (found from the working directory upward, stopping at `.git`):

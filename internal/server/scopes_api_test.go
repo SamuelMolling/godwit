@@ -67,6 +67,7 @@ func TestTokenScopesEndToEnd(t *testing.T) {
 		"read lists audit":  call(bot.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{}))),
 		"read lists plans":  call(bot.ListPlans(ctx, connect.NewRequest(&godwitv1.ListPlansRequest{Target: "app"}))),
 		"read gets plan":    call(bot.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: "missing"}))),
+		"read diffs":        call(bot.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{Target: "app", Schema: "CREATE TABLE t (id int);"}))),
 		"pipeline confirms": call(deploy.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: created.Msg.RunId}))),
 	} {
 		if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeUnauthenticated {
