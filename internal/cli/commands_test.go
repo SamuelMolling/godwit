@@ -38,7 +38,7 @@ func TestPlanCommand(t *testing.T) {
 	}
 	for _, want := range []string{
 		"20260901120000_users (up): 2 statement(s)", "hazard H001", "(down): 1 statement(s)",
-		"        hazard H001: CREATE INDEX without CONCURRENTLY blocks writes on users\n          CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n",
+		"        hazard H001: CREATE INDEX without CONCURRENTLY blocks writes on users\n          -- or let godwit run it: -- godwit: add-index users (id) name=idx_users\n          CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n",
 		"        hazard H002: DROP TABLE is destructive\n          -- expand then contract: ship the application version that no longer uses users",
 	} {
 		if !strings.Contains(out, want) {
@@ -77,7 +77,7 @@ func TestPlanMarkdown(t *testing.T) {
 		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users ( id int, " + strings.Repeat("a", 90) + "…` |  |",
 		"| `20260901120000_users` | up | 1 | tx | `CREATE INDEX idx_users ON users (id) WHERE id > 0 OR id \\| 1 = 1` | H001: CREATE INDEX without CONCURRENTLY blocks writes on users |",
 		"| `20260901120000_users` | down | 0 | tx | `DROP TABLE users` | H002: DROP TABLE is destructive |",
-		"<details><summary>recipe for H001 in `20260901120000_users` (up) #1</summary>\n\n```sql\nCREATE INDEX CONCURRENTLY idx_users ON users USING btree (id) WHERE id > 0 OR (id | 1) = 1;\n```\n\n</details>\n\n",
+		"<details><summary>recipe for H001 in `20260901120000_users` (up) #1</summary>\n\n```sql\n-- or let godwit run it: -- godwit: add-index users (id) name=idx_users where='id > 0 OR (id | 1) = 1'\nCREATE INDEX CONCURRENTLY idx_users ON users USING btree (id) WHERE id > 0 OR (id | 1) = 1;\n```\n\n</details>\n\n",
 		"<details><summary>recipe for H002 in `20260901120000_users` (down) #0</summary>\n\n```sql\n-- expand then contract: ship the application version that no longer uses users, then run this DROP TABLE as a contract migration (rollout: expand-contract)\n```\n\n</details>\n\n⚠️ 2 hazard(s); acknowledge them with `--ack`",
 	} {
 		if !strings.Contains(out, want) {
@@ -141,7 +141,7 @@ func TestPlanJSON(t *testing.T) {
 	}
 	up := plans[0].Statements
 	if len(up) != 2 || up[0].Mode != "tx" || len(up[0].Hazards) != 0 || up[1].Hazards[0].Code != "H001" ||
-		up[1].Hazards[0].Recipe != "CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);" {
+		up[1].Hazards[0].Recipe != "-- or let godwit run it: -- godwit: add-index users (id) name=idx_users\nCREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);" {
 		t.Fatalf("up = %+v", up)
 	}
 	if !strings.Contains(out, `"hazards":[]`) {

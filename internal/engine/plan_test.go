@@ -288,16 +288,17 @@ func TestBuildPlanErrors(t *testing.T) {
 	}
 }
 
-func TestBuildPlanRecipes(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]string{
-		"CREATE INDEX idx ON users (email);":                              "CREATE INDEX CONCURRENTLY idx ON users USING btree (email);",
+func recipeCases() map[string]string {
+	return map[string]string{
+		"CREATE INDEX idx ON users (email);":                              "-- or let godwit run it: -- godwit: add-index users (email) name=idx\nCREATE INDEX CONCURRENTLY idx ON users USING btree (email);",
+		"CREATE UNIQUE INDEX ON users USING hash (email) WHERE id > 0;":   "-- or let godwit run it: -- godwit: add-index users (email) using=hash where='id > 0' unique\nCREATE UNIQUE INDEX CONCURRENTLY users_email_idx ON users USING hash (email) WHERE id > 0;",
 		"CREATE INDEX ON app.users (lower(email), id DESC) WHERE id > 0;": "CREATE INDEX CONCURRENTLY users_expr_id_idx ON app.users USING btree (lower(email), id DESC) WHERE id > 0;",
 		"DROP INDEX IF EXISTS a, app.b CASCADE;":                          "DROP INDEX CONCURRENTLY IF EXISTS a CASCADE;\nDROP INDEX CONCURRENTLY IF EXISTS app.b CASCADE;",
+		"DROP INDEX app.idx;":                                             "-- or let godwit run it: -- godwit: drop-index app.idx\nDROP INDEX CONCURRENTLY app.idx;",
 		"DROP TABLE users, app.orders;":                                   "-- expand then contract: ship the application version that no longer uses users, app.orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)",
-		"ALTER TABLE users DROP COLUMN email;":                            "-- expand then contract: ship the application version that no longer reads or writes users.email, then run this DROP COLUMN as a contract migration (rollout: expand-contract)",
-		"ALTER TABLE users ALTER COLUMN age TYPE bigint;": `-- 1. expand: add the new column and keep both in sync
+		"ALTER TABLE users DROP COLUMN email;":                            "-- or let godwit run it: -- godwit: drop-column users.email\n-- expand then contract: ship the application version that no longer reads or writes users.email, then run this DROP COLUMN as a contract migration (rollout: expand-contract)",
+		"ALTER TABLE users ALTER COLUMN age TYPE bigint;": `-- or let godwit run it: -- godwit: change-type users.age bigint
+-- 1. expand: add the new column and keep both in sync
 ALTER TABLE users ADD COLUMN age_new bigint;
 CREATE FUNCTION users_age_sync() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN SELECT age::bigint INTO new.age_new FROM (SELECT new.*) AS users; RETURN new; END $$;
 CREATE TRIGGER users_age_sync BEFORE INSERT OR UPDATE ON users FOR EACH ROW EXECUTE FUNCTION users_age_sync();
@@ -310,7 +311,8 @@ ALTER TABLE users RENAME COLUMN age TO age_old;
 ALTER TABLE users RENAME COLUMN age_new TO age;
 -- 4. contract migration (rollout: expand-contract)
 ALTER TABLE users DROP age_old;`,
-		"ALTER TABLE app.users ALTER COLUMN age TYPE numeric(10,2) USING (age * 100)::numeric;": `-- 1. expand: add the new column and keep both in sync
+		"ALTER TABLE app.users ALTER COLUMN age TYPE numeric(10,2) USING (age * 100)::numeric;": `-- or let godwit run it: -- godwit: change-type app.users.age numeric(10, 2) using='(age * 100)::numeric'
+-- 1. expand: add the new column and keep both in sync
 ALTER TABLE app.users ADD COLUMN age_new numeric(10, 2);
 CREATE FUNCTION app.users_age_sync() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN SELECT (age * 100)::numeric INTO new.age_new FROM (SELECT new.*) AS users; RETURN new; END $$;
 CREATE TRIGGER users_age_sync BEFORE INSERT OR UPDATE ON app.users FOR EACH ROW EXECUTE FUNCTION app.users_age_sync();
@@ -323,6 +325,17 @@ ALTER TABLE app.users RENAME COLUMN age TO age_old;
 ALTER TABLE app.users RENAME COLUMN age_new TO age;
 -- 4. contract migration (rollout: expand-contract)
 ALTER TABLE app.users DROP age_old;`,
+		"ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (a, b) REFERENCES users (c, d) ON DELETE CASCADE;":      "ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (a, b) REFERENCES users (c, d) ON DELETE CASCADE NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT fk;",
+		"ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES app.users (id) ON DELETE CASCADE;": "-- or let godwit run it: -- godwit: add-fk orders.user_id -> app.users.id name=fk on-delete=cascade\nALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES app.users (id) ON DELETE CASCADE NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT fk;",
+		"ALTER TABLE users ADD COLUMN joined timestamp with time zone NOT NULL;": `-- or let godwit run it: -- godwit: add-column users.joined 'timestamp with time zone' not-null
+-- 1. add the column nullable, backfill it, then constrain it without a full scan
+ALTER TABLE users ADD COLUMN joined timestamp with time zone;
+ALTER TABLE users ADD CONSTRAINT joined_not_null CHECK (joined IS NOT NULL) NOT VALID;
+ALTER TABLE users VALIDATE CONSTRAINT joined_not_null;
+ALTER TABLE users ALTER COLUMN joined SET NOT NULL;
+ALTER TABLE users DROP CONSTRAINT joined_not_null;
+-- 2. or, when a constant default fits every existing row, one metadata-only step (PostgreSQL 11+; replace $1 with the constant)
+ALTER TABLE users ADD COLUMN joined timestamp with time zone NOT NULL DEFAULT $1;`,
 		"ALTER TABLE users ADD COLUMN age int NOT NULL CHECK (age > 0);": `-- 1. add the column nullable, backfill it, then constrain it without a full scan
 ALTER TABLE users ADD COLUMN age int CHECK (age > 0);
 ALTER TABLE users ADD CONSTRAINT age_not_null CHECK (age IS NOT NULL) NOT VALID;
@@ -331,20 +344,26 @@ ALTER TABLE users ALTER COLUMN age SET NOT NULL;
 ALTER TABLE users DROP CONSTRAINT age_not_null;
 -- 2. or, when a constant default fits every existing row, one metadata-only step (PostgreSQL 11+; replace $1 with the constant)
 ALTER TABLE users ADD COLUMN age int NOT NULL CHECK (age > 0) DEFAULT $1;`,
-		"ALTER TABLE orders ADD FOREIGN KEY (user_id) REFERENCES users (id);": "ALTER TABLE orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT orders_user_id_fkey;",
-		"ALTER TABLE users ADD CHECK (age > 0);":                              "ALTER TABLE users ADD CONSTRAINT users_check CHECK (age > 0) NOT VALID;\nALTER TABLE users VALIDATE CONSTRAINT users_check;",
-		"ALTER TABLE users ADD CONSTRAINT c CHECK (age > 0);":                 "ALTER TABLE users ADD CONSTRAINT c CHECK (age > 0) NOT VALID;\nALTER TABLE users VALIDATE CONSTRAINT c;",
-		"ALTER TABLE users ALTER COLUMN \"user\" SET NOT NULL;": `ALTER TABLE users ADD CONSTRAINT user_not_null CHECK ("user" IS NOT NULL) NOT VALID;
+		"ALTER TABLE orders ADD FOREIGN KEY (user_id) REFERENCES users (id);": "-- or let godwit run it: -- godwit: add-fk orders.user_id -> users.id\nALTER TABLE orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT orders_user_id_fkey;",
+		"ALTER TABLE users ADD CHECK (age > 0);":                              "-- or let godwit run it: -- godwit: add-check users users_check 'age > 0'\nALTER TABLE users ADD CONSTRAINT users_check CHECK (age > 0) NOT VALID;\nALTER TABLE users VALIDATE CONSTRAINT users_check;",
+		"ALTER TABLE users ADD CONSTRAINT c CHECK (age > 0);":                 "-- or let godwit run it: -- godwit: add-check users c 'age > 0'\nALTER TABLE users ADD CONSTRAINT c CHECK (age > 0) NOT VALID;\nALTER TABLE users VALIDATE CONSTRAINT c;",
+		"ALTER TABLE users ALTER COLUMN \"user\" SET NOT NULL;": `-- or let godwit run it: -- godwit: add-not-null users."user"
+ALTER TABLE users ADD CONSTRAINT user_not_null CHECK ("user" IS NOT NULL) NOT VALID;
 ALTER TABLE users VALIDATE CONSTRAINT user_not_null;
 ALTER TABLE users ALTER COLUMN "user" SET NOT NULL;
 ALTER TABLE users DROP CONSTRAINT user_not_null;`,
-		"ALTER TABLE users ADD PRIMARY KEY (id);":                          "CREATE UNIQUE INDEX CONCURRENTLY users_pkey_idx ON users USING btree (id);\nALTER TABLE users ADD CONSTRAINT users_pkey PRIMARY KEY USING INDEX users_pkey_idx;",
-		"ALTER TABLE users ADD UNIQUE (email, org) DEFERRABLE;":            "CREATE UNIQUE INDEX CONCURRENTLY users_email_org_key_idx ON users USING btree (email, org);\nALTER TABLE users ADD CONSTRAINT users_email_org_key UNIQUE USING INDEX users_email_org_key_idx DEFERRABLE;",
-		"ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);": "CREATE UNIQUE INDEX CONCURRENTLY users_email_key_idx ON users USING btree (email);\nALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE USING INDEX users_email_key_idx;",
+		"ALTER TABLE users ADD PRIMARY KEY (id);":                          "-- or let godwit run the index build: -- godwit: add-index users (id) name=users_pkey_idx unique\nCREATE UNIQUE INDEX CONCURRENTLY users_pkey_idx ON users USING btree (id);\nALTER TABLE users ADD CONSTRAINT users_pkey PRIMARY KEY USING INDEX users_pkey_idx;",
+		"ALTER TABLE users ADD UNIQUE (email, org) DEFERRABLE;":            "-- or let godwit run the index build: -- godwit: add-index users (email, org) name=users_email_org_key_idx unique\nCREATE UNIQUE INDEX CONCURRENTLY users_email_org_key_idx ON users USING btree (email, org);\nALTER TABLE users ADD CONSTRAINT users_email_org_key UNIQUE USING INDEX users_email_org_key_idx DEFERRABLE;",
+		"ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);": "-- or let godwit run the index build: -- godwit: add-index users (email) name=users_email_key_idx unique\nCREATE UNIQUE INDEX CONCURRENTLY users_email_key_idx ON users USING btree (email);\nALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE USING INDEX users_email_key_idx;",
 		"ALTER TABLE users RENAME TO accounts;":                            "-- expand then contract: create accounts (CREATE TABLE ... (LIKE users INCLUDING ALL)), dual-write and copy the rows, ship the application version that uses accounts, then DROP TABLE users in a contract migration (rollout: expand-contract)",
 		"ALTER TABLE users RENAME COLUMN email TO mail;":                   "-- expand then contract: ALTER TABLE users ADD COLUMN mail with the type of email, backfill and keep both in sync (see the H004 recipe), ship the application version that uses mail, then DROP COLUMN email in a contract migration (rollout: expand-contract)",
 	}
-	for sql, want := range cases {
+}
+
+func TestBuildPlanRecipes(t *testing.T) {
+	t.Parallel()
+
+	for sql, want := range recipeCases() {
 		t.Run(sql, func(t *testing.T) {
 			t.Parallel()
 			st := planUp(t, sql).Statements[0]
@@ -361,7 +380,7 @@ func TestRecipeDeparseFailure(t *testing.T) {
 	defer func() { deparseSQL = saved }()
 
 	st := planUp(t, "ALTER TABLE users ALTER COLUMN email SET NOT NULL;").Statements[0]
-	if !strings.HasPrefix(st.Hazards[0].Recipe, "/* boom */;\n") {
+	if !strings.Contains(st.Hazards[0].Recipe, "/* boom */;\n") {
 		t.Fatalf("recipe = %q", st.Hazards[0].Recipe)
 	}
 }

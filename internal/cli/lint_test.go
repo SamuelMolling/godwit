@@ -16,7 +16,7 @@ func TestLintText(t *testing.T) {
 	if code != 1 || !strings.Contains(errOut, "1 blocking finding(s)") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if !strings.Contains(out, "20260901120000_users.up.sql: error H001 CREATE INDEX without CONCURRENTLY blocks writes on users\n    CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n") ||
+	if !strings.Contains(out, "20260901120000_users.up.sql: error H001 CREATE INDEX without CONCURRENTLY blocks writes on users\n    -- or let godwit run it: -- godwit: add-index users (id) name=idx_users\n    CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n") ||
 		!strings.Contains(out, "1 finding(s), 1 blocking") {
 		t.Fatalf("out = %s", out)
 	}
@@ -46,7 +46,7 @@ func TestLintMarkdown(t *testing.T) {
 	code, out, _ := runCLI("lint", "--dir", goodMigs(t), "--format", "markdown")
 	for _, want := range []string{
 		"## godwit lint", "| Migration | Level | Code | Message |", "| `20260901120000_users.up.sql` | error | H001 |",
-		"|\n\n<details><summary>recipe for H001 in `20260901120000_users.up.sql`</summary>\n\n```sql\nCREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n```\n\n</details>\n\n❌ 1 blocking finding(s)",
+		"|\n\n<details><summary>recipe for H001 in `20260901120000_users.up.sql`</summary>\n\n```sql\n-- or let godwit run it: -- godwit: add-index users (id) name=idx_users\nCREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n```\n\n</details>\n\n❌ 1 blocking finding(s)",
 	} {
 		if code != 1 || !strings.Contains(out, want) {
 			t.Fatalf("code = %d, output missing %q:\n%s", code, want, out)
@@ -68,7 +68,7 @@ func TestLintJSON(t *testing.T) {
 		t.Fatalf("%v: %s", err, out)
 	}
 	if code != 1 || rep.Blocking != 1 || len(rep.Findings) != 1 || rep.Findings[0].Code != "H001" ||
-		rep.Findings[0].Recipe != "CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);" {
+		rep.Findings[0].Recipe != "-- or let godwit run it: -- godwit: add-index users (id) name=idx_users\nCREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);" {
 		t.Fatalf("code = %d, report = %+v", code, rep)
 	}
 
@@ -88,6 +88,19 @@ func TestLintErrors(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	if code, out, _ := runCLI("lint", "--dir", t.TempDir()+"/nope"); code != 1 || !strings.Contains(out, "E001") {
+		t.Fatalf("code = %d, out = %s", code, out)
+	}
+}
+
+func TestLintDirective(t *testing.T) {
+	t.Parallel()
+
+	dir := writeMigs(t, map[string]string{
+		"20260901120000_a.up.sql":   "-- godwit: change-type users.age biginteger batch=x\nSELECT 1;",
+		"20260901120000_a.down.sql": "SELECT 1;",
+	})
+	code, out, _ := runCLI("lint", "--dir", dir)
+	if code != 1 || !strings.Contains(out, "20260901120000_a.up.sql: error E004 20260901120000_a.up.sql:1: godwit directive: ") {
 		t.Fatalf("code = %d, out = %s", code, out)
 	}
 }

@@ -31,6 +31,85 @@ func recipe(lines ...string) string {
 	return strings.Join(lines, "\n")
 }
 
+const (
+	directiveLead = "-- or let godwit run it:"
+	indexLead     = "-- or let godwit run the index build:"
+)
+
+func withDirective(lead, hint string, lines ...string) string {
+	if hint == "" {
+		return recipe(lines...)
+	}
+
+	return recipe(append([]string{lead + " -- " + DirectiveMarker + " " + hint}, lines...)...)
+}
+
+func relText(rel *pgquery.RangeVar) string {
+	if rel.Schemaname == "" {
+		return ident(rel.Relname)
+	}
+
+	return ident(rel.Schemaname) + "." + ident(rel.Relname)
+}
+
+func colText(rel *pgquery.RangeVar, column string) string {
+	return relText(rel) + "." + ident(column)
+}
+
+func typeText(tn *pgquery.TypeName) string {
+	cast := &pgquery.Node{Node: &pgquery.Node_TypeCast{TypeCast: &pgquery.TypeCast{Arg: pgquery.MakeAConstStrNode("", 0), TypeName: tn}}}
+
+	return strings.TrimPrefix(exprText(cast), "''::")
+}
+
+func typeArg(tn *pgquery.TypeName) string {
+	t := typeText(tn)
+	depth := 0
+	for i := range len(t) {
+		switch t[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ' ':
+			if depth == 0 {
+				return quoteValue(t)
+			}
+		}
+	}
+
+	return t
+}
+
+func quoteValue(v string) string {
+	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+}
+
+func indexColsText(params []*pgquery.Node) string {
+	parts := make([]string, 0, len(params))
+	for _, p := range params {
+		e := p.GetIndexElem()
+		if !plainIndexElem(e) {
+			return ""
+		}
+		if e.Name == "" {
+			parts = append(parts, exprText(e.Expr))
+
+			continue
+		}
+		parts = append(parts, ident(e.Name))
+	}
+
+	return "(" + strings.Join(parts, ", ") + ")"
+}
+
+func plainIndexElem(e *pgquery.IndexElem) bool {
+	asc := e.Ordering == pgquery.SortByDir_SORT_BY_DIR_UNDEFINED || e.Ordering == pgquery.SortByDir_SORTBY_DEFAULT
+	nulls := e.NullsOrdering == pgquery.SortByNulls_SORT_BY_NULLS_UNDEFINED || e.NullsOrdering == pgquery.SortByNulls_SORTBY_NULLS_DEFAULT
+
+	return asc && nulls && len(e.Collation) == 0 && len(e.Opclass) == 0
+}
+
 func ident(name string) string {
 	sel := &pgquery.SelectStmt{TargetList: []*pgquery.Node{pgquery.MakeResTargetNodeWithVal(columnRef(name), 0)}}
 
@@ -124,7 +203,29 @@ func recipeIndex(idx *pgquery.IndexStmt) string {
 		c.Idxname = idx.Relation.Relname + "_" + indexColumns(idx.IndexParams) + "_idx"
 	}
 
-	return recipe(statements(indexNode(c))...)
+	return withDirective(directiveLead, addIndexHint(idx), statements(indexNode(c))...)
+}
+
+func addIndexHint(idx *pgquery.IndexStmt) string {
+	cols := indexColsText(idx.IndexParams)
+	if cols == "" {
+		return ""
+	}
+	hint := "add-index " + relText(idx.Relation) + " " + cols
+	if idx.Idxname != "" {
+		hint += " name=" + ident(idx.Idxname)
+	}
+	if idx.AccessMethod != "" && idx.AccessMethod != "btree" {
+		hint += " using=" + ident(idx.AccessMethod)
+	}
+	if idx.WhereClause != nil {
+		hint += " where=" + quoteValue(exprText(idx.WhereClause))
+	}
+	if idx.Unique {
+		hint += " unique"
+	}
+
+	return hint
 }
 
 func recipeDropIndex(d *pgquery.DropStmt) string {
@@ -135,7 +236,19 @@ func recipeDropIndex(d *pgquery.DropStmt) string {
 		}))
 	}
 
-	return recipe(statements(nodes...)...)
+	return withDirective(directiveLead, dropIndexHint(d), statements(nodes...)...)
+}
+
+func dropIndexHint(d *pgquery.DropStmt) string {
+	if len(d.Objects) != 1 {
+		return ""
+	}
+	schema, name := qualifiedName(d.Objects)
+	if schema == "" {
+		return "drop-index " + ident(name)
+	}
+
+	return "drop-index " + ident(schema) + "." + ident(name)
 }
 
 func recipeAlterType(rel *pgquery.RangeVar, cmd *pgquery.AlterTableCmd) string {
@@ -182,8 +295,12 @@ func recipeAlterType(rel *pgquery.RangeVar, cmd *pgquery.AlterTableCmd) string {
 	)...)
 	lines = append(lines, "-- 4. contract migration (rollout: expand-contract)")
 	lines = append(lines, statements(namedCmd(rel, pgquery.AlterTableType_AT_DropColumn, oldCol))...)
+	hint := "change-type " + colText(rel, col) + " " + typeArg(def.TypeName)
+	if def.RawDefault != nil {
+		hint += " using=" + quoteValue(exprText(def.RawDefault))
+	}
 
-	return recipe(lines...)
+	return withDirective(directiveLead, hint, lines...)
 }
 
 const (
@@ -214,11 +331,21 @@ func recipeAddColumn(rel *pgquery.RangeVar, col *pgquery.ColumnDef) string {
 	lines = append(lines, "-- 2. or, when a constant default fits every existing row, one metadata-only step (PostgreSQL 11+; replace $1 with the constant)")
 	lines = append(lines, statements(addColumn(rel, defaulted))...)
 
-	return recipe(lines...)
+	return withDirective(directiveLead, addColumnHint(rel, col), lines...)
+}
+
+func addColumnHint(rel *pgquery.RangeVar, col *pgquery.ColumnDef) string {
+	for _, cn := range col.Constraints {
+		if cn.GetConstraint().Contype != pgquery.ConstrType_CONSTR_NOTNULL {
+			return ""
+		}
+	}
+
+	return "add-column " + colText(rel, col.Colname) + " " + typeArg(col.TypeName) + " not-null"
 }
 
 func recipeNotNull(rel *pgquery.RangeVar, column string) string {
-	return recipe(notNullStatements(rel, column)...)
+	return withDirective(directiveLead, "add-not-null "+colText(rel, column), notNullStatements(rel, column)...)
 }
 
 func notNullStatements(rel *pgquery.RangeVar, column string) []string {
@@ -244,7 +371,29 @@ func recipeConstraint(rel *pgquery.RangeVar, cn *pgquery.Constraint) string {
 		c.Conname = constraintName(rel, cn)
 	}
 
-	return recipe(statements(addConstraint(rel, c), namedCmd(rel, pgquery.AlterTableType_AT_ValidateConstraint, c.Conname))...)
+	return withDirective(directiveLead, constraintHint(rel, cn, c.Conname),
+		statements(addConstraint(rel, c), namedCmd(rel, pgquery.AlterTableType_AT_ValidateConstraint, c.Conname))...)
+}
+
+var fkDelActions = map[string]string{"r": "restrict", "c": "cascade", "n": "set-null", "d": "set-default"}
+
+func constraintHint(rel *pgquery.RangeVar, cn *pgquery.Constraint, name string) string {
+	if cn.Contype != pgquery.ConstrType_CONSTR_FOREIGN {
+		return "add-check " + relText(rel) + " " + ident(name) + " " + quoteValue(exprText(cn.RawExpr))
+	}
+	if len(cn.FkAttrs) != 1 || len(cn.PkAttrs) != 1 {
+		return ""
+	}
+	hint := "add-fk " + colText(rel, cn.FkAttrs[0].GetString_().GetSval()) +
+		" -> " + colText(cn.Pktable, cn.PkAttrs[0].GetString_().GetSval())
+	if cn.Conname != "" {
+		hint += " name=" + ident(cn.Conname)
+	}
+	if act, ok := fkDelActions[cn.FkDelAction]; ok {
+		hint += " on-delete=" + act
+	}
+
+	return hint
 }
 
 func constraintName(rel *pgquery.RangeVar, cn *pgquery.Constraint) string {
@@ -272,8 +421,9 @@ func recipeUsingIndex(rel *pgquery.RangeVar, cn *pgquery.Constraint) string {
 	idx := &pgquery.IndexStmt{Idxname: name + "_idx", Relation: rel, AccessMethod: "btree", IndexParams: params, Unique: true, Concurrent: true}
 	c := proto.Clone(cn).(*pgquery.Constraint)
 	c.Conname, c.Indexname, c.Keys = name, idx.Idxname, nil
+	hint := "add-index " + relText(rel) + " " + indexColsText(params) + " name=" + ident(idx.Idxname) + " unique"
 
-	return recipe(statements(indexNode(idx), addConstraint(rel, c))...)
+	return withDirective(indexLead, hint, statements(indexNode(idx), addConstraint(rel, c))...)
 }
 
 func recipeDropTable(d *pgquery.DropStmt) string {
@@ -291,8 +441,9 @@ func recipeDropTable(d *pgquery.DropStmt) string {
 }
 
 func recipeDropColumn(rel *pgquery.RangeVar, column string) string {
-	return "-- expand then contract: ship the application version that no longer reads or writes " + rel.Relname + "." + column +
-		", then run this DROP COLUMN as a contract migration (rollout: expand-contract)"
+	return withDirective(directiveLead, "drop-column "+colText(rel, column),
+		"-- expand then contract: ship the application version that no longer reads or writes "+rel.Relname+"."+column+
+			", then run this DROP COLUMN as a contract migration (rollout: expand-contract)")
 }
 
 func recipeRenameTable(r *pgquery.RenameStmt) string {

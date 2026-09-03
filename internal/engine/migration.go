@@ -18,12 +18,14 @@ const RepeatablePrefix = "R__"
 
 // Migration is one up/down pair loaded from disk: versioned, or repeatable and keyed by name.
 type Migration struct {
-	Version    int64
-	Name       string
-	Repeatable bool
-	UpSQL      string
-	DownSQL    string
-	Checksum   string
+	Version         int64
+	Name            string
+	Repeatable      bool
+	UpSQL           string
+	DownSQL         string
+	Checksum        string
+	Directives      []Directive
+	RevertDirective bool
 }
 
 // ID identifies a migration in plans, keys and reports.
@@ -151,6 +153,48 @@ func (m *Migration) set(side, body string) {
 	m.DownSQL = body
 }
 
+func (m *Migration) loadDirectives() error {
+	up, _, derr := scanDirectives(m.UpSQL)
+	if derr != nil {
+		derr.File = m.UpFile()
+
+		return derr
+	}
+	down, sawSQL, derr := scanDirectives(m.DownSQL)
+	if derr != nil {
+		derr.File = m.DownFile()
+
+		return derr
+	}
+	if m.Repeatable && len(up)+len(down) > 0 {
+		return placement(m, up, down, "directives are not supported in a repeatable migration")
+	}
+	for _, d := range up {
+		if d.Op == DirectiveRevert {
+			return &DirectiveError{File: m.UpFile(), Line: d.Line, Msg: "the " + DirectiveRevert + " sentinel belongs in the .down.sql"}
+		}
+	}
+	switch {
+	case len(down) == 0:
+	case len(down) == 1 && down[0].Op == DirectiveRevert && !sawSQL:
+		m.RevertDirective = true
+	default:
+		return placement(m, nil, down, "a .down.sql carries hand-written SQL or the lone `-- "+DirectiveMarker+" "+DirectiveRevert+"` sentinel, not both")
+	}
+	m.Directives = up
+
+	return nil
+}
+
+func placement(m *Migration, up, down []Directive, msg string) error {
+	file, first := m.UpFile(), up
+	if len(first) == 0 {
+		file, first = m.DownFile(), down
+	}
+
+	return &DirectiveError{File: file, Line: first[0].Line, Msg: msg}
+}
+
 func (l loader) finish() ([]Migration, error) {
 	out := make([]Migration, 0, len(l.byVersion)+len(l.byName))
 	for _, mig := range l.byVersion {
@@ -168,6 +212,9 @@ func (l loader) finish() ([]Migration, error) {
 		}
 		sum := sha256.Sum256([]byte(out[i].UpSQL))
 		out[i].Checksum = hex.EncodeToString(sum[:])
+		if err := out[i].loadDirectives(); err != nil {
+			return nil, err
+		}
 	}
 	slices.SortFunc(out, CompareMigrations)
 

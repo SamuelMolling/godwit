@@ -97,8 +97,8 @@ func TestCheckLockHazards(t *testing.T) {
 		t.Fatalf("codes = %q, want %q", got, want)
 	}
 	if !strings.Contains(rep.Findings[0].Message, "NOT VALID") ||
-		rep.Findings[0].Recipe != "ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT fk;" ||
-		rep.Findings[2].Recipe != "DROP INDEX CONCURRENTLY i;" {
+		rep.Findings[0].Recipe != "-- or let godwit run it: -- godwit: add-fk orders.user_id -> users.id name=fk\nALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users (id) NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT fk;" ||
+		rep.Findings[2].Recipe != "-- or let godwit run it: -- godwit: drop-index i\nDROP INDEX CONCURRENTLY i;" {
 		t.Fatalf("report = %+v", rep)
 	}
 
@@ -259,6 +259,63 @@ func TestCheckBaseInjectedGit(t *testing.T) {
 	})
 	rep := check(t, dir, nil, Options{Base: "ref", Git: noise})
 	if len(rep.Findings) != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+}
+
+func TestCheckDirectiveSyntax(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeMigs(t, dir, map[string]string{
+		"20260901120000_a.up.sql":   "-- godwit: change-type users.age bigint batch=none\nSELECT 1;",
+		"20260901120000_a.down.sql": "SELECT 1;",
+	})
+	rep := check(t, dir, nil, Options{})
+	if got, want := codes(rep), "20260901120000_a.up.sql:error:E004"; got != want {
+		t.Fatalf("codes = %q, want %q", got, want)
+	}
+	if rep.Blocking != 1 || !strings.Contains(rep.Findings[0].Message, `"none" is not a positive integer`) {
+		t.Fatalf("report = %+v", rep)
+	}
+}
+
+func TestCheckDirectivePlacement(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]map[string]string{
+		"R__v.up.sql": {
+			"R__v.up.sql":   "-- godwit: add-not-null users.email\nCREATE OR REPLACE VIEW v AS SELECT 1;",
+			"R__v.down.sql": "DROP VIEW v;",
+		},
+		"20260901120000_a.down.sql": {
+			"20260901120000_a.up.sql":   "SELECT 1;",
+			"20260901120000_a.down.sql": "-- godwit: revert\nSELECT 1;",
+		},
+	}
+	for file, files := range cases {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeMigs(t, dir, files)
+			rep := check(t, dir, nil, Options{})
+			if got, want := codes(rep), file+":error:E004"; got != want {
+				t.Fatalf("codes = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestCheckRevertSentinelSkipsDownChecks(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeMigs(t, dir, map[string]string{
+		"20260901120000_a.up.sql":   "-- godwit: change-type users.age bigint\nSELECT 1;",
+		"20260901120000_a.down.sql": "-- godwit: revert\n",
+	})
+	rep := check(t, dir, nil, Options{})
+	if rep.Blocking != 0 || len(rep.Findings) != 0 {
 		t.Fatalf("report = %+v", rep)
 	}
 }
