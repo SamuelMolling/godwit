@@ -78,13 +78,30 @@ godwit plan --dir db/migrations
 
 `tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([concepts: hazards](concepts.md#hazards)).
 
-Lint the directory the way a pull request gate does, and apply against a local database:
+Lint the directory the way a pull request gate does, and apply against a local database. Create it first if you do not have one — the walkthrough uses a database `app` owned by a role `app`:
+
+```bash
+psql -U postgres -c "CREATE ROLE app LOGIN PASSWORD 'app'" -c "CREATE DATABASE app OWNER app"
+```
 
 ```bash
 godwit lint --dir db/migrations                       # exit 1 on unacknowledged hazards, parse errors, empty files
 godwit apply --dsn postgres://app:app@localhost/app --dir db/migrations
 godwit status --dsn postgres://app:app@localhost/app --dir db/migrations
 godwit down --dsn postgres://app:app@localhost/app --dir db/migrations --version 20260901120500 --yes
+```
+
+```
+$ godwit lint --dir db/migrations
+0 finding(s), 0 blocking
+$ godwit apply --dsn postgres://app:app@localhost/app --dir db/migrations
+20260901120000_create_orders: applied (1 statement(s))
+20260901120500_orders_customer_idx: applied (1 statement(s))
+R__order_stats: applied (1 statement(s))
+$ godwit status --dsn postgres://app:app@localhost/app --dir db/migrations
+20260901120000_create_orders: applied 2026-09-03T16:56:34Z
+20260901120500_orders_customer_idx: applied 2026-09-03T16:56:34Z
+R__order_stats: unchanged since 2026-09-03T16:56:34Z
 ```
 
 `apply` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
@@ -94,10 +111,16 @@ godwit down --dsn postgres://app:app@localhost/app --dir db/migrations --version
 The service needs a PostgreSQL database of its own (the *store*) and two secrets.
 
 ```bash
-createdb godwit_store
+psql -U postgres -c "CREATE ROLE godwit LOGIN PASSWORD 'godwit' CREATEDB" \
+                 -c "CREATE DATABASE godwit_store OWNER godwit"
 export GODWIT_MASTER_KEY=$(openssl rand -hex 32)          # encrypts static target DSNs at rest
 export GODWIT_TOKENS='admin:admin:s3cret-admin,ci:pipeline:s3cret-ci,oncall:operator:s3cret-ops'
 godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store --listen :8474
+```
+
+```
+{"time":"...","level":"INFO","msg":"store migrated","replica":"host","build":"dev","applied":15}
+{"time":"...","level":"INFO","msg":"listening","replica":"host","build":"dev","addr":"[::]:8474","validation":true}
 ```
 
 `serve` migrates the store schema, starts the leased scheduler, the drift monitor and the scratch-database validator, then listens for gRPC and JSON on one port (plus `/metrics`, `/healthz`, `/readyz`). The store role needs `CREATEDB` because validation creates a throwaway `godwit_validate_<id>` database on the store server ([operations: store](operations.md#the-store)).
@@ -120,10 +143,12 @@ godwit migrate --target app --dir db/migrations
 ```
 
 ```
-run 0d3c6c6e-...: queued
-run 0d3c6c6e-...: running (attempt 1)
-run 0d3c6c6e-...: succeeded (attempt 1)
+no stored plan for this set: implicit plan
+run 907350dc-e705-4cc1-b880-65cc3848b4a5: queued
+run 907350dc-e705-4cc1-b880-65cc3848b4a5: succeeded (attempt 1) [statement 0 of 20260901120500_orders_customer_idx]
 ```
+
+The first line is the plan binding: this run had no stored plan to bind to, so it planned itself. [Section 3c](#3c-plan-on-the-pull-request-apply-from-it) is the other way round. The trailing bracket is how far the run got — it stays on the line while the run progresses, so a slow migration shows which statement it is on.
 
 `migrate` sends every file in the directory, waits for admission (hazard gate, out-of-order guard, scratch replay of the target's whole history plus the new files), then streams the run until it settles. Exit code 0 on `succeeded` or `awaiting_contract`, 1 on `failed`, `needs_attention` or any refusal. A run with an unacknowledged hazard is refused before anything is queued:
 
@@ -137,11 +162,92 @@ Hazards are reported for the direction being planned; a normal `migrate` plans t
 Look around:
 
 ```bash
+godwit targets                                   # every registered target, without connecting to any of them
 godwit runs --target app
 godwit run get <run-id>
-godwit target status app --dir db/migrations
+godwit run watch <run-id>                        # streams until it settles; exits 1 on failed / needs_attention
+godwit target status app --dir db/migrations     # the target compared against the files on disk
 godwit audit --target app
 ```
+
+```
+$ godwit targets
+NAME  PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN
+app   static    2        0            0          clean  none         5s    none       false         907350dc-… succeeded
+
+$ godwit target status app --dir db/migrations
+target app: provider static, lock timeout 5s, statement timeout none, search path none
+applied (3):
+  20260901120000_create_orders        2026-09-03T16:56:34Z
+  20260901120500_orders_customer_idx  2026-09-03T16:57:07Z
+  R__order_stats                      2026-09-03T16:56:34Z  unchanged
+last run: 907350dc-e705-4cc1-b880-65cc3848b4a5 migrate succeeded finished 2026-09-03T16:57:07Z
+ready plans: 0
+drift baseline: taken 2026-09-03T16:57:07Z by run 907350dc-e705-4cc1-b880-65cc3848b4a5
+```
+
+`targets` counts versioned migrations; `target status` also lists the repeatables, which is why one says 2 and the other 3.
+
+With `serve --ui`, the same answers are pages: `/ui/` is the run list and the needs-you queue, `/ui/targets/app` is that status page, `/ui/plans` the stored plans. Sign in with any token's secret as the basic-auth password — the username is ignored — or run `serve` with `--ui-user` / `--ui-password` for one shared identity. What a page offers follows the scope behind the password; anything beyond it is a `403`.
+
+## 3c. Plan on the pull request, apply from it
+
+Two commands instead of one, so what a reviewer approved is what runs. `plan` stores the admitted plan on the service against an observation of the live target; `migrate` binds to it:
+
+```bash
+godwit plan --target app --dir db/migrations      # on the pull request
+godwit migrate --target app --dir db/migrations   # after review; binds the stored plan
+```
+
+```
+$ godwit plan --target app --dir db/migrations
+plan 1f458a7b-99f6-4814-8c25-2a2650f2a13c on app (rollout direct, validated on a scratch database)
+key: fb7ec691f5bb5e833ef353d7f74db78c09e7ee9039e4ee64e7675a787aecbc35
+observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-03T16:58:05Z
+20260903165759_orders_status (up): 1 statement(s) [expand, pending]
+  [0] tx    ALTER TABLE "public"."orders" ADD COLUMN "status" text ... NOT NULL
+
+$ godwit migrate --target app --dir db/migrations
+plan 1f458a7b-99f6-4814-8c25-2a2650f2a13c: bound
+run a47be3a6-…: queued
+run a47be3a6-…: succeeded (attempt 1) [statement 0 of 20260903165759_orders_status]
+```
+
+If the target moves between the two, `migrate` refuses with the diff and exits 3 instead of applying something nobody reviewed. `godwit target add --require-plan` (or `serve --require-plan`) makes the stored plan mandatory, and `godwit plans` / `godwit plan show <id>` read them back.
+
+## 3d. Let godwit write the lock-safe SQL
+
+A `-- godwit: <op>` comment line states the intent and godwit renders the lock-safe statements against the real catalog at plan time. A type change, whose safe form is a dozen statements nobody wants to hand-write:
+
+```sql
+-- 20260903170000_customer_id_text.up.sql
+-- godwit: change-type orders.customer_id text using='customer_id::text'
+-- 20260903170000_customer_id_text.down.sql
+-- godwit: revert
+```
+
+`godwit lint` parses it offline; `godwit plan --target` shows the expansion, split into the phases it will run in:
+
+```
+20260903170000_customer_id_text (up): 12 statement(s) [expand, pending]   directive, expand 6 / contract 6
+  -- godwit: change-type orders.customer_id text using='customer_id::text'
+  [1] tx    CREATE FUNCTION public.orders_customer_id_sync() RETURNS trigger ...   [expand]
+  [3] batch WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint ...)   [expand]
+        batch over id (int), 5000 rows per transaction
+  [8] tx    ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old   [contract]
+  note: leaves public.orders.customer_id_old for rollback; drop it with `-- godwit: drop-column public.orders.customer_id_old`
+```
+
+Under `--rollout expand-contract` the run applies the expand half and stops:
+
+```
+$ godwit migrate --target app --dir db/migrations --rollout expand-contract
+run 62a6f7cc-…: awaiting_contract (attempt 1) [statement 5 of 20260903170000_customer_id_text]
+$ godwit run confirm --latest --target app        # once the application reads both shapes
+run 62a6f7cc-…: contract confirmed
+```
+
+`awaiting_contract` is exit code 0, not a failure: the expand half is on the database and the swap waits for a human. The full directive list, the expansion rules and everything the expander refuses are in [concepts: directives](concepts.md#directives).
 
 ## 3b. Write the next migration from a schema
 
@@ -200,6 +306,11 @@ server: http://localhost:8474
 
 Then `godwit lint`, `godwit plan` and `godwit migrate` work bare. The token stays in `GODWIT_TOKEN`; the file never carries secrets. Every key, its env override and its precedence is in [configuration](configuration.md).
 
+Two consequences of this particular file worth knowing before you write it:
+
+- `target` reaches `plan` too, and `plan --target` is a service command. With `target: app` in the file, a bare `godwit plan` no longer parses the directory offline — it plans against the live target and stores a plan, like section 3c. `godwit plan --target ""` forces the offline form back.
+- `rollout: expand-contract` applies to every run, including the ones CI makes, so a destructive migration will stop at `awaiting_contract` and wait for `godwit run confirm` (or `/godwit confirm` on the pull request, below).
+
 ## 5. CI
 
 Plan on the pull request, apply from it, verify on the merge, with the composite Action in this repository:
@@ -241,8 +352,23 @@ steps:
       target: orders
 ```
 
-`lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head and sets the `godwit/applied` commit status the branch protection requires; `verify` on the merge proves `main` carries nothing unapplied. Inputs, outputs, the revert command, the `apply-on-merge` mode and the ArgoCD variant are in [CI/CD](ci-cd.md).
+`lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head and sets the `godwit/applied` commit status the branch protection requires; `verify` on the merge proves `main` carries nothing unapplied.
+
+The database changes **before** the merge, on purpose: by the time the pull request lands, `main` describes a schema the target already has. An `expand-contract` apply needs a second comment to finish: it stops at `awaiting_contract`, and until `/godwit confirm` runs, `godwit/applied` stays `pending` with *expand applied; comment `/godwit confirm` to run the contract phase*, so branch protection holds the pull request. Add the step beside the apply, in the same `issue_comment` job:
+
+```yaml
+  - name: Run the contract phase held by the apply
+    if: contains(github.event.comment.body, '/godwit confirm')
+    uses: SamuelMolling/godwit@main
+    with:
+      command: confirm
+      server: https://godwit.internal
+      token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}
+      target: orders
+```
+
+Inputs, outputs, the revert command, the `apply-on-merge` mode and the ArgoCD variant are in [CI/CD](ci-cd.md); the pull request stuck at `awaiting_contract` is a [runbook](runbook.md#a-pull-request-stuck-in-awaiting_contract) entry.
 
 ## Next
 
-[Concepts](concepts.md) explains what just happened in the target database and what happens when a replica dies with a run in flight. [Operations](operations.md) is the checklist before the service takes production traffic.
+[Concepts](concepts.md) explains what just happened in the target database and what happens when a replica dies with a run in flight. [Operations](operations.md) is the checklist before the service takes production traffic. Before you first need it: `godwit revert <run-id>` undoes **every** migration the run carried, not the last one — the [runbook](runbook.md#reverting-a-run) shows what that costs.

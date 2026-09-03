@@ -373,6 +373,19 @@ needs-attention case for a human, not something the generated down can guess at.
 retired it. `godwit diff` takes the drop of a retired column out of the generated `up_sql`, so an ORM that never
 knew about the column stops proposing to drop it on every pull request; a revert forgets the row again.
 
+**Dependent views and functions follow the rename.** The swap is two `RENAME COLUMN` statements, so a view, index or
+function built on `<c>` keeps pointing at the same physical attribute — now called `<c>_old`, and still the old type.
+PostgreSQL does not refuse the rename and the expander does not detect it: nothing warns you. The first symptom is
+usually the object's own migration failing afterwards, for instance a repeatable view whose body no longer replaces:
+
+```
+statement 0 of R__order_stats (up): exec: ERROR: cannot change data type of view column "customer_id" from bigint to text (SQLSTATE 42P16)
+```
+
+Redefine every dependent object in the same run — a repeatable that recreates the view rather than replacing it
+(`DROP VIEW IF EXISTS`, then `CREATE VIEW`) is the simplest form — and check `pg_depend` for the column before
+declaring a `change-type` on a table other things read.
+
 ### What the expander refuses
 
 Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, naming the directive line.
@@ -432,7 +445,7 @@ A migration split down the middle is **not** run twice. The expand phase stops a
 
 ## Revert
 
-`RevertRun{run_id}` queues a new run of kind `migrate` with `reverts` set, whose plans are the down sides of every file in the original run, newest version first. It goes through the same hazard gate (the `DROP TABLE` in a down file needs `--ack H002`), the same validation, the same lease. Allowed only when the original is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, is the newest non-reverted run on the target, and nothing is queued or running there. Baseline runs cannot be reverted. When the revert succeeds the original is marked `reverted` and its versions become pending again. The plan the original was bound to stays `bound` until the next `CreateRun` with the same key, which retires it (`superseded`) and starts fresh; a re-plan stores a new `ready` plan alongside it, and there is no plan state for "reverted" — the run carries that. A revert is all-or-nothing per run: there is no single-version revert out of a multi-file run.
+`RevertRun{run_id}` queues a new run of kind `migrate` with `reverts` set, whose plans are the down sides of every file in the original run, newest version first. *Every file*, not every version that run applied: `godwit migrate` sends the whole migration directory on every run, so reverting the newest run takes the target back past every migration it has, not back one step. The hazard gate is where that shows — the refusal lists the destructive statements of migrations far older than the one being undone ([runbook](runbook.md#reverting-a-run)). It goes through the same hazard gate (the `DROP TABLE` in a down file needs `--ack H002`), the same validation, the same lease. Allowed only when the original is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, is the newest non-reverted run on the target, and nothing is queued or running there. Baseline runs cannot be reverted. When the revert succeeds the original is marked `reverted` and its versions become pending again. The plan the original was bound to stays `bound` until the next `CreateRun` with the same key, which retires it (`superseded`) and starts fresh; a re-plan stores a new `ready` plan alongside it, and there is no plan state for "reverted" — the run carries that. A revert is all-or-nothing per run: there is no single-version revert out of a multi-file run.
 
 ## Drift
 
