@@ -86,6 +86,7 @@ type Plan struct {
 	Applied           []engine.Applied
 	SchemaFingerprint string
 	SchemaDefinition  string
+	SearchPath        string
 	Drift             string
 	Migrations        []PlanMigration
 	Validated         bool
@@ -278,6 +279,13 @@ type PlanDiff struct {
 	Added   []HistoryChange
 	Removed []HistoryChange
 	Schema  []string
+	Path    string
+}
+
+// PathMoved reports whether the target's effective search_path changed since the plan was taken;
+// a plan stored before the path was recorded never moved.
+func (p Plan) PathMoved(obs Observation) bool {
+	return p.SearchPath != "" && p.SearchPath != obs.SearchPath
 }
 
 // StaleDiff compares a plan's observation with a fresh one.
@@ -306,14 +314,18 @@ func StaleDiff(p Plan, obs Observation) PlanDiff {
 	if p.SchemaFingerprint != obs.Fingerprint {
 		d.Schema = engine.DiffSchemas(p.SchemaDefinition, obs.Definition)
 	}
+	if p.PathMoved(obs) {
+		d.Path = p.SearchPath + " -> " + obs.SearchPath
+		d.Schema = append(d.Schema, "- search_path "+p.SearchPath, "+ search_path "+obs.SearchPath)
+	}
 
 	return d
 }
 
 // Explained reports whether every change was made by godwit itself: versions only added, each by a run,
-// and the live schema exactly what the last run left (baseline is the stored snapshot fingerprint).
+// the live schema exactly what the last run left (baseline is the stored snapshot fingerprint), and the search_path unmoved.
 func (d PlanDiff) Explained(baseline, fingerprint string) bool {
-	if len(d.Removed) > 0 || baseline != fingerprint {
+	if len(d.Removed) > 0 || d.Path != "" || baseline != fingerprint {
 		return false
 	}
 	for _, c := range d.Added {

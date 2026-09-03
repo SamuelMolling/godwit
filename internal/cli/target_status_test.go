@@ -16,7 +16,7 @@ func TestTargetStatus(t *testing.T) {
 	t.Parallel()
 	at := timestamppb.New(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	stub := &stubService{status: &godwitv1.GetTargetStatusResponse{
-		Target: "app", Provider: "static", LockTimeout: "3s",
+		Target: "app", Provider: "static", LockTimeout: "3s", SearchPath: "app,public",
 		Applied: []*godwitv1.AppliedMigration{
 			{Version: 1, Name: "init", Checksum: "c", AppliedAt: at},
 			{Version: 2, Name: "users", Checksum: "d", AppliedAt: at, ChecksumMismatch: true},
@@ -33,7 +33,7 @@ func TestTargetStatus(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := strings.Join([]string{
-		"target app: provider static, lock timeout 3s, statement timeout none",
+		"target app: provider static, lock timeout 3s, statement timeout none, search path app,public",
 		"applied (2):",
 		"  1  init   2026-09-01T12:00:00Z  ",
 		"  2  users  2026-09-01T12:00:00Z  checksum mismatch",

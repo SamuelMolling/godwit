@@ -86,6 +86,7 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.VaultPath, "vault-path", "", "Vault secret path under /v1 (vault provider)")
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
 	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
+	cmd.Flags().StringVar(&req.SearchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for runs on this target")
 	_ = cmd.MarkFlagRequired("provider")
 

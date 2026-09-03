@@ -27,7 +27,7 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 | Repeatable migrations | no | `R__` migrations | `runOnChange` / `runAlways` | no |
 | Placeholders / templating | no; template in the pipeline | placeholders | properties | template dirs |
 | SQL hooks (before/after) | no; webhook and Slack notifications only | callbacks | not built in | no |
-| `search_path` per target | no; migrations must qualify names, journal lives in `godwit` schema | `schemas` | `defaultSchemaName` | `--schema` |
+| `search_path` per target | `--search-path app,public` on the target: every session (run, revert, plan, diff, scratch validation) sets it; journal stays schema-qualified in `godwit` and `godwit` is refused on the path | `schemas` | `defaultSchemaName` | `--schema` |
 | Contexts / labels | no; use targets and directories | no | yes | no |
 | Tag and rollback-to-tag | no; reverts are per run, newest first | no | `tag`, `rollback <tag>` | no |
 | Checkpoints | no; baseline is the escape hatch when history replay gets slow | no | no | yes |
@@ -47,7 +47,6 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 ## What godwit does not have, and why
 
 - **Repeatable migrations.** A view or function file that re-applies whenever its content changes conflicts with "the journal is the truth" unless modelled as checksum-keyed re-runs. Planned for after v1; today, put the `CREATE OR REPLACE` in a versioned migration.
-- **`search_path`.** Migrations must qualify schema names; the journal always lives in `godwit`. A per-target `search_path` is small and planned; not there.
 - **`--to <version>`.** Send fewer files. A client-side filter is planned; the service does not need to change.
 - **Retention command.** Growth is one journal row per statement and one file body per run; the SQL to prune is in [operations](operations.md#retention).
 - **SQL hooks.** Notifications are the operational hook. Running SQL before or after a run needs a design decision (per run or per migration) that has not been taken.

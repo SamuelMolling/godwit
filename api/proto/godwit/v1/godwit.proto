@@ -70,6 +70,9 @@ message RegisterTargetRequest {
   string statement_timeout = 8;
   // Refuse runs whose migration set has no stored plan.
   bool require_plan = 9;
+  // search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
+  // Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
+  string search_path = 10;
 }
 
 message RegisterTargetResponse {}
@@ -123,6 +126,8 @@ message PlanObservation {
   int32 applied_count = 3;
   int64 newest_applied = 4;
   google.protobuf.Timestamp at = 5;
+  // The search_path the target's sessions actually resolve under (current_schemas), which the plan was taken with.
+  string search_path = 6;
 }
 
 // Error detail on failed_precondition: the stored plan no longer matches the target.
@@ -326,6 +331,8 @@ message GetTargetStatusResponse {
   DriftBaseline drift_baseline = 8;
   // Stored plans still bindable on the target.
   int32 ready_plans = 9;
+  // The search_path declared on the target; empty when it inherits the role's default.
+  string search_path = 10;
 }
 
 message ListAuditRequest {

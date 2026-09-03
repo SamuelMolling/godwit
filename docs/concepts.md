@@ -186,6 +186,18 @@ The monitor fingerprints every snapshotted target every `--drift-interval` (5m).
 
 Every statement runs under `lock_timeout` (default 5s) and `statement_timeout` (default 0, disabled). Both can be set on the target at registration and overridden per run; the run value wins field by field, then the target's, then the default. Values are Go durations (`5s`, `2m`, `0`); a lock timeout below 1ms is refused. A statement that hits one fails the run with PostgreSQL's `55P03` (lock) or `57014` (statement) error, counted in `godwit_statement_failures_total{reason="lock_timeout"|"statement_timeout"}`.
 
+## search_path
+
+A target may declare a `search_path` (`godwit target add --search-path app,public`, `RegisterTarget.search_path`), and every session godwit opens on it carries that value as a connection parameter: the executor, the revert, `Observe`, `Snapshot`, `Diff`, and the scratch database validation replays on. Unqualified names in a migration then resolve where the application expects them instead of wherever the migration role's own default points. Unset, nothing changes: sessions keep the role's default, which is what earlier versions did.
+
+The value is a comma-separated list of unquoted schema names, folded to lower case the way PostgreSQL folds identifiers. Quoted identifiers and `$user` are refused — a declared path is meant to be explicit, and `$user` resolves per role, which is how a schema named after the migration role silently captured unqualified tables in the first place. `godwit` is refused too: the journal lives there.
+
+**The journal is never on the path.** `godwit.migrations`, `godwit.runs` and `godwit.journal` are schema-qualified in every statement godwit issues, so the search path cannot move them, and refusing `godwit` as a path element means a migration's unqualified `CREATE TABLE migrations` lands in the application's schema rather than colliding with the journal. `engine.Snapshot` keeps hiding those three tables from drift.
+
+The schemas must exist. PostgreSQL silently drops missing ones from a session's effective path, so on a fresh target the first migration should `CREATE SCHEMA IF NOT EXISTS app` — from then on the path resolves fully. `godwit target status` prints the **declared** path and `godwit plan` the **effective** one (`current_schemas`); if they differ, a schema is missing. Scratch validation creates the schemas on the scratch database before setting the path, so the replay puts unqualified objects in the same schema the target does and fingerprints keep matching (which is what already-applied detection compares).
+
+The effective path is part of a plan's observation. A plan taken under one path does not bind under another: the diff shows `- search_path <then>` / `+ search_path <now>` and the refusal is `PlanStale{schema}`. Plans stored before the path was recorded carry an empty value and are never stale for this reason alone.
+
 ## Plans
 
 `PlanRun{persist}` stores the admitted plan in `cp_plans` / `cp_plan_files` together with an **observation** of the target at that moment: a `history_hash` over the live `godwit.migrations` (version and checksum, ascending), the schema fingerprint and definition (`engine.Snapshot`), and the time. The **plan key** is `sha256` of the target, the rollout and the ordered *pending set* — the files whose version is not yet applied, with their up and down checksums. It is a pure function of the files and of the target's history: not a git SHA (squash merges change it), not the plan id. One `ready` plan exists per `(target, key)`; re-planning the same set refreshes the row under a new id. An applied migration whose file body differs from the recorded checksum cannot be planned (`invalid_argument`) nor bound (`PlanStale{content}`).

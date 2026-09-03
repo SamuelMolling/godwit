@@ -24,10 +24,10 @@ type storedPlanRow struct {
 
 func expectPlanByID(mock pgxmock.PgxPoolIface, row storedPlanRow) {
 	mock.ExpectQuery("FROM cp_plans WHERE id = \\$1").WithArgs(planID).WillReturnRows(pgxmock.NewRows([]string{
-		"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "drift", "plan",
+		"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
 		"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
 	}).AddRow(planID, "app", row.key, row.rollout, row.state, controlplane.HistoryHash(row.applied), row.applied,
-		"f1", "table a\n", "+ x", []controlplane.PlanMigration{}, true, []string{"H002"}, true, "ci", "repo@sha", row.createdAt, row.runID, row.supersededBy))
+		"f1", "table a\n", "public", "+ x", []controlplane.PlanMigration{}, true, []string{"H002"}, true, "ci", "repo@sha", row.createdAt, row.runID, row.supersededBy))
 }
 
 func readyRow(t *testing.T) storedPlanRow {

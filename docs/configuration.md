@@ -127,7 +127,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 | Command | Flags | Scope |
 |---|---|---|
-| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan` | admin |
+| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--search-path` | admin |
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
 | `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
@@ -144,6 +144,19 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit drift check <target>` | | operator |
 | `godwit drift accept <target>` | | operator |
 | `godwit audit` | `--target`, `--run`, `--limit` | read |
+
+### Target settings
+
+Registered with the target and stored in `cp_targets.config`; they are not `godwit.yaml` keys.
+
+| Setting | Flag | Type | Default | Meaning |
+|---|---|---|---|---|
+| `lock_timeout` | `--lock-timeout` | Go duration | `5s` | per-statement `lock_timeout`; a run may override it with `--lock-timeout` |
+| `statement_timeout` | `--statement-timeout` | Go duration | `0` (disabled) | per-statement `statement_timeout`; a run may override it with `--statement-timeout` |
+| `require_plan` | `--require-plan` | bool | `false` | refuse runs whose migration set has no stored plan |
+| `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([concepts](concepts.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
+
+`godwit target status <name>` prints all four.
 
 `migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 

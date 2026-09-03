@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const planColumns = `id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition, drift, plan,
+const planColumns = `id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition, search_path, drift, plan,
 	validated, acked, allow_out_of_order, created_by, source, created_at, coalesce(run_id::text, ''), coalesce(superseded_by::text, '')`
 
 // SavePlan stores a ready plan with its files; a ready plan with the same key on the target is replaced.
@@ -33,20 +33,20 @@ func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) e
 	if _, err := s.pool.Exec(ctx, `
 		WITH p AS (
 			INSERT INTO cp_plans (id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition,
-				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash)
-			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18)
+				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash, search_path)
+			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18, $19)
 			ON CONFLICT (target, key) WHERE state = 'ready' DO UPDATE SET
 				id = EXCLUDED.id, rollout = EXCLUDED.rollout, history_hash = EXCLUDED.history_hash, applied = EXCLUDED.applied,
 				schema_fingerprint = EXCLUDED.schema_fingerprint, schema_definition = EXCLUDED.schema_definition,
 				drift = EXCLUDED.drift, plan = EXCLUDED.plan, validated = EXCLUDED.validated, acked = EXCLUDED.acked,
 				allow_out_of_order = EXCLUDED.allow_out_of_order, created_by = EXCLUDED.created_by, source = EXCLUDED.source,
-				files_hash = EXCLUDED.files_hash, created_at = now()
+				files_hash = EXCLUDED.files_hash, search_path = EXCLUDED.search_path, created_at = now()
 			RETURNING id)
 		INSERT INTO cp_plan_files (plan_id, name, body)
 		SELECT (SELECT id FROM p), n, b FROM unnest($16::text[], $17::text[]) AS f (n, b)`,
 		p.ID, p.Target, p.Key, p.Rollout, p.HistoryHash, jsonOf(p.Applied), p.SchemaFingerprint, p.SchemaDefinition,
 		p.Drift, jsonOf(p.Migrations), p.Validated, append([]string{}, p.Acked...), p.AllowOutOfOrder, p.CreatedBy, p.Source, names, bodies,
-		FilesHash(files)); err != nil {
+		FilesHash(files), p.SearchPath); err != nil {
 		return fmt.Errorf("save plan: %w", err)
 	}
 
@@ -227,8 +227,8 @@ func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time
 func scanPlan(row pgx.Row) (Plan, error) {
 	var p Plan
 	err := row.Scan(&p.ID, &p.Target, &p.Key, &p.Rollout, &p.State, &p.HistoryHash, &p.Applied, &p.SchemaFingerprint,
-		&p.SchemaDefinition, &p.Drift, &p.Migrations, &p.Validated, &p.Acked, &p.AllowOutOfOrder, &p.CreatedBy, &p.Source,
-		&p.CreatedAt, &p.RunID, &p.SupersededBy)
+		&p.SchemaDefinition, &p.SearchPath, &p.Drift, &p.Migrations, &p.Validated, &p.Acked, &p.AllowOutOfOrder, &p.CreatedBy,
+		&p.Source, &p.CreatedAt, &p.RunID, &p.SupersededBy)
 
 	return p, err
 }

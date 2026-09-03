@@ -9,13 +9,14 @@ import (
 
 // TargetStatus is what the control plane knows about a target next to what its database reports.
 type TargetStatus struct {
-	Target    string
-	Provider  string
-	Timeouts  Timeouts
-	Applied   []engine.Applied
-	LastRun   *Run
-	Snapshot  *Snapshot
-	OpenDrift bool
+	Target     string
+	Provider   string
+	Timeouts   Timeouts
+	SearchPath string
+	Applied    []engine.Applied
+	LastRun    *Run
+	Snapshot   *Snapshot
+	OpenDrift  bool
 }
 
 // Inspector reads a target's applied versions, last run and drift baseline without changing anything.
@@ -38,7 +39,7 @@ func (i *Inspector) Status(ctx context.Context, name string) (TargetStatus, erro
 	if err != nil {
 		return TargetStatus{}, err
 	}
-	st := TargetStatus{Target: name, Provider: tg.provider, Timeouts: tg.timeouts, Applied: applied}
+	st := TargetStatus{Target: name, Provider: tg.provider, Timeouts: tg.timeouts, SearchPath: tg.searchPath, Applied: applied}
 
 	last, ok, err := i.sched.store.LastRun(ctx, name)
 	if err != nil {

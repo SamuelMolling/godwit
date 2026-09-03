@@ -78,7 +78,7 @@ func TestAuditEndToEnd(t *testing.T) {
 	if all.Msg.Entries[0].RunId != baselined.Msg.RunId || all.Msg.Entries[0].Detail != "version=1 migrations=1" {
 		t.Fatalf("baseline entry = %+v", all.Msg.Entries[0])
 	}
-	if all.Msg.Entries[4].Detail != "provider=static lock_timeout= statement_timeout= require_plan=false" {
+	if all.Msg.Entries[4].Detail != "provider=static lock_timeout= statement_timeout= require_plan=false search_path=" {
 		t.Fatalf("register entry = %+v", all.Msg.Entries[4])
 	}
 

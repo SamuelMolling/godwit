@@ -322,6 +322,36 @@ rpc Diff '{"target": "legacy", "schema": "CREATE TABLE orders (id bigint PRIMARY
 echo
 
 echo
+echo "==> per-target search_path: unqualified names land in the application's schema, the journal never moves"
+docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE tenant;" > /dev/null
+docker compose exec -T target-db psql -U app -d tenant -c "CREATE SCHEMA tenant;" > /dev/null
+rpc RegisterTarget '{
+  "name": "tenant",
+  "provider": "static",
+  "dsn": "postgres://app:app@target-db:5432/tenant?sslmode=disable",
+  "searchPath": "tenant,public"
+}' 18475
+echo "==> a migration that creates a table called \"migrations\", unqualified, on a target whose path is tenant,public"
+SP_ID=$(rpc CreateRun '{
+  "target": "tenant",
+  "files": [
+    {"name": "20260901200000_shadow.up.sql", "body": "CREATE TABLE migrations (id bigint PRIMARY KEY, note text);"},
+    {"name": "20260901200000_shadow.down.sql", "body": "DROP TABLE migrations;"}
+  ]
+}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$SP_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+echo "==> it is in tenant; godwit.migrations is still the journal, with the migration recorded in it"
+docker compose exec -T target-db psql -U app -d tenant \
+  -c "SELECT table_schema, table_name FROM information_schema.tables WHERE table_name = 'migrations' ORDER BY table_schema;"
+docker compose exec -T target-db psql -U app -d tenant -c "SELECT version, name FROM godwit.migrations;"
+docker compose exec -T godwit-2 /godwit target status tenant --server http://localhost:8474 --token demo-token
+
+echo
 echo "==> the same API from the CLI: every run so far, with who created it"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
 
@@ -334,5 +364,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

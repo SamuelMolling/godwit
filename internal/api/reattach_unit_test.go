@@ -22,10 +22,10 @@ const boundRunID = "7b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 func expectBoundPlan(mock pgxmock.PgxPoolIface, applied []engine.Applied, migs []controlplane.PlanMigration) {
 	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "drift", "plan",
+			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
 			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
 		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanBound, controlplane.HistoryHash(applied), applied,
-			"f2", "table a\n", "", migs, false, []string{}, false, "ci", "", time.Now(), boundRunID, ""))
+			"f2", "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), boundRunID, ""))
 }
 
 func expectBoundRun(mock pgxmock.PgxPoolIface, state string) {
