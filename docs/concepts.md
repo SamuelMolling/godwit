@@ -180,9 +180,11 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 | Policy | Behaviour |
 |---|---|
 | `direct` (default) | every plan runs in the expand phase; the run ends `succeeded` |
-| `expand-contract` | plans up to the first one carrying a contract hazard run now; that plan and everything after it are held; the run ends `awaiting_contract` (or `succeeded` when nothing was held). `ConfirmRollout` re-queues it with `phase = contract`; the executor skips the already-applied plans and runs the rest. |
+| `expand-contract` | statements up to the first contract statement run now; that statement and everything after it are held; the run ends `awaiting_contract` (or `succeeded` when nothing was held). `ConfirmRollout` re-queues it with `phase = contract`; the executor skips the already-applied plans and runs the rest. |
 
-The split is by migration, not by statement: a migration mixing `ADD COLUMN` and `DROP COLUMN` lands in the contract phase whole.
+The split is by statement, and a migration whose statements carry no phase of their own has a single phase. A statement belongs to the contract phase when it says so (`Statement.Phase`, which only a directive expansion sets today) or, failing that, when its migration carries a contract hazard — so a hand-written migration mixing `ADD COLUMN` and `DROP COLUMN` still lands in the contract phase whole, and only an expansion splits a migration down the middle.
+
+A migration split down the middle is **not** run twice. The expand phase stops at `Plan.HoldFrom`, the index of the first held statement, and returns without recording the migration: the target's `godwit.runs` row stays `running` and no `godwit.migrations` row appears. `ConfirmRollout` re-queues the same control-plane run with `phase = contract`, which rebuilds the plan with every statement and no hold; `openRun` finds that still-open target run, `loadProgress` checks the hash of each journalled statement against the rebuilt plan — the list is identical, only the hold differed — and execution resumes at `lastDone + 1` on the same run id before finalising it. A crash anywhere in either phase resumes through the same journal, with no extra state.
 
 ## Revert
 

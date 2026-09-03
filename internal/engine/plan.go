@@ -29,6 +29,12 @@ const (
 	VerifierRerun                   VerifierKind = "rerun"
 )
 
+// Rollout phases a statement can belong to; the empty phase follows the migration's own.
+const (
+	PhaseExpand   = "expand"
+	PhaseContract = "contract"
+)
+
 // Hazard flags a statement that can hurt a live database.
 type Hazard struct {
 	Code   string
@@ -41,6 +47,7 @@ type Statement struct {
 	SQL         string
 	Hash        string
 	NoTx        bool
+	Phase       string
 	Verifier    VerifierKind
 	IndexSchema string
 	IndexName   string
@@ -48,12 +55,19 @@ type Statement struct {
 	Opaque      string
 }
 
-// Plan is the executable form of one migration direction.
+// Plan is the executable form of one migration direction; HoldFrom is the index of the first
+// statement left for the contract phase, and zero runs the plan whole.
 type Plan struct {
 	Migration  Migration
 	Direction  Direction
 	Statements []Statement
 	MarkOnly   bool
+	HoldFrom   int
+}
+
+// Held reports whether the plan stops short of its last statement.
+func (p Plan) Held() bool {
+	return p.HoldFrom > 0 && p.HoldFrom < len(p.Statements)
 }
 
 // Opaque names why the plan's effect cannot be read back from a schema snapshot, or "" when it can.
