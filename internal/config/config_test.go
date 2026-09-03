@@ -32,7 +32,7 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"GODWIT_DIR", "GODWIT_TARGET", "GODWIT_ROLLOUT", "GODWIT_SERVER", "GODWIT_LOCK_TIMEOUT", "GODWIT_STATEMENT_TIMEOUT",
-		"GODWIT_ALLOW_OUT_OF_ORDER",
+		"GODWIT_ALLOW_OUT_OF_ORDER", "GODWIT_SCHEMA_SOURCE_KIND", "GODWIT_SCHEMA_SOURCE_PATH", "GODWIT_SCHEMA_SOURCE_BIN",
 	} {
 		t.Setenv(k, "")
 	}
@@ -206,6 +206,96 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg != want {
 		t.Fatalf("Load() = %+v, want %+v", cfg, want)
+	}
+}
+
+func TestLoadSchemaSource(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	write(t, path, "target: orders\nschema_source:\n  kind: prisma\n  path: prisma/schema.prisma\n  bin: npx prisma\n")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.SchemaSource
+	if s.Kind != SourcePrisma || s.Path != filepath.Join(dir, "prisma/schema.prisma") || s.Bin != "npx prisma" || !s.LintEnabled() {
+		t.Fatalf("schema_source = %+v", s)
+	}
+}
+
+func TestLoadSchemaSourceCommandAndLint(t *testing.T) {
+	clearEnv(t)
+	path := filepath.Join(t.TempDir(), FileName)
+	write(t, path, "schema_source:\n  kind: command\n  path: /srv/schema.sql\n  command: [\"go\", \"run\", \"./cmd/schema\"]\n  lint: false\n")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.SchemaSource
+	if s.Path != "/srv/schema.sql" || len(s.Command) != 3 || s.Command[2] != "./cmd/schema" || s.LintEnabled() {
+		t.Fatalf("schema_source = %+v", s)
+	}
+	enabled := true
+	if !(&SchemaSource{Lint: &enabled}).LintEnabled() || !(*SchemaSource)(nil).LintEnabled() {
+		t.Fatal("lint: true and an absent block must both be enabled")
+	}
+}
+
+func TestLoadSchemaSourceErrors(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+
+	for name, body := range map[string]string{
+		"unknown kind": "schema_source:\n  kind: sqlite\n",
+		"no kind":      "schema_source:\n  path: schema.sql\n",
+		"unknown key":  "schema_source:\n  kind: file\n  paht: schema.sql\n",
+	} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".yaml")
+		write(t, path, body)
+		_, err := Load(path)
+		if err == nil {
+			t.Fatalf("%s: err = nil", name)
+		}
+		if name == "unknown key" {
+			continue
+		}
+		if !strings.Contains(err.Error(), "file, prisma, gorm, django, command") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestLoadSchemaSourceEnvOverrides(t *testing.T) {
+	clearEnv(t)
+	path := filepath.Join(t.TempDir(), FileName)
+	write(t, path, "schema_source:\n  kind: file\n  path: schema.sql\n  bin: from-file\n")
+	t.Setenv("GODWIT_SCHEMA_SOURCE_KIND", "prisma")
+	t.Setenv("GODWIT_SCHEMA_SOURCE_PATH", "env/schema.prisma")
+	t.Setenv("GODWIT_SCHEMA_SOURCE_BIN", "env-prisma")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.SchemaSource; s.Kind != SourcePrisma || s.Path != "env/schema.prisma" || s.Bin != "env-prisma" {
+		t.Fatalf("schema_source = %+v", cfg.SchemaSource)
+	}
+}
+
+func TestLoadSchemaSourceFromEnvAlone(t *testing.T) {
+	clearEnv(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("GODWIT_SCHEMA_SOURCE_KIND", "file")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := cfg.SchemaSource; s.Kind != SourceFile || s.Path != "" || s.Bin != "" {
+		t.Fatalf("schema_source = %+v", cfg.SchemaSource)
 	}
 }
 

@@ -49,7 +49,7 @@ func newDiffCmd() *cobra.Command {
 			if target == "" {
 				return errors.New("--target (or target in godwit.yaml) is required")
 			}
-			source, label, err := schemaSource(schema, prisma, prismaBin)
+			source, label, err := schemaSource(cmd, schema, prisma, prismaBin)
 			if err != nil {
 				return err
 			}
@@ -89,21 +89,48 @@ func newDiffCmd() *cobra.Command {
 	return cmd
 }
 
-func schemaSource(schema, prisma, prismaBin string) (schemasource.Source, string, error) {
+func schemaSource(cmd *cobra.Command, schema, prisma, prismaBin string) (schemasource.Source, string, error) {
 	switch {
 	case schema != "" && prisma != "":
 		return nil, "", errors.New("--schema and --prisma are exclusive: one desired schema per diff")
 	case prisma != "":
-		if strings.TrimSpace(prismaBin) == "" {
-			return nil, "", errors.New("--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI")
-		}
-
-		return schemasource.Prisma{Schema: prisma, Bin: prismaBin}, prisma, nil
+		return prismaSource(prisma, prismaBin)
 	case schema != "":
 		return schemasource.File{Path: schema}, schema, nil
 	}
+	configured := configFrom(cmd.Context()).SchemaSource
+	if configured == nil {
+		return nil, "", errors.New("--schema <ddl file>, --prisma <schema.prisma>, or schema_source in godwit.yaml is required")
+	}
 
-	return nil, "", errors.New("--schema <ddl file> or --prisma <schema.prisma> is required")
+	return configuredSource(*configured, prismaBin, cmd.Flags().Changed("prisma-bin"))
+}
+
+func configuredSource(source config.SchemaSource, prismaBin string, binFromFlag bool) (schemasource.Source, string, error) {
+	switch source.Kind {
+	case config.SourceFile, config.SourcePrisma:
+		if source.Path == "" {
+			return nil, "", fmt.Errorf("schema_source.path is required for kind %s", source.Kind)
+		}
+	default:
+		return nil, "", fmt.Errorf("schema_source.kind %s has no client in godwit diff yet; use %s or %s", source.Kind, config.SourceFile, config.SourcePrisma)
+	}
+	if source.Kind == config.SourceFile {
+		return schemasource.File{Path: source.Path}, source.Path, nil
+	}
+	if source.Bin != "" && !binFromFlag {
+		prismaBin = source.Bin
+	}
+
+	return prismaSource(source.Path, prismaBin)
+}
+
+func prismaSource(schema, bin string) (schemasource.Source, string, error) {
+	if strings.TrimSpace(bin) == "" {
+		return nil, "", errors.New("--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI")
+	}
+
+	return schemasource.Prisma{Schema: schema, Bin: bin}, schema, nil
 }
 
 func writeDiff(dir, name string, m *godwitv1.DiffResponse) ([]string, error) {

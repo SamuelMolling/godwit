@@ -146,7 +146,7 @@ func TestDiffErrors(t *testing.T) {
 		want string
 	}{
 		{"no target", []string{"diff", "--server", url, "--schema", schema}, "--target"},
-		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "--schema <ddl file> or --prisma <schema.prisma> is required"},
+		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "--schema <ddl file>, --prisma <schema.prisma>, or schema_source in godwit.yaml is required"},
 		{"schema and prisma", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--prisma", "schema.prisma"}, "--schema and --prisma are exclusive"},
 		{"empty prisma bin", []string{"diff", "--server", url, "--target", "app", "--prisma", "schema.prisma", "--prisma-bin", " "}, "--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI"},
 		{"no name", base, "--name is required"},
@@ -223,5 +223,134 @@ func TestDiffPrisma(t *testing.T) {
 	code, _, errOut = runCLI("diff", "--server", url, "--target", "app", "--prisma", mysql, "--dir", dir, "--dry-run")
 	if code != 1 || !strings.Contains(errOut, `datasource provider is "mysql"; godwit targets PostgreSQL only`) {
 		t.Fatalf("mysql: code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func configRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		path := filepath.Join(repo, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return repo
+}
+
+func chdir(t *testing.T, dir string) string {
+	t.Helper()
+	t.Chdir(dir)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return wd
+}
+
+func TestDiffSchemaSourceFromConfig(t *testing.T) {
+	diffNow = func() time.Time { return time.Date(2026, 9, 2, 10, 30, 0, 0, time.UTC) }
+	defer func() { diffNow = time.Now }()
+	stub := diffStub()
+	url := startStub(t, stub)
+	repo := configRepo(t, map[string]string{
+		"a/godwit.yaml":     "target: app\nschema_source:\n  kind: file\n  path: db/schema.sql\n",
+		"a/db/schema.sql":   "CREATE TABLE a (id int);\n",
+		"a/migrations/keep": "",
+		"b/godwit.yaml":     "target: b_app\nschema_source:\n  kind: file\n  path: schema.sql\n",
+		"b/schema.sql":      "CREATE TABLE b (id int);\n",
+		"b/sub/keep":        "",
+	})
+
+	wd := chdir(t, filepath.Join(repo, "a"))
+	code, out, errOut := runCLI("diff", "--server", url, "--name", "add_status")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Target != "app" || stub.diffed.Schema != "CREATE TABLE a (id int);\n" {
+		t.Fatalf("request = %+v", stub.diffed)
+	}
+	if !strings.Contains(out, "app -> "+filepath.Join(wd, "db/schema.sql")+": 2 statement(s)\n") {
+		t.Fatalf("out = %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "migrations", "20260902103000_add_status.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+
+	wd = chdir(t, filepath.Join(repo, "b", "sub"))
+	if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Target != "b_app" || stub.diffed.Schema != "CREATE TABLE b (id int);\n" {
+		t.Fatalf("request = %+v", stub.diffed)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "..", "schema.sql")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiffSchemaSourcePrismaFromConfig(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	bin, log := fakePrisma(t)
+	repo := configRepo(t, map[string]string{
+		"godwit.yaml":   "target: app\nschema_source:\n  kind: prisma\n  path: schema.prisma\n  bin: " + bin + "\n",
+		"schema.prisma": prismaSchema,
+	})
+	chdir(t, repo)
+
+	code, _, errOut := runCLI("diff", "--server", url, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if !strings.HasPrefix(stub.diffed.Schema, "-- CreateTable\n") {
+		t.Fatalf("schema sent = %q", stub.diffed.Schema)
+	}
+	if calls, _ := os.ReadFile(log); !strings.Contains(string(calls), "migrate diff") {
+		t.Fatalf("calls = %q", calls)
+	}
+
+	flagBin, flagLog := fakePrisma(t)
+	if code, _, errOut := runCLI("diff", "--server", url, "--dry-run", "--prisma-bin", flagBin); code != 0 {
+		t.Fatalf("flag bin: code = %d, stderr = %s", code, errOut)
+	}
+	if calls, err := os.ReadFile(flagLog); err != nil || !strings.Contains(string(calls), "migrate diff") {
+		t.Fatalf("--prisma-bin must win over schema_source.bin: calls = %q, err = %v", calls, err)
+	}
+
+	envBin, envLog := fakePrisma(t)
+	chdir(t, configRepo(t, map[string]string{
+		"godwit.yaml":   "target: app\nschema_source:\n  kind: prisma\n  path: schema.prisma\n",
+		"schema.prisma": prismaSchema,
+	}))
+	t.Setenv("GODWIT_PRISMA_BIN", envBin)
+	if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 0 {
+		t.Fatalf("env bin: code = %d, stderr = %s", code, errOut)
+	}
+	if calls, err := os.ReadFile(envLog); err != nil || !strings.Contains(string(calls), "migrate diff") {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestDiffSchemaSourceConfigErrors(t *testing.T) {
+	url := startStub(t, diffStub())
+
+	for name, tc := range map[string]struct{ body, want string }{
+		"kind without a client": {"schema_source:\n  kind: gorm\n  path: ./cmd/schema\n", "schema_source.kind gorm has no client in godwit diff yet; use file or prisma"},
+		"missing path":          {"schema_source:\n  kind: file\n", "schema_source.path is required for kind file"},
+		"unknown kind":          {"schema_source:\n  kind: sqlite\n", "schema_source.kind \"sqlite\" is not one of file, prisma, gorm, django, command"},
+	} {
+		chdir(t, configRepo(t, map[string]string{"godwit.yaml": "target: app\n" + tc.body}))
+		if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 1 || !strings.Contains(errOut, tc.want) {
+			t.Fatalf("%s: code = %d, stderr = %q", name, code, errOut)
+		}
 	}
 }
