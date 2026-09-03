@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -146,9 +147,13 @@ func TestDiffErrors(t *testing.T) {
 		want string
 	}{
 		{"no target", []string{"diff", "--server", url, "--schema", schema}, "--target"},
-		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "--schema <ddl file>, --prisma <schema.prisma>, or schema_source in godwit.yaml is required"},
-		{"schema and prisma", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--prisma", "schema.prisma"}, "--schema and --prisma are exclusive"},
+		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "one of --schema, --prisma, --exec, --gorm, --django, or schema_source in godwit.yaml is required"},
+		{"schema and prisma", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--prisma", "schema.prisma"}, "--schema and --prisma are exclusive: one desired schema per diff"},
+		{"three sources", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--exec", "dump", "--django", "manage.py"}, "--schema, --exec and --django are exclusive: one desired schema per diff"},
 		{"empty prisma bin", []string{"diff", "--server", url, "--target", "app", "--prisma", "schema.prisma", "--prisma-bin", " "}, "--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI"},
+		{"empty exec", []string{"diff", "--server", url, "--target", "app", "--exec", " "}, "--exec (or schema_source.command) must name a command that prints the desired schema as DDL"},
+		{"empty go bin", []string{"diff", "--server", url, "--target", "app", "--gorm", "./cmd/schema", "--go-bin", " "}, "--go-bin (or GODWIT_GO_BIN) must name the Go toolchain"},
+		{"empty python bin", []string{"diff", "--server", url, "--target", "app", "--django", "manage.py", "--python-bin", " "}, "--python-bin (or GODWIT_PYTHON_BIN) must name the Python interpreter"},
 		{"no name", base, "--name is required"},
 		{"bad name", append(base, "--name", "Drop-A"), "snake_case"},
 		{"missing schema file", []string{"diff", "--server", url, "--target", "app", "--schema", filepath.Join(dir, "nope.sql"), "--name", "x"}, "no such file"},
@@ -344,13 +349,162 @@ func TestDiffSchemaSourceConfigErrors(t *testing.T) {
 	url := startStub(t, diffStub())
 
 	for name, tc := range map[string]struct{ body, want string }{
-		"kind without a client": {"schema_source:\n  kind: gorm\n  path: ./cmd/schema\n", "schema_source.kind gorm has no client in godwit diff yet; use file or prisma"},
-		"missing path":          {"schema_source:\n  kind: file\n", "schema_source.path is required for kind file"},
-		"unknown kind":          {"schema_source:\n  kind: sqlite\n", "schema_source.kind \"sqlite\" is not one of file, prisma, gorm, django, command"},
+		"missing path":    {"schema_source:\n  kind: gorm\n", "schema_source.path is required for kind gorm"},
+		"missing command": {"schema_source:\n  kind: command\n", "--exec (or schema_source.command) must name a command that prints the desired schema as DDL"},
+		"unknown kind":    {"schema_source:\n  kind: sqlite\n", "schema_source.kind \"sqlite\" is not one of file, prisma, gorm, django, command"},
 	} {
 		chdir(t, configRepo(t, map[string]string{"godwit.yaml": "target: app\n" + tc.body}))
 		if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 1 || !strings.Contains(errOut, tc.want) {
 			t.Fatalf("%s: code = %d, stderr = %q", name, code, errOut)
 		}
+	}
+}
+
+func fakeBin(t *testing.T, name, body string) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	bin := filepath.Join(dir, name)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho \"$@\" >> "+log+"\n"+body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	return bin, log
+}
+
+func fakePython(t *testing.T) (string, string) {
+	t.Helper()
+
+	return fakeBin(t, "python", "case \"$2\" in\n  showmigrations) echo '[X]  orders.0001_initial' ;;\n"+
+		"  sqlmigrate) printf 'BEGIN;\\nCREATE TABLE t (id int);\\nCOMMIT;\\n' ;;\nesac\n")
+}
+
+const djangoSettings = "DATABASES = {'default': {'ENGINE': 'django.db.backends.postgresql', 'NAME': 'app'}}\n"
+
+func djangoFiles(managePy string) map[string]string {
+	return map[string]string{
+		managePy:           "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shop.settings')\n",
+		"shop/settings.py": djangoSettings,
+		"shop/__init__.py": "",
+		"db/.keep":         "",
+	}
+}
+
+func TestDiffExec(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	bin, log := fakeBin(t, "dump", "echo 'CREATE TABLE t (id int);'\n")
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--exec", bin+"  --all", "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n" {
+		t.Fatalf("schema sent = %q", stub.diffed.Schema)
+	}
+	if !strings.Contains(out, "app -> "+bin+" --all: 2 statement(s)\n") {
+		t.Fatalf("out = %q", out)
+	}
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != "--all\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestDiffGorm(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	bin, log := fakeBin(t, "go", "echo 'CREATE TABLE t (id int);'\n")
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--gorm", "./cmd/schema", "--go-bin", bin, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n" || !strings.Contains(out, "app -> go run ./cmd/schema: 2 statement(s)\n") {
+		t.Fatalf("schema sent = %q, out = %q", stub.diffed.Schema, out)
+	}
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != "run ./cmd/schema\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestDiffDjango(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	repo := configRepo(t, djangoFiles("manage.py"))
+	manage := filepath.Join(repo, "manage.py")
+	bin, log := fakePython(t)
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--django", manage, "--python-bin", bin, "--django-database", "default", "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n\n" || !strings.Contains(out, "app -> "+manage+": 2 statement(s)\n") {
+		t.Fatalf("schema sent = %q, out = %q", stub.diffed.Schema, out)
+	}
+	want := manage + " showmigrations --plan --no-color --database=default\n" + manage + " sqlmigrate orders 0001_initial --no-color --database=default\n"
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != want {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+
+	t.Setenv("DJANGO_SETTINGS_MODULE", "shop.settings")
+	envBin, envLog := fakePython(t)
+	if code, _, errOut := runCLI("diff", "--server", url, "--target", "app", "--django", manage, "--python-bin", envBin, "--dry-run"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want = manage + " showmigrations --plan --no-color --settings=shop.settings\n" + manage + " sqlmigrate orders 0001_initial --no-color --settings=shop.settings\n"
+	if calls, err := os.ReadFile(envLog); err != nil || string(calls) != want {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestDiffSchemaSourceKindsFromConfig(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	dump, dumpLog := fakeBin(t, "dump", "echo 'CREATE TABLE t (id int);'\n")
+	goBin, goLog := fakeBin(t, "go", "echo 'CREATE TABLE t (id int);'\n")
+	python, pythonLog := fakePython(t)
+
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		log   string
+		want  func(repo string) string
+	}{
+		{
+			"command",
+			map[string]string{"godwit.yaml": "target: app\nschema_source:\n  kind: command\n  command: [\"" + dump + "\", \"--all\"]\n"},
+			dumpLog, func(string) string { return "--all\n" },
+		},
+		{
+			"gorm",
+			map[string]string{"godwit.yaml": "target: app\nschema_source:\n  kind: gorm\n  path: ./cmd/schema\n  bin: " + goBin + "\n"},
+			goLog, func(repo string) string { return "run " + filepath.Join(repo, "cmd", "schema") + "\n" },
+		},
+	} {
+		repo := chdir(t, configRepo(t, tc.files))
+		if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 0 {
+			t.Fatalf("%s: code = %d, stderr = %s", tc.name, code, errOut)
+		}
+		if calls, err := os.ReadFile(tc.log); err != nil || string(calls) != tc.want(repo) {
+			t.Fatalf("%s: calls = %q, err = %v", tc.name, calls, err)
+		}
+		if stub.diffed.Schema != "CREATE TABLE t (id int);\n" {
+			t.Fatalf("%s: schema sent = %q", tc.name, stub.diffed.Schema)
+		}
+	}
+
+	files := djangoFiles("manage.py")
+	files["godwit.yaml"] = "target: app\nschema_source:\n  kind: django\n  path: manage.py\n  bin: " + python + "\n"
+	repo := chdir(t, configRepo(t, files))
+	if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 0 {
+		t.Fatalf("django: code = %d, stderr = %s", code, errOut)
+	}
+	manage := filepath.Join(repo, "manage.py")
+	want := manage + " showmigrations --plan --no-color\n" + manage + " sqlmigrate orders 0001_initial --no-color\n"
+	if calls, err := os.ReadFile(pythonLog); err != nil || string(calls) != want {
+		t.Fatalf("django: calls = %q, err = %v", calls, err)
 	}
 }

@@ -18,6 +18,10 @@ Branch protection for the default mode: require the `godwit/applied` status and 
 
 The action builds godwit from source with cgo (`go-version` pins the toolchain), so the first step of a job takes about a minute.
 
+## GORM schema package
+
+[gorm/schema/main.go](gorm/schema/main.go) is what `godwit diff --gorm ./cmd/schema` runs: GORM's migrator in `DryRun` mode with a logger that prints the SQL, so the model structs render to DDL without a database. Copy the file into your own project (it carries its own `go.mod` only to stay out of godwit's build), replace `Order` with your models, and point `--gorm` or `schema_source.path` at the package.
+
 ## ArgoCD
 
 [argocd/](argocd/README.md): an `Application` for the service (Helm chart in `deploy/helm/godwit`) and one for an application whose chart carries the PreSync / PostSync hook Jobs from [deploy/argocd](../deploy/argocd/README.md).
