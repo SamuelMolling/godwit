@@ -27,6 +27,7 @@ const (
 	VerifierCreateIndexConcurrently VerifierKind = "create_index_concurrently"
 	VerifierDropIndexConcurrently   VerifierKind = "drop_index_concurrently"
 	VerifierRerun                   VerifierKind = "rerun"
+	VerifierBatch                   VerifierKind = "batch"
 )
 
 // Rollout phases a statement can belong to; the empty phase follows the migration's own.
@@ -53,6 +54,7 @@ type Statement struct {
 	IndexName   string
 	Hazards     []Hazard
 	Opaque      string
+	Batch       *BatchSpec
 }
 
 // Plan is the executable form of one migration direction; HoldFrom is the index of the first

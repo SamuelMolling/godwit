@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	errBoom = errors.New("boom")
-	cicHash = hashSQL("CREATE INDEX CONCURRENTLY i ON tt (v)")
+	journalCols = []string{"stmt_idx", "state", "sql_hash", "cursor", "rows_done", "rows_total"}
+	errBoom     = errors.New("boom")
+	cicHash     = hashSQL("CREATE INDEX CONCURRENTLY i ON tt (v)")
 )
 
 func newMockExec(t *testing.T, opts ...Option) (pgxmock.PgxConnIface, *Executor) {
@@ -161,7 +162,7 @@ func TestUpErrorPaths(t *testing.T) {
 				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}).AddRow("no", "done", "h"))
+					WillReturnRows(pgxmock.NewRows(journalCols).AddRow("no", "done", "h", nil, int64(0), nil))
 			},
 			wantErr: "read journal",
 		},
@@ -174,8 +175,8 @@ func TestUpErrorPaths(t *testing.T) {
 				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}).
-						AddRow(0, "done", "h").RowError(0, errBoom))
+					WillReturnRows(pgxmock.NewRows(journalCols).
+						AddRow(0, "done", "h", nil, int64(0), nil).RowError(0, errBoom))
 			},
 			wantErr: "read journal",
 		},
@@ -188,7 +189,7 @@ func TestUpErrorPaths(t *testing.T) {
 				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}))
+					WillReturnRows(pgxmock.NewRows(journalCols))
 				mock.ExpectExec("UPDATE godwit.runs SET state = 'running'").WithArgs(pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
 			wantErr: "reopen run",
@@ -359,8 +360,8 @@ func TestNoTxErrorPaths(t *testing.T) {
 		mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 		mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
-			WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}).
-				AddRow(0, "intent", cicHash))
+			WillReturnRows(pgxmock.NewRows(journalCols).
+				AddRow(0, "intent", cicHash, nil, int64(0), nil))
 		mock.ExpectExec("UPDATE godwit.runs SET state = 'running'").WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	}
 

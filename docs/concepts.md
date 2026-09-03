@@ -6,7 +6,7 @@ What godwit stores where, what it promises across a crash, and the vocabulary th
 
 | | Lives in | Owned by | Holds |
 |---|---|---|---|
-| **Journal** | every target database, schema `godwit` | the executor (engine) | `migrations` (applied versions), `repeatables` (the content last applied under each repeatable name), `runs` (one row per migration × direction attempt), `journal` (one `intent`/`done` row per statement) |
+| **Journal** | every target database, schema `godwit` | the executor (engine) | `migrations` (applied versions), `repeatables` (the content last applied under each repeatable name), `runs` (one row per migration × direction attempt), `journal` (one `intent`/`done` row per statement, carrying the cursor and row counts of a batched one) |
 | **Store** | the service's own database (`--store-dsn`), default schema | the control plane | `cp_targets`, `cp_runs`, `cp_run_files`, `cp_leases`, `cp_snapshots`, `cp_drift_events`, `cp_notifications`, `cp_audit` |
 
 The journal is the truth about what happened on a target. The store is the truth about who asked for what, who is executing it, and what the schema looked like last time. The store's own schema is applied with the same executor at `serve` start-up, so the store database also carries a `godwit` schema tracking the control-plane migrations.
@@ -23,14 +23,32 @@ Before anything runs, each side is parsed with libpg_query into a **plan**: an o
 |---|---|---|
 | `tx` | everything else | `BEGIN` → `SET LOCAL lock_timeout` / `statement_timeout` → statement → journal `done` → `COMMIT`. DDL and progress commit together. |
 | `no-tx` | `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX ... CONCURRENTLY` | journal `intent` → `SET` timeouts → statement → `RESET` → journal `done`. A verifier decides what to do if the process died between `intent` and `done`. |
+| `batch` | a statement carrying a batch spec (a backfill) | journal `intent` once, then per batch, in one transaction: `SET LOCAL` timeouts → the statement with the cursor as `$1` → `UPDATE godwit.journal SET cursor, rows_done` → `COMMIT`, sleeping `pause` between batches until a batch returns fewer than `size` rows. Then journal `done`. |
 
 `CREATE INDEX CONCURRENTLY` must name its index; an anonymous one is a plan error, because the verifier has nothing to look up after a crash.
+
+### Batched statements
+
+A backfill is **one** plan statement, not N unrolled ones: the row count is unknown when the plan is built and changes before it runs. The statement is the rendered single batch, so its hash is stable and the "statement _i_ changed since run _X_ started" guard needs no special case; the batch spec beside it carries the cursor column and its kind (`int`, `uuid`, `text`), the batch size, the pause and an optional estimate query that fills `godwit.journal.rows_total` once.
+
+The contract on the SQL: it takes the cursor as `$1`, touches at most `size` rows ordered by the key, and returns the key of every row it touched. `$1` is bound as `bigint` / `uuid` / `text`, so a key narrower than `bigint` needs an explicit `$1::bigint` — the initial cursor is the low end of the bound type. The predicate must exclude rows already done (`... IS DISTINCT FROM ...`), which is what makes re-running a batch a no-op.
+
+```sql
+WITH b AS (SELECT "id" FROM "public"."users"
+           WHERE "id" > $1::bigint AND age_new IS DISTINCT FROM age::bigint
+           ORDER BY "id" LIMIT 5000)
+UPDATE "public"."users" AS t SET "age_new" = t."age"::bigint
+  FROM b WHERE t."id" = b."id" RETURNING b."id"
+```
+
+The new cursor is the highest key the batch returned. A key the database orders above the one picked here was in the same batch, so picking low can only repeat work that the predicate then skips — it can never skip a row. `godwit.journal` carries `cursor`, `rows_done` and `rows_total` for the statement, and the cursor advances in the **same transaction** as the batch, so the journal never claims more progress than the database holds. Each batch is one statement, so `statement_timeout` bounds a batch rather than the whole backfill.
 
 | Verifier | Used by | After a crash with a pending intent |
 |---|---|---|
 | `create_index_concurrently` | `CREATE INDEX CONCURRENTLY` | index exists and `pg_index.indisvalid` → mark `done`; exists but invalid → `DROP INDEX` and run again; absent → run again |
 | `drop_index_concurrently` | `DROP INDEX CONCURRENTLY` | index gone → mark `done`; still there → run again |
 | `rerun` | `VACUUM`, `REFRESH ... CONCURRENTLY`, `REINDEX ... CONCURRENTLY` | idempotent: run again |
+| `batch` | a batched backfill | resume the loop from the journalled `cursor`; the batch that was in flight rolled back, and its rows come back in the next batch |
 
 ## The journal protocol
 
@@ -71,6 +89,7 @@ time ─────────────────────────
 | D (index build interrupted) | `intent(1)`, index present but `indisvalid = false` | verifier drops the invalid index, builds it again |
 | E (index built, before `done(1)`) | `intent(1)`, valid index | verifier marks `done(1)`, moves to statement 2 |
 | after `done(2)` before finalize | all three statements applied, no `godwit.migrations` row | loop finds nothing pending, writes the `migrations` row and `succeeded` |
+| mid-backfill, had statement 1 been batched | `intent(1)` with the `cursor` and `rows_done` of the last **committed** batch; the batch in flight rolled back | resumes at that cursor; the rows of the lost batch are still pending, so they come back |
 
 There is no dirty flag and no repair command: the next attempt reads the journal and continues. The control plane's job is to make sure there is a next attempt ([leases](#leases)).
 
