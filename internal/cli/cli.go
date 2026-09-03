@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -63,6 +64,14 @@ func configKeys(cmd *cobra.Command, keys ...string) {
 	cmd.Annotations["config"] = strings.Join(append(strings.Split(cmd.Annotations["config"], ","), keys...), ",")
 }
 
+type loadedConfigKey struct{}
+
+func configFrom(ctx context.Context) config.Config {
+	cfg, _ := ctx.Value(loadedConfigKey{}).(config.Config)
+
+	return cfg
+}
+
 func applyConfig(cmd *cobra.Command, path string) error {
 	keys, ok := cmd.Annotations["config"]
 	if !ok {
@@ -72,6 +81,7 @@ func applyConfig(cmd *cobra.Command, path string) error {
 	if err != nil {
 		return err
 	}
+	cmd.SetContext(context.WithValue(cmd.Context(), loadedConfigKey{}, cfg))
 	values := map[string]string{
 		"dir":                cfg.Dir,
 		"target":             cfg.Target,

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,6 +16,17 @@ import (
 
 // FileName is the project file looked up from the working directory upwards.
 const FileName = "godwit.yaml"
+
+// Kinds accepted in schema_source.kind.
+const (
+	SourceFile    = "file"
+	SourcePrisma  = "prisma"
+	SourceGorm    = "gorm"
+	SourceDjango  = "django"
+	SourceCommand = "command"
+)
+
+var sourceKinds = []string{SourceFile, SourcePrisma, SourceGorm, SourceDjango, SourceCommand}
 
 // Config holds the per-project defaults shared by every CLI command.
 type Config struct {
@@ -24,6 +37,21 @@ type Config struct {
 	LockTimeout      time.Duration `yaml:"lock_timeout"`
 	StatementTimeout time.Duration `yaml:"statement_timeout"`
 	AllowOutOfOrder  bool          `yaml:"allow_out_of_order"`
+	SchemaSource     *SchemaSource `yaml:"schema_source"`
+}
+
+// SchemaSource says how the desired schema of this directory is rendered to DDL.
+type SchemaSource struct {
+	Kind    string   `yaml:"kind"`
+	Path    string   `yaml:"path"`
+	Bin     string   `yaml:"bin"`
+	Command []string `yaml:"command"`
+	Lint    *bool    `yaml:"lint"`
+}
+
+// LintEnabled reports whether lint treats a stale generated migration as an error rather than a warning.
+func (s *SchemaSource) LintEnabled() bool {
+	return s == nil || s.Lint == nil || *s.Lint
 }
 
 var getwd = os.Getwd
@@ -49,6 +77,10 @@ func Load(path string) (Config, error) {
 		}
 	}
 	if err := cfg.applyEnv(); err != nil {
+		return Config{}, err
+	}
+	cfg.applySourceEnv()
+	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 
@@ -84,6 +116,9 @@ func (c *Config) readFile(path string) error {
 	}
 	if !filepath.IsAbs(c.Dir) {
 		c.Dir = filepath.Join(filepath.Dir(path), c.Dir)
+	}
+	if s := c.SchemaSource; s != nil && s.Path != "" && !filepath.IsAbs(s.Path) {
+		s.Path = filepath.Join(filepath.Dir(path), s.Path)
 	}
 
 	return nil
@@ -122,6 +157,37 @@ func (c *Config) applyEnv() error {
 			return fmt.Errorf("GODWIT_ALLOW_OUT_OF_ORDER: %w", err)
 		}
 		c.AllowOutOfOrder = b
+	}
+
+	return nil
+}
+
+func (c *Config) applySourceEnv() {
+	kind, path, bin := os.Getenv("GODWIT_SCHEMA_SOURCE_KIND"), os.Getenv("GODWIT_SCHEMA_SOURCE_PATH"), os.Getenv("GODWIT_SCHEMA_SOURCE_BIN")
+	if kind == "" && path == "" && bin == "" {
+		return
+	}
+	if c.SchemaSource == nil {
+		c.SchemaSource = &SchemaSource{}
+	}
+	for _, e := range []struct {
+		value string
+		dst   *string
+	}{
+		{kind, &c.SchemaSource.Kind}, {path, &c.SchemaSource.Path}, {bin, &c.SchemaSource.Bin},
+	} {
+		if e.value != "" {
+			*e.dst = e.value
+		}
+	}
+}
+
+func (c *Config) validate() error {
+	if c.SchemaSource == nil {
+		return nil
+	}
+	if !slices.Contains(sourceKinds, c.SchemaSource.Kind) {
+		return fmt.Errorf("schema_source.kind %q is not one of %s", c.SchemaSource.Kind, strings.Join(sourceKinds, ", "))
 	}
 
 	return nil

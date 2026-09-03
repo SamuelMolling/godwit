@@ -15,6 +15,7 @@ Project file for the CLI. Looked up from the working directory upward until a di
 | `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `apply`, `status`, `down` only |
 | `statement_timeout` | Go duration | `0` (disabled) | `GODWIT_STATEMENT_TIMEOUT` | `apply`, `status`, `down` only |
 | `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `migrate` |
+| `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff` |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
 
@@ -27,6 +28,31 @@ server: http://godwit.godwit.svc:8474
 lock_timeout: 5s
 statement_timeout: 0
 ```
+
+### `schema_source`
+
+Says how the desired schema of *this* directory is rendered to DDL, so `godwit diff` needs no source flag. `godwit.yaml` is per directory, so a monorepo puts one next to each migration directory and each keeps its own source; `path` is resolved relative to the file that declares it.
+
+```yaml
+dir: db/migrations
+target: orders
+schema_source:
+  kind: prisma                              # file | prisma | gorm | django | command
+  path: prisma/schema.prisma
+  bin: npx prisma                           # kind-specific, optional
+  command: ["go", "run", "./cmd/schema"]    # kind: command only
+  lint: true                                # default true
+```
+
+| Key | Type | Default | Env override | Meaning |
+|---|---|---|---|---|
+| `kind` | `file` \| `prisma` \| `gorm` \| `django` \| `command` | — (required) | `GODWIT_SCHEMA_SOURCE_KIND` | which source renders the schema; any other value is a config error naming the set |
+| `path` | path | — | `GODWIT_SCHEMA_SOURCE_PATH` | the DDL file, `schema.prisma`, Go package or `manage.py`, resolved relative to `godwit.yaml` |
+| `bin` | string | kind's default | `GODWIT_SCHEMA_SOURCE_BIN` | command line running the ORM's CLI |
+| `command` | list of strings | — | — | `kind: command` only: the argv whose stdout is the DDL |
+| `lint` | bool | `true` | — | whether an out-of-date generated migration is a lint error rather than a warning |
+
+`godwit diff` renders `kind: file` and `kind: prisma` today; the other kinds are accepted by the config and refused by `diff` with the kinds it can render. A source flag always wins over the block: `--schema` and `--prisma` select the source, and `--prisma-bin` given on the command line overrides `schema_source.bin` (which itself overrides `GODWIT_PRISMA_BIN`). `--schema` and `--prisma` together stay mutually exclusive.
 
 ## Client environment
 
@@ -133,7 +159,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
 | `godwit plan show <plan-id>` | `--format text\|markdown\|json` | read; statements, hazards and recipes, observation, drift, state, run id, superseded-by |
 | `godwit plans` | `--target`, `--limit` | read; newest first |
-| `godwit diff` | `--target`, `--schema <file>` or `--prisma <schema.prisma>` (exactly one), `--prisma-bin` (`$GODWIT_PRISMA_BIN`, default `npx prisma`), `--name <snake_case>` (required unless `--dry-run`), `--dir`, `--dry-run` | read; writes `<timestamp>_<name>.up.sql` / `.down.sql` from the live target to the desired schema: a DDL file, or a Prisma schema rendered by the Prisma CLI (provider `postgresql` only); prints the up SQL with hazards and recipes, `no changes` when they match, `--dry-run` prints without writing |
+| `godwit diff` | `--target`, `--schema <file>` or `--prisma <schema.prisma>` (at most one; neither falls back to [`schema_source`](#schema_source)), `--prisma-bin` (`$GODWIT_PRISMA_BIN`, default `npx prisma`), `--name <snake_case>` (required unless `--dry-run`), `--dir`, `--dry-run` | read; writes `<timestamp>_<name>.up.sql` / `.down.sql` from the live target to the desired schema: a DDL file, or a Prisma schema rendered by the Prisma CLI (provider `postgresql` only); prints the up SQL with hazards and recipes, `no changes` when they match, `--dry-run` prints without writing |
 | `godwit migrate` | `--target`, `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--lock-timeout`, `--statement-timeout`, `--dry-run`, `--format text\|markdown\|json` (dry run only), `--plan <plan-id>` | pipeline (`--dry-run`: read) |
 | `godwit revert <run-id>` | `--ack`, `--skip-validation`, `--lock-timeout`, `--statement-timeout` | pipeline |
 | `godwit run get <run-id>` | | read |
