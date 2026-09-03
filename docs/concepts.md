@@ -95,7 +95,7 @@ There is no dirty flag and no repair command: the next attempt reads the journal
 
 ## Runs and states
 
-A **run** is one request to apply a set of files to one target. `cp_runs` carries `state`, `attempts`, `rollout`, `phase`, `kind`, `reverts`, `created_by`, `source`, per-run timeouts and the error.
+A **run** is one request to apply a set of files to one target. `cp_runs` carries `state`, `attempts`, `rollout`, `phase`, `kind`, `reverts`, `created_by`, `source`, per-run timeouts and the error; `cp_run_applied` carries one row per migration the run actually applied, which is what a [revert](#revert) acts on.
 
 ```
               CreateRun / RevertRun                       ConfirmRollout
@@ -126,7 +126,7 @@ A genuine SQL failure goes straight to `failed`. A transient one (`40001`, `40P0
 
 A pipeline re-run does not queue a second run: `CreateRun` with the same files, target and rollout as a bound plan re-attaches to that plan's run (`reattached` in the response, `run.reattach` in the audit). A `queued`, `running` or `awaiting_contract` run is simply followed; a `succeeded` one is followed too if the target still has everything it applied; a `failed` or `needs_attention` one is resumed when the only history the plan did not know is the run's own progress; a `reverted` one releases the plan and a fresh run is created. An explicit `--plan <id>` skips re-attaching.
 
-`kind` is `migrate` or `baseline`; `phase` is `expand` or `contract`; `reverts` links a revert run to the run it undoes.
+`kind` is `migrate` or `baseline`; `phase` is `expand` or `contract`; `reverts` links a revert run to the run it undoes, and `cp_run_applied.reverted_by` links each undone migration to it.
 
 ## Leases
 
@@ -428,7 +428,7 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 
 **Hazards apply unchanged**: a repeatable is still DDL and goes through the same gate, the same acknowledgement and the same `expand-contract` split. `lint` accepts the filename and reports the same codes, with one exception: `E003` ("migration modified after merge") never fires on an `R__` file — editing it in place is the point.
 
-**Down.** The `.down.sql` is required, like a versioned one, and it is used only when the run that applied the repeatable is reverted; then it runs and the `godwit.repeatables` row is deleted. godwit does not store previous file bodies, so reverting a run that *re-applied* a repeatable drops the object rather than restoring the body it had before — write the down side as `DROP ... IF EXISTS`, and roll forward by editing the file when you want the previous content back.
+**Down.** The `.down.sql` is required, like a versioned one, and it is used only when the run whose ledger holds the repeatable is reverted; then it runs and the `godwit.repeatables` row is deleted. godwit does not store previous file bodies, so reverting a run that *re-applied* a repeatable drops the object rather than restoring the body it had before — write the down side as `DROP ... IF EXISTS`, and roll forward by editing the file when you want the previous content back.
 
 ## Rollout policies
 
@@ -445,7 +445,62 @@ A migration split down the middle is **not** run twice. The expand phase stops a
 
 ## Revert
 
-`RevertRun{run_id}` queues a new run of kind `migrate` with `reverts` set, whose plans are the down sides of every file in the original run, newest version first. *Every file*, not every version that run applied: `godwit migrate` sends the whole migration directory on every run, so reverting the newest run takes the target back past every migration it has, not back one step. The hazard gate is where that shows — the refusal lists the destructive statements of migrations far older than the one being undone ([runbook](runbook.md#reverting-a-run)). It goes through the same hazard gate (the `DROP TABLE` in a down file needs `--ack H002`), the same validation, the same lease. Allowed only when the original is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, is the newest non-reverted run on the target, and nothing is queued or running there. Baseline runs cannot be reverted. When the revert succeeds the original is marked `reverted` and its versions become pending again. The plan the original was bound to stays `bound` until the next `CreateRun` with the same key, which retires it (`superseded`) and starts fresh; a re-plan stores a new `ready` plan alongside it, and there is no plan state for "reverted" — the run carries that. A revert is all-or-nothing per run: there is no single-version revert out of a multi-file run.
+`RevertRun` queues a new run of kind `migrate` with `reverts` set, whose plans are the **down sides of the
+migrations the original run actually applied**, in reverse order of application. Not every file it carried:
+`godwit migrate` sends the whole migration directory on every run, and the files it skipped as already
+applied belong to whoever applied them.
+
+**The ledger is the scope.** As a run applies each migration the scheduler writes a row in
+`cp_run_applied` — the migration id, its order, whether its contract phase is still held, and the directive
+expansion frozen for it. A skipped migration writes nothing. `RevertRun` reads those rows back, narrows the
+run's stored files to their up/down pairs, and reverses them. That is what `godwit run get` prints under
+`applied:` and what the run page shows as *What it applied*. This is Liquibase's `rollback-one-update`
+scope — DATABASECHANGELOG rows, not changelog files — and it is why `revert` needs no confirmation prompt:
+the set is a record of fact, not a statement of intent.
+
+Because the expansion lives on the migration's own ledger row rather than on the run, a migration carrying
+a `-- godwit:` directive no longer blocks the revert of any *later* run: the later run's plan never contains
+it, and the directive run's own revert reads the inverse frozen for it.
+
+**Target.** `RevertRun{target}` with no `run_id` acts on the newest un-reverted run of that target, and
+never on anything wider — there is no "revert everything". Naming an older run is refused
+(`run y is newer and still stands`) unless `force` is set; unwinding three runs is three explicit calls,
+newest first. Baseline runs cannot be reverted, and neither can a revert.
+
+**Plan first.** The response always carries the plan — the down statements per migration, in the order they
+will run, plus what the plan would destroy — and `dry_run` returns that plan without queueing anything.
+`godwit revert` prints it before it watches the run; the GitHub Action puts the dry run in the pull-request
+comment.
+
+**Data loss is refused, not warned about.** godwit counts what each `DROP TABLE` (rows) and `DROP COLUMN`
+(non-null values) in the plan would destroy on the live target, and refuses the whole revert when anything
+is left:
+
+```
+revert would destroy data: 20260101000000_orders drops table public.orders holds 12482 row(s);
+pass allow_data_loss (--allow-data-loss) to run it anyway
+```
+
+Atlas is the only other tool in this space that blocks rather than warns, and it is the right call: the
+failure mode everyone documents is data loss, and a warning in CI logs is not read. The trade-off is
+deliberate — this makes `revert` fail in exactly the moment someone is panicking, when the correct action
+is usually roll-forward or restore-from-backup. The gate reads the down files *you* wrote; a
+`-- godwit: revert` inverse is generated, and godwit refuses to generate one wherever it would not be
+lossless, so generated inverses are exempt.
+
+**History is added to, never subtracted from.** The revert run is its own row; the original stays and turns
+`reverted`; its ledger rows record `reverted_by`. Nothing is deleted, so the audit trail survives the
+incident review and a second revert of the same run is refused because the ledger says nothing of it still
+stands. A revert that fails part-way marks only what it undid, and a second `revert` picks up the rest.
+
+Everything else is as before: the same hazard gate (a `DROP TABLE` in a down file needs `--ack H002`), the
+same scratch validation, the same lease, and the target must have nothing `queued` or `running` on it. The
+plan the original was bound to stays `bound` until the next `CreateRun` with the same key retires it
+(`superseded`); there is no plan state for "reverted" — the run carries that.
+
+**Use it for the minutes after a bad apply, not as the production recovery mechanism.** The consensus
+across every vendor surveyed, including those who sell rollback, is roll forward in production and keep
+down files as a review artifact.
 
 ## Drift
 

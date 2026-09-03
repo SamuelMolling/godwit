@@ -169,7 +169,9 @@ echo "state: $STATE"
 docker compose exec -T target-db psql -U app -d app -c "\d users"
 
 echo
-echo "==> revert: the down side of the last run, through the same crash-safe executor"
+echo "==> revert: only what that run applied, planned before anything runs"
+echo "dry run (nothing is queued):"
+rpc RevertRun "{\"runId\": \"$EC_ID\", \"acknowledgeHazards\": [\"H003\"], \"dryRun\": true}" 18475
 RV_ID=$(rpc RevertRun "{\"runId\": \"$EC_ID\", \"acknowledgeHazards\": [\"H003\"]}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$RV_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')

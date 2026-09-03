@@ -43,6 +43,35 @@ type Hazard struct {
 	Recipe string
 }
 
+// Drop is a table, or a column of one, that a statement removes.
+type Drop struct {
+	Schema string `json:"schema,omitempty"`
+	Table  string `json:"table"`
+	Column string `json:"column,omitempty"`
+}
+
+// String renders the dropped object as a qualified reference.
+func (d Drop) String() string {
+	out := d.Table
+	if d.Schema != "" {
+		out = d.Schema + "." + out
+	}
+	if d.Column != "" {
+		out += "." + d.Column
+	}
+
+	return out
+}
+
+// Kind names what the drop removes.
+func (d Drop) Kind() string {
+	if d.Column != "" {
+		return "column"
+	}
+
+	return "table"
+}
+
 // Statement is one classified SQL statement of a plan.
 type Statement struct {
 	SQL         string
@@ -55,6 +84,8 @@ type Statement struct {
 	Hazards     []Hazard
 	Opaque      string
 	Batch       *BatchSpec
+	// Drops are the tables and columns the statement removes, whatever hazards it carries.
+	Drops []Drop
 }
 
 // Plan is the executable form of one migration direction; HoldFrom is the index of the first
@@ -191,6 +222,10 @@ func classifyIndex(idx *pgquery.IndexStmt, st *Statement) error {
 func classifyDrop(d *pgquery.DropStmt, st *Statement) {
 	switch d.RemoveType {
 	case pgquery.ObjectType_OBJECT_TABLE:
+		for _, obj := range d.Objects {
+			schema, name := qualifiedName([]*pgquery.Node{obj})
+			st.Drops = append(st.Drops, Drop{Schema: schema, Table: name})
+		}
 		st.hazard("H002", "DROP TABLE is destructive", recipeDropTable(d))
 	case pgquery.ObjectType_OBJECT_INDEX:
 		if !d.Concurrent {
@@ -223,6 +258,7 @@ func classifyAlterTable(a *pgquery.AlterTableStmt, st *Statement) {
 		cmd := cmdNode.GetAlterTableCmd()
 		switch cmd.Subtype {
 		case pgquery.AlterTableType_AT_DropColumn:
+			st.Drops = append(st.Drops, Drop{Schema: a.Relation.Schemaname, Table: a.Relation.Relname, Column: cmd.Name})
 			st.hazard("H003", "DROP COLUMN is destructive", recipeDropColumn(a.Relation, cmd.Name))
 		case pgquery.AlterTableType_AT_AlterColumnType:
 			st.hazard("H004", "ALTER COLUMN TYPE rewrites the table under an exclusive lock", recipeAlterType(a.Relation, cmd))

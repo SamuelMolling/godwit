@@ -22,7 +22,8 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 |---|---|---|
 | `cp_targets` | one per target; `config` holds the encrypted DSN or the provider config | targets |
 | `cp_runs` | one per run: state, attempts, rollout, phase, `reverts`, timeouts, kind, `created_by`, `source`, error | runs |
-| `cp_run_files` | every migration file body sent with a run (replayed for validation and used for revert) | runs × files; the largest table |
+| `cp_run_files` | every migration file body sent with a run (replayed for validation, and the source of a revert's down bodies) | runs × files; the largest table |
+| `cp_run_applied` | one row per migration a run actually applied: order, whether its contract phase is held, the directive expansion frozen for it, and the revert that undid it. This is what a revert is scoped to | runs × migrations applied |
 | `cp_plans` | one per stored plan: key, rollout, state, observation, drift, directive expansions, the run it is bound to | `godwit plan --target` calls; swept by `--plan-retention` |
 | `cp_plan_files` | the file bodies of a stored plan | plans × files; second largest |
 | `cp_retired_columns` | one per `<c>_old` a completed `change-type` left behind, so `godwit diff` stops proposing to drop it | `change-type` directives |
@@ -46,7 +47,7 @@ Sizing: the store is small. `cp_run_files` keeps the full text of every file for
 godwit does not back anything up. Before these actions, take a backup or note a PITR restore point on the **target**:
 
 - `godwit run confirm` (the contract phase runs the destructive statements you deferred);
-- `godwit revert <run-id>` (down migrations are typically `DROP`);
+- `godwit revert` (down migrations are typically `DROP`; godwit refuses one that would drop a non-empty table or column unless `--allow-data-loss`);
 - `godwit migrate --ack H002,...` (any acknowledged destructive hazard);
 - `godwit target baseline` (not destructive to data, but rewrites `godwit.migrations`).
 

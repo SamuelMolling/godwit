@@ -47,6 +47,7 @@ type stubService struct {
 	events      []*godwitv1.Run
 	drift       *godwitv1.CheckDriftResponse
 	revertID    string
+	applied     []*godwitv1.RunMigration
 	planID      string
 	planGot     string
 	plansListed *godwitv1.ListPlansRequest
@@ -126,7 +127,14 @@ func (s *stubService) RevertRun(_ context.Context, req *connect.Request[godwitv1
 		return nil, err
 	}
 
-	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: s.revertID}), nil
+	return connect.NewResponse(&godwitv1.RevertRunResponse{
+		RunId: s.revertID, Reverts: req.Msg.RunId, Target: "app", Forced: req.Msg.Force,
+		Migrations: []*godwitv1.PlannedMigration{{
+			Version: 20260901120000, Name: "t",
+			Statements: []*godwitv1.PlannedStatement{{Sql: "DROP TABLE t;"}, {Sql: "DROP INDEX CONCURRENTLY i;", NoTx: true}},
+		}},
+		DataLoss: []*godwitv1.DataLoss{{Migration: "20260901120000_t", Kind: "table", Object: "public.t", Rows: 3}},
+	}), nil
 }
 
 func (s *stubService) GetRun(_ context.Context, req *connect.Request[godwitv1.GetRunRequest]) (*connect.Response[godwitv1.GetRunResponse], error) {
@@ -135,7 +143,7 @@ func (s *stubService) GetRun(_ context.Context, req *connect.Request[godwitv1.Ge
 		return nil, err
 	}
 
-	return connect.NewResponse(&godwitv1.GetRunResponse{Run: s.run}), nil
+	return connect.NewResponse(&godwitv1.GetRunResponse{Run: s.run, Applied: s.applied}), nil
 }
 
 func (s *stubService) ListRuns(_ context.Context, req *connect.Request[godwitv1.ListRunsRequest]) (*connect.Response[godwitv1.ListRunsResponse], error) {
@@ -677,7 +685,11 @@ func TestRevert(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if out != "run r2: running (attempt 1)\nrun r2: succeeded (attempt 1)\n" {
+	want := "revert of run r1 on app: 1 migration(s), reverse order of application\n" +
+		"  20260901120000_t (down): 2 statement(s)\n    [0] tx    DROP TABLE t;\n    [1] no_tx DROP INDEX CONCURRENTLY i;\n" +
+		"  data loss: 20260901120000_t drops table public.t holding 3 row(s)\n" +
+		"run r2: running (attempt 1)\nrun r2: succeeded (attempt 1)\n"
+	if out != want {
 		t.Fatalf("out = %q", out)
 	}
 	rv := stub.reverted
@@ -686,9 +698,18 @@ func TestRevert(t *testing.T) {
 		t.Fatalf("request = %v, watched = %q", rv, stub.watched)
 	}
 
-	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("run is not the latest on its target"))
+	stub.watched = ""
+	code, out, errOut = runCLI("revert", "--server", url, "--target", "app", "--dry-run", "--force", "--allow-data-loss")
+	if code != 0 || stub.watched != "" || !strings.Contains(out, "forced past a newer run") {
+		t.Fatalf("dry run: code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+	if rv = stub.reverted; rv.RunId != "" || rv.Target != "app" || !rv.DryRun || !rv.Force || !rv.AllowDataLoss {
+		t.Fatalf("dry-run request = %v", rv)
+	}
+
+	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("run is not revertable"))
 	code, _, errOut = runCLI("revert", "r1", "--server", url)
-	if code != 1 || errOut != "godwit: run is not the latest on its target\n" {
+	if code != 1 || errOut != "godwit: run is not revertable\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
@@ -696,7 +717,9 @@ func TestRevert(t *testing.T) {
 func TestRunGet(t *testing.T) {
 	t.Parallel()
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	stub := &stubService{run: &godwitv1.Run{
+	stub := &stubService{applied: []*godwitv1.RunMigration{{
+		Migration: "20260901120000_t", AppliedAt: timestamppb.New(created.Add(30 * time.Second)), Held: true, RevertedBy: "r2",
+	}, {Migration: "20260901120001_u"}}, run: &godwitv1.Run{
 		Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1,
 		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", Kind: "migrate", LockTimeout: "2s", StatementTimeout: "1m",
 		CreatedBy: "ci", Source: "github.com/org/repo@abc:db", PlanId: "p1", CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
@@ -708,9 +731,16 @@ func TestRunGet(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "run r1: succeeded (attempt 1)\n  target: app\n  kind: migrate\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
-		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created_by: ci\n  source: github.com/org/repo@abc:db\n  plan: p1\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n"
+		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created_by: ci\n  source: github.com/org/repo@abc:db\n  plan: p1\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n" +
+		"  applied:\n    20260901120000_t at 2026-09-01T12:00:30Z (contract held) (reverted by r2)\n    20260901120001_u at \n"
 	if out != want || stub.got != "r1" {
 		t.Fatalf("out = %q, got = %q", out, stub.got)
+	}
+
+	stub.applied = nil
+	code, out, _ = runCLI("run", "get", "r1", "--server", url)
+	if code != 0 || !strings.HasSuffix(out, "  applied: none\n") {
+		t.Fatalf("no ledger: code = %d, out = %q", code, out)
 	}
 
 	code, out, _ = runCLI("run", "get", "r1", "--server", url, "--json")

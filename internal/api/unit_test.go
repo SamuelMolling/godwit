@@ -556,5 +556,5 @@ func TestCreateRunInternalErrors(t *testing.T) {
 }
 
 func expectNoRepeatables(mock pgxmock.PgxPoolIface) {
-	mock.ExpectQuery("SELECT DISTINCT ON \\(f.name\\)").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"name", "body"}))
+	mock.ExpectQuery("SELECT DISTINCT ON \\(a.migration\\)").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"migration", "body"}))
 }

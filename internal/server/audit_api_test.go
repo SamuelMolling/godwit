@@ -72,7 +72,7 @@ func TestAuditEndToEnd(t *testing.T) {
 	if createEntry.RunId != run.Id || createEntry.Detail != "rollout=direct migrations=1 acked= source="+source+" plan=" {
 		t.Fatalf("create entry = %+v", createEntry)
 	}
-	if revertEntry.RunId != reverted.Msg.RunId || revertEntry.Detail != "reverts="+run.Id+" acked=H002" {
+	if revertEntry.RunId != reverted.Msg.RunId || revertEntry.Detail != "reverts="+run.Id+" migrations=1 acked=H002 forced=false allow_data_loss=false" {
 		t.Fatalf("revert entry = %+v", revertEntry)
 	}
 	if all.Msg.Entries[0].RunId != baselined.Msg.RunId || all.Msg.Entries[0].Detail != "version=1 migrations=1" {

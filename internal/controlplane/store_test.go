@@ -149,32 +149,47 @@ func TestCreateRevert(t *testing.T) {
 	revert := "66666666-0000-0000-0000-000000000003"
 	queueRun(t, s, first, goodFiles())
 	queueRun(t, s, second, goodFiles())
+	load := func(id string) Run {
+		t.Helper()
+		r, err := s.Run(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if err := s.CreateRevert(ctx, revert, first, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) {
+		return r
+	}
+
+	if err := s.CreateRevert(ctx, revert, load(first), false, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) {
 		t.Fatalf("revert queued run: err = %v", err)
 	}
 	if err := s.Finish(ctx, first, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRevert(ctx, revert, first, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, revert, load(first), false, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) ||
+		!strings.Contains(err.Error(), "queued or running run") {
 		t.Fatalf("revert with a later queued run: err = %v", err)
 	}
 	if err := s.Finish(ctx, second, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRevert(ctx, revert, first, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, revert, load(first), false, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) ||
+		!strings.Contains(err.Error(), "is newer and still stands") {
 		t.Fatalf("revert with a later succeeded run: err = %v", err)
 	}
 
-	if err := s.CreateRevert(ctx, revert, second, Timeouts{}, Provenance{}); err != nil {
+	if err := s.CreateRevert(ctx, revert, load(second), false, Timeouts{}, Provenance{}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Run(ctx, revert)
 	if err != nil || r.State != StateQueued || r.Reverts != second || r.Target != "app" {
 		t.Fatalf("revert run = %+v, err = %v", r, err)
 	}
-	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000004", second, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) {
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000004", load(second), false, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) {
 		t.Fatalf("double revert: err = %v", err)
+	}
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000004", load(revert), true, Timeouts{}, Provenance{}); !errors.Is(err, ErrNotRevertable) ||
+		!strings.Contains(err.Error(), "itself a revert") {
+		t.Fatalf("revert of a revert: err = %v", err)
 	}
 	if err := s.Finish(ctx, revert, StateFailed, "boom"); err != nil {
 		t.Fatal(err)
@@ -196,8 +211,42 @@ func TestCreateRevert(t *testing.T) {
 		t.Fatalf("history = %v, err = %v", history, err)
 	}
 
-	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000005", first, Timeouts{}, Provenance{}); err != nil {
+	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000005", load(first), false, Timeouts{}, Provenance{}); err != nil {
 		t.Fatalf("first is the latest again: %v", err)
+	}
+}
+
+func TestRevertTargetAndForce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RevertTarget(ctx, "app"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no run yet: %v", err)
+	}
+	first, second := "77777777-0000-0000-0000-000000000001", "77777777-0000-0000-0000-000000000002"
+	queueRun(t, s, first, goodFiles())
+	queueRun(t, s, second, goodFiles())
+	for _, id := range []string{first, second} {
+		if err := s.Finish(ctx, id, StateSucceeded, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newest, err := s.RevertTarget(ctx, "app")
+	if err != nil || newest.ID != second {
+		t.Fatalf("newest = %+v, err = %v", newest, err)
+	}
+	older, err := s.Run(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newer, err := s.Newer(ctx, older); err != nil || !newer {
+		t.Fatalf("newer = %v, err = %v", newer, err)
+	}
+	if err := s.CreateRevert(ctx, "77777777-0000-0000-0000-000000000003", older, true, Timeouts{}, Provenance{}); err != nil {
+		t.Fatalf("force must revert an older run: %v", err)
 	}
 }
 
@@ -318,7 +367,7 @@ func TestStoreQueryErrors(t *testing.T) {
 	if _, err := s.RunStats(ctx); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.CreateRevert(ctx, "id", "id", Timeouts{}, Provenance{}); err == nil {
+	if err := s.CreateRevert(ctx, "id", Run{ID: "id", State: StateSucceeded}, false, Timeouts{}, Provenance{}); err == nil {
 		t.Fatal("want error")
 	}
 	if err := s.CreateBaseline(ctx, "id", "x", nil, Provenance{}); err == nil {
@@ -408,6 +457,9 @@ func TestAppliedVersions(t *testing.T) {
 		"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;",
 		"R__v.up.sql": "CREATE OR REPLACE VIEW v AS SELECT 1;", "R__v.down.sql": "DROP VIEW IF EXISTS v;",
 	})
+	ledger(t, s, first, "20260901120001_a", "20260901120003_c")
+	ledger(t, s, second, "20260901120002_b")
+	ledger(t, s, third, "R__v")
 	if err := s.Finish(ctx, first, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -464,6 +516,7 @@ func TestListTargets(t *testing.T) {
 		"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;",
 		"20260901120002_b.up.sql": upBody, "20260901120002_b.down.sql": "SELECT 1;",
 	})
+	ledger(t, s, done, "20260901120001_a", "20260901120002_b")
 	if err := s.Finish(ctx, done, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}

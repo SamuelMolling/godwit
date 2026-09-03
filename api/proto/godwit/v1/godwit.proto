@@ -451,6 +451,19 @@ message GetRunRequest {
 
 message GetRunResponse {
   Run run = 1;
+  // What the run actually put into the target's history, in the order it applied them.
+  repeated RunMigration applied = 2;
+}
+
+// RunMigration is one migration a run applied, as recorded in the control plane's ledger.
+message RunMigration {
+  // Migration id: <version>_<name>, or R__<name>.
+  string migration = 1;
+  google.protobuf.Timestamp applied_at = 2;
+  // Id of the revert run that undid it; empty while it still stands.
+  string reverted_by = 3;
+  // Its contract phase never ran: applied but not recorded on the target.
+  bool held = 4;
 }
 
 message ListRunsRequest {
@@ -489,6 +502,7 @@ message ConfirmRolloutRequest {
 message ConfirmRolloutResponse {}
 
 message RevertRunRequest {
+  // Run to revert; empty picks the newest un-reverted run on target.
   string run_id = 1;
   repeated string acknowledge_hazards = 2;
   bool skip_validation = 3;
@@ -496,11 +510,39 @@ message RevertRunRequest {
   string lock_timeout = 4;
   // Override the target's statement_timeout for the revert run; "0" disables it.
   string statement_timeout = 5;
+  // Required when run_id is empty, and checked against the run's own target otherwise.
+  string target = 6;
+  // Return the plan without queueing anything.
+  bool dry_run = 7;
+  // Revert a run that is not the newest un-reverted one on its target.
+  bool force = 8;
+  // Run a plan that drops a table or column still holding rows.
+  bool allow_data_loss = 9;
+}
+
+// DataLoss is a table or column the revert would drop while it still holds rows.
+message DataLoss {
+  string migration = 1;
+  // "table" or "column".
+  string kind = 2;
+  // schema.table, or schema.table.column.
+  string object = 3;
+  // Rows for a table; non-null values for a column.
+  int64 rows = 4;
 }
 
 message RevertRunResponse {
-  // Id of the new run applying the down migrations.
+  // Id of the new run applying the down migrations; empty on a dry run.
   string run_id = 1;
+  // Run being reverted.
+  string reverts = 2;
+  string target = 3;
+  // The down side of every migration the run applied, in reverse order of application.
+  repeated PlannedMigration migrations = 4;
+  // What the plan would destroy; non-empty only when allow_data_loss let it through.
+  repeated DataLoss data_loss = 5;
+  // The run was not the newest un-reverted one and force allowed it anyway.
+  bool forced = 6;
 }
 
 service GodwitService {

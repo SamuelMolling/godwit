@@ -82,7 +82,10 @@ func TestStorePersistsTimeouts(t *testing.T) {
 	if err := s.Finish(ctx, id, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRevert(ctx, revert, id, Timeouts{Statement: "0"}, Provenance{}); err != nil {
+	if r, err = s.Run(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRevert(ctx, revert, r, false, Timeouts{Statement: "0"}, Provenance{}); err != nil {
 		t.Fatal(err)
 	}
 	runs, err := s.ListRuns(ctx, "app")

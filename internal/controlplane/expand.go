@@ -1136,16 +1136,23 @@ func ExpandUp(plans []engine.Plan, exps map[string]Expansion) ([]engine.Plan, er
 	return substitute(plans, exps, func(e Expansion) string { return e.UpSQL })
 }
 
-// ExpandDown substitutes the generated inverse; held picks the pre-swap form, which is what a run
-// stopped between its phases needs. A hand-written .down.sql has no expansion and wins untouched.
-func ExpandDown(plans []engine.Plan, exps map[string]Expansion, held bool) ([]engine.Plan, error) {
-	return substitute(plans, exps, func(e Expansion) string {
-		if held {
-			return e.DownHeld
+// ExpandDown substitutes each migration's own frozen inverse, taken from the ledger of what the run
+// applied; a migration whose contract phase never ran gets the pre-swap form. A hand-written
+// .down.sql has no expansion and wins untouched.
+func ExpandDown(plans []engine.Plan, applied []RunMigration) ([]engine.Plan, error) {
+	exps := make(map[string]Expansion, len(applied))
+	for _, m := range applied {
+		if m.Expansion == nil {
+			continue
 		}
+		e := *m.Expansion
+		if m.Held {
+			e.DownSQL = e.DownHeld
+		}
+		exps[m.Migration] = e
+	}
 
-		return e.DownSQL
-	})
+	return substitute(plans, exps, func(e Expansion) string { return e.DownSQL })
 }
 
 func substitute(plans []engine.Plan, exps map[string]Expansion, body func(Expansion) string) ([]engine.Plan, error) {

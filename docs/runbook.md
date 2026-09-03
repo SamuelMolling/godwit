@@ -53,7 +53,7 @@ WHERE r.state = 'failed' GROUP BY r.id;
 
 ## Run stuck in `awaiting_contract`
 
-**Meaning.** An `expand-contract` run applied every migration before the first one carrying a contract hazard (`DROP TABLE`, `DROP COLUMN`, `RENAME`: H002, H003, H008) and waits for `ConfirmRollout` to run the rest. Nothing is wrong; the target is usable by both the old and the new application version. It does not block a new `migrate` on the target (only `queued`/`running` runs do), but a newer run makes this one non-revertable.
+**Meaning.** An `expand-contract` run applied every migration before the first one carrying a contract hazard (`DROP TABLE`, `DROP COLUMN`, `RENAME`: H002, H003, H008) and waits for `ConfirmRollout` to run the rest. Nothing is wrong; the target is usable by both the old and the new application version. It does not block a new `migrate` on the target (only `queued`/`running` runs do), but once a newer run stands on the target, reverting this one takes `godwit revert <run-id> --force`.
 
 ```sql
 SELECT id, target, created_by, source, created_at, now() - created_at AS waiting
@@ -67,7 +67,7 @@ godwit run confirm <run-id>                        # pipeline scope
 godwit run confirm --latest --target <target>      # or by target
 ```
 
-Take a [restore point](operations.md#backups-and-pitr) first. If the deploy was rolled back instead, `godwit revert <run-id>` runs the down side of every migration in the run.
+Take a [restore point](operations.md#backups-and-pitr) first. If the deploy was rolled back instead, `godwit revert <run-id>` runs the down side of the migrations that run applied.
 
 ### A pull request stuck in `awaiting_contract`
 
@@ -191,7 +191,8 @@ The checksum is the SHA-256 hex of the up file body: `sha256sum migrations/<N>_<
 | `out-of-order migrations ...: newest applied version on x is N` | failed_precondition | a new file older than the newest applied version | `--allow-out-of-order` if intended |
 | `run "x": run is not failed or parked` | failed_precondition | `resume` on a run in another state | nothing to do |
 | `run "x": run is not awaiting contract` | failed_precondition | `confirm` on a run in another state | nothing to do |
-| `run "x": run is not the latest on its target or the target is busy` | failed_precondition | revert of an older run, or a `queued`/`running` run exists | revert newer runs first, or wait |
+| `run "x": run is not revertable: ...` | failed_precondition | revert of an older run, of a run that applied nothing, or of one on a busy target | see [reverting a run](#reverting-a-run) |
+| `revert would destroy data: ...` | failed_precondition | the revert plan drops a non-empty table or column | `--allow-data-loss`, or roll forward |
 | `baseline runs cannot be reverted` | failed_precondition | revert of a `kind = baseline` run | drop `godwit.migrations` rows by hand if you really need it |
 | `N applied versions: target already has applied migrations` | failed_precondition | baseline on a non-empty target | see [baseline](concepts.md#baseline) |
 | `drift detection is not enabled` / `baselining is not enabled` | unimplemented | server built without the feature wired (tests only) | — |
@@ -210,32 +211,66 @@ To apply one specific stored plan instead of whatever `migrate` matches by key, 
 
 ## Reverting a run
 
-> **A revert is not "undo the last migration".** It runs the down side of every file the run carried, and `godwit migrate --dir db/migrations` carries the whole directory. Reverting the newest run therefore reverts every migration the target has applied, newest version first. Take a restore point first, and read the hazard list the refusal prints: it names every destructive statement the revert would run.
+A revert undoes **what that run actually applied** — the per-migration ledger the scheduler writes as
+each migration lands (`cp_run_applied`), never the directory the run submitted. `godwit migrate --dir
+db/migrations` carries the whole directory on every run, and the migrations it skips as already applied
+are not the reverting run's to undo.
 
 ```bash
-godwit revert <run-id>             # pipeline; down files of that run, newest version first
-godwit run watch <new-run-id>
+godwit revert --target app --dry-run   # read; prints the plan and queues nothing
+godwit revert --target app --ack H002  # pipeline; the newest un-reverted run on the target
+godwit revert <run-id> --ack H002      # that run, if it is still the newest un-reverted one
 ```
 
 Two migrations applied by two runs, then a revert of the second:
 
 ```
 $ godwit revert 71a9be1b-44eb-4db4-95c5-af7cc0138e17 --ack H002
+revert of run 71a9be1b-44eb-4db4-95c5-af7cc0138e17 on app: 1 migration(s), reverse order of application
+  20260101000001_b (down): 1 statement(s)
+    [0] tx    DROP TABLE b;
 run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: queued
-run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: succeeded (attempt 1) [statement 0 of 20260101000000_a]
+run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: succeeded (attempt 1) [statement 0 of 20260101000001_b]
 ```
 
-Both tables are gone and `godwit.migrations` is empty: the run carried both files, so both down sides ran. The `--ack H002` in that line is the tell — the `DROP TABLE` it acknowledges belongs to the *first* migration, which the reverted run never applied. When only the newest change should come off, write a forward migration that undoes it instead.
+The first run's table and its `godwit.migrations` row are untouched. `godwit run get <run-id>` lists the
+same ledger under `applied:`, with `(reverted by <run>)` on the rows a revert has undone.
 
-Only the latest run on the target can be reverted, and only while no run is `queued`/`running` there. A revert is itself a run (`reverts = <original>`); when it succeeds the original becomes `reverted`. Down plans are hazard-gated like up plans: a `DROP TABLE` in a down file needs `--ack H002`.
+**The plan is always printed before anything runs**, and `--dry-run` is that plan on its own — it is what
+the pull-request comment shows when the Action runs `command: revert`.
 
-**A directive migration in the directory blocks the revert.** Once a migration carrying `-- godwit: <op>` is applied, later runs that still carry its files are refused at admission:
+### What it refuses
 
-```
-godwit: migration failed validation: 20260903170000_customer_id_text (down): its godwit directives were never expanded
-```
+| Refusal | Why | Release |
+|---|---|---|
+| `run "x": run is not revertable: run y is newer and still stands` | reverting behind a newer run is almost always a mistake | revert the newer run first, or `--force` |
+| `revert would destroy data: <migration> drops table public.t holds 12 row(s)` | the plan would drop a non-empty table or column | `--allow-data-loss`, or roll forward instead |
+| `run "x": run is not revertable: it applied no migration that still stands` | the run applied nothing, or a revert already undid all of it | nothing to do |
+| `run "x": run is not revertable: target app has a queued or running run` | the target is busy | wait |
+| `unacknowledged hazards (...)` | the down files carry hazards | `--ack H002` (down plans are hazard-gated like up plans) |
 
-The expansion is stored on the run that applied the directive, so a *later* run has nothing to substitute into its down side. Revert the run that applied the directive (it still holds its own expansion), or roll forward.
+The data-loss gate reads the down files **you** wrote. A `-- godwit: revert` inverse is godwit's own, and
+godwit refuses to generate one wherever it would not be lossless (`drop-column`, `drop-index`, `backfill`,
+`keep-old=false`), so generated inverses are exempt.
+
+`--force` and `--allow-data-loss` are independent: forcing past a newer run does not allow data loss, and
+allowing data loss does not let you skip a newer run.
+
+### What it leaves behind
+
+A revert is itself a run (`reverts = <original>`) and it is added to the history, never subtracted from it:
+when it succeeds the original run becomes `reverted`, its ledger rows point at the revert with
+`reverted_by`, and both runs stay in `godwit runs` and in the audit. Reverting the same run twice is
+refused because the ledger says there is nothing left standing.
+
+A revert that fails part-way leaves the ledger honest: the migrations it undid are marked reverted, the
+rest still stand, and a second `godwit revert` picks up exactly what is left.
+
+**Production policy is roll forward.** Every vendor in this space says so, including the ones selling the
+feature: a down file is a review artifact, and the answer to a bad migration in production is usually a new
+migration or a restore from backup. `revert` is for the minutes after a bad apply and for the pull request
+that gets abandoned. Take a [restore point](operations.md#backups-and-pitr) before using it on anything
+that matters.
 
 ## Store unreachable
 

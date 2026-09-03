@@ -35,7 +35,7 @@ The default, `mode: apply-on-pr`, is the Atlantis model: the pull request plans,
 | `issue_comment` `/godwit apply`, or `pull_request_review` | `apply` | `migrate` from the pull request head, bound to the stored plan; status `godwit/applied` on the head commit |
 | `issue_comment` `/godwit confirm` | `confirm` | the contract phase of the run the pull request left in `awaiting_contract`; the status goes from `pending` to `success` |
 | merge (`push`) | `verify` | `migrate --dry-run`: fails when a migration on `main` is not applied; never applies |
-| `issue_comment` `/godwit revert` | `revert` | the down files of the run(s) the pull request applied; status back to failure |
+| `issue_comment` `/godwit revert` | `revert` | undoes what the run(s) of the pull request applied, newest first; the dry-run plan goes in the comment before anything is queued; status back to failure |
 
 In this mode `command: migrate` is refused (exit 2) unless `dry-run: "true"`. `mode: apply-on-merge` keeps the previous flow: `plan` on the pull request, `migrate` on push; `apply`, `confirm` and `revert` are refused there (confirm the contract phase from the deploy pipeline with `godwit run confirm --latest --allow-none --target <t>`, [below](#expand--contract-in-a-pipeline)). Use it when nothing may touch the database before the merge (for example when the PreSync hook in [ArgoCD](#argocd) is the only thing allowed to apply).
 
@@ -50,6 +50,8 @@ In this mode `command: migrate` is refused (exit 2) unless `dry-run: "true"`. `m
 | `dir` | `dir` from `godwit.yaml`, else `migrations` | all but revert; diff writes the generated pair there |
 | `base` | `origin/main` | lint: only migrations added since the ref are linted, files modified since it are `E003`; empty checks every file. The ref is fetched depth-1 when missing |
 | `ack` | — | lint, plan, apply, verify, migrate: comma-separated hazard codes; revert: the codes found in the down files (`H002` for `DROP TABLE`, `H009` for `DROP INDEX`, ...) |
+| `allow-data-loss` | `false` | revert: run a plan that drops a table or column still holding rows. godwit refuses it by default and names the objects and their row counts in the comment |
+| `force` | `false` | revert: undo a run that is not the newest un-reverted one on its target |
 | `server` | `server` from `godwit.yaml` or `GODWIT_SERVER` | plan, apply, verify, revert, migrate, diff |
 | `token` | — | plan, verify and diff (`read`), apply, confirm, revert and migrate (`pipeline`); exported as `GODWIT_TOKEN`, never passed on the command line |
 | `target` | `target` from `godwit.yaml` | plan, apply, verify, migrate, diff; confirm and revert (optional, narrows the run search). With a target, `plan` runs on the service and stores the plan; without one it parses the files offline |

@@ -21,6 +21,8 @@ type ApplyRequest struct {
 	Opts   engine.Options
 	// Progress receives every statement event; nil drops them.
 	Progress func(engine.StatementEvent)
+	// Record receives each plan's outcome as it completes; nil drops them.
+	Record Recorder
 }
 
 // Engine applies plans to a target database, marks migrations applied and inspects its schema and journal.
@@ -30,6 +32,7 @@ type Engine interface {
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 	Applied(ctx context.Context, dsn string) ([]engine.Applied, []engine.Repeatable, error)
 	Observe(ctx context.Context, dsn string) (Observation, error)
+	DataLoss(ctx context.Context, dsn string, drops []engine.Drop) ([]engine.Loss, error)
 }
 
 // PGEngine is the PostgreSQL Engine; Metrics and Log are optional.
@@ -46,9 +49,20 @@ func (e PGEngine) Apply(ctx context.Context, req ApplyRequest) error {
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	_, err = applyPlans(ctx, conn, req.Opts, req.Plans, engine.WithObserver(e.observer(req)))
+	_, err = applyPlans(ctx, conn, req.Opts, req.Plans, req.Record, engine.WithObserver(e.observer(req)))
 
 	return err
+}
+
+// DataLoss implements Engine.
+func (PGEngine) DataLoss(ctx context.Context, dsn string, drops []engine.Drop) ([]engine.Loss, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect target: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	return engine.DataLoss(ctx, conn, drops)
 }
 
 func (e PGEngine) observer(req ApplyRequest) func(engine.StatementEvent) {

@@ -501,7 +501,8 @@ func TestRevertRefusesUnexpandableDown(t *testing.T) {
 	runID := startRun(t, client, files)
 	waitState(t, client, runID, godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT)
 
-	execStore(t, storeDSN, `UPDATE cp_runs SET expansions = '{"20260901130000_age": {"down_held_sql": "NOT SQL"}}'::jsonb WHERE state = 'awaiting_contract'`)
+	execStore(t, storeDSN, `UPDATE cp_run_applied SET expansion = jsonb_set(expansion, '{down_held_sql}', '"NOT SQL"')
+		WHERE migration = '20260901130000_age'`)
 	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: runID})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("err = %v", err)
 	}
