@@ -8,16 +8,18 @@ Project file for the CLI. Looked up from the working directory upward until a di
 
 | Key | Type | Default | Env override | Used by |
 |---|---|---|---|---|
-| `dir` | path | `migrations` | `GODWIT_DIR` | `plan`, `apply`, `status`, `down`, `lint`, `migrate`, `target baseline`, `target status` |
-| `target` | string | — | `GODWIT_TARGET` | `migrate`, `run confirm --latest` |
-| `rollout` | `direct` \| `expand-contract` | `direct` | `GODWIT_ROLLOUT` | `migrate` |
-| `server` | URL | — | `GODWIT_SERVER` | every service command (`target`, `migrate`, `revert`, `run`, `runs`, `drift`, `audit`) |
+| `dir` | path | `migrations` | `GODWIT_DIR` | `plan`, `apply`, `status`, `down`, `lint`, `migrate`, `diff`, `target baseline`, `target status` |
+| `target` | string | — | `GODWIT_TARGET` | `plan`, `plans`, `lint`, `diff`, `migrate`, `run confirm --latest` |
+| `rollout` | `direct` \| `expand-contract` | `direct` | `GODWIT_ROLLOUT` | `plan`, `migrate` |
+| `server` | URL | — | `GODWIT_SERVER` | every service command (`target`, `targets`, `plan`, `plans`, `lint`, `diff`, `migrate`, `revert`, `run`, `runs`, `drift`, `audit`) |
 | `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `apply`, `status`, `down` only |
 | `statement_timeout` | Go duration | `0` (disabled) | `GODWIT_STATEMENT_TIMEOUT` | `apply`, `status`, `down` only |
-| `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `migrate` |
+| `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `plan`, `migrate` |
 | `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff`, `lint` |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
+
+`target` reaches `plan` as well as `migrate`, and `plan --target` is a service command: once `godwit.yaml` names a target, a bare `godwit plan` no longer parses the directory offline — it plans against the live target and stores a plan on the service. `godwit plan --target ""` forces the offline form back.
 
 ```yaml
 dir: db/migrations
@@ -146,7 +148,7 @@ Global: `--config <path>`. Every service command: `--server`, `--token`, `--json
 
 | Command | Flags | Notes |
 |---|---|---|
-| `godwit version` | | prints `godwit <version> (<commit>)` |
+| `godwit version` | | prints `<version> (<commit>)`; `dev (none)` from a plain `go build`, `main (<full commit>)` in the published image |
 | `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline; with `--target` it becomes a service command (below) |
 | `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>`, `--server`, `--token`, `--target`, `--no-schema-check` | with `--base`, only migrations added since the ref are checked and versioned files modified since it are `E003` (never an `R__` file); with `--server` and `--target` it also checks the committed migrations against `schema_source` (`E005`, below); blocking findings exit 1 |
 | `godwit apply` | `--dsn` (required), `--dir`, `--lock-timeout`, `--statement-timeout` | runs the executor directly against a database |
@@ -159,16 +161,16 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 | Command | Flags | Scope |
 |---|---|---|
-| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--search-path` | admin |
+| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path` | admin |
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
-| `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them |
+| `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them. The applied count is versioned migrations only; `target status` also lists the repeatables, so its `applied (N)` is the larger number |
 | `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
 | `godwit plan show <plan-id>` | `--format text\|markdown\|json` | read; statements, hazards and recipes, observation, drift, state, run id, superseded-by |
 | `godwit plans` | `--target`, `--limit` | read; newest first |
 | `godwit diff` | `--target`, one of `--schema <file>`, `--prisma <schema.prisma>`, `--exec '<command line>'`, `--gorm <package>`, `--django <manage.py>` (none falls back to [`schema_source`](#schema_source)), `--prisma-bin` (`$GODWIT_PRISMA_BIN`, default `npx prisma`), `--go-bin` (`$GODWIT_GO_BIN`, default `go`), `--python-bin` (`$GODWIT_PYTHON_BIN`, default `python`), `--django-database <alias>`, `--name <snake_case>` (required unless `--dry-run`), `--dir`, `--dry-run` | read; writes `<timestamp>_<name>.up.sql` / `.down.sql` from the live target to the desired schema: a DDL file, a Prisma schema, any command's stdout, a GORM dry-run package or a Django project; prints the up SQL with hazards and recipes, `no changes` when they match, `--dry-run` prints without writing |
 | `godwit migrate` | `--target`, `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--lock-timeout`, `--statement-timeout`, `--dry-run`, `--format text\|markdown\|json` (dry run only), `--plan <plan-id>` | pipeline (`--dry-run`: read) |
-| `godwit revert <run-id>` | `--ack`, `--skip-validation`, `--lock-timeout`, `--statement-timeout` | pipeline |
+| `godwit revert <run-id>` | `--ack`, `--skip-validation`, `--lock-timeout`, `--statement-timeout` | pipeline; runs the down side of **every file the run carried**, not only the versions that run applied — with the usual whole-directory `migrate`, that is the whole history ([runbook](runbook.md#reverting-a-run)) |
 | `godwit run get <run-id>` | | read |
 | `godwit run watch <run-id>` | | read; exits 1 on `failed` / `needs_attention` |
 | `godwit run resume <run-id>` | | operator |
@@ -190,7 +192,9 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 | `keep_old` | `--keep-old` | bool | `true` | `-- godwit: change-type` on this target keeps the pre-swap column as the rollback; a directive's own `keep-old=` still wins |
 | `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([concepts](concepts.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
 
-`godwit target status <name>` prints all four.
+A setting the target does not carry is printed as `none` by `godwit target status` and `godwit targets`; it means "nothing registered", not "no limit". An unregistered `lock_timeout` still runs under the executor's own 5s default, and an unregistered `statement_timeout` is genuinely disabled.
+
+`godwit target status <name>` prints the provider and three of them — `lock_timeout`, `statement_timeout` and `search_path`. `require_plan` and `keep_old` are in `godwit targets` and in `ListTargets`.
 
 `migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` or `R__<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 

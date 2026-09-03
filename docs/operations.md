@@ -23,6 +23,9 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 | `cp_targets` | one per target; `config` holds the encrypted DSN or the provider config | targets |
 | `cp_runs` | one per run: state, attempts, rollout, phase, `reverts`, timeouts, kind, `created_by`, `source`, error | runs |
 | `cp_run_files` | every migration file body sent with a run (replayed for validation and used for revert) | runs × files; the largest table |
+| `cp_plans` | one per stored plan: key, rollout, state, observation, drift, directive expansions, the run it is bound to | `godwit plan --target` calls; swept by `--plan-retention` |
+| `cp_plan_files` | the file bodies of a stored plan | plans × files; second largest |
+| `cp_retired_columns` | one per `<c>_old` a completed `change-type` left behind, so `godwit diff` stops proposing to drop it | `change-type` directives |
 | `cp_leases` | one per claimed run | runs (never pruned; tiny) |
 | `cp_snapshots` | one per target: schema fingerprint and definition after the last successful run or baseline | targets |
 | `cp_drift_events` | one per detected diff, `resolved_at` when it goes away or is accepted | drift |

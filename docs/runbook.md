@@ -210,12 +210,32 @@ To apply one specific stored plan instead of whatever `migrate` matches by key, 
 
 ## Reverting a run
 
+> **A revert is not "undo the last migration".** It runs the down side of every file the run carried, and `godwit migrate --dir db/migrations` carries the whole directory. Reverting the newest run therefore reverts every migration the target has applied, newest version first. Take a restore point first, and read the hazard list the refusal prints: it names every destructive statement the revert would run.
+
 ```bash
 godwit revert <run-id>             # pipeline; down files of that run, newest version first
 godwit run watch <new-run-id>
 ```
 
-Only the latest run on the target can be reverted, and only while no run is `queued`/`running` there. A revert is itself a run (`reverts = <original>`); when it succeeds the original becomes `reverted`. Down plans are hazard-gated like up plans: a `DROP TABLE` in a down file needs `--ack H002`. Take a restore point first.
+Two migrations applied by two runs, then a revert of the second:
+
+```
+$ godwit revert 71a9be1b-44eb-4db4-95c5-af7cc0138e17 --ack H002
+run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: queued
+run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: succeeded (attempt 1) [statement 0 of 20260101000000_a]
+```
+
+Both tables are gone and `godwit.migrations` is empty: the run carried both files, so both down sides ran. The `--ack H002` in that line is the tell — the `DROP TABLE` it acknowledges belongs to the *first* migration, which the reverted run never applied. When only the newest change should come off, write a forward migration that undoes it instead.
+
+Only the latest run on the target can be reverted, and only while no run is `queued`/`running` there. A revert is itself a run (`reverts = <original>`); when it succeeds the original becomes `reverted`. Down plans are hazard-gated like up plans: a `DROP TABLE` in a down file needs `--ack H002`.
+
+**A directive migration in the directory blocks the revert.** Once a migration carrying `-- godwit: <op>` is applied, later runs that still carry its files are refused at admission:
+
+```
+godwit: migration failed validation: 20260903170000_customer_id_text (down): its godwit directives were never expanded
+```
+
+The expansion is stored on the run that applied the directive, so a *later* run has nothing to substitute into its down side. Revert the run that applied the directive (it still holds its own expansion), or roll forward.
 
 ## Store unreachable
 
