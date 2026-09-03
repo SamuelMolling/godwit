@@ -179,6 +179,80 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	return provider, config, nil
 }
 
+// TargetSummary is the control plane's own view of a registered target, assembled without connecting to it.
+type TargetSummary struct {
+	Name            string
+	Provider        string
+	Timeouts        Timeouts
+	SearchPath      string
+	RequirePlan     bool
+	KeepOld         bool
+	LastRun         *Run
+	AttentionRuns   int
+	UnresolvedDrift bool
+	ReadyPlans      int
+	AppliedCount    int
+}
+
+// ListTargets summarises every target by name, counting ready plans created at or after since.
+func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSummary, error) {
+	last, err := s.lastRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.name, t.provider, t.config,
+			(SELECT count(DISTINCT left(f.name, 14)) FROM cp_run_files f JOIN cp_runs r ON r.id = f.run_id
+			 WHERE r.target = t.name AND r.state = 'succeeded' AND `+versionedFile+`),
+			(SELECT count(*) FROM cp_runs r WHERE r.target = t.name AND r.state IN ('needs_attention', 'awaiting_contract')),
+			(SELECT count(*) FROM cp_plans p WHERE p.target = t.name AND p.state = 'ready' AND p.created_at >= $1),
+			EXISTS (SELECT 1 FROM cp_drift_events d WHERE d.target = t.name AND d.resolved_at IS NULL)
+		FROM cp_targets t ORDER BY t.name`, since)
+	if err != nil {
+		return nil, fmt.Errorf("list targets: %w", err)
+	}
+	var out []TargetSummary
+	var sum TargetSummary
+	var cfg []byte
+	fields := []any{&sum.Name, &sum.Provider, &cfg, &sum.AppliedCount, &sum.AttentionRuns, &sum.ReadyPlans, &sum.UnresolvedDrift}
+	if _, err := pgx.ForEachRow(rows, fields, func() error {
+		var config map[string]string
+		if err := json.Unmarshal(cfg, &config); err != nil {
+			return fmt.Errorf("target %q config: %w", sum.Name, err)
+		}
+		sum.Timeouts, sum.SearchPath = TargetTimeouts(config), config[ConfigSearchPath]
+		sum.RequirePlan, sum.KeepOld = config[ConfigRequirePlan] == "true", config[ConfigKeepOld] != "false"
+		sum.LastRun = last[sum.Name]
+		out = append(out, sum)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read targets: %w", err)
+	}
+
+	return out, nil
+}
+
+func (s *Store) lastRuns(ctx context.Context) (map[string]*Run, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+runColumns+` FROM (SELECT DISTINCT ON (target) * FROM cp_runs ORDER BY target, created_at DESC) r`)
+	if err != nil {
+		return nil, fmt.Errorf("list last runs: %w", err)
+	}
+	out := map[string]*Run{}
+	var r Run
+	if _, err := pgx.ForEachRow(rows, r.fields(), func() error {
+		run := r
+		out[run.Target] = &run
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read last runs: %w", err)
+	}
+
+	return out, nil
+}
+
 // CreateRun queues a run with its migration files, per-run timeout overrides, provenance, bound plan
 // (empty when implicit) and the directive expansions the run applies in place of the file bodies.
 func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance, planID string, exps map[string]Expansion) error {

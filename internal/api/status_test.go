@@ -118,3 +118,69 @@ func TestGetTargetStatus(t *testing.T) {
 func expectReadyCount(mock pgxmock.PgxPoolIface, n int) {
 	mock.ExpectQuery("SELECT count").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(n))
 }
+
+func TestListTargets(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+
+	expectTargetRows(mock)
+	res, err := s.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.Msg.Targets
+	if len(got) != 2 {
+		t.Fatalf("targets = %+v", got)
+	}
+	app := got[0]
+	if app.Name != "app" || app.Provider != "static" || app.SearchPath != "app,public" || app.LockTimeout != "3s" ||
+		app.StatementTimeout != "1m" || !app.RequirePlan || app.KeepOld || !app.UnresolvedDrift ||
+		app.ReadyPlans != 2 || app.AppliedCount != 7 || app.AttentionRuns != 1 ||
+		app.LastRun == nil || app.LastRun.Id != "r1" || app.LastRun.State != godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION {
+		t.Fatalf("app = %+v last = %+v", app, app.LastRun)
+	}
+	if bare := got[1]; bare.Name != "bare" || bare.RequirePlan || !bare.KeepOld || bare.LastRun != nil ||
+		bare.SearchPath != "" || bare.AppliedCount != 0 {
+		t.Fatalf("bare = %+v", bare)
+	}
+
+	s.RequirePlan = true
+	expectTargetRows(mock)
+	res, err = s.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{}))
+	if err != nil || !res.Msg.Targets[1].RequirePlan {
+		t.Fatalf("--require-plan must show on every target: %+v, err = %v", res, err)
+	}
+
+	mock.ExpectQuery("DISTINCT ON").WillReturnError(errors.New("runs down"))
+	if _, err := s.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("store error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runRow() *pgxmock.Rows {
+	return pgxmock.NewRows([]string{
+		"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce",
+		"created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions",
+	}).AddRow("r1", "app", controlplane.StateNeedsAttention, "boom", 3, controlplane.RolloutDirect, controlplane.PhaseExpand,
+		"", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), "ci", "", "", 0, (*time.Time)(nil),
+		(*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{})
+}
+
+func expectTargetRows(mock pgxmock.PgxPoolIface) {
+	mock.ExpectQuery("DISTINCT ON").WillReturnRows(runRow())
+	mock.ExpectQuery("FROM cp_targets").WithArgs(pgxmock.AnyArg()).WillReturnRows(
+		pgxmock.NewRows([]string{"name", "provider", "config", "applied", "attention", "ready", "drift"}).
+			AddRow("app", "static",
+				[]byte(`{"lock_timeout":"3s","statement_timeout":"1m","require_plan":"true","keep_old":"false","search_path":"app,public"}`),
+				7, 1, 2, true).
+			AddRow("bare", "static", []byte(`{}`), 0, 0, 0, false))
+}

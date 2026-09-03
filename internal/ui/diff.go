@@ -43,7 +43,7 @@ func diffName(s string) string {
 }
 
 func (h *Handler) diffForm(w http.ResponseWriter, r *http.Request) {
-	p, _, err := h.frame(r.Context(), r, "diff")
+	p, err := h.frame(r.Context(), r, "diff")
 	if err != nil {
 		h.fail(w, p, err)
 
@@ -55,7 +55,7 @@ func (h *Handler) diffForm(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) diffRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, _, err := h.frame(ctx, r, "diff")
+	p, err := h.frame(ctx, r, "diff")
 	if err != nil {
 		h.fail(w, p, err)
 

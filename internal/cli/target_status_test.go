@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -68,6 +69,48 @@ func TestTargetStatus(t *testing.T) {
 	stub.err = connect.NewError(connect.CodeNotFound, errors.New("target \"app\": not found"))
 	if code, _, errOut := runCLI("target", "status", "app", "--server", url, "--dir", goodMigs(t)); code != 1 ||
 		errOut != "godwit: target \"app\": not found\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func (s *stubService) ListTargets(_ context.Context, req *connect.Request[godwitv1.ListTargetsRequest]) (*connect.Response[godwitv1.ListTargetsResponse], error) {
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(&godwitv1.ListTargetsResponse{Targets: s.summaries}), nil
+}
+
+func TestTargets(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{summaries: []*godwitv1.TargetSummary{
+		{
+			Name: "app", Provider: "static", SearchPath: "app,public", LockTimeout: "3s", StatementTimeout: "1m",
+			RequirePlan: true, KeepOld: false, AppliedCount: 7, ReadyPlans: 2, AttentionRuns: 1, UnresolvedDrift: true,
+			LastRun: &godwitv1.Run{Id: "r1", State: godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION},
+		},
+		{Name: "billing", Provider: "vault", KeepOld: true},
+	}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("targets", "--server", url)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := "NAME     PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT    SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN\n" +
+		"app      static    7        2            1          drifted  app,public   3s    1m         true          r1 needs_attention\n" +
+		"billing  vault     0        0            0          clean    none         none  none       false         none\n"
+	if out != want {
+		t.Fatalf("out = %q\nwant %q", out, want)
+	}
+
+	code, out, _ = runCLI("targets", "--server", url, "--json")
+	if code != 0 || len(decodeJSON(t, out)["targets"].([]any)) != 2 {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	stub.err = connect.NewError(connect.CodeUnavailable, errors.New("store down"))
+	if code, _, errOut := runCLI("targets", "--server", url); code != 1 || errOut != "godwit: store down\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }

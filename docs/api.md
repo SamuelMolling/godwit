@@ -35,7 +35,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 | Scope | RPCs |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListDriftEvents`, `ListAudit` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
 | `admin` | + `RegisterTarget` |
@@ -230,6 +230,25 @@ call GetTargetStatus '{"target":"app","files":[...]}'
 ```
 
 `files` is optional; with it, `pending` lists versions in the files not yet applied and `applied[].checksumMismatch` marks versions whose file changed. `readyPlans` counts the stored plans still bindable (`ready` and younger than `--plan-ttl`).
+
+### ListTargets — read
+
+```bash
+call ListTargets '{}'
+```
+
+```json
+{"targets":[{"name":"app","provider":"static","searchPath":"app,public","lockTimeout":"5s","statementTimeout":"0",
+  "requirePlan":true,"keepOld":true,"appliedCount":12,"readyPlans":1,"attentionRuns":0,"unresolvedDrift":false,
+  "lastRun":{"id":"...","state":"RUN_STATE_SUCCEEDED"}}]}
+```
+
+Every registered target by name, with its settings and what the control plane knows about it. No connection is opened
+to any target, so it answers while a target is unreachable; `GetTargetStatus` is the one that reads the target's own
+journal. `appliedCount` counts the distinct versions the target's succeeded runs carried, `attentionRuns` the runs in
+`needs_attention` or `awaiting_contract`, and `readyPlans` the stored plans still bindable (`ready` and younger than
+`--plan-ttl`). `requirePlan` is true when the target was registered with it **or** the service runs with
+`--require-plan`. The CLI renders it as `godwit targets`.
 
 ### GetPlan — read
 

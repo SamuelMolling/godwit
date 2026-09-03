@@ -48,6 +48,48 @@ func newTargetStatusCmd() *cobra.Command {
 	return cmd
 }
 
+func newTargetsCmd() *cobra.Command {
+	flags := &clientFlags{}
+	cmd := &cobra.Command{
+		Use:   "targets",
+		Short: "List the targets registered on the service with their settings, applied count, drift and ready plans",
+		Args:  cobra.NoArgs,
+		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, _ []string) error {
+			resp, err := client.ListTargets(cmd.Context(), connect.NewRequest(&godwitv1.ListTargetsRequest{}))
+			if err != nil {
+				return err
+			}
+			flags.print(cmd, resp.Msg, targetsTable(resp.Msg.Targets))
+
+			return nil
+		}),
+	}
+	flags.register(cmd)
+
+	return cmd
+}
+
+func targetsTable(targets []*godwitv1.TargetSummary) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tPROVIDER\tAPPLIED\tREADY PLANS\tNEEDS YOU\tDRIFT\tSEARCH PATH\tLOCK\tSTATEMENT\tREQUIRE PLAN\tLAST RUN")
+	for _, t := range targets {
+		last := "none"
+		if t.LastRun != nil {
+			last = t.LastRun.Id + " " + stateName(t.LastRun.State)
+		}
+		drift := "clean"
+		if t.UnresolvedDrift {
+			drift = "drifted"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%t\t%s\n", t.Name, t.Provider, t.AppliedCount, t.ReadyPlans,
+			t.AttentionRuns, drift, orNone(t.SearchPath), orNone(t.LockTimeout), orNone(t.StatementTimeout), t.RequirePlan, last)
+	}
+	_ = w.Flush()
+
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
 func optionalFiles(cmd *cobra.Command, dir string) ([]*godwitv1.MigrationFile, error) {
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) && !cmd.Flags().Changed("dir") {
 		return nil, nil

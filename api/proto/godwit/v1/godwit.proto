@@ -348,6 +348,34 @@ message BaselineTargetResponse {
   string run_id = 1;
 }
 
+message ListTargetsRequest {}
+
+// TargetSummary is what the control plane knows about a target without connecting to it.
+message TargetSummary {
+  string name = 1;
+  string provider = 2;
+  // The target's registered settings; empty timeouts and search_path inherit the role's defaults.
+  string search_path = 3;
+  string lock_timeout = 4;
+  string statement_timeout = 5;
+  bool require_plan = 6;
+  // Whether a change-type keeps the old column as its rollback; true unless keep_old is registered as false.
+  bool keep_old = 7;
+  Run last_run = 8;
+  bool unresolved_drift = 9;
+  // Stored plans still bindable on the target.
+  int32 ready_plans = 10;
+  // Distinct versions carried by the target's succeeded runs.
+  int32 applied_count = 11;
+  // Runs waiting for a human: needs_attention or awaiting_contract.
+  int32 attention_runs = 12;
+}
+
+message ListTargetsResponse {
+  // By name.
+  repeated TargetSummary targets = 1;
+}
+
 message GetTargetStatusRequest {
   string target = 1;
   // Optional: when given, versions missing on the target and repeatables whose content changed are reported as pending,
@@ -492,6 +520,8 @@ service GodwitService {
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);
   rpc BaselineTarget(BaselineTargetRequest) returns (BaselineTargetResponse);
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
+  // Summarises every registered target from the control plane alone, without opening a connection to any of them.
+  rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
   rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);

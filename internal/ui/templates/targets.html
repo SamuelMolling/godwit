@@ -1,0 +1,31 @@
+{{define "targets.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Targets</span></div><h1>Targets</h1></div>
+  <div class="acts"><a class="btn ghost" href="/ui/targets"><svg class="ic"><use href="#i-refresh"/></svg>Refresh</a></div>
+</header>
+<div class="body">
+  <div class="sec" style="margin-top:0">
+    <div class="sec-hd"><h2>Registered <span class="n">{{len .Summaries}}</span></h2><div class="right">Everything the control plane knows without opening a connection</div></div>
+    {{if .Summaries}}
+    <div class="tbl"><table>
+      <thead><tr><th>Target</th><th>Provider</th><th class="r">Applied</th><th class="r">Ready plans</th><th>Drift</th><th>Last run</th><th>Settings</th></tr></thead>
+      <tbody>
+        {{range .Summaries}}
+        <tr>
+          <td class="id"><a href="/ui/targets/{{.Name}}">{{.Name}}</a>{{if .AttentionRuns}}<span class="sub">{{.AttentionRuns}} waiting for you</span>{{end}}</td>
+          <td><span class="chip">{{.Provider}}</span></td>
+          <td class="r num">{{.AppliedCount}}</td>
+          <td class="r num">{{.ReadyPlans}}</td>
+          <td>{{if .UnresolvedDrift}}<span class="pill drifted">drifted</span>{{else}}<span class="pill succeeded">clean</span>{{end}}</td>
+          <td>{{with .LastRun}}<a href="/ui/runs/{{.Id}}" class="mono">{{short .Id}}</a> <span class="pill {{state .State}}">{{label .State}}</span>{{else}}<span class="faint">never migrated</span>{{end}}</td>
+          <td class="ago">{{if .SearchPath}}<span class="mono">{{.SearchPath}}</span>{{else}}<span class="faint">role default path</span>{{end}}<span class="sub">lock {{or .LockTimeout "—"}} · statement {{or .StatementTimeout "—"}}{{if .RequirePlan}} · require_plan{{end}}{{if not .KeepOld}} · keep_old=false{{end}}</span></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table></div>
+    {{else}}
+    <div class="empty"><svg class="ic"><use href="#i-db"/></svg><b>No targets yet</b><p><span class="mono">godwit target add &lt;name&gt; --provider static --dsn ...</span> registers the first one.</p></div>
+    {{end}}
+  </div>
+</div>
+{{template "foot" .}}{{end}}

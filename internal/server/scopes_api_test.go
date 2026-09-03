@@ -60,15 +60,16 @@ func TestTokenScopesEndToEnd(t *testing.T) {
 		t.Fatalf("operator checks drift: %v", err)
 	}
 	for name, err := range map[string]error{
-		"read lists runs":   call(bot.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{}))),
-		"read gets status":  call(bot.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "app"}))),
-		"read plans":        call(bot.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: migrationFiles()}))),
-		"read lists drift":  call(bot.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{Target: "app"}))),
-		"read lists audit":  call(bot.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{}))),
-		"read lists plans":  call(bot.ListPlans(ctx, connect.NewRequest(&godwitv1.ListPlansRequest{Target: "app"}))),
-		"read gets plan":    call(bot.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: "missing"}))),
-		"read diffs":        call(bot.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{Target: "app", Schema: "CREATE TABLE t (id int);"}))),
-		"pipeline confirms": call(deploy.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: created.Msg.RunId}))),
+		"read lists runs":    call(bot.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{}))),
+		"read gets status":   call(bot.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "app"}))),
+		"read lists targets": call(bot.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{}))),
+		"read plans":         call(bot.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: migrationFiles()}))),
+		"read lists drift":   call(bot.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{Target: "app"}))),
+		"read lists audit":   call(bot.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{}))),
+		"read lists plans":   call(bot.ListPlans(ctx, connect.NewRequest(&godwitv1.ListPlansRequest{Target: "app"}))),
+		"read gets plan":     call(bot.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: "missing"}))),
+		"read diffs":         call(bot.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{Target: "app", Schema: "CREATE TABLE t (id int);"}))),
+		"pipeline confirms":  call(deploy.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: created.Msg.RunId}))),
 	} {
 		if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeUnauthenticated {
 			t.Fatalf("%s: %v", name, err)
