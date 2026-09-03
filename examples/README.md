@@ -8,9 +8,12 @@ Copy into `.github/workflows/` of the repository that holds the migrations.
 
 | File | Trigger | What it does | Token scope |
 |---|---|---|---|
-| [pr-lint-and-plan.yml](github-actions/pr-lint-and-plan.yml) | pull request | `lint` the migrations added since `origin/main`; `plan` against the live target, stored on the service as the plan the merge will apply; each posts a sticky comment | `read` (plan) |
-| [pr-dry-run.yml](github-actions/pr-dry-run.yml) | pull request | non-persisting variant: `migrate --dry-run` against the live target shows the same admitted plan without storing it; sticky comment | `read` |
-| [deploy-migrate.yml](github-actions/deploy-migrate.yml) | push to `main` | job `expand`: `migrate --rollout expand-contract` bound to the plan the pull request stored, outcome posted on the merged pull request; job `contract`: `run confirm --latest --allow-none`, gated by a GitHub environment with required reviewers | `pipeline` |
+| [pr-plan-and-apply.yml](github-actions/pr-plan-and-apply.yml) | pull request; `/godwit apply` or `/godwit revert` comment; review | job `check`: `lint` the migrations added since `origin/main`, `plan` against the live target stored on the service; job `apply`: `/godwit apply` (or an approving review with `apply-on: comment,approve`) applies the stored plan from the pull request head and sets the `godwit/applied` status, `/godwit revert` runs the down files when the pull request is abandoned | `read` (plan), `pipeline` (apply, revert) |
+| [push-verify.yml](github-actions/push-verify.yml) | push to `main` | job `verify`: `migrate --dry-run` proves every migration on `main` is applied, fails the push and comments on the merged pull request otherwise; job `contract`: `run confirm --latest --allow-none`, gated by a GitHub environment with required reviewers | `read` (verify), `pipeline` (contract) |
+| [pr-dry-run.yml](github-actions/pr-dry-run.yml) | pull request | non-persisting variant of the plan step: `migrate --dry-run` against the live target shows the same admitted plan without storing it; sticky comment | `read` |
+| [apply-on-merge.yml](github-actions/apply-on-merge.yml) | push to `main` | opt-in `mode: apply-on-merge`: job `expand`: `migrate --rollout expand-contract` bound to the plan the pull request stored, outcome posted on the merged pull request; job `contract` as above | `pipeline` |
+
+Branch protection for the default mode: require the `godwit/applied` status and "Require branches to be up to date before merging" on `main`; the status is set on the pull request head, so any push after the apply needs `/godwit apply` again.
 
 The action builds godwit from source with cgo (`go-version` pins the toolchain), so the first step of a job takes about a minute.
 

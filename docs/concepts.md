@@ -170,7 +170,7 @@ The split is by migration, not by statement: a migration mixing `ADD COLUMN` and
 
 ## Revert
 
-`RevertRun{run_id}` queues a new run of kind `migrate` with `reverts` set, whose plans are the down sides of every file in the original run, newest version first. It goes through the same hazard gate (the `DROP TABLE` in a down file needs `--ack H002`), the same validation, the same lease. Allowed only when the original is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, is the newest non-reverted run on the target, and nothing is queued or running there. Baseline runs cannot be reverted. When the revert succeeds the original is marked `reverted` and its versions become pending again. A revert is all-or-nothing per run: there is no single-version revert out of a multi-file run.
+`RevertRun{run_id}` queues a new run of kind `migrate` with `reverts` set, whose plans are the down sides of every file in the original run, newest version first. It goes through the same hazard gate (the `DROP TABLE` in a down file needs `--ack H002`), the same validation, the same lease. Allowed only when the original is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, is the newest non-reverted run on the target, and nothing is queued or running there. Baseline runs cannot be reverted. When the revert succeeds the original is marked `reverted` and its versions become pending again. The plan the original was bound to stays `bound` until the next `CreateRun` with the same key, which retires it (`superseded`) and starts fresh; a re-plan stores a new `ready` plan alongside it, and there is no plan state for "reverted" — the run carries that. A revert is all-or-nothing per run: there is no single-version revert out of a multi-file run.
 
 ## Drift
 

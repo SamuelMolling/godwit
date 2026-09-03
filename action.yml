@@ -1,11 +1,20 @@
 name: godwit
-description: Lint, plan or migrate plain-SQL PostgreSQL migrations with godwit
+description: Lint, plan, apply, verify or revert plain-SQL PostgreSQL migrations with godwit
 author: Samuel Molling
 
 inputs:
   command:
-    description: "What to run: lint, plan or migrate"
+    description: "What to run: lint, plan, apply, verify, revert or migrate"
     required: true
+  mode:
+    description: "apply-on-pr (default: apply runs from the pull request, verify on push, migrate is refused) or apply-on-merge (migrate runs on push; apply and revert are refused)"
+    default: apply-on-pr
+  apply-on:
+    description: "What triggers apply: comment (a '/godwit apply' comment or review), approve (an approved review), or comment,approve"
+    default: comment
+  allowed-associations:
+    description: "author_association values allowed to command apply or revert from a comment or review"
+    default: OWNER,MEMBER,COLLABORATOR
   dir:
     description: "Migration directory (default: dir from godwit.yaml, else migrations)"
     default: ""
@@ -13,34 +22,34 @@ inputs:
     description: "Git ref; lint only checks migrations added since it (empty checks every migration)"
     default: origin/main
   ack:
-    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003"
+    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002)"
     default: ""
   server:
-    description: "godwit service URL (plan, migrate; default: server from godwit.yaml or GODWIT_SERVER)"
+    description: "godwit service URL (plan, apply, verify, revert, migrate; default: server from godwit.yaml or GODWIT_SERVER)"
     default: ""
   token:
-    description: "Bearer token for the service (plan: read scope, migrate: pipeline scope)"
+    description: "Bearer token for the service (plan, verify: read scope; apply, revert, migrate: pipeline scope)"
     default: ""
   target:
-    description: "Target name (plan, migrate; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
+    description: "Target name (plan, apply, verify, migrate; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
     default: ""
   rollout:
-    description: "Rollout policy for plan and migrate: direct or expand-contract (default: godwit.yaml, else direct)"
+    description: "Rollout policy for plan, apply and migrate: direct or expand-contract (default: godwit.yaml, else direct)"
     default: ""
   dry-run:
     description: "With migrate: ask the service for the admitted plan without persisting it and without queueing a run (command: plan persists it)"
     default: "false"
   source:
-    description: "Provenance recorded on the plan or run (default: <repository>@<sha>[:<dir>])"
+    description: "Provenance recorded on the plan or run (default: <repository>@<pull request head sha, else sha>[:<dir>])"
     default: ""
   comment:
-    description: "Post the lint, plan or dry-run report as one sticky pull request comment (needs pull-requests: write)"
+    description: "Post the report as one sticky pull request comment (needs pull-requests: write)"
     default: "true"
   comment-on-push:
-    description: "On push events, post the migrate outcome on the pull request(s) merged by the commit (needs pull-requests: write)"
+    description: "On push events, post the migrate outcome, or a failed verify, on the pull request(s) merged by the commit (needs pull-requests: write)"
     default: "true"
   github-token:
-    description: "Token used to post the pull request comment"
+    description: "Token used to read the pull request, post the comment and set the godwit/applied status"
     default: ${{ github.token }}
   go-version:
     description: "Go version used to build godwit (cgo: libpg_query)"
@@ -48,33 +57,63 @@ inputs:
 
 outputs:
   run-id:
-    description: "Run id created by migrate"
+    description: "Run id created by apply, migrate or revert (the last revert run)"
     value: ${{ steps.godwit.outputs.run-id }}
   plan-id:
-    description: "Id of the plan stored by plan, or bound by migrate (empty for an implicit run)"
+    description: "Id of the plan stored by plan, or bound by apply or migrate (empty for an implicit run)"
     value: ${{ steps.godwit.outputs.plan-id }}
   plan-key:
     description: "Key of the plan stored by plan"
     value: ${{ steps.godwit.outputs.plan-key }}
   stale:
-    description: "true when migrate was refused because the stored plan is stale or required (exit 3)"
+    description: "true when apply or migrate was refused because the stored plan is stale or required (exit 3)"
     value: ${{ steps.godwit.outputs.stale }}
+  pending:
+    description: "Number of migrations verify found not applied"
+    value: ${{ steps.godwit.outputs.pending }}
   blocking:
     description: "Number of blocking lint findings"
     value: ${{ steps.godwit.outputs.blocking }}
+  pr-number:
+    description: "Pull request apply or revert acted on (or the pull request of a pull_request event)"
+    value: ${{ steps.context.outputs.pr-number }}
+  head-sha:
+    description: "Head commit of that pull request; apply sets the godwit/applied status on it"
+    value: ${{ steps.context.outputs.head-sha }}
+  skipped:
+    description: "true when the event did not carry a command for apply or revert (nothing ran)"
+    value: ${{ steps.context.outputs.skipped }}
   summary-path:
-    description: "Path of the markdown report written by lint, plan or migrate"
+    description: "Path of the markdown report"
     value: ${{ steps.godwit.outputs.summary-path }}
 
 runs:
   using: composite
   steps:
+    - name: Read the event
+      id: context
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        COMMAND: ${{ inputs.command }}
+        MODE: ${{ inputs.mode }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        APPLY_ON: ${{ inputs.apply-on }}
+        ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_PATH: ${{ github.event_path }}
+        REPOSITORY: ${{ github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: "${{ github.action_path }}/scripts/action-context.sh"
+
     - uses: actions/setup-go@v5
+      if: ${{ steps.context.outputs.skipped != 'true' }}
       with:
         go-version: ${{ inputs.go-version }}
         cache-dependency-path: ${{ github.action_path }}/go.sum
 
     - name: Build godwit
+      if: ${{ steps.context.outputs.skipped != 'true' }}
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
@@ -83,8 +122,11 @@ runs:
 
     - name: Run godwit ${{ inputs.command }}
       id: godwit
+      if: ${{ steps.context.outputs.skipped != 'true' }}
       shell: bash
       env:
+        GODWIT_BIN: ${{ runner.temp }}/godwit
+        GH_TOKEN: ${{ inputs.github-token }}
         COMMAND: ${{ inputs.command }}
         DIR: ${{ inputs.dir }}
         BASE: ${{ inputs.base }}
@@ -95,138 +137,31 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         SOURCE: ${{ inputs.source }}
         GODWIT_TOKEN: ${{ inputs.token }}
-      run: |
-        set -euo pipefail
-        godwit="${RUNNER_TEMP}/godwit"
-        work="$(mktemp -d "${RUNNER_TEMP}/godwit-${COMMAND}.XXXXXX")"
-        summary="${work}/summary.md"
-        status=0
-        blocking=""
-        run_id=""
-        plan_id=""
-        plan_key=""
-        stale=false
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ steps.context.outputs.pr-number }}
+        HEAD_SHA: ${{ steps.context.outputs.head-sha }}
+      run: "${{ github.action_path }}/scripts/action-run.sh"
 
-        ensure_base() {
-          if git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
-            return 0
-          fi
-          case "${BASE}" in
-            origin/*) git fetch --no-tags --depth=1 origin "+refs/heads/${BASE#origin/}:refs/remotes/${BASE}" ;;
-          esac
-        }
-
-        remote_args() {
-          if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
-          if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
-          if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
-          if [ -n "${ROLLOUT}" ]; then args+=(--rollout "${ROLLOUT}"); fi
-          if [ -z "${SOURCE}" ]; then
-            SOURCE="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}@${GITHUB_SHA}"
-            if [ -n "${DIR}" ]; then SOURCE="${SOURCE}:${DIR}"; fi
-          fi
-          args+=(--source "${SOURCE}")
-        }
-
-        refused() {
-          {
-            printf '## godwit %s\n\n%s:\n\n```\n' "$1" "$2"
-            sed 's/^godwit: //' "${errors}"
-            printf '```\n'
-          } >"${summary}"
-        }
-
-        dir_args=()
-        if [ -n "${DIR}" ]; then dir_args+=(--dir "${DIR}"); fi
-        errors="${work}/errors.txt"
-
-        case "${COMMAND}" in
-          lint)
-            args=(${dir_args[@]+"${dir_args[@]}"})
-            if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
-            if [ -n "${BASE}" ]; then
-              ensure_base
-              args+=(--base "${BASE}")
-            fi
-            "${godwit}" lint ${args[@]+"${args[@]}"} --format markdown >"${summary}" || status=$?
-            "${godwit}" lint ${args[@]+"${args[@]}"} --format json >"${work}/lint.json" 2>/dev/null || true
-            blocking="$(jq -r '.blocking // 0' "${work}/lint.json" 2>/dev/null || true)"
-            blocking="${blocking:-0}"
-            ;;
-          plan)
-            args=(${dir_args[@]+"${dir_args[@]}"})
-            remote_args
-            "${godwit}" plan ${args[@]+"${args[@]}"} --format markdown >"${summary}" 2>"${errors}" || status=$?
-            cat "${errors}" >&2
-            if [ ! -s "${summary}" ]; then
-              refused plan refused
-            fi
-            plan_id="$(sed -n 's/^## godwit plan \(.*\)$/\1/p' "${summary}" | head -n 1)"
-            plan_key="$(sed -n 's/^key: \(.*\)$/\1/p' "${summary}" | head -n 1)"
-            ;;
-          migrate)
-            args=(${dir_args[@]+"${dir_args[@]}"})
-            remote_args
-            events="${work}/events.jsonl"
-            if [ "${DRY_RUN}" = "true" ]; then
-              "${godwit}" migrate ${args[@]+"${args[@]}"} --dry-run --format markdown >"${summary}" 2>"${errors}" || status=$?
-              cat "${errors}" >&2
-              if [ ! -s "${summary}" ]; then
-                refused "dry run" refused
-              fi
-            else
-              "${godwit}" migrate ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
-              cat "${errors}" >&2
-              last="$(tail -n 1 "${events}" 2>/dev/null || true)"
-              run_id="$(printf '%s' "${last}" | jq -r '.run.id // empty' 2>/dev/null || true)"
-              plan_id="$(printf '%s' "${last}" | jq -r '.run.planId // empty' 2>/dev/null || true)"
-              if [ "${status}" = "3" ]; then
-                stale=true
-                refused migrate "refused: the stored plan is stale or missing, push to the pull request to re-plan"
-              elif [ -n "${last}" ]; then
-                {
-                  printf '## godwit migrate\n\n'
-                  printf '%s' "${last}" | jq -r '.run | "run `\(.id)`: **\(.state | ascii_downcase | ltrimstr("run_state_"))**" + (if .planId != "" and .planId != null then " (plan `\(.planId)`)" else " (implicit plan)" end) + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
-                } >"${summary}"
-              elif [ -s "${errors}" ]; then
-                refused migrate "no run created"
-              else
-                printf '## godwit migrate\n\nno run created\n' >"${summary}"
-              fi
-            fi
-            ;;
-          *)
-            echo "unknown command '${COMMAND}' (want lint, plan or migrate)" >&2
-            exit 2
-            ;;
-        esac
-
-        cat "${summary}"
-        cat "${summary}" >>"${GITHUB_STEP_SUMMARY}"
-        {
-          printf 'status=%s\n' "${status}"
-          printf 'blocking=%s\n' "${blocking}"
-          printf 'run-id=%s\n' "${run_id}"
-          printf 'plan-id=%s\n' "${plan_id}"
-          printf 'plan-key=%s\n' "${plan_key}"
-          printf 'stale=%s\n' "${stale}"
-          printf 'summary-path=%s\n' "${summary}"
-        } >>"${GITHUB_OUTPUT}"
-
-    - name: Comment on the pull request
-      if: ${{ inputs.comment == 'true' }}
+    - name: Comment on the pull request and set the status
+      if: ${{ steps.context.outputs.skipped != 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         COMMAND: ${{ inputs.command }}
         DRY_RUN: ${{ inputs.dry-run }}
+        COMMENT: ${{ inputs.comment }}
         COMMENT_ON_PUSH: ${{ inputs.comment-on-push }}
-        MARKER: "<!-- godwit:${{ inputs.dry-run == 'true' && 'dry-run' || inputs.command }} -->"
         SUMMARY: ${{ steps.godwit.outputs.summary-path }}
+        STATUS: ${{ steps.godwit.outputs.status }}
+        STALE: ${{ steps.godwit.outputs.stale }}
+        RUN_ID: ${{ steps.godwit.outputs.run-id }}
         EVENT_NAME: ${{ github.event_name }}
         REPOSITORY: ${{ github.repository }}
         SHA: ${{ github.sha }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ steps.context.outputs.pr-number }}
+        HEAD_SHA: ${{ steps.context.outputs.head-sha }}
+        SKIPPED: ${{ steps.context.outputs.skipped }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: "${{ github.action_path }}/scripts/action-comment.sh"
 
     - name: Propagate the exit status
@@ -235,6 +170,6 @@ runs:
         STATUS: ${{ steps.godwit.outputs.status }}
       run: |
         set -euo pipefail
-        if [ "${STATUS}" != "0" ]; then
+        if [ -n "${STATUS}" ] && [ "${STATUS}" != "0" ]; then
           exit "${STATUS}"
         fi

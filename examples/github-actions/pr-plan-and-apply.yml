@@ -1,0 +1,87 @@
+name: migrations
+
+on:
+  pull_request:
+    paths:
+      - db/migrations/**   # your migration directory
+      - godwit.yaml
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: write   # the sticky comment
+  statuses: write        # the godwit/applied commit status on the pull request head
+
+# Branch protection on main: require the godwit/applied status and "Require branches to be up to
+# date before merging". The status is set on the head commit, so a push after the apply drops it
+# and the pull request needs `/godwit apply` again; a base move re-runs `check` and re-plans.
+concurrency: migrate-orders   # one apply per target at a time
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint migrations added since main
+        uses: SamuelMolling/godwit@main
+        with:
+          command: lint
+          dir: db/migrations   # drop when godwit.yaml sets dir
+          base: origin/main    # the branch pull requests merge into
+          # ack: H003          # hazard codes reviewed and accepted on purpose
+
+      - name: Plan against the live target and store the plan the apply will bind to
+        id: plan
+        uses: SamuelMolling/godwit@main
+        with:
+          command: plan
+          dir: db/migrations
+          server: https://godwit.internal           # your godwit service URL
+          token: ${{ secrets.GODWIT_TOKEN_READ }}   # token with the read scope
+          target: orders                            # target registered on the service
+          rollout: expand-contract                  # must match the apply step
+          # ack: H003                               # same codes as lint
+
+      - run: echo "plan ${{ steps.plan.outputs.plan-id }} (key ${{ steps.plan.outputs.plan-key }})"
+
+  # `/godwit apply` as a comment or review on the pull request applies the stored plan from the
+  # pull request head; `/godwit revert` runs the down files of that run when the pull request is
+  # abandoned. Both only from OWNER, MEMBER or COLLABORATOR; other events end the job as skipped.
+  apply:
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/godwit '))
+      || github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The apply runs the files of the pull request head, not the default branch.
+          ref: refs/pull/${{ github.event.issue.number || github.event.pull_request.number }}/head
+
+      - name: Apply the stored plan from the pull request
+        id: apply
+        uses: SamuelMolling/godwit@main
+        with:
+          command: apply
+          # apply-on: comment,approve   # also apply when a review approves the pull request
+          dir: db/migrations
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}   # token with the pipeline scope
+          target: orders
+          rollout: expand-contract
+          # ack: H003
+
+      - name: Revert the run of the pull request
+        if: contains(github.event.comment.body, '/godwit revert')
+        uses: SamuelMolling/godwit@main
+        with:
+          command: revert
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}
+          target: orders
+          ack: H002,H009   # the hazard codes of the down files (DROP TABLE, DROP INDEX)

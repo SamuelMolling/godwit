@@ -48,7 +48,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | API and CLI | connect (gRPC + JSON) with scoped bearer tokens (`read`, `pipeline`, `operator`, `admin`); the same binary is the CLI, with `godwit.yaml` for defaults. |
 | Audit, metrics, logs | Actor on every mutation, `created_by` and `source` on runs; Prometheus `/metrics`; structured `slog` that never prints a DSN, token or SQL body. |
 | Notifications | Webhook JSON and Slack (threaded or edited in place), off the run's critical path. |
-| CI/CD and deploy | Composite GitHub Action: `lint` and `plan` on the pull request (the plan is stored on the service and shown as a sticky comment with the observation and the changes outside migrations), `migrate` on the merge commit bound to that plan, its outcome posted back on the merged pull request, outputs `plan-id`/`plan-key`/`stale`/`run-id`; ArgoCD PreSync/PostSync hooks, Helm chart. |
+| CI/CD and deploy | Composite GitHub Action, apply before merge: `lint` and `plan` on the pull request (the plan is stored on the service and shown as a sticky comment with the observation and the changes outside migrations), `/godwit apply` on the pull request runs it bound to that plan and sets the `godwit/applied` status the merge requires, `verify` on the merge commit proves `main` carries nothing unapplied, `/godwit revert` when the pull request is abandoned; `apply-on-merge` mode for migrate on push; outputs `plan-id`/`plan-key`/`stale`/`run-id`/`pending`; ArgoCD PreSync/PostSync hooks, Helm chart. |
 
 ## Documentation
 

@@ -1,4 +1,4 @@
-name: migrate
+name: migrations on main
 
 on:
   push:
@@ -9,37 +9,32 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write   # the outcome is posted on the pull request this commit merged
-
-concurrency: migrate-orders   # one pipeline per target at a time
+  pull-requests: write   # a failed verify is posted on the pull request this commit merged
 
 jobs:
-  expand:
+  # Nothing is applied here: the pull request applied before the merge. This job only proves
+  # that main carries no migration the target does not have, and fails the push if it does.
+  verify:
     runs-on: ubuntu-latest
-    outputs:
-      run-id: ${{ steps.migrate.outputs.run-id }}
     steps:
       - uses: actions/checkout@v4
 
-      # No plan id to pass: the service finds the plan the pull request stored from the files
-      # themselves (same target, rollout and pending set = same key) and refuses if the target moved.
-      - name: Queue the run (expand phase applies now, contract waits)
-        id: migrate
+      - name: Verify that every migration on main is applied on the target
+        id: verify
         uses: SamuelMolling/godwit@main
         with:
-          command: migrate
-          dir: db/migrations                            # drop when godwit.yaml sets dir
-          server: https://godwit.internal               # your godwit service URL
-          token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}   # token with the pipeline scope
-          target: orders                                # target registered on the service
-          rollout: expand-contract
-          # Provenance stored on the run; this is also the default when omitted.
-          source: ${{ github.server_url }}/${{ github.repository }}@${{ github.sha }}:db/migrations
+          command: verify
+          dir: db/migrations                        # drop when godwit.yaml sets dir
+          server: https://godwit.internal           # your godwit service URL
+          token: ${{ secrets.GODWIT_TOKEN_READ }}   # token with the read scope
+          target: orders                            # target registered on the service
+          rollout: expand-contract                  # same as the pull request
+          # ack: H003                               # same codes as the pull request
 
-      - run: echo "run ${{ steps.migrate.outputs.run-id }} bound to plan ${{ steps.migrate.outputs.plan-id }}"
+      - run: echo "${{ steps.verify.outputs.pending }} migrations pending"
 
   contract:
-    needs: expand
+    needs: verify
     runs-on: ubuntu-latest
     # A GitHub environment with required reviewers turns this job into a manual gate:
     # approve it once the application version that handles both schemas is deployed.
@@ -61,7 +56,7 @@ jobs:
         working-directory: .godwit
         run: CGO_ENABLED=1 go build -o "${RUNNER_TEMP}/godwit" ./cmd/godwit
 
-      - name: Confirm the contract phase of run ${{ needs.expand.outputs.run-id }}
+      - name: Confirm the contract phase of the run the pull request applied
         env:
           GODWIT_SERVER: https://godwit.internal               # your godwit service URL
           GODWIT_TOKEN: ${{ secrets.GODWIT_TOKEN_PIPELINE }}   # token with the pipeline scope
