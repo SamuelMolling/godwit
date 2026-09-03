@@ -52,7 +52,18 @@ type stubService struct {
 	stored      *godwitv1.Plan
 	plans       []*godwitv1.Plan
 	reattached  bool
+	diffed      *godwitv1.DiffRequest
+	diff        *godwitv1.DiffResponse
 	err         error
+}
+
+func (s *stubService) Diff(_ context.Context, req *connect.Request[godwitv1.DiffRequest]) (*connect.Response[godwitv1.DiffResponse], error) {
+	s.diffed = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(s.diff), nil
 }
 
 func (s *stubService) record(h http.Header) error {

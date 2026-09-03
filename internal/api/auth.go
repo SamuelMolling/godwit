@@ -43,6 +43,7 @@ var procedureScopes = map[string]Scope{
 	godwitv1connect.GodwitServiceListAuditProcedure:       ScopeRead,
 	godwitv1connect.GodwitServiceGetPlanProcedure:         ScopeRead,
 	godwitv1connect.GodwitServiceListPlansProcedure:       ScopeRead,
+	godwitv1connect.GodwitServiceDiffProcedure:            ScopeRead,
 	godwitv1connect.GodwitServiceCreateRunProcedure:       ScopePipeline,
 	godwitv1connect.GodwitServiceRevertRunProcedure:       ScopePipeline,
 	godwitv1connect.GodwitServiceConfirmRolloutProcedure:  ScopePipeline,

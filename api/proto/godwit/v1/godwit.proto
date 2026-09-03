@@ -229,6 +229,25 @@ message ListPlansResponse {
   repeated Plan plans = 1;
 }
 
+message DiffRequest {
+  string target = 1;
+  // The whole desired database as DDL (CREATE TABLE ...); applied on an empty scratch database with the target's search_path.
+  string schema = 2;
+}
+
+message DiffResponse {
+  string target = 1;
+  // Takes the target from its live schema to the desired one; empty when they already match.
+  string up_sql = 2;
+  // Takes the desired schema back to the live one.
+  string down_sql = 3;
+  // up_sql classified statement by statement, with hazards and recipes.
+  repeated PlannedStatement statements = 4;
+  PlanObservation observed = 5;
+  // Schema changes on the target that no run made, as +/- lines; they are part of up_sql's starting point.
+  string drift = 6;
+}
+
 message CheckDriftRequest {
   string target = 1;
 }
@@ -411,4 +430,6 @@ service GodwitService {
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
   rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
+  // Generates the migration between the target's live schema and a desired DDL, in both directions.
+  rpc Diff(DiffRequest) returns (DiffResponse);
 }

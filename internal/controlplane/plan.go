@@ -167,14 +167,22 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied []int64) [
 			Version: p.Migration.Version, Name: p.Migration.Name, Checksum: p.Migration.Checksum,
 			Applied: slices.Contains(applied, p.Migration.Version), Phase: phase,
 		}
-		for _, st := range p.Statements {
-			ps := PlanStatement{SQL: st.SQL, NoTx: st.NoTx}
-			for _, h := range st.Hazards {
-				ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
-			}
-			pm.Statements = append(pm.Statements, ps)
-		}
+		pm.Statements = PlanStatements(p.Statements)
 		out = append(out, pm)
+	}
+
+	return out
+}
+
+// PlanStatements keeps the SQL, transaction mode and hazards of classified statements.
+func PlanStatements(sts []engine.Statement) []PlanStatement {
+	var out []PlanStatement
+	for _, st := range sts {
+		ps := PlanStatement{SQL: st.SQL, NoTx: st.NoTx}
+		for _, h := range st.Hazards {
+			ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
+		}
+		out = append(out, ps)
 	}
 
 	return out

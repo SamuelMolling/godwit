@@ -125,14 +125,21 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 			Version: m.Version, Name: m.Name, Checksum: m.Checksum, Applied: m.Applied, Phase: m.Phase,
 			AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
 		}
-		for _, st := range m.Statements {
-			ps := &godwitv1.PlannedStatement{Sql: st.SQL, NoTx: st.NoTx}
-			for _, h := range st.Hazards {
-				ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
-			}
-			pm.Statements = append(pm.Statements, ps)
-		}
+		pm.Statements = statementsToProto(m.Statements)
 		out = append(out, pm)
+	}
+
+	return out
+}
+
+func statementsToProto(sts []controlplane.PlanStatement) []*godwitv1.PlannedStatement {
+	out := make([]*godwitv1.PlannedStatement, 0, len(sts))
+	for _, st := range sts {
+		ps := &godwitv1.PlannedStatement{Sql: st.SQL, NoTx: st.NoTx}
+		for _, h := range st.Hazards {
+			ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
+		}
+		out = append(out, ps)
 	}
 
 	return out

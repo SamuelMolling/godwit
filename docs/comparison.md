@@ -32,6 +32,7 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 | Tag and rollback-to-tag | no; reverts are per run, newest first | no | `tag`, `rollback <tag>` | no |
 | Checkpoints | no; baseline is the escape hatch when history replay gets slow | no | no | yes |
 | Declarative schema | no | no | no | yes (`schema apply`) |
+| Migration from a desired schema | `Diff` / `godwit diff --schema`: up and down SQL from the live target to a DDL file, hazards and recipes on the result, drift against the history shown; tables, keys, foreign keys, indexes, sequences, enums, functions, triggers, views, policies, extensions (via pg-schema-diff); no domains, composite types, exclusion constraints, comments or roles | no | `diff-changelog` | `migrate diff` (schema in HCL, SQL or from an ORM; dev database) |
 | Retention of history | no command; documented SQL | n/a | n/a | n/a |
 | Multi-target ordering | no; one target per run, the pipeline orchestrates | n/a | n/a | n/a |
 | Service / API | connect (gRPC + JSON) service with scoped tokens, leases, replicas | CLI (Enterprise has a hub) | CLI (Pro has a hub) | CLI (Atlas Cloud) |
@@ -49,6 +50,7 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 - **`--to <version>`.** Send fewer files. A client-side filter is planned; the service does not need to change.
 - **Retention command.** Growth is one journal row per statement and one file body per run; the SQL to prune is in [operations](operations.md#retention).
 - **SQL hooks.** Notifications are the operational hook. Running SQL before or after a run needs a design decision (per run or per migration) that has not been taken.
+- **A declarative apply.** `godwit diff` generates the migration from a desired schema, but what runs is always a versioned file that went through the gate, and the output has holes (domains, composite types, exclusion constraints, comments, roles) that Atlas does not have. It is a shortcut for writing the file, not a replacement for the history.
 - **Checkpoints.** Validation replays the full recorded history; on a long history that becomes slow. Baselining a target resets the replay root and covers the same need until it does not.
 - **Repair.** There is no dirty state to repair: a failed run resumes from its journal, and a changed file is refused until you write a new migration.
 - **Multiple databases.** The planner is `libpg_query`; every hazard is a PostgreSQL lock or rewrite semantics. Nothing here ports.

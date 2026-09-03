@@ -48,6 +48,11 @@ type Inspector interface {
 	Observe(ctx context.Context, target string) (controlplane.Observation, error)
 }
 
+// Differ generates the migration between a target's live schema and a desired DDL (implemented by the control plane).
+type Differ interface {
+	Diff(ctx context.Context, target, ddl string) (controlplane.SchemaDiff, error)
+}
+
 // Server implements godwit.v1.GodwitService over the control-plane store.
 type Server struct {
 	// Metrics receives admission and API events; replace it before Handler to share a registry.
@@ -60,6 +65,8 @@ type Server struct {
 	Baseliner Baseliner
 	// Inspector serves GetTargetStatus and stored plans; nil leaves both unimplemented and every run implicit.
 	Inspector Inspector
+	// Differ serves Diff; nil leaves it unimplemented.
+	Differ Differ
 	// RequirePlan refuses runs without a stored plan on every target, not only those registered with require_plan.
 	RequirePlan bool
 	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.

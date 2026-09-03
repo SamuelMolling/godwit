@@ -23,8 +23,10 @@ The script:
 11. Queues a run with a per-run `statement_timeout: 1s` over `SELECT pg_sleep(3)`: it hits PostgreSQL's statement-timeout error, which is transient, so the run goes back to `queued` with a backoff (`transient: ... (retry in Ns)`) instead of failing; `run get` shows the effective timeouts and the retry count, `godwit_statement_failures_total{reason="statement_timeout"}` and `godwit_run_retries_total{code="57014"}` count it. After `--max-attempts` (5) it parks as `needs_attention`.
 12. Baselines a database that already has a schema (`legacy`): `BaselineTarget` marks the schema-dump migration applied without running it, the next migration applies on top after validation replays the baseline files, and a second baseline is refused because the target already has applied versions.
 13. Asks `GetTargetStatus` for `legacy`: both versions applied with their checksums, nothing pending, the migrate run as last run, the drift baseline it took.
-14. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API; the `KIND` column tells baseline runs from migrations.
-15. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
+14. Adds a column to `legacy` by hand, then plans a migration that would add it: the stored plan reports it as `alreadyApplied` with its `effect`, and the run records it with zero statements instead of executing it.
+15. Sends `Diff` the whole desired `orders` table plus an index: the response is the up SQL from what `legacy` has now to it (`ADD COLUMN`, `CREATE INDEX CONCURRENTLY`) and the down SQL back; the same schema sent again reports no changes.
+16. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API; the `KIND` column tells baseline runs from migrations.
+17. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
 
 Poke around:
 

@@ -207,12 +207,7 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 		live: true, target: m.Target, rollout: m.Rollout, validated: m.Validated, items: make([]planItem, 0, len(m.Migrations)),
 		planID: m.PlanId, planKey: m.PlanKey, drift: m.Drift,
 	}
-	if m.Observed != nil {
-		r.observed = &planObservation{
-			HistoryHash: m.Observed.HistoryHash, SchemaFingerprint: m.Observed.SchemaFingerprint,
-			AppliedCount: m.Observed.AppliedCount, NewestApplied: m.Observed.NewestApplied, At: stamp(m.Observed.At),
-		}
-	}
+	r.observed = observationFromProto(m.Observed)
 	for _, pm := range m.Migrations {
 		p := engine.Plan{
 			Migration: engine.Migration{Version: pm.Version, Name: pm.Name, Checksum: pm.Checksum},
@@ -231,6 +226,17 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 	}
 
 	return r
+}
+
+func observationFromProto(o *godwitv1.PlanObservation) *planObservation {
+	if o == nil {
+		return nil
+	}
+
+	return &planObservation{
+		HistoryHash: o.HistoryHash, SchemaFingerprint: o.SchemaFingerprint,
+		AppliedCount: o.AppliedCount, NewestApplied: o.NewestApplied, At: stamp(o.At),
+	}
 }
 
 func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {
