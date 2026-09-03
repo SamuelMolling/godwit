@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
@@ -304,5 +305,50 @@ func TestValidator(t *testing.T) {
 	pool.Close()
 	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "history files") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidatorReplay(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, pool := newStore(t)
+	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	v := NewValidator(pool, s, func() string { return "replay" })
+	mock, err := pgxmock.NewConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.Replay(ctx, mock, "app", "app,pg_catalog", nil); err == nil || !strings.Contains(err.Error(), "mirror search path") {
+		t.Fatalf("search path err = %v", err)
+	}
+
+	plain, err := PlansFromFiles(map[string]string{
+		"20260901120001_v.up.sql":   "CREATE TABLE v (id int);",
+		"20260901120001_v.down.sql": "DROP TABLE v;",
+	}, engine.DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Replay(ctx, mock, "app", "", plain); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("apply err = %v", err)
+	}
+
+	directive, err := PlansFromFiles(map[string]string{
+		"20260901120002_d.up.sql":   "-- godwit: drop-column public.v.id\n",
+		"20260901120002_d.down.sql": "-- godwit: revert\n",
+	}, engine.DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Replay(ctx, mock, "app", "", directive); err == nil || errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("expand err = %v", err)
+	}
+
+	pool.Close()
+	if err := v.Replay(ctx, mock, "app", "", nil); err == nil || !strings.Contains(err.Error(), "history files") {
+		t.Fatalf("history err = %v", err)
 	}
 }

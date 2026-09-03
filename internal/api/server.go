@@ -48,9 +48,9 @@ type Inspector interface {
 	Observe(ctx context.Context, target string) (controlplane.Observation, error)
 }
 
-// Differ generates the migration between a target's live schema and a desired DDL (implemented by the control plane).
+// Differ generates the migration between a base schema and a desired DDL (implemented by the control plane).
 type Differ interface {
-	Diff(ctx context.Context, target, ddl string) (controlplane.SchemaDiff, error)
+	Diff(ctx context.Context, target, ddl string, base controlplane.DiffBase, files map[string]string) (controlplane.SchemaDiff, error)
 }
 
 // Server implements godwit.v1.GodwitService over the control-plane store.

@@ -175,7 +175,18 @@ call Diff '{"target":"app","schema":"CREATE TABLE orders (id bigserial PRIMARY K
  "drift":""}
 ```
 
-`schema` is the whole desired database as DDL; it is applied on an empty scratch database with the target's `search_path`. `upSql` is the migration from the live target to it, `downSql` the way back, both empty when they already match. `statements` classifies `upSql` with hazards and recipes; `drift` holds the `+`/`-` lines between the target's recorded history and its live schema (empty when validation is off). `invalid_argument` with `desired schema failed to apply: <postgres error>` when the DDL does not apply; `unimplemented` on a service started without a control-plane pool.
+`schema` is the whole desired database as DDL; it is applied on an empty scratch database with the target's `search_path`. `upSql` is the migration from the base to it, `downSql` the way back, both empty when they already match. `statements` classifies `upSql` with hazards and recipes; `drift` holds the `+`/`-` lines between the target's recorded history and its live schema (empty when validation is off). `invalid_argument` with `desired schema failed to apply: <postgres error>` when the DDL does not apply; `unimplemented` on a service started without a control-plane pool.
+
+`base` chooses what `upSql` starts from: `DIFF_BASE_LIVE` (the default) is the live target, `DIFF_BASE_FILES` is the schema `files` produce on top of the target's recorded history, replayed on a second scratch database — this is what `godwit lint` uses to tell whether the committed migrations still express the ORM schema ([concepts](concepts.md#keeping-the-generated-sql-and-the-orm-schema-together)).
+
+```bash
+call Diff '{"target":"app","base":"DIFF_BASE_FILES","schema":"CREATE TABLE t (id int, email text);",
+            "files":[{"name":"20260901120000_t.up.sql","body":"CREATE TABLE t (id int);"},
+                     {"name":"20260901120000_t.down.sql","body":"DROP TABLE t;"}]}'
+# {"target":"app","upSql":"ALTER TABLE \"public\".\"t\" ADD COLUMN \"email\" text;", ...}
+```
+
+`files` is required by `DIFF_BASE_FILES` and ignored otherwise. `invalid_argument` with `migration files failed to replay: <reason>` when they do not load or do not apply on the history; `failed_precondition` on a service started with validation disabled, which has no replay to build the base from.
 
 ### CheckDrift — operator
 

@@ -15,7 +15,7 @@ Project file for the CLI. Looked up from the working directory upward until a di
 | `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `apply`, `status`, `down` only |
 | `statement_timeout` | Go duration | `0` (disabled) | `GODWIT_STATEMENT_TIMEOUT` | `apply`, `status`, `down` only |
 | `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `migrate` |
-| `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff` |
+| `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff`, `lint` |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
 
@@ -50,9 +50,11 @@ schema_source:
 | `path` | path | — | `GODWIT_SCHEMA_SOURCE_PATH` | the DDL file, `schema.prisma`, Go package or `manage.py`, resolved relative to `godwit.yaml` |
 | `bin` | string | kind's default | `GODWIT_SCHEMA_SOURCE_BIN` | command line running the ORM's CLI |
 | `command` | list of strings | — | — | `kind: command` only: the argv whose stdout is the DDL |
-| `lint` | bool | `true` | — | whether an out-of-date generated migration is a lint error rather than a warning |
+| `lint` | bool | `true` | — | whether an out-of-date generated migration is `E005` (error) rather than a warning |
 
 `godwit diff` renders every kind: `file` and `command` need no toolchain, `prisma`, `gorm` and `django` run the project's own ([concepts](concepts.md#generating-migrations-from-a-schema) has the command each one runs and what it refuses). A source flag always wins over the block: `--schema`, `--prisma`, `--exec`, `--gorm` and `--django` select the source and are mutually exclusive, at most one per diff; `--prisma-bin`, `--go-bin` and `--python-bin` given on the command line override `schema_source.bin` (which itself overrides `GODWIT_PRISMA_BIN` / `GODWIT_GO_BIN` / `GODWIT_PYTHON_BIN`). `kind: django` also reads `DJANGO_SETTINGS_MODULE` from the environment when `manage.py` does not set one, and `--django-database` names the `DATABASES` alias.
+
+`godwit lint` reads the same block: with `--server` and `--target` it renders the source and asks the service what the committed migrations still owe it, reporting `E005` when they no longer match ([concepts: schema sources](concepts.md#schema-sources)). Without a server it reports `W002` and does not run the ORM at all; `--no-schema-check` turns the check off even when the block is present.
 
 ## Client environment
 
@@ -142,12 +144,12 @@ Global: `--config <path>`. Every service command: `--server`, `--token`, `--json
 |---|---|---|
 | `godwit version` | | prints `godwit <version> (<commit>)` |
 | `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline; with `--target` it becomes a service command (below) |
-| `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>` | with `--base`, only migrations added since the ref are checked and versioned files modified since it are `E003` (never an `R__` file); blocking findings exit 1 |
+| `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>`, `--server`, `--token`, `--target`, `--no-schema-check` | with `--base`, only migrations added since the ref are checked and versioned files modified since it are `E003` (never an `R__` file); with `--server` and `--target` it also checks the committed migrations against `schema_source` (`E005`, below); blocking findings exit 1 |
 | `godwit apply` | `--dsn` (required), `--dir`, `--lock-timeout`, `--statement-timeout` | runs the executor directly against a database |
 | `godwit status` | `--dsn` (required), `--dir`, timeouts as above | `applied <ts>`, `pending`, `applied <ts> (checksum drift!)` per versioned migration, `unchanged since <ts>` or `pending` per repeatable; bootstraps the `godwit` schema |
 | `godwit down` | `--dsn` (required), `--dir`, `--version` (required), `--yes` | applies one versioned migration's down side; refuses without `--yes`; repeatables have no version and are reverted with the run that applied them |
 
-Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migration modified after merge (needs `--base`), `E004` malformed or misplaced `-- godwit:` directive ([concepts: directives](concepts.md#directives)), `H001`–`H010` unacknowledged hazards on the up side, `W001` no-op down migration (warning, never blocking). Hazard findings carry a `recipe` (the safe SQL, [concepts: hazards](concepts.md#hazards)): indented under the finding in text, a `<details>` block per finding in markdown, a field in JSON.
+Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migration modified after merge (needs `--base`), `E004` malformed or misplaced `-- godwit:` directive ([concepts: directives](concepts.md#directives)), `E005` the migration generated from the declared `schema_source` is out of date ([concepts: schema sources](concepts.md#schema-sources)), `H001`–`H010` unacknowledged hazards on the up side, `W001` no-op down migration and `W002` schema source not checked because no server was given (warnings, never blocking). Hazard findings carry a `recipe` (the safe SQL, [concepts: hazards](concepts.md#hazards)): indented under the finding in text, a `<details>` block per finding in markdown, a field in JSON.
 
 ### Service
 

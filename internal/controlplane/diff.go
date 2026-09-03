@@ -19,14 +19,31 @@ import (
 // ErrDesiredSchema marks a desired schema the author must fix.
 var ErrDesiredSchema = errors.New("desired schema failed to apply")
 
+// ErrMigrationFiles marks committed migration files that do not replay on top of the target's history.
+var ErrMigrationFiles = errors.New("migration files failed to replay")
+
+// ErrValidationDisabled marks a diff against the committed files on a service started with validation off.
+var ErrValidationDisabled = errors.New("diffing against the committed files needs validation, which is disabled on this service")
+
 var (
 	parseDSN     = pgx.ParseConfig
 	generatePlan = diff.Generate
 )
 
+// DiffBase is the schema a desired one is compared against.
+type DiffBase int
+
+const (
+	// DiffBaseLive is the target's live schema.
+	DiffBaseLive DiffBase = iota
+	// DiffBaseFiles is what the committed migration files produce on top of the target's recorded history.
+	DiffBaseFiles
+)
+
 // HistoryReplayer rebuilds a target's recorded history on a scratch database (implemented by Validator).
 type HistoryReplayer interface {
 	Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (Validation, error)
+	Replay(ctx context.Context, conn engine.DB, target, searchPath string, plans []engine.Plan) error
 }
 
 // SchemaDiff is the migration from a target's live schema to a desired one, and back.
@@ -98,8 +115,8 @@ func NewDiffer(pool *pgxpool.Pool, sched *Scheduler, history HistoryReplayer, ne
 	return &Differ{pool: pool, sched: sched, history: history, newID: newID}
 }
 
-// Diff observes the target, applies ddl on a scratch database and returns the SQL between the two in both directions.
-func (d *Differ) Diff(ctx context.Context, target, ddl string) (SchemaDiff, error) {
+// Diff applies ddl on a scratch database and returns the SQL between base and it in both directions.
+func (d *Differ) Diff(ctx context.Context, target, ddl string, base DiffBase, files map[string]string) (SchemaDiff, error) {
 	tg, err := d.sched.target(ctx, target)
 	if err != nil {
 		return SchemaDiff{}, err
@@ -125,6 +142,16 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string) (SchemaDiff, erro
 	defer func() { _ = live.Close() }()
 
 	factory := &scratchFactory{pool: d.pool, newID: d.newID, searchPath: obs.SearchPath}
+	from, label := live, "live"
+	if base == DiffBaseFiles {
+		replayed, done, err := d.filesBase(ctx, factory, target, obs.SearchPath, files)
+		if err != nil {
+			return SchemaDiff{}, err
+		}
+		defer done()
+		from, label = replayed, "files"
+	}
+
 	desired, err := factory.Create(ctx)
 	if err != nil {
 		return SchemaDiff{}, err
@@ -134,19 +161,54 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string) (SchemaDiff, erro
 		return SchemaDiff{}, fmt.Errorf("%w: %w", ErrDesiredSchema, err)
 	}
 
-	if out.UpSQL, err = generate(ctx, live, desired.ConnPool, factory); err != nil {
-		return SchemaDiff{}, fmt.Errorf("diff live to desired: %w", err)
+	if out.UpSQL, err = generate(ctx, from, desired.ConnPool, factory); err != nil {
+		return SchemaDiff{}, fmt.Errorf("diff %s to desired: %w", label, err)
 	}
 	retired, err := d.sched.store.RetiredColumns(ctx, target)
 	if err != nil {
 		return SchemaDiff{}, err
 	}
 	out.UpSQL, out.Retained = keepRetired(out.UpSQL, retired)
-	if out.DownSQL, err = generate(ctx, desired.ConnPool, live, factory); err != nil {
-		return SchemaDiff{}, fmt.Errorf("diff desired to live: %w", err)
+	if out.DownSQL, err = generate(ctx, desired.ConnPool, from, factory); err != nil {
+		return SchemaDiff{}, fmt.Errorf("diff desired to %s: %w", label, err)
 	}
 
 	return out, nil
+}
+
+// filesBase builds the schema the committed files claim to produce: a scratch database carrying the
+// target's recorded history with the files it has not run yet replayed on top.
+func (d *Differ) filesBase(ctx context.Context, factory *scratchFactory, target, searchPath string, files map[string]string) (*sql.DB, func(), error) {
+	if d.history == nil {
+		return nil, nil, ErrValidationDisabled
+	}
+	plans, err := PlansFromFiles(files, engine.DirectionUp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrMigrationFiles, err)
+	}
+	name, scratch, err := factory.create(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	done := func() { _ = scratch.Close(context.WithoutCancel(ctx)) }
+
+	cfg := d.pool.Config().ConnConfig.Copy()
+	cfg.Database = name
+	conn, err := connectScratch(ctx, cfg)
+	if err != nil {
+		done()
+
+		return nil, nil, fmt.Errorf("connect scratch database: %w", err)
+	}
+	err = d.history.Replay(ctx, conn, target, searchPath, plans)
+	_ = conn.Close(context.WithoutCancel(ctx))
+	if err != nil {
+		done()
+
+		return nil, nil, fmt.Errorf("%w: %w", ErrMigrationFiles, err)
+	}
+
+	return scratch.ConnPool, done, nil
 }
 
 func generate(ctx context.Context, from, to *sql.DB, factory tempdb.Factory) (string, error) {
@@ -179,9 +241,15 @@ type scratchFactory struct {
 
 // Create makes a fresh database on the control-plane server, reachable with the pool's credentials.
 func (f *scratchFactory) Create(ctx context.Context) (*tempdb.Database, error) {
+	_, db, err := f.create(ctx)
+
+	return db, err
+}
+
+func (f *scratchFactory) create(ctx context.Context) (string, *tempdb.Database, error) {
 	name := "godwit_diff_" + f.newID()
 	if _, err := f.pool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		return nil, fmt.Errorf("create scratch database: %w", err)
+		return "", nil, fmt.Errorf("create scratch database: %w", err)
 	}
 	cfg := f.pool.Config().ConnConfig.Copy()
 	cfg.Database = name
@@ -190,7 +258,7 @@ func (f *scratchFactory) Create(ctx context.Context) (*tempdb.Database, error) {
 	}
 	db := stdlib.OpenDB(*cfg)
 
-	return &tempdb.Database{ConnPool: db, ContextualCloser: scratchCloser{pool: f.pool, db: db, name: name}}, nil
+	return name, &tempdb.Database{ConnPool: db, ContextualCloser: scratchCloser{pool: f.pool, db: db, name: name}}, nil
 }
 
 // Close is a no-op: every scratch database is dropped by its own closer.

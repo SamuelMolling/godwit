@@ -49,12 +49,7 @@ type Validation struct {
 
 // Validate replays the history, applies each plan on top and snapshots the schema after every step.
 func (v *Validator) Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (Validation, error) {
-	history, err := v.store.HistoryFiles(ctx, target)
-	if err != nil {
-		return Validation{}, err
-	}
-
-	expander, err := v.expander(ctx, target)
+	history, expander, err := v.historyOf(ctx, target)
 	if err != nil {
 		return Validation{}, err
 	}
@@ -75,28 +70,73 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 		return Validation{}, fmt.Errorf("connect scratch database: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	if err := mirrorSearchPath(ctx, conn, searchPath); err != nil {
+
+	replayed, err := replayRuns(ctx, conn, history, searchPath)
+	if err != nil {
 		return Validation{}, err
 	}
 
+	return expander.validateEach(ctx, conn, plans, replayed)
+}
+
+// Replay rebuilds target's recorded history on conn and applies plans on top, so conn ends up holding the
+// schema the committed files claim to produce; a migration the history already covers keeps its own expansion.
+func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPath string, plans []engine.Plan) error {
+	history, expander, err := v.historyOf(ctx, target)
+	if err != nil {
+		return err
+	}
+	replayed, err := replayRuns(ctx, conn, history, searchPath)
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		if p, err = expander.expandPlan(ctx, conn, p, map[string]Expansion{}, replayed); err != nil {
+			return err
+		}
+		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}); err != nil {
+			return fmt.Errorf("%w: %w", ErrValidationFailed, err)
+		}
+	}
+
+	return nil
+}
+
+func (v *Validator) historyOf(ctx context.Context, target string) ([]HistoryRun, *Validator, error) {
+	history, err := v.store.HistoryFiles(ctx, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	expander, err := v.expander(ctx, target)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return history, expander, nil
+}
+
+func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searchPath string) (map[string]bool, error) {
+	if err := mirrorSearchPath(ctx, conn, searchPath); err != nil {
+		return nil, err
+	}
 	replayed := map[string]bool{}
 	for i, run := range history {
 		histPlans, err := PlansFromFiles(run.Files, engine.DirectionUp)
 		if err != nil {
-			return Validation{}, fmt.Errorf("history run %d: %w", i, err)
+			return nil, fmt.Errorf("history run %d: %w", i, err)
 		}
 		if histPlans, err = ExpandUp(histPlans, run.Expansions); err != nil {
-			return Validation{}, fmt.Errorf("history run %d: %w", i, err)
+			return nil, fmt.Errorf("history run %d: %w", i, err)
 		}
 		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans)); err != nil {
-			return Validation{}, fmt.Errorf("replay history run %d: %w", i, err)
+			return nil, fmt.Errorf("replay history run %d: %w", i, err)
 		}
 		for _, p := range histPlans {
 			replayed[p.Migration.ID()] = true
 		}
 	}
 
-	return expander.validateEach(ctx, conn, plans, replayed)
+	return replayed, nil
 }
 
 // recordUnexpanded marks a history plan no run ever expanded — a baseline records without running — so the replay records it too.

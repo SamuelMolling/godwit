@@ -106,7 +106,7 @@ jobs:
           target: orders
 ```
 
-`lint` needs no service. `plan` with a target needs a token with the `read` scope only: it asks the service for the admitted plan against the real target (hazards, out-of-order check, scratch validation, which versions are already applied, which statements would be deferred to contract), stores it with an observation of the target, and posts a `## godwit plan <id>` comment carrying the key, the observation and a `### Changes outside migrations` diff when the target already differs from what the last run left. That stored plan is what the apply binds to ([concepts: plans](concepts.md#plans)); a refusal becomes a `## godwit plan` comment with the reason and a failed step. Without a target the step parses the files offline as before. `dry-run: "true"` on `migrate` gives the same report without storing anything. On `pull_request` events the `source` records the pull request head, not the merge commit GitHub checks out.
+`lint` needs no service, unless a `schema_source` block is declared and `server`/`target` are given: it then also checks that the committed migrations still express the ORM schema (`E005`, [below](#pull-request-a-migration-from-the-prisma-schema)). `plan` with a target needs a token with the `read` scope only: it asks the service for the admitted plan against the real target (hazards, out-of-order check, scratch validation, which versions are already applied, which statements would be deferred to contract), stores it with an observation of the target, and posts a `## godwit plan <id>` comment carrying the key, the observation and a `### Changes outside migrations` diff when the target already differs from what the last run left. That stored plan is what the apply binds to ([concepts: plans](concepts.md#plans)); a refusal becomes a `## godwit plan` comment with the reason and a failed step. Without a target the step parses the files offline as before. `dry-run: "true"` on `migrate` gives the same report without storing anything. On `pull_request` events the `source` records the pull request head, not the merge commit GitHub checks out.
 
 Acknowledging a hazard is a code change, visible in the workflow file or in the migration author's `--ack` list, never a click:
 
@@ -140,6 +140,21 @@ A team that edits `prisma/schema.prisma` and never writes SQL gets the migration
 The step runs `prisma migrate diff --from-empty --script` on the schema with the CLI the project pins, sends the resulting DDL as the desired state and writes the pair into `dir`; `changed` and `files` say whether it wrote anything and what. The Action never commits: the workflow does, with a bot identity, so `contents: write` and a checkout of `github.event.pull_request.head.ref` (not the merge commit) are what let the pair land on the branch. Because a push made with `GITHUB_TOKEN` triggers no workflow, the same job continues with `lint` and `plan` after the commit, otherwise the stored plan would not cover the files just added. The generated pair is regenerated on every push: delete the pair the previous run added (`git rm` the `*_<name>.{up,down}.sql` files added since the base) before the diff step, so the pull request always carries exactly one.
 
 The desired schema must describe the whole database ([getting started](getting-started.md#3b-write-the-next-migration-from-a-schema)); anything the target has that the Prisma schema does not is a `DROP` in the generated `up`, including `_prisma_migrations` if the project ever ran `prisma migrate` against that database.
+
+The commit is what keeps the two in step; nothing stops a later pull request from editing `schema.prisma` without regenerating, or hand-editing the generated `.sql`. The `lint` step catches that when it is given `server` and `target`, and the directory declares its source in `godwit.yaml`:
+
+```yaml
+      - uses: SamuelMolling/godwit@main
+        with:
+          command: lint
+          dir: db/migrations
+          base: origin/main
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_READ }}
+          target: orders
+```
+
+godwit replays the committed migrations on a scratch database (the target's recorded history first, then the files) and diffs the result against the rendered ORM schema. Empty means they match; anything left is `E005` with the residual SQL under it, and the step fails ([concepts](concepts.md#keeping-the-generated-sql-and-the-orm-schema-together)). `schema_source.lint: false` in `godwit.yaml` makes it a warning instead. Drop `server` and the check reports `W002` and lint runs offline as before — the check lives in `lint` rather than in the workflow precisely so the local command and the CI one agree.
 
 ### Pull request: apply
 

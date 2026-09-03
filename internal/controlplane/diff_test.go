@@ -56,7 +56,7 @@ func TestDifferBothDirections(t *testing.T) {
 	d.sched.Tick(ctx)
 	waitState(t, s, "dddddddd-0000-0000-0000-000000000001", StateSucceeded)
 
-	out, err := d.Diff(ctx, "app", desiredDDL)
+	out, err := d.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestDifferBothDirections(t *testing.T) {
 	}
 
 	execDSN(t, targetDSN, strings.ReplaceAll(out.UpSQL, "CONCURRENTLY ", ""))
-	same, err := d.Diff(ctx, "app", desiredDDL)
+	same, err := d.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil)
 	if err != nil || same.UpSQL != "" || same.DownSQL != "" {
 		t.Fatalf("after apply: up = %q, down = %q, err = %v", same.UpSQL, same.DownSQL, err)
 	}
@@ -98,41 +98,114 @@ func TestDifferSkipsDriftWithoutHistory(t *testing.T) {
 	d, _, targetDSN := newDiffer(t, nil)
 	execDSN(t, targetDSN, "CREATE TABLE t (id int)")
 
-	out, err := d.Diff(ctx, "app", "CREATE TABLE t (id int);")
+	out, err := d.Diff(ctx, "app", "CREATE TABLE t (id int);", DiffBaseLive, nil)
 	if err != nil || out.UpSQL != "" || out.Drift != nil || len(out.Observed.Applied) != 0 {
 		t.Fatalf("out = %+v, err = %v", out, err)
 	}
 }
 
 type stubHistory struct {
-	val Validation
-	err error
+	val       Validation
+	err       error
+	replayErr error
 }
 
 func (h stubHistory) Validate(context.Context, string, []engine.Plan, string) (Validation, error) {
 	return h.val, h.err
 }
 
+func (h stubHistory) Replay(context.Context, engine.DB, string, string, []engine.Plan) error {
+	return h.replayErr
+}
+
+func TestDifferBaseFiles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d, s, _ := newDiffer(t, nil)
+	d.history = NewValidator(d.pool, s, d.newID)
+	queueRun(t, s, "dddddddd-0000-0000-0000-000000000002", goodFiles())
+	d.sched.Tick(ctx)
+	waitState(t, s, "dddddddd-0000-0000-0000-000000000002", StateSucceeded)
+
+	files := goodFiles()
+	files["20260901120001_status.up.sql"] = "ALTER TABLE t ADD COLUMN status text;"
+	files["20260901120001_status.down.sql"] = "ALTER TABLE t DROP COLUMN status;"
+	desired := "CREATE TABLE t (id int, status text);"
+
+	out, err := d.Diff(ctx, "app", desired, DiffBaseFiles, files)
+	if err != nil || out.UpSQL != "" || out.DownSQL != "" {
+		t.Fatalf("in sync: up = %q, down = %q, err = %v", out.UpSQL, out.DownSQL, err)
+	}
+
+	live, err := d.Diff(ctx, "app", desired, DiffBaseLive, nil)
+	if err != nil || !strings.Contains(live.UpSQL, `ADD COLUMN "status"`) {
+		t.Fatalf("live base: up = %q, err = %v", live.UpSQL, err)
+	}
+
+	files["20260901120001_status.up.sql"] = "ALTER TABLE t ADD COLUMN other text;"
+	edited, err := d.Diff(ctx, "app", desired, DiffBaseFiles, files)
+	if err != nil || !strings.Contains(edited.UpSQL, `ADD COLUMN "status"`) || !strings.Contains(edited.UpSQL, `DROP COLUMN "other"`) {
+		t.Fatalf("hand-edited: up = %q, err = %v", edited.UpSQL, err)
+	}
+
+	grown, err := d.Diff(ctx, "app", "CREATE TABLE t (id int, status text, note text);", DiffBaseFiles, goodFiles())
+	if err != nil || !strings.Contains(grown.UpSQL, `ADD COLUMN "note"`) || !strings.Contains(grown.UpSQL, `ADD COLUMN "status"`) {
+		t.Fatalf("missing migration: up = %q, err = %v", grown.UpSQL, err)
+	}
+}
+
+func TestDifferBaseFilesErrors(t *testing.T) {
+	ctx := context.Background()
+	d, _, _ := newDiffer(t, nil)
+
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseFiles, goodFiles()); !errors.Is(err, ErrValidationDisabled) {
+		t.Fatalf("no replayer err = %v", err)
+	}
+	d.history = stubHistory{}
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseFiles, map[string]string{"nope.sql": "SELECT 1;"}); !errors.Is(err, ErrMigrationFiles) {
+		t.Fatalf("unloadable files err = %v", err)
+	}
+	d.history = stubHistory{replayErr: errBoom}
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseFiles, goodFiles()); !errors.Is(err, ErrMigrationFiles) || !errors.Is(err, errBoom) {
+		t.Fatalf("replay err = %v", err)
+	}
+
+	if _, err := d.pool.Exec(ctx, "CREATE DATABASE godwit_diff_dupfiles"); err != nil {
+		t.Fatal(err)
+	}
+	dup := NewDiffer(d.pool, d.sched, stubHistory{}, func() string { return "dupfiles" })
+	if _, err := dup.Diff(ctx, "app", desiredDDL, DiffBaseFiles, goodFiles()); err == nil || !strings.Contains(err.Error(), "create scratch database") {
+		t.Fatalf("scratch err = %v", err)
+	}
+
+	connectScratch = func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error) { return nil, errBoom }
+	defer func() { connectScratch = pgx.ConnectConfig }()
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseFiles, goodFiles()); !errors.Is(err, errBoom) ||
+		!strings.Contains(err.Error(), "connect scratch database") {
+		t.Fatalf("connect err = %v", err)
+	}
+}
+
 func TestDifferErrors(t *testing.T) {
 	ctx := context.Background()
 	d, s, _ := newDiffer(t, stubHistory{err: errBoom})
 
-	if _, err := d.Diff(ctx, "ghost", desiredDDL); !errors.Is(err, ErrNotFound) {
+	if _, err := d.Diff(ctx, "ghost", desiredDDL, DiffBaseLive, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown target err = %v", err)
 	}
 	if err := s.RegisterTarget(ctx, "broken", "plain", map[string]string{"dsn": "postgres://nobody@127.0.0.1:1/x"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Diff(ctx, "broken", desiredDDL); err == nil || !strings.Contains(err.Error(), "connect target") {
+	if _, err := d.Diff(ctx, "broken", desiredDDL, DiffBaseLive, nil); err == nil || !strings.Contains(err.Error(), "connect target") {
 		t.Fatalf("unreachable err = %v", err)
 	}
-	if _, err := d.Diff(ctx, "app", desiredDDL); !errors.Is(err, errBoom) {
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil); !errors.Is(err, errBoom) {
 		t.Fatalf("history err = %v", err)
 	}
 	d.history = nil
 
 	parseDSN = func(string) (*pgx.ConnConfig, error) { return nil, errBoom }
-	if _, err := d.Diff(ctx, "app", desiredDDL); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "parse target dsn") {
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "parse target dsn") {
 		t.Fatalf("parse err = %v", err)
 	}
 	parseDSN = pgx.ParseConfig
@@ -141,11 +214,11 @@ func TestDifferErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	dup := NewDiffer(d.pool, d.sched, nil, func() string { return "dup" })
-	if _, err := dup.Diff(ctx, "app", desiredDDL); err == nil || !strings.Contains(err.Error(), "create scratch database") {
+	if _, err := dup.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil); err == nil || !strings.Contains(err.Error(), "create scratch database") {
 		t.Fatalf("scratch err = %v", err)
 	}
 
-	if _, err := d.Diff(ctx, "app", "CREATE TABLE t (id nosuchtype);"); !errors.Is(err, ErrDesiredSchema) {
+	if _, err := d.Diff(ctx, "app", "CREATE TABLE t (id nosuchtype);", DiffBaseLive, nil); !errors.Is(err, ErrDesiredSchema) {
 		t.Fatalf("ddl err = %v", err)
 	}
 
@@ -159,11 +232,11 @@ func TestDifferErrors(t *testing.T) {
 		return diff.Plan{Statements: []diff.Statement{{DDL: "SELECT 1"}}}, nil
 	}
 	defer func() { generatePlan = diff.Generate }()
-	if _, err := d.Diff(ctx, "app", desiredDDL); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "diff desired to live") {
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "diff desired to live") {
 		t.Fatalf("down err = %v", err)
 	}
 	calls = 1
-	if _, err := d.Diff(ctx, "app", desiredDDL); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "diff live to desired") {
+	if _, err := d.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil); !errors.Is(err, errBoom) || !strings.Contains(err.Error(), "diff live to desired") {
 		t.Fatalf("up err = %v", err)
 	}
 	if err := (&scratchFactory{}).Close(); err != nil {

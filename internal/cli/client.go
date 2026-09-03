@@ -26,9 +26,14 @@ type clientFlags struct {
 }
 
 func (f *clientFlags) register(cmd *cobra.Command) {
+	f.registerServer(cmd)
+	cmd.Flags().BoolVar(&f.json, "json", false, "print the raw JSON response")
+}
+
+// registerServer adds the connection flags alone, for a command that also works with no server.
+func (f *clientFlags) registerServer(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.server, "server", os.Getenv("GODWIT_SERVER"), "godwit service URL (env GODWIT_SERVER)")
 	cmd.Flags().StringVar(&f.token, "token", os.Getenv("GODWIT_TOKEN"), "bearer token (env GODWIT_TOKEN)")
-	cmd.Flags().BoolVar(&f.json, "json", false, "print the raw JSON response")
 	configKeys(cmd, "server")
 }
 
@@ -36,6 +41,12 @@ func (f *clientFlags) client() (godwitv1connect.GodwitServiceClient, error) {
 	if f.server == "" {
 		return nil, errors.New("--server (or GODWIT_SERVER, or server in godwit.yaml) is required")
 	}
+
+	return f.dial(), nil
+}
+
+// dial builds the client for a caller that has already decided the server is set.
+func (f *clientFlags) dial() godwitv1connect.GodwitServiceClient {
 	var transport http.RoundTripper = &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
@@ -48,7 +59,7 @@ func (f *clientFlags) client() (godwitv1connect.GodwitServiceClient, error) {
 		transport = bearerTransport{token: f.token, next: transport}
 	}
 
-	return godwitv1connect.NewGodwitServiceClient(&http.Client{Transport: transport}, f.server), nil
+	return godwitv1connect.NewGodwitServiceClient(&http.Client{Transport: transport}, f.server)
 }
 
 type remoteFunc func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error

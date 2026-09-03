@@ -319,3 +319,86 @@ func TestCheckRevertSentinelSkipsDownChecks(t *testing.T) {
 		t.Fatalf("report = %+v", rep)
 	}
 }
+
+func schemaDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeMigs(t, dir, map[string]string{
+		"20260901120000_users.up.sql":   "CREATE TABLE users (id int);",
+		"20260901120000_users.down.sql": "DROP TABLE users;",
+	})
+
+	return dir
+}
+
+func TestSchemaCheckMatches(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]string
+	rep := check(t, schemaDir(t), nil, Options{Schema: &SchemaCheck{Path: "schema.prisma", Diff: func(files map[string]string) (string, error) {
+		got = files
+
+		return "\n  \n", nil
+	}}})
+	if len(rep.Findings) != 0 || rep.Blocking != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if len(got) != 2 || got["20260901120000_users.up.sql"] != "CREATE TABLE users (id int);" ||
+		got["20260901120000_users.down.sql"] != "DROP TABLE users;" {
+		t.Fatalf("files = %v", got)
+	}
+}
+
+func TestSchemaCheckDrifts(t *testing.T) {
+	t.Parallel()
+
+	residue := `ALTER TABLE "public"."users" ADD COLUMN "email" text;`
+	rep := check(t, schemaDir(t), nil, Options{Schema: &SchemaCheck{Path: "schema.prisma", Diff: func(map[string]string) (string, error) {
+		return residue, nil
+	}}})
+	if rep.Blocking != 1 || len(rep.Findings) != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	f := rep.Findings[0]
+	if f.File != "schema.prisma" || f.Level != LevelError || f.Code != CodeSchemaDrift || f.Recipe != residue ||
+		f.Message != "the migration generated from schema.prisma is out of date" {
+		t.Fatalf("finding = %+v", f)
+	}
+}
+
+func TestSchemaCheckWarnOnly(t *testing.T) {
+	t.Parallel()
+
+	rep := check(t, schemaDir(t), nil, Options{Schema: &SchemaCheck{Path: "schema.prisma", Warn: true, Diff: func(map[string]string) (string, error) {
+		return "ALTER TABLE users ADD COLUMN email text;", nil
+	}}})
+	if rep.Blocking != 0 || len(rep.Findings) != 1 || rep.Findings[0].Level != LevelWarning || rep.Findings[0].Code != CodeSchemaDrift {
+		t.Fatalf("report = %+v", rep)
+	}
+}
+
+func TestSchemaCheckWithoutServer(t *testing.T) {
+	t.Parallel()
+
+	rep := check(t, schemaDir(t), nil, Options{Schema: &SchemaCheck{Path: "prisma/schema.prisma"}})
+	if rep.Blocking != 0 || len(rep.Findings) != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	f := rep.Findings[0]
+	if f.Code != CodeUnchecked || f.Level != LevelWarning || f.File != "prisma/schema.prisma" ||
+		f.Message != "prisma/schema.prisma not checked: no server configured" {
+		t.Fatalf("finding = %+v", f)
+	}
+}
+
+func TestSchemaCheckPropagatesTheError(t *testing.T) {
+	t.Parallel()
+
+	boom := errors.New("boom")
+	_, err := Check(schemaDir(t), nil, Options{Schema: &SchemaCheck{Path: "s.prisma", Diff: func(map[string]string) (string, error) {
+		return "", boom
+	}}})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+}

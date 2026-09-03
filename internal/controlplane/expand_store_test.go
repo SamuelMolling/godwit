@@ -213,7 +213,7 @@ func TestDiffKeepsRetiredColumns(t *testing.T) {
 	if err := s.RetireColumns(ctx, "app", runID, "m", cols); err != nil {
 		t.Fatal(err)
 	}
-	out, err := d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint, nick text)`)
+	out, err := d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint, nick text)`, DiffBaseLive, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestDiffKeepsRetiredColumns(t *testing.T) {
 	if err := s.UnretireColumns(ctx, "app", cols); err != nil {
 		t.Fatal(err)
 	}
-	out, err = d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint)`)
+	out, err = d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint)`, DiffBaseLive, nil)
 	if err != nil || !strings.Contains(out.UpSQL, "age_old") || out.Retained != nil {
 		t.Fatalf("out = %+v, err = %v", out, err)
 	}
@@ -243,7 +243,7 @@ func TestDiffRetiredColumnsError(t *testing.T) {
 	if _, err := d.pool.Exec(ctx, `DROP TABLE cp_retired_columns`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint)`); err == nil ||
+	if _, err := d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint)`, DiffBaseLive, nil); err == nil ||
 		!strings.Contains(err.Error(), "list retired columns") {
 		t.Fatalf("err = %v", err)
 	}

@@ -19,6 +19,12 @@ concurrency:
 # <timestamp>_prisma.{up,down}.sql, regenerated from the live target on every push. A push made with
 # GITHUB_TOKEN does not trigger workflows, which is why lint and plan run here, after the commit: the
 # plan the `/godwit apply` of pr-plan-and-apply.yml binds to must include the generated files.
+#
+# The lint step's schema check reads the source from godwit.yaml, so declare it there:
+#
+#   schema_source:
+#     kind: prisma
+#     path: prisma/schema.prisma
 jobs:
   diff:
     if: github.event.pull_request.head.repo.full_name == github.repository   # a fork cannot receive the commit
@@ -69,12 +75,19 @@ jobs:
           git commit -m "chore(db): migration generated from prisma/schema.prisma"
           git push
 
-      - name: Lint the generated migration
+      # With server and target, lint also replays the committed migrations on a scratch database and
+      # compares the result with prisma/schema.prisma: E005 when the pair no longer matches the schema
+      # (a hand-edited .sql, or a schema edited with the generation step skipped). Without them the
+      # check reports W002 and lint stays offline.
+      - name: Lint the generated migration and check it still matches the Prisma schema
         uses: SamuelMolling/godwit@main
         with:
           command: lint
           dir: db/migrations
           base: origin/main
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_READ }}
+          target: orders
 
       - name: Plan against the live target and store the plan the apply will bind to
         uses: SamuelMolling/godwit@main

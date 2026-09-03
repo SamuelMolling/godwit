@@ -496,6 +496,8 @@ Only what the snapshot sees can be matched: columns of base tables, constraints,
 
 Because the starting point is the live schema, hand changes that are not in the history become part of the generated migration. When validation is on, the response also carries `drift`: the `+`/`-` lines between the history replayed on a scratch database and the live target, so you can tell which part of the `up` captures drift and which part is new ([drift](#drift) explains the format). With `--skip-validation` on the service, `drift` is empty.
 
+### Schema sources
+
 The `schema` the service receives is always DDL; where it comes from is the client's business. `godwit diff` has one **schema source** per flag, each an implementation of `schemasource.Source` (`Load(ctx) (ddl, error)`), all of them running next to the repository with the project's own toolchain — the service never sees a Prisma schema, a Go package or a Django project, and never gains a Node, Go or Python dependency:
 
 | Flag | `kind` | What it runs | Refuses |
@@ -508,7 +510,31 @@ The `schema` the service receives is always DDL; where it comes from is the clie
 
 `--exec` is the escape hatch: any command that prints the whole desired database on stdout. `--gorm` is a thin wrapper over it, because GORM's dry-run migrator is a Go API over your model structs, not a CLI: the package is yours, godwit only runs it and reports a build failure with the package name instead of `exit status 1` ([examples/gorm/schema/main.go](../examples/gorm/schema/main.go) is a copyable 20-line one). `--django` concatenates `sqlmigrate`'s output, dropping the `BEGIN;`/`COMMIT;` lines Django wraps an atomic migration in. **Django's constraint, documented rather than hidden:** `sqlmigrate` opens the configured connection to introspect, so `DATABASES` must point at a reachable PostgreSQL (`--django-database <alias>` picks which); teams for whom that does not hold use `--exec` with their own dump. `--go-bin`, `--python-bin` and `--prisma-bin` (and their `GODWIT_*_BIN` variables) name the interpreter when it is not on `PATH`; a missing one is reported as a godwit message, not as a bare `exec` error.
 
-The source is also a property of the directory, not only of the command line: a `schema_source` block in `godwit.yaml` says which ORM the migrations next to it follow, and `godwit diff` falls back to it when no source flag is given ([configuration](configuration.md#godwityaml) has the keys). `schema_source.path` is resolved relative to the file that declares it, and `godwit.yaml` is looked up from the working directory upward, so a monorepo puts one next to each migration directory and every directory keeps its own source. The block is what a later ORM check reads to know what to compare the committed migrations against; the flags stay the override for a one-off diff.
+The source is also a property of the directory, not only of the command line: a `schema_source` block in `godwit.yaml` says which ORM the migrations next to it follow, and `godwit diff` falls back to it when no source flag is given ([configuration](configuration.md#godwityaml) has the keys). `schema_source.path` is resolved relative to the file that declares it, and `godwit.yaml` is looked up from the working directory upward, so a monorepo puts one next to each migration directory and every directory keeps its own source. The block is also what the lint check below compares the committed migrations against; the flags stay the override for a one-off diff.
+
+### Keeping the generated SQL and the ORM schema together
+
+A Prisma or GORM team edits the ORM schema, `godwit diff` writes the pair, both are committed. Nothing then stops someone from editing the ORM schema without regenerating, or hand-editing the generated `.sql`: the pull request looks fine and the two drift apart silently. `godwit lint` catches it.
+
+The check cannot use the live target as the before side — the pending files are not applied there, so the diff would re-propose everything pending. `DiffRequest.base` therefore takes a second starting point:
+
+| `base` | Before side | Reads |
+|---|---|---|
+| `DIFF_BASE_LIVE` (default) | the target as `Observe` sees it | the live database |
+| `DIFF_BASE_FILES` | `DiffRequest.files` replayed on top of the target's recorded history, on a scratch database | the store and the files in the request |
+
+With `base: files` the before side is `S_n`, the schema the committed files claim to produce, so `up_sql` is empty **exactly when** the committed migrations already express the ORM schema. Anything left is the residue, whatever caused it. The replay is the validator's own: the recorded history first (each run with the directive expansion *it* froze, never a fresh one), then the request's files, which the journal skips where the history already covers them.
+
+`godwit lint --server <url> --target <t>` renders the declared source client-side, sends the whole directory as `files`, and reports the residue:
+
+```
+$ godwit lint --dir db/migrations --server https://godwit.internal --target orders
+prisma/schema.prisma: error E005 the migration generated from prisma/schema.prisma is out of date
+    ALTER TABLE "public"."users" ADD COLUMN "email" text;
+1 finding(s), 1 blocking
+```
+
+`E005` blocks (exit 1) unless `schema_source.lint` is `false`, which makes it a warning. Without `--server` the check reports `W002` (`<path> not checked: no server configured`) and lint stays entirely offline — the local/CI parity the check is for is "same command, same config", not "same connectivity". `--no-schema-check` turns it off. The ORM itself always runs client-side, next to the repository: the service only ever receives DDL.
 
 What the diff covers is what pg-schema-diff covers: schemas, extensions, enums, tables (columns with type, default, nullability, collation, identity and generated expression; check constraints; partitions; row-level security and policies; replica identity; table grants), primary and unique keys, foreign keys, indexes (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, online replacement of a changed index), sequences, functions, procedures, triggers, views and materialized views. Not covered: types other than enums (domains, composite types), exclusion constraints, comments, roles, grants on anything but tables; keep those in hand-written migrations. Index names in the output are unquoted; everything else is schema-qualified. The scratch database is empty apart from the target's `search_path`, so the schema must declare what it relies on (`CREATE SCHEMA`, `CREATE EXTENSION`) or qualify names; a schema that fails to apply is refused with `invalid_argument` and PostgreSQL's error. Data is never inferred: a column rename comes out as drop + add, a type change as `ALTER COLUMN ... TYPE`, both flagged by their hazards with the expand/contract recipe.
 
