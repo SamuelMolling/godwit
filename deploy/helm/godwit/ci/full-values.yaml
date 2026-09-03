@@ -11,12 +11,17 @@ existingSecret:
     tokens: tokens
     storeDSN: store-dsn
     slackToken: slack-token
+    uiUser: ui-user
+    uiPassword: ui-password
 serve:
   port: 9000
   driftInterval: 1m
   skipValidation: true
   logFormat: text
   logLevel: debug
+  ui:
+    enabled: true
+    basicAuth: true
   extraArgs: ["--drift-interval=2m"]
 vault:
   addr: https://vault.example.com

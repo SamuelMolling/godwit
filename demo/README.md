@@ -28,6 +28,8 @@ The script:
 16. Lists every run through the CLI (`godwit runs`) from inside a replica — the same binary, the same API; the `KIND` column tells baseline runs from migrations.
 17. Scrapes `/metrics` on the surviving replica: runs per state, the reconciler takeover, the refused hazard and the drift check all show up as Prometheus series.
 
+While the stack is up, open <http://localhost:18475/ui> (user `demo`, password `demo`) to see the same runs and drift events in the operator UI.
+
 Poke around:
 
 ```bash

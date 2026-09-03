@@ -55,8 +55,11 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--plan-retention` | `2160h` | `bound` and `superseded` plans older than this are deleted on the drift ticker (`ready` plans and plans of unfinished runs are kept); the run keeps its `run.create` audit entry, its `plan_id` becomes empty |
 | `--log-format` | `GODWIT_LOG_FORMAT` or `json` | `json` or `text` |
 | `--log-level` | `GODWIT_LOG_LEVEL` or `info` | `debug`, `info`, `warn` or `error` |
+| `--ui` | `false` | serve the operator web UI at `/ui` on the same listener (also `GODWIT_UI=true`) |
+| `--ui-user` | `GODWIT_UI_USER` | basic auth user for `/ui`; with `--ui-password` every UI request needs the pair |
+| `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for `/ui` |
 
-A bad log format or level fails `serve` before anything else starts.
+A bad log format or level, or a UI user without a password (or the reverse), fails `serve` before anything else starts. `--ui` without credentials serves the UI open and logs `ui enabled without basic auth`; UI actions are audited as `ui:<user>` (`ui:anonymous` when open).
 
 ### Environment
 
@@ -71,6 +74,9 @@ A bad log format or level fails `serve` before anything else starts.
 | `GODWIT_PUBLIC_URL` | no | base URL for the "Open run" button in Slack messages (`<url>/ui/runs/<id>`) |
 | `GODWIT_LOG_FORMAT` | no | default for `--log-format` |
 | `GODWIT_LOG_LEVEL` | no | default for `--log-level` |
+| `GODWIT_UI` | no | `true` enables the web UI like `--ui` |
+| `GODWIT_UI_USER` | no | default for `--ui-user` |
+| `GODWIT_UI_PASSWORD` | no | default for `--ui-password` |
 | `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
 | `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
 | `VAULT_K8S_ROLE` | without `VAULT_TOKEN` | role for `POST auth/<mount>/login` |
@@ -147,4 +153,4 @@ See [CI/CD](ci-cd.md#action-inputs-and-outputs); they map one-to-one onto the CL
 
 ## Helm values
 
-`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `logFormat`, `logLevel` and `extraArgs`, and every environment variable above comes from the Secret named by `existingSecret` or from `vault.*`, `notifications.*`, `extraEnv` / `extraEnvFrom`. `--lease-ttl`, `--tick-interval` and `--max-attempts` go through `serve.extraArgs`.
+`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `logFormat`, `logLevel`, `ui.enabled`, `ui.basicAuth` and `extraArgs`, and every environment variable above comes from the Secret named by `existingSecret` or from `vault.*`, `notifications.*`, `extraEnv` / `extraEnvFrom`. `--lease-ttl`, `--tick-interval` and `--max-attempts` go through `serve.extraArgs`.

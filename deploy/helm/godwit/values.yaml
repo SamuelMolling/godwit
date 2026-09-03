@@ -25,6 +25,7 @@ fullnameOverride: ""
 #     --from-literal=GODWIT_STORE_DSN=postgres://godwit:...@store/godwit_store
 # The DSN is injected as `--store-dsn=$(GODWIT_STORE_DSN)` so it never appears in the pod spec.
 # Add a GODWIT_SLACK_TOKEN entry and set notifications.slack.channel to enable Slack.
+# Add GODWIT_UI_USER and GODWIT_UI_PASSWORD entries and set serve.ui.basicAuth to protect the UI.
 existingSecret:
   name: godwit
   keys:
@@ -32,6 +33,8 @@ existingSecret:
     tokens: GODWIT_TOKENS
     storeDSN: GODWIT_STORE_DSN
     slackToken: GODWIT_SLACK_TOKEN
+    uiUser: GODWIT_UI_USER
+    uiPassword: GODWIT_UI_PASSWORD
 
 # Flags of `godwit serve`; nothing else is accepted by the binary.
 serve:
@@ -45,6 +48,12 @@ serve:
   logFormat: json
   # GODWIT_LOG_LEVEL: debug, info, warn or error.
   logLevel: info
+  ui:
+    # --ui: serve the operator web UI at /ui on the same port.
+    enabled: false
+    # Wire GODWIT_UI_USER / GODWIT_UI_PASSWORD from existingSecret so /ui asks for basic auth.
+    # Without it the UI is open to anyone who reaches the port and the service logs a warning.
+    basicAuth: false
   # Appended verbatim after the flags above.
   extraArgs: []
 

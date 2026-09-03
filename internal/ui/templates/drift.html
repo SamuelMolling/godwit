@@ -1,0 +1,51 @@
+{{define "drift.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Drift</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Drift</h1></div>
+  {{if .Target}}<div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn pri"><svg class="ic"><use href="#i-refresh"/></svg>Check {{.Target}} now</button></form></div>{{end}}
+</header>
+<div class="body">
+{{if .Tabs}}
+  <div class="tabs">
+    {{range .Tabs}}<a href="/ui/drift?target={{.Name}}" {{if eq .Name $.Target}}class="on"{{end}}>{{.Name}} <span class="cnt">{{if .Bad}}drifted{{else}}clean{{end}}</span></a>{{end}}
+  </div>
+
+  <div class="sec" style="margin-top:24px">
+    {{if .Open}}
+    <div class="banner drifted">
+      <div class="icw"><svg class="ic"><use href="#i-ne"/></svg></div>
+      <div><b>{{.Target}} drifted from its baseline</b><span>Detected {{ago .Open.DetectedAt}}{{if eq .Checked "drifted"}} · confirmed by the check you just ran{{end}} · the diff is in the events below</span></div>
+      <div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form><form method="post" action="/ui/drift/{{.Target}}/accept"><button class="btn dng">Accept as baseline</button></form></div>
+    </div>
+    <p class="note"><b>Accept as baseline</b> records the current schema as the new reference for {{.Target}}. It does not change the database; future checks compare against it.</p>
+    {{else}}
+    <div class="banner clean">
+      <div class="icw"><svg class="ic"><use href="#i-check"/></svg></div>
+      <div><b>{{.Target}} matches its baseline</b><span>{{if eq .Checked "clean"}}Checked just now{{else}}No open drift event{{end}} · the monitor fingerprints it on every interval and after every successful run</span></div>
+      <div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form></div>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="sec">
+    <div class="sec-hd"><h2>Events <span class="n">{{len .Events}}</span></h2><div class="right">Newest first</div></div>
+    {{if .Events}}
+    <div>
+      {{range .Events}}
+      <div class="ev">
+        <div class="when">{{clock .DetectedAt}}<small>{{if .ResolvedAt}}resolved {{clock .ResolvedAt}}{{else}}open{{end}}</small></div>
+        <div>
+          <div class="st">{{if .ResolvedAt}}<span class="pill succeeded">resolved</span> <span class="hint">schema matched the baseline again, or the baseline was accepted</span>{{else}}<span class="pill drifted">drifted</span> <span class="hint">detected {{stamp .DetectedAt}}</span>{{end}}</div>
+          <pre>{{.Diff}}</pre>
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>No drift recorded</b><p>{{.Target}} has never diverged from its baseline since it was first fingerprinted.</p></div>
+    {{end}}
+  </div>
+{{else}}
+  <div class="empty"><svg class="ic"><use href="#i-db"/></svg><b>No targets yet</b><p>Drift is tracked per target once it has a run.</p></div>
+{{end}}
+</div>
+{{template "foot" .}}{{end}}
