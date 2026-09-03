@@ -1,0 +1,113 @@
+{{define "diff.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl">
+    <div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Diff</span></div>
+    <h1>Schema diff</h1>
+  </div>
+</header>
+<div class="body">
+{{with .Diff}}
+  <form class="card blk" method="post" action="/ui/diff">
+    <div class="fields">
+      <label>Target<input class="in" name="target" list="diff-targets" value="{{.Target}}" placeholder="orders" required></label>
+      <label>Name<input class="in" name="name" value="{{.Name}}" placeholder="add_email_index"></label>
+    </div>
+    <datalist id="diff-targets">{{range $.Targets}}<option value="{{.Name}}">{{end}}</datalist>
+    <label class="field">Desired schema<textarea class="in" name="schema" rows="14" spellcheck="false" required placeholder="CREATE TABLE public.users (id bigint PRIMARY KEY, email text NOT NULL);">{{.Schema}}</textarea></label>
+    <div class="sql-hd">
+      {{if $.Can.diff}}<button class="btn pri"><svg class="ic"><use href="#i-ne"/></svg>Generate migration</button>{{end}}
+      <span class="faint">Applied to an empty scratch database and compared with {{if .Target}}{{.Target}}{{else}}the target{{end}}. Nothing is written to disk here.</span>
+    </div>
+  </form>
+  {{if not $.Can.diff}}{{template "scope-note" $}}{{end}}
+  <p class="note">Paste the <b>whole</b> desired database as DDL. A Prisma, GORM or Django schema is rendered by that project's own toolchain next to your repository, so it never reaches the service: run <span class="mono">godwit diff --prisma</span> (or <span class="mono">--gorm</span>, <span class="mono">--django</span>, <span class="mono">--exec</span>) from the CLI, which writes the pair for you. This page only takes DDL.</p>
+  <p class="note faint">The name only labels the files below; it must be snake_case, and anything else falls back to <span class="mono">changes</span>.</p>
+
+  {{with $.Error}}
+  <div class="sec">
+    <div class="banner drifted">
+      <div class="icw"><svg class="ic"><use href="#i-warn"/></svg></div>
+      <div><b>The diff was refused</b><span>{{.}}</span></div>
+    </div>
+  </div>
+  {{end}}
+
+  {{if .Ran}}
+  {{if .Changed}}
+  {{with .Drift}}
+  <div class="sec">
+    <div class="sec-hd"><h2>Drift</h2><div class="right">Already on the target</div></div>
+    <p class="note">The starting point is {{$.Diff.Target}}'s live schema, not its history. No run made these changes, and they are part of what the migration below is written against.</p>
+    <pre>{{.}}</pre>
+  </div>
+  {{end}}
+
+  <div class="sec">
+    <div class="sec-hd"><h2>Statements <span class="n">{{len .Statements}}</span></h2><div class="right">{{$.Diff.Target}} to the desired schema</div></div>
+    <ul class="tl">
+      {{range .Statements}}
+      <li><i class="{{if .Hazards}}bad{{else}}ok{{end}}"></i><div>
+        <div class="d"><span class="chip">{{if .NoTx}}no-tx{{else}}tx{{end}}</span></div>
+        <pre>{{.Sql}}</pre>
+        {{range .Hazards}}<div class="d"><b>{{.Code}}</b> {{.Detail}}</div>{{with .Recipe}}<pre>{{.}}</pre>{{end}}{{end}}
+      </div></li>
+      {{end}}
+    </ul>
+  </div>
+
+  <div class="sec">
+    <div class="sec-hd"><h2>Migration</h2><div class="right">Save both files under your migration directory</div></div>
+    <div class="blk">
+      <div class="sql-hd"><span class="mono">{{.UpFile}}</span><button class="btn sm" type="button" data-copy="up-sql">Copy</button></div>
+      <pre id="up-sql">{{.Up}}</pre>
+    </div>
+    <div class="blk">
+      <div class="sql-hd"><span class="mono">{{.DownFile}}</span><button class="btn sm" type="button" data-copy="down-sql">Copy</button></div>
+      <pre id="down-sql">{{.Down}}</pre>
+    </div>
+    <p class="note">godwit did not write them: commit the pair yourself so the migration goes through review and the plan gate like any other.</p>
+  </div>
+
+  {{with .Observed}}
+  <div class="sec">
+    <div class="sec-hd"><h2>Taken against</h2></div>
+    <dl class="facts">
+      <dt>search_path</dt><dd class="mono">{{or .SearchPath "—"}}</dd>
+      <dt>Applied</dt><dd class="num">{{.AppliedCount}}{{if .NewestApplied}} <span class="faint">· newest {{.NewestApplied}}</span>{{end}}</dd>
+      <dt>History</dt><dd class="mono">{{short .HistoryHash}}</dd>
+      <dt>Observed</dt><dd class="mono num">{{stamp .At}}</dd>
+    </dl>
+  </div>
+  {{end}}
+  {{else}}
+  <div class="sec">
+    <div class="banner clean">
+      <div class="icw"><svg class="ic"><use href="#i-check"/></svg></div>
+      <div><b>No changes</b><span>{{$.Diff.Target}} already matches the schema you pasted, so there is no migration to write.</span></div>
+    </div>
+  </div>
+  {{end}}
+  {{end}}
+{{end}}
+</div>
+<script>
+document.addEventListener("click", function (e) {
+  var b = e.target.closest("[data-copy]");
+  if (!b) return;
+  var pre = document.getElementById(b.dataset.copy);
+  if (!navigator.clipboard) {
+    var r = document.createRange();
+    r.selectNodeContents(pre);
+    var s = window.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+    return;
+  }
+  navigator.clipboard.writeText(pre.textContent).then(function () {
+    var was = b.textContent;
+    b.textContent = "Copied";
+    setTimeout(function () { b.textContent = was; }, 1200);
+  });
+});
+</script>
+{{template "foot" .}}{{end}}

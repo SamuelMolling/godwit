@@ -65,6 +65,8 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	h.mux.HandleFunc("POST /ui/runs/{id}/{action}", h.runAction)
 	h.mux.HandleFunc("GET /ui/drift", h.drift)
 	h.mux.HandleFunc("POST /ui/drift/{target}/{action}", h.driftAction)
+	h.mux.HandleFunc("GET /ui/diff", h.diffForm)
+	h.mux.HandleFunc("POST /ui/diff", h.diffRun)
 
 	return h
 }
@@ -137,6 +139,7 @@ var uiActions = map[string]string{
 	"revert":  godwitv1connect.GodwitServiceRevertRunProcedure,
 	"check":   godwitv1connect.GodwitServiceCheckDriftProcedure,
 	"accept":  godwitv1connect.GodwitServiceAcceptBaselineProcedure,
+	"diff":    godwitv1connect.GodwitServiceDiffProcedure,
 }
 
 func allowed(p api.Principal) map[string]bool {
@@ -305,6 +308,7 @@ type page struct {
 	Events    []*godwitv1.DriftEvent
 	Open      *godwitv1.DriftEvent
 	Checked   string
+	Diff      *diffView
 	Error     string
 	Partial   bool
 }
@@ -362,12 +366,17 @@ func (h *Handler) render(w http.ResponseWriter, status int, name string, data pa
 	_, _ = buf.WriteTo(w)
 }
 
-func (h *Handler) fail(w http.ResponseWriter, p page, err error) {
+func reason(err error) string {
 	var cerr *connect.Error
-	p.Error, p.Partial = err.Error(), false
 	if errors.As(err, &cerr) {
-		p.Error = cerr.Message()
+		return cerr.Message()
 	}
+
+	return err.Error()
+}
+
+func (h *Handler) fail(w http.ResponseWriter, p page, err error) {
+	p.Error, p.Partial = reason(err), false
 	status := http.StatusBadGateway
 	switch connect.CodeOf(err) {
 	case connect.CodeNotFound:

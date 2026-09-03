@@ -181,6 +181,12 @@ pre{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:
 .empty .ic{width:28px;height:28px;color:var(--fg-3)}
 .empty b{color:var(--fg);font-weight:600}
 .empty p{margin:0;max-width:44ch}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.fields label,.field{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-3)}
+.fields .in,.field .in{font-weight:400;letter-spacing:0;text-transform:none;color:var(--fg)}
+textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height:1.6}
+.sql-hd{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.sql-hd .mono{font-size:13px;color:var(--fg-2)}
 @media (max-width:1200px){
   :root{--rail:76px}
   .rail{padding:20px 8px;gap:20px}
@@ -242,6 +248,7 @@ pre{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:
   <nav class="nav" aria-label="Sections">
     <a href="/ui/" {{if eq .Nav "runs"}}class="on"{{end}}><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span>{{if .Attention}}<span class="cnt">{{.Attention}}</span>{{end}}</a>
     <a href="/ui/drift" {{if eq .Nav "drift"}}class="on"{{end}}><svg class="ic"><use href="#i-drift"/></svg><span class="lbl">Drift</span></a>
+    <a href="/ui/diff" {{if eq .Nav "diff"}}class="on"{{end}}><svg class="ic"><use href="#i-ne"/></svg><span class="lbl">Diff</span></a>
     <a href="/metrics"><svg class="ic"><use href="#i-metrics"/></svg><span class="lbl">Metrics</span><svg class="ic" style="width:13px;height:13px;color:var(--fg-3)"><use href="#i-ext"/></svg></a>
   </nav>
   <div>
