@@ -28,6 +28,7 @@ type stubService struct {
 	baselined   *godwitv1.BaselineTargetRequest
 	statused    *godwitv1.GetTargetStatusRequest
 	status      *godwitv1.GetTargetStatusResponse
+	summaries   []*godwitv1.TargetSummary
 	created     *godwitv1.CreateRunRequest
 	planned     *godwitv1.PlanRunRequest
 	plan        *godwitv1.PlanRunResponse

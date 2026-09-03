@@ -1,0 +1,112 @@
+{{define "target.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl">
+    <div class="crumbs"><a href="/ui/targets">Targets</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Target}}</span></div>
+    <h1>{{.Target}} <span class="chip">{{.Summary.Provider}}</span>{{if .Summary.UnresolvedDrift}} <span class="pill drifted lg">drifted</span>{{end}}</h1>
+  </div>
+  <div class="acts">{{if .Can.check}}<form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn pri"><svg class="ic"><use href="#i-refresh"/></svg>Check drift now</button></form>{{end}}</div>
+</header>
+<div class="body">
+  <div class="two">
+    <div class="stack">
+      <div class="blk">
+        <h3>Applied <span class="n">{{len .Applied}}</span></h3>
+        {{if .Applied}}
+        <div class="tbl"><table>
+          <thead><tr><th>Migration</th><th>Applied</th><th>Checksum</th><th>State</th></tr></thead>
+          <tbody>
+            {{range .Applied}}
+            <tr>
+              <td class="id"><span class="mono">{{.ID}}</span></td>
+              <td class="ago num">{{ago .At}}<small>{{stamp .At}}</small></td>
+              <td class="mono faint">{{short .Checksum}}</td>
+              <td>{{if .Mismatch}}<span class="pill drifted">checksum mismatch</span>{{else if .Repeatable}}<span class="chip">repeatable · unchanged</span>{{else}}<span class="pill succeeded">recorded</span>{{end}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table></div>
+        {{else}}
+        <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Never migrated</b><p>{{.Target}} is registered but its <span class="mono">godwit.migrations</span> journal is empty. The first run bootstraps it.</p></div>
+        {{end}}
+      </div>
+
+      <div class="blk">
+        <h3>Pending <span class="n">{{len .Pending}}</span></h3>
+        {{if .Pending}}
+        <ul class="tl">
+          {{range .Pending}}
+          <li><i class="warn"></i><div>
+            <div class="d"><span class="mono">{{.ID}}</span>{{if .Repeatable}} <span class="chip">repeatable</span>{{end}}</div>
+            <div class="t">{{plural .Statements "statement"}} · from plan <a href="/ui/plans/{{.Plan}}">{{short .Plan}}</a></div>
+          </div></li>
+          {{end}}
+        </ul>
+        {{else}}
+        <p class="note">Nothing pending in the target's ready plans.</p>
+        {{end}}
+        <p class="note">The service holds no migration directory of its own, so this is what the newest <b>ready</b> plan still has to apply. <span class="mono">godwit target status {{.Target}} --dir ./migrations</span> compares against the files on disk.</p>
+      </div>
+
+      <div class="blk">
+        <h3>Ready plans <span class="n">{{len .Ready}}</span></h3>
+        {{if .Ready}}
+        <ul class="tl">
+          {{range .Ready}}
+          <li><i class="ok"></i><div>
+            <div class="d"><a href="/ui/plans/{{.Id}}" class="mono">{{short .Id}}</a> <span class="chip">{{.Rollout}}</span>{{if .Validated}} <span class="chip">validated</span>{{end}}</div>
+            <div class="t">by {{or .CreatedBy "—"}}{{with .Source}} via {{.}}{{end}} · {{ago .CreatedAt}}</div>
+          </div></li>
+          {{end}}
+        </ul>
+        {{else}}
+        <p class="note">No stored plan is bindable on {{.Target}} right now. <span class="mono">godwit plan --target {{.Target}}</span> stores one.</p>
+        {{end}}
+      </div>
+
+      <div class="blk">
+        <h3>Drift</h3>
+        {{if .Open}}
+        <div class="banner drifted">
+          <div class="icw"><svg class="ic"><use href="#i-ne"/></svg></div>
+          <div><b>{{.Target}} drifted from its baseline</b><span>Detected {{ago .Open.DetectedAt}}</span></div>
+          <div class="acts">{{if .Can.accept}}<form method="post" action="/ui/drift/{{.Target}}/accept"><button class="btn dng">Accept as baseline</button></form>{{end}}<a class="btn" href="/ui/drift?target={{.Target}}">All events</a></div>
+        </div>
+        <pre>{{.Open.Diff}}</pre>
+        {{else}}
+        <div class="banner clean">
+          <div class="icw"><svg class="ic"><use href="#i-check"/></svg></div>
+          <div><b>{{.Target}} matches its baseline</b><span>{{len .Events}} recorded event(s), none open</span></div>
+          <div class="acts"><a class="btn" href="/ui/drift?target={{.Target}}">All events</a></div>
+        </div>
+        {{end}}
+        {{if .Locked}}{{template "scope-note" .}}{{end}}
+      </div>
+    </div>
+
+    <aside class="aside">
+      <div class="blk">
+        <h3>Settings</h3>
+        <dl class="facts">
+          <dt>Provider</dt><dd class="mono">{{.Summary.Provider}}</dd>
+          <dt>search_path</dt><dd class="mono">{{or .Summary.SearchPath "role default"}}</dd>
+          <dt>lock_timeout</dt><dd class="mono">{{or .Summary.LockTimeout "default"}}</dd>
+          <dt>statement_timeout</dt><dd class="mono">{{or .Summary.StatementTimeout "default"}}</dd>
+          <dt>require_plan</dt><dd class="mono">{{.Summary.RequirePlan}}</dd>
+          <dt>keep_old</dt><dd class="mono">{{.Summary.KeepOld}}</dd>
+        </dl>
+      </div>
+      <div class="blk">
+        <h3>State</h3>
+        <dl class="facts">
+          <dt>Applied</dt><dd class="num">{{.Summary.AppliedCount}} <span class="faint">versions</span></dd>
+          <dt>Ready plans</dt><dd class="num">{{.Summary.ReadyPlans}}</dd>
+          <dt>Needs you</dt><dd class="num">{{.Summary.AttentionRuns}}</dd>
+          <dt>Last run</dt><dd>{{with .Summary.LastRun}}<a href="/ui/runs/{{.Id}}" class="mono">{{short .Id}}</a> <span class="pill {{state .State}}">{{label .State}}</span>{{else}}<span class="faint">never migrated</span>{{end}}</dd>
+          <dt>Baseline</dt><dd class="mono num">{{with .Status.DriftBaseline}}{{stamp .TakenAt}}{{else}}<span class="faint">none</span>{{end}}</dd>
+        </dl>
+        <p class="note"><a href="/ui/?target={{.Target}}">Runs on {{.Target}}</a> · <a href="/ui/plans?target={{.Target}}">Plans</a> · <a href="/ui/drift?target={{.Target}}">Drift</a></p>
+      </div>
+    </aside>
+  </div>
+</div>
+{{template "foot" .}}{{end}}

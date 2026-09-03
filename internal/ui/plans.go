@@ -162,7 +162,7 @@ func planTargets(p page) []string {
 
 func (h *Handler) plans(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, _, err := h.frame(ctx, r, "plans")
+	p, err := h.frame(ctx, r, "plans")
 	if err != nil {
 		h.fail(w, p, err)
 
@@ -195,7 +195,7 @@ func (h *Handler) plans(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) planPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, _, err := h.frame(ctx, r, "plans")
+	p, err := h.frame(ctx, r, "plans")
 	if err != nil {
 		h.fail(w, p, err)
 

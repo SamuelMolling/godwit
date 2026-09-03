@@ -107,12 +107,16 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 |---|---|
 | `/ui/` | what is running, what needs a human, every run newest first; `?target=` filters |
 | `/ui/runs/{id}` | one run's timeline from `cp_audit`, its error, the plan it is bound to, and resume / park / confirm / revert |
+| `/ui/targets` | every registered target with its provider, `search_path`, timeouts, `require_plan`, applied count, ready plans, runs waiting for a human and open drift |
+| `/ui/targets/{name}` | one target: what its journal has applied (checksum mismatches flagged) and its repeatables, what the newest ready plan still has to apply, the ready plans themselves, the open drift with check and accept, and the registered settings |
 | `/ui/plans` | every stored plan newest first, filtered by target (`?target=`) and state (`?state=ready\|bound\|superseded`), with the key prefix, rollout, author, migration count and the run each one is bound to |
 | `/ui/plans/{id}` | one plan in full: statements per migration grouped by phase, every hazard with its recipe, `already applied by hand` with the effect it recorded, the directives a migration carried and the expansion they produced, the observation the plan was taken against, and the drift the target had at that moment |
 | `/ui/drift` | drift events per target, with check and accept-baseline |
 | `/ui/diff` | the desired schema pasted as DDL against a target, answered with the up/down migration and the filenames to save it under |
 
-The plan list asks `ListPlans` once per target, so a target with no run yet does not appear until it has one. A plan that retention has swept renders as *pruned* rather than a `404`: the run keeps the record of what it applied.
+The rail and every target list come from `ListTargets`, so a registered target that was never migrated appears from the moment it is registered. The plan list asks `ListPlans` once per target. A plan that retention has swept renders as *pruned* rather than a `404`: the run keeps the record of what it applied.
+
+`/ui/targets/{name}` takes its *pending* set from the target's newest **ready** plan, because the service holds no migration directory of its own; `godwit target status <name> --dir ./migrations` is the comparison against the files on disk, and it is also what flags a checksum mismatch.
 
 ## Metrics
 

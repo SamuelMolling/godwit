@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pashagolub/pgxmock/v4"
 )
 
 const upBody = "CREATE TABLE t (id int);"
@@ -422,5 +424,121 @@ func TestAppliedVersions(t *testing.T) {
 	}
 	if want := checksum("CREATE OR REPLACE VIEW v AS SELECT 1;"); got.Repeatables["v"] != want {
 		t.Fatalf("repeatables = %v", got.Repeatables)
+	}
+}
+
+func TestListTargets(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+
+	if got, err := s.ListTargets(ctx, time.Time{}); err != nil || got != nil {
+		t.Fatalf("no targets = %v, err = %v", got, err)
+	}
+	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{
+		ConfigLockTimeout: "3s", ConfigStatementTimeout: "1m", ConfigRequirePlan: "true",
+		ConfigSearchPath: "app,public", ConfigKeepOld: "false",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterTarget(ctx, "billing", "static", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListTargets(ctx, time.Time{})
+	if err != nil || len(got) != 2 || got[0].Name != "app" || got[1].Name != "billing" {
+		t.Fatalf("targets = %+v, err = %v", got, err)
+	}
+	app := got[0]
+	if app.Provider != "static" || app.Timeouts.Lock != "3s" || app.Timeouts.Statement != "1m" || app.SearchPath != "app,public" ||
+		!app.RequirePlan || app.KeepOld || app.LastRun != nil || app.AppliedCount != 0 || app.ReadyPlans != 0 ||
+		app.AttentionRuns != 0 || app.UnresolvedDrift {
+		t.Fatalf("never migrated target = %+v", app)
+	}
+	if bare := got[1]; bare.RequirePlan || !bare.KeepOld || bare.SearchPath != "" || bare.Timeouts.Lock != "" {
+		t.Fatalf("bare target = %+v", bare)
+	}
+
+	done, stuck := "99999999-0000-0000-0000-000000000001", "99999999-0000-0000-0000-000000000002"
+	queueRun(t, s, done, map[string]string{
+		"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;",
+		"20260901120002_b.up.sql": upBody, "20260901120002_b.down.sql": "SELECT 1;",
+	})
+	if err := s.Finish(ctx, done, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	queueRun(t, s, stuck, goodFiles())
+	if err := s.Finish(ctx, stuck, StateNeedsAttention, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SavePlan(ctx, storedPlan(planA), goodFiles()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveSnapshot(ctx, "app", "f1", "table a\n", done); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordDrift(ctx, "app", "f1", "+ column extra"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = s.ListTargets(ctx, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app = got[0]
+	if app.AppliedCount != 2 || app.AttentionRuns != 1 || app.ReadyPlans != 1 || !app.UnresolvedDrift ||
+		app.LastRun == nil || app.LastRun.ID != stuck || app.LastRun.State != StateNeedsAttention {
+		t.Fatalf("busy target = %+v last = %+v", app, app.LastRun)
+	}
+	if got[1].LastRun != nil || got[1].AppliedCount != 0 {
+		t.Fatalf("billing = %+v", got[1])
+	}
+
+	fresh, err := s.ListTargets(ctx, time.Now().Add(time.Hour))
+	if err != nil || fresh[0].ReadyPlans != 0 {
+		t.Fatalf("plans newer than since = %+v, err = %v", fresh, err)
+	}
+}
+
+func TestListTargetsBadConfigJSON(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO cp_targets (name, provider, config) VALUES ('bad', 'static', '"not-an-object"')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ListTargets(ctx, time.Time{}); err == nil || !strings.Contains(err.Error(), `target "bad" config`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestListTargetsQueryErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	s := NewStore(mock)
+	boom := errors.New("boom")
+
+	mock.ExpectQuery("DISTINCT ON").WillReturnError(boom)
+	if _, err := s.ListTargets(ctx, time.Time{}); err == nil || !strings.Contains(err.Error(), "list last runs") {
+		t.Fatalf("err = %v", err)
+	}
+	mock.ExpectQuery("DISTINCT ON").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
+	if _, err := s.ListTargets(ctx, time.Time{}); err == nil || !strings.Contains(err.Error(), "read last runs") {
+		t.Fatalf("scan err = %v", err)
+	}
+	mock.ExpectQuery("DISTINCT ON").WillReturnRows(pgxmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("FROM cp_targets").WithArgs(time.Time{}).WillReturnError(boom)
+	if _, err := s.ListTargets(ctx, time.Time{}); err == nil || !strings.Contains(err.Error(), "list targets") {
+		t.Fatalf("targets err = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

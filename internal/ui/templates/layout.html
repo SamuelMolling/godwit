@@ -248,6 +248,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   </div>
   <nav class="nav" aria-label="Sections">
     <a href="/ui/" {{if eq .Nav "runs"}}class="on"{{end}}><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span>{{if .Attention}}<span class="cnt">{{.Attention}}</span>{{end}}</a>
+    <a href="/ui/targets" {{if eq .Nav "targets"}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">Targets</span></a>
     <a href="/ui/plans" {{if eq .Nav "plans"}}class="on"{{end}}><svg class="ic"><use href="#i-plan"/></svg><span class="lbl">Plans</span></a>
     <a href="/ui/drift" {{if eq .Nav "drift"}}class="on"{{end}}><svg class="ic"><use href="#i-drift"/></svg><span class="lbl">Drift</span></a>
     <a href="/ui/diff" {{if eq .Nav "diff"}}class="on"{{end}}><svg class="ic"><use href="#i-ne"/></svg><span class="lbl">Diff</span></a>
@@ -256,8 +257,8 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <div>
     <h4>Targets</h4>
     <div class="targets">
-      <a href="{{if eq .Nav "plans"}}/ui/plans{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (eq .Nav "plans")) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
-      {{range .Targets}}<a href="{{if eq $.Nav "drift"}}/ui/drift{{else if eq $.Nav "plans"}}/ui/plans{{else}}/ui/{{end}}?target={{.Name}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
+      <a href="{{if eq .Nav "plans"}}/ui/plans{{else if eq .Nav "targets"}}/ui/targets{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (or (eq .Nav "plans") (eq .Nav "targets"))) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
+      {{range .Targets}}<a href="{{if eq $.Nav "targets"}}/ui/targets/{{.Name}}{{else if eq $.Nav "drift"}}/ui/drift?target={{.Name}}{{else if eq $.Nav "plans"}}/ui/plans?target={{.Name}}{{else}}/ui/?target={{.Name}}{{end}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
       {{end}}
     </div>
   </div>

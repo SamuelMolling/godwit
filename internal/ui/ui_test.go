@@ -32,6 +32,8 @@ type stub struct {
 	runs   []*godwitv1.Run
 	audit  []*godwitv1.AuditEntry
 	plans  map[string]*godwitv1.Plan
+	status *godwitv1.GetTargetStatusResponse
+	sums   []*godwitv1.TargetSummary
 	events []*godwitv1.DriftEvent
 	drift  *godwitv1.CheckDriftResponse
 	calls  []string
@@ -82,6 +84,25 @@ func (s *stub) GetPlan(ctx context.Context, req *connect.Request[godwitv1.GetPla
 	}
 
 	return nil, connect.NewError(connect.CodeNotFound, errors.New("no such plan"))
+}
+
+func (s *stub) ListTargets(ctx context.Context, _ *connect.Request[godwitv1.ListTargetsRequest]) (*connect.Response[godwitv1.ListTargetsResponse], error) {
+	if err := s.call(ctx, "ListTargets"); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(&godwitv1.ListTargetsResponse{Targets: s.sums}), nil
+}
+
+func (s *stub) GetTargetStatus(ctx context.Context, req *connect.Request[godwitv1.GetTargetStatusRequest]) (*connect.Response[godwitv1.GetTargetStatusResponse], error) {
+	if err := s.call(ctx, "GetTargetStatus:"+req.Msg.Target); err != nil {
+		return nil, err
+	}
+	if s.status == nil {
+		return connect.NewResponse(&godwitv1.GetTargetStatusResponse{Target: req.Msg.Target}), nil
+	}
+
+	return connect.NewResponse(s.status), nil
 }
 
 func (s *stub) ResumeRun(ctx context.Context, req *connect.Request[godwitv1.ResumeRunRequest]) (*connect.Response[godwitv1.ResumeRunResponse], error) {
@@ -228,6 +249,24 @@ func fixture() *stub {
 				},
 			},
 		},
+		sums: []*godwitv1.TargetSummary{
+			{
+				Name: "app", Provider: "static", SearchPath: "app,public", LockTimeout: "3s", StatementTimeout: "1m",
+				RequirePlan: true, KeepOld: false, AttentionRuns: 1, UnresolvedDrift: true, ReadyPlans: 1, AppliedCount: 2,
+				LastRun: &godwitv1.Run{Id: "r-wait-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT},
+			},
+			{Name: "billing", Provider: "vault", KeepOld: true, AttentionRuns: 1},
+		},
+		status: &godwitv1.GetTargetStatusResponse{
+			Target: "app", Provider: "static", LockTimeout: "3s", StatementTimeout: "1m", SearchPath: "app,public",
+			Applied: []*godwitv1.AppliedMigration{
+				{Version: 20260901120000, Name: "add_index", Checksum: "9f1e2d3c4b5a", AppliedAt: at(3 * time.Hour)},
+				{Version: 20260901130000, Name: "drop_legacy", Checksum: "deadbeefcafe", AppliedAt: at(2 * time.Hour), ChecksumMismatch: true},
+				{Name: "views", Repeatable: true, Checksum: "abc123def456", AppliedAt: at(time.Hour)},
+			},
+			DriftBaseline: &godwitv1.DriftBaseline{TakenAt: at(time.Hour), RunId: "r-ok-000001", UnresolvedDrift: true},
+			ReadyPlans:    1,
+		},
 		events: []*godwitv1.DriftEvent{
 			{Id: 8, Target: "app", Diff: "column extra added", DetectedAt: at(time.Minute)},
 			{Id: 7, Target: "app", Diff: "index gone", DetectedAt: at(time.Hour), ResolvedAt: at(30 * time.Minute)},
@@ -260,6 +299,16 @@ func TestIndex(t *testing.T) {
 
 	s.err = connect.NewError(connect.CodeUnavailable, errBoom)
 	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusBadGateway, "boom", "Back to runs")
+
+	want(t, do(newUI(&runsFail{stub: fixture()}, Config{}), http.MethodGet, "/ui/", nil), http.StatusBadGateway, "runs down")
+}
+
+type runsFail struct {
+	*stub
+}
+
+func (r *runsFail) ListRuns(context.Context, *connect.Request[godwitv1.ListRunsRequest]) (*connect.Response[godwitv1.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnavailable, errors.New("runs down"))
 }
 
 func TestRunPage(t *testing.T) {
@@ -572,4 +621,79 @@ func TestMark(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/svg+xml" {
 		t.Fatalf("content-type = %q", ct)
 	}
+}
+
+func TestTargetsList(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	h := newUI(s, Config{Replica: "godwit-0"})
+
+	rec := do(h, http.MethodGet, "/ui/targets", nil)
+	want(t, rec, http.StatusOK, "Registered", `href="/ui/targets/app"`, `href="/ui/targets/billing"`,
+		"static", "vault", "app,public", "lock 3s · statement 1m · require_plan · keep_old=false",
+		"drifted", "clean", "role default path", "never migrated", "r-wait-0", `class="cnt">2<`)
+	if s.calls[0] != "ListTargets" {
+		t.Fatalf("the rail must come from ListTargets: %v", s.calls)
+	}
+
+	want(t, do(newUI(&stub{}, Config{}), http.MethodGet, "/ui/targets", nil), http.StatusOK, "No targets yet")
+
+	s.err = connect.NewError(connect.CodeUnavailable, errBoom)
+	want(t, do(h, http.MethodGet, "/ui/targets", nil), http.StatusBadGateway, "boom")
+}
+
+func TestTargetPage(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	s.plans["p-ready-0001"] = &godwitv1.Plan{
+		Id: "p-ready-0001", Target: "app", State: "ready", Rollout: "expand-contract", Validated: true,
+		CreatedBy: "ci", Source: "github", CreatedAt: at(10 * time.Minute),
+		Migrations: []*godwitv1.PlannedMigration{
+			{Version: 20260901120000, Name: "add_index", Applied: true},
+			{Version: 20260901140000, Name: "backfill", Statements: []*godwitv1.PlannedStatement{{Sql: "UPDATE t SET a = 1;"}}},
+			{Name: "views", Repeatable: true, Statements: []*godwitv1.PlannedStatement{{Sql: "CREATE VIEW v AS SELECT 1;"}}},
+		},
+	}
+	h := newUI(s, Config{})
+
+	rec := do(h, http.MethodGet, "/ui/targets/app", nil)
+	want(t, rec, http.StatusOK,
+		"20260901120000_add_index", "20260901130000_drop_legacy", "checksum mismatch", "R__views", "repeatable · unchanged",
+		"20260901140000_backfill", "1 statement", `href="/ui/plans/p-ready-0001"`, "newest <b>ready</b> plan",
+		"app drifted from its baseline", "column extra added", "Accept as baseline", "Check drift now",
+		"app,public", "require_plan", "keep_old", "Ready plans", `href="/ui/plans?target=app"`, "9f1e2d3c")
+	if strings.Contains(rec.Body.String(), "p-plan-000") {
+		t.Fatalf("only ready plans belong on the page:\n%s", rec.Body.String())
+	}
+
+	s.status = &godwitv1.GetTargetStatusResponse{Target: "billing", Provider: "vault"}
+	s.events = nil
+	want(t, do(h, http.MethodGet, "/ui/targets/billing", nil), http.StatusOK, "Never migrated",
+		"billing matches its baseline", "Nothing pending", "No stored plan is bindable", "role default", "none")
+
+	want(t, do(h, http.MethodGet, "/ui/targets/ghost", nil), http.StatusNotFound, "target ghost is not registered")
+
+	want(t, do(newUI(&stub{err: errBoom}, Config{}), http.MethodGet, "/ui/targets/app", nil), http.StatusBadGateway, "boom")
+	want(t, do(newUI(&statusFail{stub: fixture()}, Config{}), http.MethodGet, "/ui/targets/app", nil), http.StatusBadGateway, "status down")
+	want(t, do(newUI(&listPlansFail{stub: fixture()}, Config{}), http.MethodGet, "/ui/targets/app", nil), http.StatusBadGateway, "plan list down")
+	want(t, do(newUI(&eventsFail{stub: fixture()}, Config{}), http.MethodGet, "/ui/targets/app", nil), http.StatusBadGateway, "events down")
+}
+
+type statusFail struct {
+	*stub
+}
+
+func (s *statusFail) GetTargetStatus(context.Context, *connect.Request[godwitv1.GetTargetStatusRequest]) (*connect.Response[godwitv1.GetTargetStatusResponse], error) {
+	return nil, connect.NewError(connect.CodeUnavailable, errors.New("status down"))
+}
+
+func TestTargetPageScope(t *testing.T) {
+	t.Parallel()
+	h := newUI(fixture(), Config{Tokens: uiTokens})
+
+	rec := do(h, http.MethodGet, "/ui/targets/app", nil, "Authorization", basic("x", "s-read"))
+	want(t, rec, http.StatusOK, "Actions on this page need a wider scope")
+	absent(t, rec, noAction)
+	want(t, do(h, http.MethodGet, "/ui/targets/app", nil, "Authorization", basic("x", "s-op")), http.StatusOK,
+		"/ui/drift/app/check", "/ui/drift/app/accept")
 }

@@ -45,6 +45,31 @@ func (s *Server) GetTargetStatus(ctx context.Context, req *connect.Request[godwi
 	return connect.NewResponse(out), nil
 }
 
+// ListTargets summarises every registered target from the control plane alone: its settings, what it has applied,
+// its last run, open drift and the plans still bindable on it.
+func (s *Server) ListTargets(ctx context.Context, _ *connect.Request[godwitv1.ListTargetsRequest]) (*connect.Response[godwitv1.ListTargetsResponse], error) {
+	targets, err := s.store.ListTargets(ctx, s.planSince())
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	out := &godwitv1.ListTargetsResponse{Targets: make([]*godwitv1.TargetSummary, 0, len(targets))}
+	for _, t := range targets {
+		sum := &godwitv1.TargetSummary{
+			Name: t.Name, Provider: t.Provider, SearchPath: t.SearchPath,
+			LockTimeout: t.Timeouts.Lock, StatementTimeout: t.Timeouts.Statement,
+			RequirePlan: s.RequirePlan || t.RequirePlan, KeepOld: t.KeepOld,
+			UnresolvedDrift: t.UnresolvedDrift, ReadyPlans: int32(t.ReadyPlans),
+			AppliedCount: int32(t.AppliedCount), AttentionRuns: int32(t.AttentionRuns),
+		}
+		if t.LastRun != nil {
+			sum.LastRun = toProto(*t.LastRun)
+		}
+		out.Targets = append(out.Targets, sum)
+	}
+
+	return connect.NewResponse(out), nil
+}
+
 func statusToProto(st controlplane.TargetStatus, migs []engine.Migration) *godwitv1.GetTargetStatusResponse {
 	out := &godwitv1.GetTargetStatusResponse{
 		Target: st.Target, Provider: st.Provider,

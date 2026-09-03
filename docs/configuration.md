@@ -162,6 +162,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--search-path` | admin |
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
+| `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them |
 | `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
 | `godwit plan show <plan-id>` | `--format text\|markdown\|json` | read; statements, hazards and recipes, observation, drift, state, run id, superseded-by |
 | `godwit plans` | `--target`, `--limit` | read; newest first |

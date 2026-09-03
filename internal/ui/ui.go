@@ -10,7 +10,6 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +68,8 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	h.mux.HandleFunc("POST /ui/drift/{target}/{action}", h.driftAction)
 	h.mux.HandleFunc("GET /ui/diff", h.diffForm)
 	h.mux.HandleFunc("POST /ui/diff", h.diffRun)
+	h.mux.HandleFunc("GET /ui/targets", h.targets)
+	h.mux.HandleFunc("GET /ui/targets/{name}", h.target)
 
 	return h
 }
@@ -312,6 +313,12 @@ type page struct {
 	Open      *godwitv1.DriftEvent
 	Checked   string
 	Diff      *diffView
+	Summaries []*godwitv1.TargetSummary
+	Summary   *godwitv1.TargetSummary
+	Status    *godwitv1.GetTargetStatusResponse
+	Ready     []*godwitv1.Plan
+	Applied   []migRow
+	Pending   []migRow
 	Error     string
 	Partial   bool
 }
@@ -333,28 +340,19 @@ func (h *Handler) bare(r *http.Request, nav string) page {
 	return p
 }
 
-func (h *Handler) frame(ctx context.Context, r *http.Request, nav string) (page, []*godwitv1.Run, error) {
+func (h *Handler) frame(ctx context.Context, r *http.Request, nav string) (page, error) {
 	p := h.bare(r, nav)
-	resp, err := call(ctx, godwitv1connect.GodwitServiceListRunsProcedure, &godwitv1.ListRunsRequest{}, h.svc.ListRuns)
+	resp, err := call(ctx, godwitv1connect.GodwitServiceListTargetsProcedure, &godwitv1.ListTargetsRequest{}, h.svc.ListTargets)
 	if err != nil {
-		return p, nil, err
+		return p, err
 	}
-	bad := map[string]bool{}
-	for _, run := range resp.Runs {
-		if _, seen := bad[run.Target]; !seen {
-			bad[run.Target] = false
-		}
-		if needsHuman(run) {
-			bad[run.Target] = true
-			p.Attention++
-		}
+	p.Summaries = resp.Targets
+	for _, t := range resp.Targets {
+		p.Attention += int(t.AttentionRuns)
+		p.Targets = append(p.Targets, target{Name: t.Name, Bad: t.AttentionRuns > 0})
 	}
-	for name, b := range bad {
-		p.Targets = append(p.Targets, target{Name: name, Bad: b})
-	}
-	sort.Slice(p.Targets, func(i, j int) bool { return p.Targets[i].Name < p.Targets[j].Name })
 
-	return p, resp.Runs, nil
+	return p, nil
 }
 
 func (h *Handler) render(w http.ResponseWriter, status int, name string, data page) {
@@ -421,12 +419,19 @@ func (h *Handler) summarize(runs []*godwitv1.Run) (strip, []*godwitv1.Run) {
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, all, err := h.frame(ctx, r, "runs")
+	p, err := h.frame(ctx, r, "runs")
 	if err != nil {
 		h.fail(w, p, err)
 
 		return
 	}
+	resp, err := call(ctx, godwitv1connect.GodwitServiceListRunsProcedure, &godwitv1.ListRunsRequest{}, h.svc.ListRuns)
+	if err != nil {
+		h.fail(w, p, err)
+
+		return
+	}
+	all := resp.Runs
 	p.Target, p.Runs = r.URL.Query().Get("target"), all
 	if p.Target != "" {
 		p.Runs = nil
@@ -442,7 +447,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, _, err := h.frame(ctx, r, "runs")
+	p, err := h.frame(ctx, r, "runs")
 	if err != nil {
 		h.fail(w, p, err)
 
@@ -611,7 +616,7 @@ func (h *Handler) runAction(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) drift(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	p, _, err := h.frame(ctx, r, "drift")
+	p, err := h.frame(ctx, r, "drift")
 	if err != nil {
 		h.fail(w, p, err)
 
