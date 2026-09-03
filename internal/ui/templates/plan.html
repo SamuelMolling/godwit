@@ -1,0 +1,86 @@
+{{define "plan-migration"}}
+<div class="blk">
+  <h3>{{if .Repeatable}}<span class="mono">R__</span> {{.Name}}{{else}}<span class="mono">{{.Version}}</span> {{.Name}}{{end}}</h3>
+  <p class="note">{{plural .Statements "statement"}}{{if .Applied}} · <span class="chip">{{if .Repeatable}}unchanged{{else}}in history{{end}}</span>{{end}}{{if .AlreadyApplied}} · <span class="chip">already applied by hand</span>{{end}}{{if .Expanded}} · <span class="chip">expanded from a directive</span>{{end}}</p>
+  {{range .Directives}}<pre>{{.}}</pre>{{end}}
+  {{if .AlreadyApplied}}<p class="note">Applying the plan records it without executing; its effect is already in the schema.</p>{{end}}
+  {{with .Effect}}<pre>{{.}}</pre>{{end}}
+  {{with .Note}}<p class="note">{{.}}</p>{{end}}
+  {{range .Notes}}<p class="note">note: {{.}}</p>{{end}}
+  {{range .Phases}}
+  {{with .Name}}<p class="note"><span class="chip">{{.}} phase</span>{{if eq . "contract"}} held until the rollout is confirmed{{end}}</p>{{end}}
+  <ul class="tl">
+    {{range .Stmts}}
+    <li><i class="{{if .Hazards}}bad{{else}}ok{{end}}"></i><div>
+      <pre>{{.SQL}}</pre>
+      <div class="t">{{if .NoTx}}no-tx{{else}}tx{{end}}{{with .Batch}} · {{.}}{{end}}</div>
+      {{range .Hazards}}<div class="d"><b>{{.Code}}</b> {{.Detail}}</div>{{with .Recipe}}<pre>{{.}}</pre>{{end}}{{end}}
+    </div></li>
+    {{end}}
+  </ul>
+  {{end}}
+</div>
+{{end}}
+
+{{define "plan.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl">
+    <div class="crumbs"><a href="/ui/plans">Plans</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Plans.ID}}</span></div>
+    <h1><span class="mono" style="font-weight:500;font-size:22px">{{short .Plans.ID}}</span> {{with .Plan}}<span class="pill {{$.Plans.Tone}} lg">{{.State}}</span>{{else}}<span class="pill lg">pruned</span>{{end}}</h1>
+  </div>
+  {{with .Plan}}{{with .RunId}}<div class="acts"><a class="btn" href="/ui/runs/{{.}}">Open run {{short .}}</a></div>{{end}}{{end}}
+</header>
+<div class="body">
+{{if .Plans.Pruned}}
+  <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>This plan was pruned</b><p>Retention swept <span class="mono">{{.Plans.ID}}</span> from the store. The run it was bound to still records every statement it applied.</p></div>
+{{else}}
+  <div class="two">
+    <div class="stack">
+      {{if .Plans.Detail}}
+      {{range .Plans.Detail}}{{template "plan-migration" .}}{{end}}
+      {{else}}
+      <div class="empty"><svg class="ic"><use href="#i-check"/></svg><b>Nothing pending</b><p>The plan was taken with every migration in <span class="mono">{{.Plan.Target}}</span>'s history already.</p></div>
+      {{end}}
+    </div>
+
+    <aside class="aside">
+      <div class="blk">
+        <h3>Facts</h3>
+        <dl class="facts">
+          <dt>Target</dt><dd><span class="chip">{{.Plan.Target}}</span></dd>
+          <dt>Key</dt><dd class="mono">{{short .Plan.Key}}</dd>
+          <dt>Rollout</dt><dd class="mono">{{.Plan.Rollout}}</dd>
+          <dt>Validated</dt><dd>{{if .Plan.Validated}}replayed on a scratch database{{else}}not validated{{end}}</dd>
+          {{if .Plan.AllowOutOfOrder}}<dt>Order</dt><dd>out-of-order allowed</dd>{{end}}
+          {{with .Plan.AcknowledgedHazards}}<dt>Acknowledged</dt><dd>{{range .}}<span class="chip">{{.}}</span> {{end}}</dd>{{end}}
+          <dt>Created by</dt><dd>{{or .Plan.CreatedBy "—"}}{{with .Plan.Source}} <span class="faint">via {{.}}</span>{{end}}</dd>
+          <dt>Created</dt><dd class="mono num">{{stamp .Plan.CreatedAt}}</dd>
+          <dt>Run</dt><dd>{{with .Plan.RunId}}<a class="mono" href="/ui/runs/{{.}}">{{short .}}</a>{{else}}<span class="faint">not bound</span>{{end}}</dd>
+          {{with .Plan.SupersededBy}}<dt>Superseded by</dt><dd><a class="mono" href="/ui/plans/{{.}}">{{short .}}</a></dd>{{end}}
+        </dl>
+      </div>
+      {{with .Plan.Observed}}
+      <div class="blk">
+        <h3>Observation</h3>
+        <p class="note">What the target looked like when the plan was taken. A re-plan that sees anything else refuses to bind.</p>
+        <dl class="facts">
+          <dt>Applied</dt><dd class="num">{{.AppliedCount}}{{if .NewestApplied}} <span class="faint">newest {{.NewestApplied}}</span>{{end}}</dd>
+          <dt>History</dt><dd class="mono">{{short .HistoryHash}}</dd>
+          <dt>Schema</dt><dd class="mono">{{short .SchemaFingerprint}}</dd>
+          <dt>search_path</dt><dd class="mono">{{or .SearchPath "—"}}</dd>
+          <dt>Taken at</dt><dd class="mono num">{{stamp .At}}</dd>
+        </dl>
+      </div>
+      {{end}}
+      {{with .Plan.Drift}}
+      <div class="blk">
+        <h3>Changes outside migrations</h3>
+        <pre>{{.}}</pre>
+        <p class="note">The target had diverged from its baseline when the plan was taken.</p>
+      </div>
+      {{end}}
+    </aside>
+  </div>
+{{end}}
+</div>
+{{template "foot" .}}{{end}}

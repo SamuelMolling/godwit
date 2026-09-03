@@ -63,6 +63,8 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	})
 	h.mux.HandleFunc("GET /ui/runs/{id}", h.run)
 	h.mux.HandleFunc("POST /ui/runs/{id}/{action}", h.runAction)
+	h.mux.HandleFunc("GET /ui/plans", h.plans)
+	h.mux.HandleFunc("GET /ui/plans/{id}", h.planPage)
 	h.mux.HandleFunc("GET /ui/drift", h.drift)
 	h.mux.HandleFunc("POST /ui/drift/{target}/{action}", h.driftAction)
 	h.mux.HandleFunc("GET /ui/diff", h.diffForm)
@@ -304,6 +306,7 @@ type page struct {
 	Steps     []step
 	Plan      *godwitv1.Plan
 	Planned   []planned
+	Plans     *plansData
 	Tabs      []target
 	Events    []*godwitv1.DriftEvent
 	Open      *godwitv1.DriftEvent

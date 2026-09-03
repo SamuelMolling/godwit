@@ -238,6 +238,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <symbol id="i-ne" viewBox="0 0 16 16"><path d="M3.5 6h9M3.5 10h9M10.5 3l-5 10"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 16 16"><path d="M2.5 9h3l1 2h3l1-2h3"/><path d="M4 3.5h8l1.5 5.5v4h-11V9z"/></symbol>
   <symbol id="i-undo" viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v3h3"/></symbol>
+  <symbol id="i-plan" viewBox="0 0 16 16"><path d="M4 2.5h8v11H4z"/><path d="M6.5 5.5h3M6.5 8h3M6.5 10.5h2"/></symbol>
 </svg>
 <div class="app">
 <aside class="rail">
@@ -247,6 +248,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   </div>
   <nav class="nav" aria-label="Sections">
     <a href="/ui/" {{if eq .Nav "runs"}}class="on"{{end}}><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span>{{if .Attention}}<span class="cnt">{{.Attention}}</span>{{end}}</a>
+    <a href="/ui/plans" {{if eq .Nav "plans"}}class="on"{{end}}><svg class="ic"><use href="#i-plan"/></svg><span class="lbl">Plans</span></a>
     <a href="/ui/drift" {{if eq .Nav "drift"}}class="on"{{end}}><svg class="ic"><use href="#i-drift"/></svg><span class="lbl">Drift</span></a>
     <a href="/ui/diff" {{if eq .Nav "diff"}}class="on"{{end}}><svg class="ic"><use href="#i-ne"/></svg><span class="lbl">Diff</span></a>
     <a href="/metrics"><svg class="ic"><use href="#i-metrics"/></svg><span class="lbl">Metrics</span><svg class="ic" style="width:13px;height:13px;color:var(--fg-3)"><use href="#i-ext"/></svg></a>
@@ -254,8 +256,8 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <div>
     <h4>Targets</h4>
     <div class="targets">
-      <a href="/ui/" {{if and (eq .Nav "runs") (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
-      {{range .Targets}}<a href="{{if eq $.Nav "drift"}}/ui/drift{{else}}/ui/{{end}}?target={{.Name}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
+      <a href="{{if eq .Nav "plans"}}/ui/plans{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (eq .Nav "plans")) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
+      {{range .Targets}}<a href="{{if eq $.Nav "drift"}}/ui/drift{{else if eq $.Nav "plans"}}/ui/plans{{else}}/ui/{{end}}?target={{.Name}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
       {{end}}
     </div>
   </div>
