@@ -20,8 +20,8 @@ refuse() {
 event() { jq -r "$1" "${EVENT_PATH}"; }
 
 case "${COMMAND}" in
-  lint|plan|migrate|apply|verify|revert) ;;
-  *) refuse "unknown command '${COMMAND}' (want lint, plan, migrate, apply, verify or revert)" 2 ;;
+  lint|plan|migrate|apply|verify|revert|diff) ;;
+  *) refuse "unknown command '${COMMAND}' (want lint, plan, migrate, apply, verify, revert or diff)" 2 ;;
 esac
 case "${MODE}" in
   apply-on-pr)

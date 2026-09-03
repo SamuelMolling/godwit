@@ -1,10 +1,10 @@
 name: godwit
-description: Lint, plan, apply, verify or revert plain-SQL PostgreSQL migrations with godwit
+description: Lint, plan, apply, verify, revert or generate plain-SQL PostgreSQL migrations with godwit
 author: Samuel Molling
 
 inputs:
   command:
-    description: "What to run: lint, plan, apply, verify, revert or migrate"
+    description: "What to run: lint, plan, apply, verify, revert, migrate or diff"
     required: true
   mode:
     description: "apply-on-pr (default: apply runs from the pull request, verify on push, migrate is refused) or apply-on-merge (migrate runs on push; apply and revert are refused)"
@@ -25,20 +25,32 @@ inputs:
     description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002)"
     default: ""
   server:
-    description: "godwit service URL (plan, apply, verify, revert, migrate; default: server from godwit.yaml or GODWIT_SERVER)"
+    description: "godwit service URL (plan, apply, verify, revert, migrate, diff; default: server from godwit.yaml or GODWIT_SERVER)"
     default: ""
   token:
-    description: "Bearer token for the service (plan, verify: read scope; apply, revert, migrate: pipeline scope)"
+    description: "Bearer token for the service (plan, verify, diff: read scope; apply, revert, migrate: pipeline scope)"
     default: ""
   target:
-    description: "Target name (plan, apply, verify, migrate; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
+    description: "Target name (plan, apply, verify, migrate, diff; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
     default: ""
   rollout:
     description: "Rollout policy for plan, apply and migrate: direct or expand-contract (default: godwit.yaml, else direct)"
     default: ""
   dry-run:
-    description: "With migrate: ask the service for the admitted plan without persisting it and without queueing a run (command: plan persists it)"
+    description: "With migrate: ask the service for the admitted plan without persisting it and without queueing a run (command: plan persists it). With diff: report the migration without writing files"
     default: "false"
+  schema:
+    description: "diff: file holding the whole desired database as DDL"
+    default: ""
+  prisma:
+    description: "diff: Prisma schema (schema.prisma) rendered to DDL by the Prisma CLI, which must be installed in the checkout (npx prisma)"
+    default: ""
+  prisma-bin:
+    description: "diff: command line that runs the Prisma CLI (default: npx prisma, or GODWIT_PRISMA_BIN)"
+    default: ""
+  name:
+    description: "diff: migration name, snake_case; the files are <timestamp>_<name>.{up,down}.sql in dir"
+    default: ""
   source:
     description: "Provenance recorded on the plan or run (default: <repository>@<pull request head sha, else sha>[:<dir>])"
     default: ""
@@ -83,6 +95,12 @@ outputs:
   skipped:
     description: "true when the event did not carry a command for apply or revert (nothing ran)"
     value: ${{ steps.context.outputs.skipped }}
+  changed:
+    description: "true when diff found the target and the desired schema differ"
+    value: ${{ steps.godwit.outputs.changed }}
+  files:
+    description: "Space-separated paths of the up and down files diff wrote"
+    value: ${{ steps.godwit.outputs.files }}
   summary-path:
     description: "Path of the markdown report"
     value: ${{ steps.godwit.outputs.summary-path }}
@@ -136,6 +154,10 @@ runs:
         ROLLOUT: ${{ inputs.rollout }}
         DRY_RUN: ${{ inputs.dry-run }}
         SOURCE: ${{ inputs.source }}
+        SCHEMA: ${{ inputs.schema }}
+        PRISMA: ${{ inputs.prisma }}
+        PRISMA_BIN: ${{ inputs.prisma-bin }}
+        NAME: ${{ inputs.name }}
         GODWIT_TOKEN: ${{ inputs.token }}
         REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ steps.context.outputs.pr-number }}

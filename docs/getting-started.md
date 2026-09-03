@@ -152,11 +152,11 @@ wrote db/migrations/20260902103000_orders_status.down.sql
 
 The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift` and `files`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
 
-`--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state:
+`--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state. A Prisma schema needs no dump: `--prisma` renders it with the project's Prisma CLI, no database involved.
 
 ```bash
-# Prisma: the whole datamodel as SQL, from nothing
-npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > db/schema.sql
+# Prisma: the datamodel itself; the datasource provider must be postgresql
+godwit diff --target app --prisma prisma/schema.prisma --name sync_prisma
 
 # GORM: dry-run AutoMigrate against an empty database and capture the DDL
 go run ./cmd/schema-dump > db/schema.sql   # db.Session(&gorm.Session{DryRun: true}).AutoMigrate(&Order{}) with a logger that records the SQL
@@ -166,6 +166,8 @@ python manage.py showmigrations --plan | awk '{print $2}' | while IFS=. read app
 
 godwit diff --target app --schema db/schema.sql --name sync_orm
 ```
+
+`--prisma` runs `prisma migrate diff --from-empty --script` on the file (`npx prisma` by default, so the `prisma` devDependency the project pins is what renders it; `--prisma-bin` or `GODWIT_PRISMA_BIN` names another command line, such as `node_modules/.bin/prisma --config prisma.config.ts` on Prisma 7, whose `prisma.config.ts` must set a `datasource.url`, any value, nothing connects to it). Prisma 5, 6 and 7 are supported; the CLI's own errors are surfaced as-is.
 
 The ORM keeps owning the model; godwit keeps owning what runs, when, under which lock and with which hazards acknowledged. The file must describe the whole database: anything the target has that the file does not is a `DROP` in the generated `up`, so a Django dump keeps its `django_*` tables and a Prisma project that also has `_prisma_migrations` on the target declares it too.
 
