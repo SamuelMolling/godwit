@@ -392,3 +392,133 @@ func TestTimeoutsReachTheSession(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestHoldFromStopsBeforeTheContractPhase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	connect := newTestDB(t)
+	conn := connect()
+
+	m := Migration{
+		Version: 9, Name: "phased", Checksum: "c9",
+		UpSQL:   "CREATE TABLE p (id int);\nCREATE TABLE q (id int);\nDROP TABLE p;",
+		DownSQL: "DROP TABLE q;",
+	}
+	expand := buildPlanT(t, m, DirectionUp)
+	expand.HoldFrom = 2
+
+	exec := New(conn, Options{})
+	res, err := exec.Up(ctx, expand)
+	if err != nil || !res.Held || res.Applied != 2 {
+		t.Fatalf("expand: res = %+v, err = %v", res, err)
+	}
+	if !tableIn(t, conn, "p") || !tableIn(t, conn, "q") {
+		t.Fatal("expand phase must have created p and q")
+	}
+	if state, count := runOf(t, conn, 9); state != "running" || count != 1 {
+		t.Fatalf("run state = %q over %d rows, want one running row", state, count)
+	}
+	if n := countRows(t, conn, "godwit.migrations"); n != 0 {
+		t.Fatalf("held run must not record the migration, got %d rows", n)
+	}
+
+	res, err = exec.Up(ctx, expand)
+	if err != nil || !res.Held || res.Applied != 0 {
+		t.Fatalf("re-held: res = %+v, err = %v", res, err)
+	}
+
+	res, err = exec.Up(ctx, buildPlanT(t, m, DirectionUp))
+	if err != nil || res.Held || res.Applied != 1 {
+		t.Fatalf("contract: res = %+v, err = %v", res, err)
+	}
+	if tableIn(t, conn, "p") {
+		t.Fatal("contract phase must have dropped p")
+	}
+	if state, count := runOf(t, conn, 9); state != "succeeded" || count != 1 {
+		t.Fatalf("run state = %q over %d rows, want the same run succeeded", state, count)
+	}
+	if n := countRows(t, conn, "godwit.journal"); n != 3 {
+		t.Fatalf("journal = %d rows, want 3 on the resumed run", n)
+	}
+	if n := countRows(t, conn, "godwit.migrations"); n != 1 {
+		t.Fatalf("migrations = %d rows, want 1", n)
+	}
+}
+
+func TestHoldFromBeyondTheLastStatementRunsWhole(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	connect := newTestDB(t)
+	conn := connect()
+
+	m := Migration{Version: 10, Name: "whole", Checksum: "c10", UpSQL: "CREATE TABLE w (id int);", DownSQL: "DROP TABLE w;"}
+	p := buildPlanT(t, m, DirectionUp)
+	p.HoldFrom = len(p.Statements)
+
+	res, err := New(conn, Options{}).Up(ctx, p)
+	if err != nil || res.Held || res.Applied != 1 {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if n := countRows(t, conn, "godwit.migrations"); n != 1 {
+		t.Fatalf("migrations = %d rows, want 1", n)
+	}
+}
+
+func tableIn(t *testing.T, conn *pgx.Conn, name string) bool {
+	t.Helper()
+	var ok bool
+	if err := conn.QueryRow(context.Background(), `SELECT to_regclass($1) IS NOT NULL`, name).Scan(&ok); err != nil {
+		t.Fatal(err)
+	}
+
+	return ok
+}
+
+func runOf(t *testing.T, conn *pgx.Conn, version int64) (state string, count int) {
+	t.Helper()
+	if err := conn.QueryRow(context.Background(),
+		`SELECT min(state), count(*) FROM godwit.runs WHERE version = $1`, version).Scan(&state, &count); err != nil {
+		t.Fatal(err)
+	}
+
+	return state, count
+}
+
+func TestCrashInsideTheExpandPhaseResumesThenHolds(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	connect := newTestDB(t)
+
+	m := Migration{
+		Version: 11, Name: "phased", Checksum: "c11",
+		UpSQL:   "CREATE TABLE p (id int);\nCREATE TABLE q (id int);\nDROP TABLE p;",
+		DownSQL: "DROP TABLE q;",
+	}
+	expand := buildPlanT(t, m, DirectionUp)
+	expand.HoldFrom = 2
+
+	crashed := connect()
+	if _, err := New(crashed, Options{}, crashOn(crashed, HookInsideTx, 1)).Up(ctx, expand); err == nil {
+		t.Fatal("crash run must fail")
+	}
+
+	fresh := connect()
+	res, err := New(fresh, Options{}).Up(ctx, expand)
+	if err != nil || !res.Held || res.Applied != 1 {
+		t.Fatalf("resumed expand: res = %+v, err = %v", res, err)
+	}
+	if !tableIn(t, fresh, "p") || !tableIn(t, fresh, "q") {
+		t.Fatal("resumed expand must leave p and q")
+	}
+
+	res, err = New(fresh, Options{}).Up(ctx, buildPlanT(t, m, DirectionUp))
+	if err != nil || res.Held || res.Applied != 1 {
+		t.Fatalf("contract: res = %+v, err = %v", res, err)
+	}
+	if state, count := runOf(t, fresh, 11); state != "succeeded" || count != 1 {
+		t.Fatalf("run state = %q over %d rows", state, count)
+	}
+	if n := countRows(t, fresh, "godwit.journal"); n != 3 {
+		t.Fatalf("journal = %d rows, want 3", n)
+	}
+}

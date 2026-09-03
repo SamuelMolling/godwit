@@ -37,7 +37,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | Safe-DDL recipes | Every hazard carries the safe form as ready-to-copy SQL with the real names from the statement (`CREATE INDEX CONCURRENTLY ...`, `CHECK ... NOT VALID` → `VALIDATE` → `SET NOT NULL`, add column → backfill → swap for a type change), in `lint`, `plan` and the API. |
 | Validation | Every run replays the target's recorded history plus the new files on a scratch database before it is queued. |
 | Repeatable migrations | `R__<name>.up.sql` / `.down.sql` have no version: applied after the run's versioned files, in name order, whenever the content differs from what the target recorded in `godwit.repeatables`, and skipped when it does not. Same hazard gate, same journal, same plan contract; `lint`'s edited-after-merge check does not apply to them. |
-| Rollout policies | `direct`, or `expand-contract`: destructive migrations wait in `awaiting_contract` until `ConfirmRollout`. |
+| Rollout policies | `direct`, or `expand-contract`: destructive statements wait in `awaiting_contract` until `ConfirmRollout`, which resumes the same run from the statement it stopped at. |
 | Revert, baseline, status | `RevertRun` runs the down side through the same gate; `BaselineTarget` adopts an existing database; `GetTargetStatus` answers applied/pending/last run/drift in one call. |
 | Drift detection | Fingerprint after every successful run, periodic monitor, events, accept. |
 | Out-of-order guard and dry run | Older-than-applied versions are refused unless allowed; `PlanRun` shows the admitted plan without queueing. |

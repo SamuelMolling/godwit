@@ -78,3 +78,65 @@ func TestExpandContractHazards(t *testing.T) {
 		})
 	}
 }
+
+func phasedPlans(t *testing.T, at int) []engine.Plan {
+	t.Helper()
+	plans, err := buildPlans([]engine.Migration{
+		{Version: 1, Name: "a", UpSQL: "CREATE TABLE a (id int);", DownSQL: "DROP TABLE a;"},
+		{
+			Version: 2, Name: "b", DownSQL: "SELECT 1;",
+			UpSQL: "ALTER TABLE a ADD COLUMN b int;\nALTER TABLE a ADD COLUMN c int;\nSELECT 1;",
+		},
+		{Version: 3, Name: "c", UpSQL: "CREATE TABLE c (id int);", DownSQL: "DROP TABLE c;"},
+	}, engine.DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := at; i < len(plans[1].Statements); i++ {
+		plans[1].Statements[i].Phase = engine.PhaseContract
+	}
+
+	return plans
+}
+
+func TestExpandContractHoldsInsideOnePlan(t *testing.T) {
+	t.Parallel()
+
+	plans := phasedPlans(t, 2)
+	expand, contract := ExpandContract{}.Split(plans)
+
+	if len(expand) != 2 || !expand[1].Held() || expand[1].HoldFrom != 2 {
+		t.Fatalf("expand = %d plans, hold from %d", len(expand), expand[len(expand)-1].HoldFrom)
+	}
+	if len(contract) != 2 || contract[0].Migration.Version != 2 || contract[0].HoldFrom != 0 {
+		t.Fatalf("contract = %+v", contract)
+	}
+	if plans[1].HoldFrom != 0 || expand[0].Migration.Version != 1 {
+		t.Fatalf("split must not touch the plans it was given: %+v", plans)
+	}
+	if n := HeldStatements(expand, contract); n != 2 {
+		t.Fatalf("held statements = %d, want 2", n)
+	}
+
+	expand, contract = Direct{}.Split(phasedPlans(t, 2))
+	if len(expand) != 3 || contract != nil || expand[1].Held() {
+		t.Fatalf("direct must ignore phases: expand = %d, contract = %d", len(expand), len(contract))
+	}
+}
+
+func TestExpandContractHoldsWholePlanFromStatementZero(t *testing.T) {
+	t.Parallel()
+
+	plans := phasedPlans(t, 0)
+	expand, contract := ExpandContract{}.Split(plans)
+
+	if len(expand) != 1 || expand[0].Held() {
+		t.Fatalf("expand = %+v", expand)
+	}
+	if len(contract) != 2 || contract[0].HoldFrom != 0 {
+		t.Fatalf("contract = %+v", contract)
+	}
+	if n := HeldStatements(expand, contract); n != 4 {
+		t.Fatalf("held statements = %d, want 4", n)
+	}
+}

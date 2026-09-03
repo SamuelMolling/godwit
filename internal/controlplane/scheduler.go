@@ -140,8 +140,8 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	}
 	// Watchers must find the snapshot once they see the final state.
 	s.baseline(ctx, run, log)
-	if held > 0 {
-		log.Info("expand phase applied; awaiting rollout confirmation", "held", held)
+	if held.plans > 0 {
+		log.Info("expand phase applied; awaiting rollout confirmation", "held", held.plans, "held_statements", held.statements)
 		finish(StateAwaitingContract, "")
 
 		return
@@ -210,42 +210,48 @@ func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
 	}
 }
 
-// applyRun applies the current phase and reports how many plans were held back.
-func (s *Scheduler) applyRun(ctx context.Context, run Run) (int, error) {
+// heldWork is what the expand phase left for the contract phase.
+type heldWork struct {
+	plans      int
+	statements int
+}
+
+// applyRun applies the current phase and reports what it held back.
+func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	filesID, dir := run.ID, engine.DirectionUp
 	if run.Reverts != "" {
 		filesID, dir = run.Reverts, engine.DirectionDown
 	}
 	files, err := s.store.RunFiles(ctx, filesID)
 	if err != nil {
-		return 0, err
+		return heldWork{}, err
 	}
 	plans, err := PlansFromFiles(files, dir)
 	if err != nil {
-		return 0, err
+		return heldWork{}, err
 	}
-	held := 0
+	var held heldWork
 	if run.Reverts == "" && run.Phase != PhaseContract {
 		policy, ok := s.policies[run.Rollout]
 		if !ok {
-			return 0, fmt.Errorf("unknown rollout policy %q", run.Rollout)
+			return heldWork{}, fmt.Errorf("unknown rollout policy %q", run.Rollout)
 		}
 		var contract []engine.Plan
 		plans, contract = policy.Split(plans)
-		held = len(contract)
+		held = heldWork{plans: len(contract), statements: HeldStatements(plans, contract)}
 	}
 
 	tg, err := s.target(ctx, run.Target)
 	if err != nil {
-		return 0, err
+		return heldWork{}, err
 	}
 	opts, err := run.Timeouts.Over(tg.timeouts).Options()
 	if err != nil {
-		return 0, err
+		return heldWork{}, err
 	}
 	if run.Reverts == "" && run.PlanID != "" {
 		if plans, err = s.markOnly(ctx, run.PlanID, plans, tg.dsn); err != nil {
-			return 0, err
+			return heldWork{}, err
 		}
 	}
 

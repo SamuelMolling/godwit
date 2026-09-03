@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -450,5 +451,95 @@ func TestSchedulerHeartbeatKeepsLease(t *testing.T) {
 	r := waitState(t, s, "44444444-0000-0000-0000-000000000001", StateSucceeded)
 	if r.Attempts != 1 {
 		t.Fatalf("attempts = %d, want 1 (lease must have been heartbeated, never stolen)", r.Attempts)
+	}
+}
+
+// phaseFrom marks the tail of the last plan as contract statements, the way the expander will.
+type phaseFrom struct{ at int }
+
+func (p phaseFrom) Split(plans []engine.Plan) ([]engine.Plan, []engine.Plan) {
+	marked := slices.Clone(plans)
+	last := len(marked) - 1
+	sts := slices.Clone(marked[last].Statements)
+	for i := p.at; i < len(sts); i++ {
+		sts[i].Phase = engine.PhaseContract
+	}
+	marked[last].Statements = sts
+
+	return ExpandContract{}.Split(marked)
+}
+
+func targetValue(t *testing.T, dsn, query string) string {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var v string
+	if err := conn.QueryRow(ctx, query).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+
+	return v
+}
+
+func TestSchedulerHoldsContractStatementsInOneMigration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	targetDSN := newDatabase(t, "tg")
+	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": targetDSN}); err != nil {
+		t.Fatal(err)
+	}
+	policies := Policies()
+	policies["phased"] = phaseFrom{at: 2}
+	sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}},
+		PGEngine{}, policies, Config{Holder: "h1"}, testLog)
+
+	files := map[string]string{
+		"20260901120000_t.up.sql":   "CREATE TABLE t (id int);\nCREATE TABLE u (id int);\nDROP TABLE t;",
+		"20260901120000_t.down.sql": "DROP TABLE u;",
+	}
+	id := "5a5a5a5a-0000-0000-0000-000000000001"
+	if err := s.CreateRun(ctx, id, "app", "phased", files, Timeouts{}, Provenance{}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	sched.Tick(ctx)
+	r := waitState(t, s, id, StateAwaitingContract)
+	if r.Phase != PhaseExpand || r.Error != "" {
+		t.Fatalf("run = %+v", r)
+	}
+	if !tableExists(t, targetDSN, "t") || !tableExists(t, targetDSN, "u") {
+		t.Fatal("expand statements must have run")
+	}
+	if got := targetValue(t, targetDSN, "SELECT string_agg(state, ',') FROM godwit.runs"); got != "running" {
+		t.Fatalf("target runs = %q, want one still running", got)
+	}
+	if got := targetValue(t, targetDSN, "SELECT count(*)::text FROM godwit.migrations"); got != "0" {
+		t.Fatalf("migrations = %s, want none before the contract phase", got)
+	}
+
+	if _, err := s.Confirm(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	sched.Tick(ctx)
+	r = waitState(t, s, id, StateSucceeded)
+	if r.Phase != PhaseContract {
+		t.Fatalf("run = %+v", r)
+	}
+	if tableExists(t, targetDSN, "t") || !tableExists(t, targetDSN, "u") {
+		t.Fatal("contract statement must have dropped t and left u")
+	}
+	if got := targetValue(t, targetDSN, "SELECT string_agg(state, ',') FROM godwit.runs"); got != "succeeded" {
+		t.Fatalf("target runs = %q, want the same run finished", got)
+	}
+	if got := targetValue(t, targetDSN, "SELECT count(DISTINCT run_id) || '/' || count(*) FROM godwit.journal"); got != "1/3" {
+		t.Fatalf("journal = %s, want three statements on one run", got)
+	}
+	if got := targetValue(t, targetDSN, "SELECT count(*)::text FROM godwit.migrations"); got != "1" {
+		t.Fatalf("migrations = %s, want the file recorded once", got)
 	}
 }

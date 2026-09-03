@@ -87,10 +87,11 @@ func New(db DB, opts Options, extra ...Option) *Executor {
 	return e
 }
 
-// Result reports what one apply did.
+// Result reports what one apply did; Held marks a plan stopped at its contract boundary.
 type Result struct {
 	Migration string
 	Skipped   bool
+	Held      bool
 	Applied   int
 }
 
@@ -153,7 +154,11 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 		return res, err
 	}
 
-	for i := prog.lastDone + 1; i < len(p.Statements); i++ {
+	last := len(p.Statements)
+	if p.Held() {
+		last = p.HoldFrom
+	}
+	for i := prog.lastDone + 1; i < last; i++ {
 		if err := e.execStatement(ctx, prog, res.Migration, i, p.Statements[i]); err != nil {
 			err = fmt.Errorf("statement %d of %s (%s): %w", i, res.Migration, p.Direction, err)
 			markFailed(ctx, e.db, prog.runID, err)
@@ -161,6 +166,11 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 			return res, err
 		}
 		res.Applied++
+	}
+	if p.Held() {
+		res.Held = true
+
+		return res, nil
 	}
 
 	return res, e.finalize(ctx, p, prog.runID)
