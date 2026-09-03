@@ -33,6 +33,7 @@ const (
 	HookInsideTx        HookPoint = "inside_tx"
 	HookAfterIntent     HookPoint = "after_intent"
 	HookAfterExec       HookPoint = "after_exec"
+	HookAfterBatch      HookPoint = "after_batch"
 )
 
 // StatementEvent reports one executed statement.
@@ -42,6 +43,9 @@ type StatementEvent struct {
 	Statement Statement
 	Duration  time.Duration
 	Err       error
+	RowsDone  int64
+	RowsTotal int64
+	Batches   int
 }
 
 // Executor applies plans over one database session.
@@ -220,13 +224,18 @@ func (e *Executor) recorded(ctx context.Context, m Migration) (bool, string, err
 func (e *Executor) execStatement(ctx context.Context, prog runProgress, migration string, idx int, st Statement) error {
 	e.hook(HookBeforeStatement, idx)
 	start := time.Now()
+	ev := StatementEvent{Migration: migration, Index: idx, Statement: st}
 	var err error
-	if st.NoTx {
+	switch {
+	case st.Batch != nil:
+		err = e.execBatch(ctx, prog, idx, st, &ev)
+	case st.NoTx:
 		err = e.execNoTx(ctx, prog, idx, st)
-	} else {
+	default:
 		err = e.execTx(ctx, prog, idx, st)
 	}
-	e.observe(StatementEvent{Migration: migration, Index: idx, Statement: st, Duration: time.Since(start), Err: err})
+	ev.Duration, ev.Err = time.Since(start), err
+	e.observe(ev)
 
 	return err
 }

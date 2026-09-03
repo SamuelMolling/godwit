@@ -57,7 +57,10 @@ func (e PGEngine) observer(runID, target string) func(engine.StatementEvent) {
 
 	return func(ev engine.StatementEvent) {
 		kind := "tx"
-		if ev.Statement.NoTx {
+		switch {
+		case ev.Statement.Batch != nil:
+			kind = "batch"
+		case ev.Statement.NoTx:
 			kind = "no_tx"
 		}
 		if e.Metrics != nil {

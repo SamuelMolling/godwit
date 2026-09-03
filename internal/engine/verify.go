@@ -15,6 +15,8 @@ func reconcile(ctx context.Context, db DB, st Statement) (done bool, err error) 
 		return reconcileCreateIndex(ctx, db, st)
 	case VerifierDropIndexConcurrently:
 		return reconcileDropIndex(ctx, db, st)
+	case VerifierBatch: // the cursor in the journal is the recovery point.
+		return false, nil
 	default: // VerifierRerun: idempotent by classification, run it again.
 		return false, nil
 	}

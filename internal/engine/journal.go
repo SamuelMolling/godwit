@@ -44,6 +44,9 @@ var bootstrapDDL = []string{
 		recorded_at timestamptz NOT NULL DEFAULT now(),
 		PRIMARY KEY (run_id, stmt_idx, state)
 	)`,
+	`ALTER TABLE godwit.journal ADD COLUMN IF NOT EXISTS cursor text`,
+	`ALTER TABLE godwit.journal ADD COLUMN IF NOT EXISTS rows_done bigint NOT NULL DEFAULT 0`,
+	`ALTER TABLE godwit.journal ADD COLUMN IF NOT EXISTS rows_total bigint`,
 }
 
 func bootstrap(ctx context.Context, db DB) error {
@@ -61,6 +64,9 @@ type runProgress struct {
 	runID         string
 	lastDone      int
 	pendingIntent int
+	cursor        *string
+	rowsDone      int64
+	rowsTotal     int64
 }
 
 func newProgress(runID string) runProgress {
@@ -112,16 +118,20 @@ func openRun(ctx context.Context, db DB, p Plan, newID string) (runProgress, err
 
 func loadProgress(ctx context.Context, db DB, p Plan, runID string) (runProgress, error) {
 	rows, err := db.Query(ctx,
-		`SELECT stmt_idx, state, sql_hash FROM godwit.journal WHERE run_id = $1 ORDER BY stmt_idx`, runID)
+		`SELECT stmt_idx, state, sql_hash, cursor, rows_done, rows_total
+		 FROM godwit.journal WHERE run_id = $1 ORDER BY stmt_idx`, runID)
 	if err != nil {
 		return runProgress{}, fmt.Errorf("load journal: %w", err)
 	}
 
 	prog := newProgress(runID)
-	intents := map[int]bool{}
+	intents := map[int]intentRow{}
 	var idx int
 	var state, hash string
-	_, err = pgx.ForEachRow(rows, []any{&idx, &state, &hash}, func() error {
+	var cursor *string
+	var rowsDone int64
+	var rowsTotal *int64
+	_, err = pgx.ForEachRow(rows, []any{&idx, &state, &hash, &cursor, &rowsDone, &rowsTotal}, func() error {
 		if hash != p.Statements[idx].Hash {
 			return fmt.Errorf("statement %d changed since run %s started; refusing to resume", idx, runID)
 		}
@@ -130,18 +140,24 @@ func loadProgress(ctx context.Context, db DB, p Plan, runID string) (runProgress
 				prog.lastDone = idx
 			}
 			delete(intents, idx)
-		} else {
-			intents[idx] = true
+
+			return nil
 		}
+		row := intentRow{cursor: cursor, rowsDone: rowsDone}
+		if rowsTotal != nil {
+			row.rowsTotal = *rowsTotal
+		}
+		intents[idx] = row
 
 		return nil
 	})
 	if err != nil {
 		return runProgress{}, fmt.Errorf("read journal: %w", err)
 	}
-	for idx := range intents {
+	for idx, row := range intents {
 		if idx > prog.lastDone {
 			prog.pendingIntent = idx
+			prog.cursor, prog.rowsDone, prog.rowsTotal = row.cursor, row.rowsDone, row.rowsTotal
 		}
 	}
 	if _, err := db.Exec(ctx,
@@ -150,6 +166,24 @@ func loadProgress(ctx context.Context, db DB, p Plan, runID string) (runProgress
 	}
 
 	return prog, nil
+}
+
+type intentRow struct {
+	cursor    *string
+	rowsDone  int64
+	rowsTotal int64
+}
+
+func recordBatchIntent(ctx context.Context, db DB, runID string, idx int, hash string, total *int64) error {
+	_, err := db.Exec(ctx,
+		`INSERT INTO godwit.journal (run_id, stmt_idx, state, sql_hash, rows_total)
+		 VALUES ($1, $2, 'intent', $3, $4) ON CONFLICT DO NOTHING`,
+		runID, idx, hash, total)
+	if err != nil {
+		return fmt.Errorf("journal intent for statement %d: %w", idx, err)
+	}
+
+	return nil
 }
 
 func recordJournal(ctx context.Context, db DB, runID string, idx int, state, hash string) error {

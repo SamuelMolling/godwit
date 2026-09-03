@@ -45,11 +45,13 @@ func TestPGEngineObserverLogs(t *testing.T) {
 	observe := PGEngine{Log: log}.observer("run-1", "app")
 	observe(engine.StatementEvent{Migration: "00000000000007_x", Index: 2, Statement: engine.Statement{SQL: "INSERT INTO people VALUES ('pii')"}})
 	observe(engine.StatementEvent{Migration: "00000000000007_x", Index: 3, Statement: engine.Statement{SQL: "SELECT secret_column", NoTx: true}, Err: errors.New("boom")})
+	observe(engine.StatementEvent{Migration: "00000000000007_x", Index: 4, Statement: engine.Statement{SQL: "UPDATE pii SET people = 1", Batch: &engine.BatchSpec{}}})
 
 	out := sink.String()
 	for _, want := range []string{
 		`"msg":"statement applied"`, `"run":"run-1"`, `"target":"app"`, `"migration":"00000000000007_x"`, `"stmt":2`, `"kind":"tx"`, `"duration_ms":0`,
 		`"msg":"statement failed"`, `"stmt":3`, `"kind":"no_tx"`, `"error":"boom"`,
+		`"stmt":4`, `"kind":"batch"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("log missing %s:\n%s", want, out)
