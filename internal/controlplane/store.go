@@ -77,6 +77,19 @@ type Run struct {
 	NotBefore  *time.Time
 	CreatedAt  time.Time
 	FinishedAt *time.Time
+	Progress   *RunProgress
+	// Expansions is the SQL godwit generated for the run's directives, keyed by migration id.
+	Expansions map[string]Expansion
+}
+
+// RunProgress is the newest statement a running run reported, so a long backfill is visible while it runs.
+type RunProgress struct {
+	Migration string `json:"migration"`
+	Statement int    `json:"statement"`
+	Phase     string `json:"phase,omitempty"`
+	RowsDone  int64  `json:"rows_done,omitempty"`
+	RowsTotal int64  `json:"rows_total,omitempty"`
+	Batches   int    `json:"batches,omitempty"`
 }
 
 // Provenance records who created a run and where its files came from.
@@ -166,8 +179,9 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	return provider, config, nil
 }
 
-// CreateRun queues a run with its migration files, per-run timeout overrides, provenance and bound plan (empty when implicit).
-func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance, planID string) error {
+// CreateRun queues a run with its migration files, per-run timeout overrides, provenance, bound plan
+// (empty when implicit) and the directive expansions the run applies in place of the file bodies.
+func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance, planID string, exps map[string]Expansion) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
 	for name, body := range files {
@@ -175,15 +189,82 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 		bodies = append(bodies, body)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout, lock_timeout, statement_timeout, created_by, source, plan_id)
-			VALUES ($1, $2, 'queued', $5, nullif($6, ''), nullif($7, ''), $8, $9, nullif($10, '')::uuid))
+		WITH r AS (INSERT INTO cp_runs (id, target, state, rollout, lock_timeout, statement_timeout, created_by, source, plan_id, expansions)
+			VALUES ($1, $2, 'queued', $5, nullif($6, ''), nullif($7, ''), $8, $9, nullif($10, '')::uuid, $11))
 		INSERT INTO cp_run_files (run_id, name, body)
 		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
-		id, target, names, bodies, rollout, t.Lock, t.Statement, p.CreatedBy, p.Source, planID); err != nil {
+		id, target, names, bodies, rollout, t.Lock, t.Statement, p.CreatedBy, p.Source, planID, jsonOf(orEmpty(exps))); err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
 
 	return nil
+}
+
+// SaveProgress records what the newest statement of a running run reported.
+func (s *Store) SaveProgress(ctx context.Context, id string, p RunProgress) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE cp_runs SET progress = $2 WHERE id = $1`, id, jsonOf(p)); err != nil {
+		return fmt.Errorf("save run progress: %w", err)
+	}
+
+	return nil
+}
+
+// RetireColumns records the columns a run left behind so a desired-schema diff stops proposing their drop.
+func (s *Store) RetireColumns(ctx context.Context, target, runID, migration string, cols []RetiredColumn) error {
+	for _, c := range cols {
+		if _, err := s.pool.Exec(ctx, `
+			INSERT INTO cp_retired_columns (target, schema, rel, col, retires, migration, run_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (target, schema, rel, col) DO UPDATE SET
+				retires = EXCLUDED.retires, migration = EXCLUDED.migration, run_id = EXCLUDED.run_id, retired_at = now()`,
+			target, c.Schema, c.Table, c.Column, c.Retires, migration, runID); err != nil {
+			return fmt.Errorf("retire column %s: %w", c, err)
+		}
+	}
+
+	return nil
+}
+
+// UnretireColumns forgets columns a revert renamed back into place.
+func (s *Store) UnretireColumns(ctx context.Context, target string, cols []RetiredColumn) error {
+	for _, c := range cols {
+		if _, err := s.pool.Exec(ctx,
+			`DELETE FROM cp_retired_columns WHERE target = $1 AND schema = $2 AND rel = $3 AND col = $4`,
+			target, c.Schema, c.Table, c.Column); err != nil {
+			return fmt.Errorf("unretire column %s: %w", c, err)
+		}
+	}
+
+	return nil
+}
+
+// RetiredColumns lists the columns a target keeps only as the rollback of a completed change-type.
+func (s *Store) RetiredColumns(ctx context.Context, target string) ([]RetiredColumn, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT schema, rel, col, retires FROM cp_retired_columns WHERE target = $1 ORDER BY schema, rel, col`, target)
+	if err != nil {
+		return nil, fmt.Errorf("list retired columns: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByPos[RetiredColumn])
+	if err != nil {
+		return nil, fmt.Errorf("read retired columns: %w", err)
+	}
+
+	return out, nil
+}
+
+// AwaitingContract returns the target's run stopped between its phases, if it has one.
+func (s *Store) AwaitingContract(ctx context.Context, target string) (Run, bool, error) {
+	r, err := scanRun(s.pool.QueryRow(ctx,
+		`SELECT `+runColumns+` FROM cp_runs WHERE target = $1 AND state = 'awaiting_contract' ORDER BY created_at LIMIT 1`, target))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, false, nil
+	}
+	if err != nil {
+		return Run{}, false, fmt.Errorf("load awaiting run: %w", err)
+	}
+
+	return r, true, nil
 }
 
 // CreateBaseline records an already-succeeded baseline run holding the files that describe the target's current schema.
@@ -230,13 +311,13 @@ func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeout
 
 const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
 	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source, coalesce(plan_id::text, ''),
-	retries, not_before`
+	retries, not_before, progress, expansions`
 
 func (r *Run) fields() []any {
 	return []any{
 		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
 		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt, &r.Provenance.CreatedBy, &r.Provenance.Source, &r.PlanID,
-		&r.Retries, &r.NotBefore,
+		&r.Retries, &r.NotBefore, &r.Progress, &r.Expansions,
 	}
 }
 

@@ -351,6 +351,42 @@ rpc Diff '{"target": "legacy", "schema": "CREATE TABLE orders (id bigint PRIMARY
 echo
 
 echo
+echo "==> directive: one comment line asks godwit to run the lock-safe type change itself"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "ALTER TABLE orders ADD COLUMN quantity integer NOT NULL DEFAULT 1;" \
+  -c "INSERT INTO orders (id, total, quantity) SELECT g, g, g FROM generate_series(1, 5000) g ON CONFLICT DO NOTHING;" > /dev/null
+CT_FILES='[
+    {"name": "20260901190000_quantity.up.sql", "body": "-- godwit: change-type public.orders.quantity bigint batch=1000\n"},
+    {"name": "20260901190000_quantity.down.sql", "body": "-- godwit: revert\n"}
+  ]'
+echo "==> plan: the expansion is computed against the target's catalog and frozen into the plan"
+rpc PlanRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"persist\": true, \"files\": $CT_FILES}" 18475 \
+  | tr ',' '\n' | grep -E '"(sql|phase|key|size)"' | head -20
+CT_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"files\": $CT_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$CT_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_AWAITING_CONTRACT" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+echo "==> the expand phase is applied: both columns exist and a trigger keeps them in sync"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'orders' AND column_name LIKE 'quantity%' ORDER BY column_name;" \
+  -c "INSERT INTO orders (id, total, quantity) VALUES (999001, 1, 42);" \
+  -c "SELECT quantity, quantity_new FROM orders WHERE id = 999001;"
+echo "==> confirm resumes the same run at the statement it stopped at and swaps the columns"
+rpc ConfirmRollout "{\"runId\": \"$CT_ID\"}" 18475
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$CT_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'orders' AND column_name LIKE 'quantity%' ORDER BY column_name;"
+echo "==> quantity is bigint, quantity_old is the rollback godwit kept and recorded as retired"
+
+echo
 echo "==> per-target search_path: unqualified names land in the application's schema, the journal never moves"
 docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE tenant;" > /dev/null
 docker compose exec -T target-db psql -U app -d tenant -c "CREATE SCHEMA tenant;" > /dev/null
@@ -393,5 +429,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, -- godwit: directives expanded into lock-safe plans, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

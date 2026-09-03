@@ -81,7 +81,7 @@ func TestPlanStoreLifecycle(t *testing.T) {
 	}
 
 	const runID = "bbbbbbbb-0000-0000-0000-000000000001"
-	if err := s.CreateRun(ctx, runID, "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, planB); err != nil {
+	if err := s.CreateRun(ctx, runID, "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, planB, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.BindPlan(ctx, planB, runID); err != nil {
@@ -205,7 +205,7 @@ func TestPlanStoreErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", "k1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(20)...).WillReturnError(errBoom)
+	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(21)...).WillReturnError(errBoom)
 	if err := s.SavePlan(ctx, storedPlan(planA), nil); err == nil || !strings.Contains(err.Error(), "save plan") {
 		t.Fatalf("err = %v", err)
 	}
@@ -248,7 +248,7 @@ func TestPlanStoreErrors(t *testing.T) {
 	}
 	mock.ExpectExec("UPDATE cp_plans SET state = 'superseded'").WithArgs(planA).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", "k1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
-	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(20)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec("WITH p AS").WithArgs(anyArgs(21)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec("UPDATE cp_plans SET superseded_by").WithArgs(planA, planB).WillReturnError(errBoom)
 	if err := s.SupersedePlan(ctx, planA, storedPlan(planB), nil); err == nil || !strings.Contains(err.Error(), "link superseded plan") {
 		t.Fatalf("err = %v", err)
@@ -289,9 +289,9 @@ func TestPlanStoreErrors(t *testing.T) {
 func planRows() *pgxmock.Rows {
 	return pgxmock.NewRows([]string{
 		"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
-		"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
+		"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce", "expansions",
 	}).AddRow(planA, "app", "k1", RolloutDirect, PlanReady, "h", []byte("[]"), "f", "d", "public", "", []byte("[]"),
-		true, []string{}, false, "ci", "", now(), "", "")
+		true, []string{}, false, "ci", "", now(), "", "", map[string]Expansion{})
 }
 
 func anyArgs(n int) []any {

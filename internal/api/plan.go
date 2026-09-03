@@ -33,6 +33,9 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	}
 	var obs controlplane.Observation
 	if m.Persist {
+		if err := s.checkIdle(ctx, m.Target); err != nil {
+			return nil, err
+		}
 		if obs, err = s.Inspector.Observe(ctx, m.Target); err != nil {
 			return nil, rpcErr(err)
 		}
@@ -41,7 +44,10 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	if err != nil {
 		return nil, err
 	}
-	migs := controlplane.BuildPlanMigrations(spec.rollout, spec.plans, adm.applied)
+	if err := checkRollout(spec.rollout, adm.expanded(spec)); err != nil {
+		return nil, err
+	}
+	migs := controlplane.BuildPlanMigrations(spec.rollout, adm.expanded(spec), adm.applied, adm.expansions)
 	out := &godwitv1.PlanRunResponse{Target: m.Target, Rollout: spec.rollout, Validated: adm.validated, Migrations: migrationsToProto(migs)}
 	if !m.Persist {
 		s.Log.Info("run planned", "target", m.Target, "rollout", spec.rollout, "files", len(spec.files),
@@ -56,7 +62,7 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	p := controlplane.Plan{
 		ID: s.newID(), Target: m.Target, Key: controlplane.PlanKey(m.Target, spec.rollout, pending), Rollout: spec.rollout,
 		Validated: adm.validated, Acked: m.AcknowledgeHazards, AllowOutOfOrder: m.AllowOutOfOrder,
-		CreatedBy: Actor(ctx), Source: m.Source,
+		CreatedBy: Actor(ctx), Source: m.Source, Expansions: adm.expansions,
 	}
 	var detected bool
 	if p.Migrations, p.Drift, detected = planMigrations(spec, adm, obs); !detected {
@@ -88,12 +94,13 @@ func observed(p controlplane.Plan, obs controlplane.Observation) controlplane.Pl
 }
 
 func planMigrations(spec runSpec, adm admission, obs controlplane.Observation) (migs []controlplane.PlanMigration, drift string, detected bool) {
-	migs = controlplane.BuildPlanMigrations(spec.rollout, spec.plans, adm.applied)
+	plans := adm.expanded(spec)
+	migs = controlplane.BuildPlanMigrations(spec.rollout, plans, adm.applied, adm.expansions)
 	if adm.validation == nil {
 		return migs, "", false
 	}
 
-	return migs, controlplane.Detect(migs, spec.plans, *adm.validation, obs), true
+	return migs, controlplane.Detect(migs, plans, *adm.validation, obs), true
 }
 
 func (s *Server) driftSince(ctx context.Context, target string, obs controlplane.Observation) (string, error) {
@@ -126,6 +133,7 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 		pm := &godwitv1.PlannedMigration{
 			Version: m.Version, Name: m.Name, Repeatable: m.Repeatable, Checksum: m.Checksum, Applied: m.Applied,
 			Phase: m.Phase, AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
+			Directives: m.Directives, Expanded: m.Expanded, Notes: m.Notes,
 		}
 		pm.Statements = statementsToProto(m.Statements)
 		out = append(out, pm)
@@ -137,7 +145,10 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 func statementsToProto(sts []controlplane.PlanStatement) []*godwitv1.PlannedStatement {
 	out := make([]*godwitv1.PlannedStatement, 0, len(sts))
 	for _, st := range sts {
-		ps := &godwitv1.PlannedStatement{Sql: st.SQL, NoTx: st.NoTx}
+		ps := &godwitv1.PlannedStatement{Sql: st.SQL, NoTx: st.NoTx, Phase: st.Phase}
+		if st.Batch != nil {
+			ps.Batch = &godwitv1.PlannedBatch{Key: st.Batch.Key, Kind: st.Batch.Kind, Size: int32(st.Batch.Size), Pause: st.Batch.Pause}
+		}
 		for _, h := range st.Hazards {
 			ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 		}
@@ -161,6 +172,7 @@ func observationToProto(obs controlplane.Observation) *godwitv1.PlanObservation 
 
 type binding struct {
 	planID          string
+	expansions      map[string]controlplane.Expansion
 	searchPath      string
 	acked           []string
 	allowOutOfOrder bool
@@ -179,6 +191,9 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 		return b, rpcErr(err)
 	}
 	b.searchPath = obs.SearchPath
+	if err := s.checkIdle(ctx, m.Target); err != nil {
+		return b, err
+	}
 	if run, ok, err := s.reattach(ctx, m, spec, obs); err != nil || ok {
 		b.reattached, b.planID = run.ID, run.PlanID
 
@@ -192,7 +207,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	if err != nil || plan.ID == "" {
 		return b, err
 	}
-	b.planID = plan.ID
+	b.planID, b.expansions = plan.ID, plan.Expansions
 	b.acked = union(plan.Acked, m.AcknowledgeHazards)
 	b.allowOutOfOrder = plan.AllowOutOfOrder || m.AllowOutOfOrder
 	if plan.HistoryHash == obs.HistoryHash() && plan.SchemaFingerprint == obs.Fingerprint && !plan.PathMoved(obs) {
@@ -215,6 +230,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	}
 	next := observed(plan, obs)
 	next.ID, next.CreatedBy, next.Source, next.Validated = s.newID(), Actor(ctx), m.Source, adm.validated
+	next.Expansions = adm.expansions
 	migs, drift, detected := planMigrations(spec, adm, obs)
 	next.Migrations = migs
 	if detected {
@@ -230,7 +246,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	}
 	s.Log.Info("plan superseded", "plan", plan.ID, "by", next.ID, "target", m.Target, "history_added", len(d.Added))
 	s.audit(ctx, controlplane.AuditPlanSupersede, "", m.Target, fmt.Sprintf("plan=%s by=%s key=%s", plan.ID, next.ID, plan.Key))
-	b.planID, b.superseded, b.adm = next.ID, plan.ID, &adm
+	b.planID, b.superseded, b.adm, b.expansions = next.ID, plan.ID, &adm, adm.expansions
 
 	return b, nil
 }
@@ -250,12 +266,35 @@ func (s *Server) observedSearchPath(ctx context.Context, target string) (string,
 func (b binding) detail() string {
 	switch {
 	case b.superseded != "":
-		return fmt.Sprintf("plan %s superseded by %s", notify.ShortID(b.superseded), notify.ShortID(b.planID))
+		return join(fmt.Sprintf("plan %s superseded by %s", notify.ShortID(b.superseded), notify.ShortID(b.planID)), b.expanded())
 	case b.planID != "":
-		return "plan " + notify.ShortID(b.planID)
+		return join("plan "+notify.ShortID(b.planID), b.expanded())
 	default:
+		return b.expanded()
+	}
+}
+
+func join(a, b string) string {
+	if b == "" {
+		return a
+	}
+
+	return a + ", " + b
+}
+
+// expanded names what godwit generated for this run, so an implicit run without a stored plan still
+// leaves the expansion in the audit trail and the notification.
+func (b binding) expanded() string {
+	ids := make([]string, 0, len(b.expansions))
+	for id, e := range b.expansions {
+		ids = append(ids, id+" "+notify.ShortID(e.Hash))
+	}
+	if len(ids) == 0 {
 		return ""
 	}
+	slices.Sort(ids)
+
+	return "expands " + strings.Join(ids, ", ")
 }
 
 func (s *Server) planSince() time.Time {

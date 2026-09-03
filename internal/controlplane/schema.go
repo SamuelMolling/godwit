@@ -266,6 +266,29 @@ ALTER TABLE cp_runs DROP CONSTRAINT cp_runs_plan_id_fkey,
 		UpSQL:    `ALTER TABLE cp_plans ADD COLUMN repeatables jsonb NOT NULL DEFAULT '[]'::jsonb;`,
 		DownSQL:  `ALTER TABLE cp_plans DROP COLUMN repeatables;`,
 	},
+	{
+		Version:  20260902000014,
+		Name:     "plan_expansions",
+		Checksum: "cp-plan-expansions-v1",
+		UpSQL: `
+ALTER TABLE cp_plans ADD COLUMN expansions jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE cp_runs ADD COLUMN expansions jsonb NOT NULL DEFAULT '{}'::jsonb, ADD COLUMN progress jsonb;
+CREATE TABLE cp_retired_columns (
+	target     text NOT NULL REFERENCES cp_targets (name),
+	schema     text NOT NULL,
+	rel        text NOT NULL,
+	col        text NOT NULL,
+	retires    text NOT NULL,
+	migration  text NOT NULL,
+	run_id     uuid REFERENCES cp_runs (id) ON DELETE SET NULL,
+	retired_at timestamptz NOT NULL DEFAULT now(),
+	PRIMARY KEY (target, schema, rel, col)
+);`,
+		DownSQL: `
+DROP TABLE cp_retired_columns;
+ALTER TABLE cp_runs DROP COLUMN expansions, DROP COLUMN progress;
+ALTER TABLE cp_plans DROP COLUMN expansions;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

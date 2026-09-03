@@ -228,7 +228,8 @@ rows per batch and the sleep between them.
 
 `keep-old=` defaults to `true`: a `change-type` leaves `<c>_old` in place as the rollback, and a later migration
 removes it with `-- godwit: drop-column <t>.<c>_old`. `keep-old=false` drops it in the contract phase and makes
-that phase irreversible.
+that phase irreversible; the plan says so. The default is per target (`godwit target add --keep-old=false`, stored
+as the `keep_old` target config key) and a directive's own `keep-old=` still wins over it.
 
 **Parsed offline, expanded on the plan.** Loading a migration parses its directives with no database in sight:
 the operation must be known, the arity right, the option names known, durations and integers parseable, and
@@ -263,6 +264,106 @@ build:` instead, because `add-index ... unique` builds the concurrent index but 
 that follows it stays yours. A recipe whose statement the grammar cannot express — a multi-column foreign key, an
 index with an ordering or an operator class, a `DROP INDEX` naming several indexes, an `ADD COLUMN` carrying more
 than `NOT NULL` — prints no directive line rather than a lossy one.
+
+### The expansion
+
+`Validator.Validate` expands every directive migration in turn, against the scratch database the plans before it
+have already touched, and replaces the plan with `BuildPlan` over the expanded body. `Effects`, `Fingerprints`,
+`Detect` and already-applied detection then describe the real effect for free.
+
+`-- godwit: change-type public.users.age bigint` on a table whose `age` is `NOT NULL` and whose primary key is
+`id bigint` becomes:
+
+```sql
+-- expand
+ALTER TABLE public.users ADD COLUMN age_new bigint;
+CREATE FUNCTION public.users_age_sync() RETURNS trigger LANGUAGE plpgsql AS $godwit$
+  BEGIN SELECT age::bigint INTO new.age_new FROM (SELECT new.*) AS users; RETURN new; END $godwit$;
+CREATE TRIGGER users_age_sync BEFORE INSERT OR UPDATE ON public.users
+  FOR EACH ROW EXECUTE FUNCTION public.users_age_sync();
+WITH b AS (SELECT id AS godwit_key FROM public.users
+           WHERE id > $1::bigint AND (age_new IS DISTINCT FROM age::bigint) ORDER BY id LIMIT 5000)
+UPDATE public.users AS t SET age_new = age::bigint FROM b WHERE t.id = b.godwit_key RETURNING b.godwit_key;
+ALTER TABLE public.users ADD CONSTRAINT users_age_new_not_null CHECK (age_new IS NOT NULL) NOT VALID;
+ALTER TABLE public.users VALIDATE CONSTRAINT users_age_new_not_null;
+-- contract
+DROP TRIGGER users_age_sync ON public.users;
+DROP FUNCTION public.users_age_sync();
+ALTER TABLE public.users RENAME COLUMN age TO age_old;
+ALTER TABLE public.users RENAME COLUMN age_new TO age;
+ALTER TABLE public.users ALTER COLUMN age SET NOT NULL;
+ALTER TABLE public.users DROP CONSTRAINT users_age_new_not_null;
+```
+
+The trigger is what makes the window safe: it exists before the first batch and is dropped after the last, so a
+write that lands during the backfill sets both columns and the backfill's `IS DISTINCT FROM` predicate skips it.
+The `UPDATE` is one plan statement with a `BatchSpec`, not N unrolled ones: the executor loops over it, commits the
+cursor with the rows, and resumes from the cursor after a crash. `$1::bigint` is explicit because a key narrower
+than `bigint` would otherwise refuse the `int8` the executor binds.
+
+Expand statements are spliced where the directive stood; contract statements are appended at the **end** of the
+body, so the contract phase is always a suffix and `Plan.HoldFrom` can name a single index. The generated
+statements carry no hazards: godwit wrote them, and the hazard gate speaks about what the author wrote.
+
+**The expansion is frozen.** It is stored on `cp_plans.expansions` and on `cp_runs.expansions`, and the scheduler
+substitutes the run's expansion for the file bodies before planning: the run applies byte for byte what the pull
+request showed. The plan key stays a pure function of the files, but `shape()` carries the expansion hash, so a
+re-plan whose expansion changed — a column appeared, the primary key moved — fails `SameStatements` and refuses
+with `PlanStale{history}` at bind. `godwit.migrations` records the checksum of the **file**, never of the expansion.
+
+**A directive does not need a stored plan.** In an implicit run the expansion is computed at admission through the
+same code path and recorded in the run's audit detail and notification (`expands <id> <hash>`). `require_plan` on
+the target still applies as usual.
+
+**A directive that produces two phases forces the rollout.** `rollout: direct` on such a plan is refused with
+`<id> expands into expand and contract phases; use rollout: expand-contract` — the rollout is part of the plan key,
+and godwit will not silently upgrade what the reader approved.
+
+**A target mid-rollout is not plannable.** Between the phases the schema matches no recorded state, so `PlanRun`
+and `CreateRun` refuse with `target <t> has run <id> awaiting contract; confirm or revert it first`.
+
+**Never already applied.** The expanded body carries DML (the backfill) and objects a snapshot cannot read back
+(the trigger and its function), so `Plan.Opaque()` already stops `Detect`'s prefix walk. That is the right answer
+for the right reason; there is no special case for it.
+
+**Progress.** The scheduler writes the newest statement event to `cp_runs.progress` under the heartbeat, so
+`godwit runs`, `godwit run get` and the UI show `backfill 320000/~1240000 rows (batch 64)` while it runs. A run
+that backfills for an hour notifies once, not once per batch.
+
+**Revert.** `-- godwit: revert` asks for the generated inverse, and godwit stores two: the pre-swap one for a run
+parked at `awaiting_contract` (`DROP TRIGGER IF EXISTS`, `DROP FUNCTION IF EXISTS`, `DROP CONSTRAINT IF EXISTS`,
+`DROP COLUMN IF EXISTS` — idempotent from any point in the expand phase) and the post-swap one for a completed run
+(rename back, drop the new column). Both are lossless because `age_old` is still there. Reverting a migration
+parked between its phases has no `godwit.migrations` row to key on, so the executor looks for the still-open up run
+instead, and discards its journal once the down has finished. A run that failed *inside* the contract phase is a
+needs-attention case for a human, not something the generated down can guess at.
+
+**Retired columns.** A completed `change-type` records `<t>.<c>_old` in `cp_retired_columns`, with the run that
+retired it. `godwit diff` takes the drop of a retired column out of the generated `up_sql`, so an ORM that never
+knew about the column stops proposing to drop it on every pull request; a revert forgets the row again.
+
+### What the expander refuses
+
+Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, naming the directive line.
+
+| Case | Reason |
+|---|---|
+| the table or column does not exist in the schema the migration starts from | the expansion is computed before the migration's own SQL runs |
+| the relation is partitioned (`relkind = 'p'`) or is not an ordinary table | the swap would have to run per partition |
+| identity or generated column | the sequence or expression stays bound to the physical attribute across the rename |
+| the column takes part in a foreign key, either side | after the swap the constraint still points at the renamed physical column |
+| `<c>_new` or `<c>_old` already exists on the table | the expansion would collide |
+| no single-column primary key and no `key=` | nothing to batch on; the message names the option |
+| `key=` that does not exist, is nullable, or has no single-column unique btree index | a cursor over it can skip or repeat rows |
+| `key=` whose type is not integer, `uuid` or text | the cursor cannot be carried between batches |
+| `using=` calling a function `pg_proc` reports as `VOLATILE` | the trigger and the backfill would disagree |
+| `using=` containing a subquery or a column of another table | the trigger form `SELECT expr INTO new.c_new FROM (SELECT new.*) AS t` cannot express it |
+| two directives naming the same subject in one migration | ambiguous order |
+| a directive in a migration whose own SQL carries H002, H003 or H008 | the contract block is a suffix, so the destructive statement would run in the expand phase; split them |
+| a directive that splits a statement in two | a directive sits between whole statements |
+| `-- godwit: revert` with `keep-old=false`, or against a `backfill` | there is no lossless inverse; write the `.down.sql` by hand |
+| `skip_validation` | no scratch, no catalog, no expansion |
+| a directive in a repeatable, or in a `.down.sql` beyond the sentinel | `E004`, above |
 
 ## Repeatable migrations
 

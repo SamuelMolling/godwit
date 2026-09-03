@@ -95,6 +95,10 @@ func BuildPlan(m Migration, dir Direction) (Plan, error) {
 		return Plan{}, fmt.Errorf("%d_%s (%s): parse: %w", m.Version, m.Name, dir, err)
 	}
 	if len(res.Stmts) == 0 {
+		if awaitsExpansion(m, dir) {
+			return Plan{Migration: m, Direction: dir}, nil
+		}
+
 		return Plan{}, fmt.Errorf("%d_%s (%s): no statements", m.Version, m.Name, dir)
 	}
 
@@ -109,6 +113,15 @@ func BuildPlan(m Migration, dir Direction) (Plan, error) {
 	}
 
 	return p, nil
+}
+
+// awaitsExpansion reports whether a body has no SQL because godwit still has to expand its directives.
+func awaitsExpansion(m Migration, dir Direction) bool {
+	if dir == DirectionDown {
+		return m.RevertDirective
+	}
+
+	return len(m.Directives) > 0
 }
 
 func stmtText(sql string, raw *pgquery.RawStmt) string {

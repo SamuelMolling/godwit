@@ -180,6 +180,7 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 | `lock_timeout` | `--lock-timeout` | Go duration | `5s` | per-statement `lock_timeout`; a run may override it with `--lock-timeout` |
 | `statement_timeout` | `--statement-timeout` | Go duration | `0` (disabled) | per-statement `statement_timeout`; a run may override it with `--statement-timeout` |
 | `require_plan` | `--require-plan` | bool | `false` | refuse runs whose migration set has no stored plan |
+| `keep_old` | `--keep-old` | bool | `true` | `-- godwit: change-type` on this target keeps the pre-swap column as the rollback; a directive's own `keep-old=` still wins |
 | `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([concepts](concepts.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
 
 `godwit target status <name>` prints all four.

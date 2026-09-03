@@ -52,6 +52,19 @@ message Run {
   google.protobuf.Timestamp not_before = 17;
   // Transient failures the scheduler retried on its own.
   int32 retries = 18;
+  // What the newest statement reported; set while a run is executing a long statement.
+  RunProgress progress = 19;
+}
+
+// RunProgress is how far the statement a run is executing has got.
+message RunProgress {
+  string migration = 1;
+  int32 statement = 2;
+  string phase = 3;
+  int64 rows_done = 4;
+  // Estimate taken when the backfill started; 0 when unknown.
+  int64 rows_total = 5;
+  int32 batches = 6;
 }
 
 message RegisterTargetRequest {
@@ -70,6 +83,9 @@ message RegisterTargetRequest {
   string statement_timeout = 8;
   // Refuse runs whose migration set has no stored plan.
   bool require_plan = 9;
+  // Default for `-- godwit: change-type` on this target: keep the pre-swap column as the rollback (true, godwit's
+  // own default) or drop it in the contract phase. A directive's own keep-old= still wins. Unset leaves the default.
+  optional bool keep_old = 11;
   // search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
   // Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
   string search_path = 10;
@@ -155,11 +171,27 @@ message PlannedHazard {
   string recipe = 3;
 }
 
+// PlannedBatch describes a statement the executor runs as a resumable loop over a journalled cursor.
+message PlannedBatch {
+  // Cursor column, already quoted.
+  string key = 1;
+  // "int", "uuid" or "text": how the cursor is carried between batches.
+  string kind = 2;
+  // Rows touched per transaction.
+  int32 size = 3;
+  // Wait between batches ("100ms"); empty means none.
+  string pause = 4;
+}
+
 message PlannedStatement {
   string sql = 1;
   // Runs outside a transaction (CREATE INDEX CONCURRENTLY, VACUUM, ...).
   bool no_tx = 2;
   repeated PlannedHazard hazards = 3;
+  // "expand", "contract", or empty for a statement that follows the migration's own phase.
+  string phase = 4;
+  // Set when the statement is a batched backfill rather than a single execution.
+  PlannedBatch batch = 5;
 }
 
 message PlannedMigration {
@@ -179,6 +211,12 @@ message PlannedMigration {
   string note = 9;
   // Has no version: an R__ file, applied after the versioned ones whenever its content differs from what the target recorded.
   bool repeatable = 10;
+  // The `-- godwit:` lines the file carries, as written.
+  repeated string directives = 11;
+  // Its statements were generated from those directives against the target's catalog.
+  bool expanded = 12;
+  // What the expansion leaves behind or costs, one line each.
+  repeated string notes = 13;
 }
 
 message PlanRunResponse {

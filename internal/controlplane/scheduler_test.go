@@ -46,7 +46,7 @@ func newScheduler(t *testing.T, s *Store, cfg Config) (*Scheduler, string) {
 
 func queueRun(t *testing.T, s *Store, id string, files map[string]string) {
 	t.Helper()
-	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, files, Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, files, Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -217,10 +217,10 @@ func scrape(t *testing.T, m *metrics.Metrics) string {
 func TestPGEngineObserver(t *testing.T) {
 	t.Parallel()
 
-	PGEngine{}.observer("r", "app")(engine.StatementEvent{})
+	PGEngine{}.observer(ApplyRequest{RunID: "r", Target: "app"})(engine.StatementEvent{})
 
 	m := metrics.New()
-	PGEngine{Metrics: m}.observer("r", "app")(engine.StatementEvent{Statement: engine.Statement{NoTx: true}})
+	PGEngine{Metrics: m}.observer(ApplyRequest{RunID: "r", Target: "app"})(engine.StatementEvent{Statement: engine.Statement{NoTx: true}})
 	if body := scrape(t, m); !strings.Contains(body, `godwit_statement_duration_seconds_count{kind="no_tx",target="app"} 1`) {
 		t.Fatalf("metrics:\n%s", body)
 	}
@@ -313,7 +313,7 @@ func TestSchedulerUnknownRollout(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "postgres://x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "33333333-0000-0000-0000-000000000001", "app", "canary", goodFiles(), Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, "33333333-0000-0000-0000-000000000001", "app", "canary", goodFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -340,7 +340,7 @@ func TestSchedulerExpandContract(t *testing.T) {
 		"20260901120001_drop.down.sql": upBody,
 	}
 	id := "55555555-0000-0000-0000-000000000001"
-	if err := s.CreateRun(ctx, id, "app", RolloutExpandContract, files, Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, id, "app", RolloutExpandContract, files, Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -503,7 +503,7 @@ func TestSchedulerHoldsContractStatementsInOneMigration(t *testing.T) {
 		"20260901120000_t.down.sql": "DROP TABLE u;",
 	}
 	id := "5a5a5a5a-0000-0000-0000-000000000001"
-	if err := s.CreateRun(ctx, id, "app", "phased", files, Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, id, "app", "phased", files, Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 

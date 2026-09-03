@@ -72,7 +72,7 @@ func TestStorePersistsTimeouts(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, revert := "88888888-0000-0000-0000-000000000001", "88888888-0000-0000-0000-000000000002"
-	if err := s.CreateRun(ctx, id, "app", RolloutDirect, goodFiles(), Timeouts{Lock: "2s"}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, id, "app", RolloutDirect, goodFiles(), Timeouts{Lock: "2s"}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Run(ctx, id)
@@ -139,7 +139,7 @@ func TestSchedulerAppliesEffectiveTimeouts(t *testing.T) {
 			}
 			sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}}, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 			id := "99999999-0000-0000-0000-00000000000" + string(rune('1'+i))
-			if err := s.CreateRun(ctx, id, "app", RolloutDirect, settingsFiles(), tc.run, Provenance{}, ""); err != nil {
+			if err := s.CreateRun(ctx, id, "app", RolloutDirect, settingsFiles(), tc.run, Provenance{}, "", nil); err != nil {
 				t.Fatal(err)
 			}
 			sched.Tick(ctx)

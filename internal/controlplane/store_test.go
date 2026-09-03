@@ -57,7 +57,7 @@ func TestRunLifecycle(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "11111111-1111-1111-1111-111111111111", "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, "11111111-1111-1111-1111-111111111111", "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +207,7 @@ func TestClaimRecoversExpiredLease(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(ctx, "33333333-3333-3333-3333-333333333333", "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, "33333333-3333-3333-3333-333333333333", "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -238,7 +238,7 @@ func TestClaimSerializesPerTarget(t *testing.T) {
 		"66666666-6666-6666-6666-666666666666": "b",
 	}
 	for id, target := range ids {
-		if err := s.CreateRun(ctx, id, target, RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, ""); err != nil {
+		if err := s.CreateRun(ctx, id, target, RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -264,7 +264,7 @@ func TestCreateRunUnknownTarget(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newStore(t)
-	err := s.CreateRun(context.Background(), "77777777-7777-7777-7777-777777777777", "ghost", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, "")
+	err := s.CreateRun(context.Background(), "77777777-7777-7777-7777-777777777777", "ghost", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "create run") {
 		t.Fatalf("err = %v", err)
 	}
@@ -289,7 +289,7 @@ func TestStoreQueryErrors(t *testing.T) {
 	if _, _, err := s.Target(ctx, "x"); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.CreateRun(ctx, "id", "x", RolloutDirect, nil, Timeouts{}, Provenance{}, ""); err == nil {
+	if err := s.CreateRun(ctx, "id", "x", RolloutDirect, nil, Timeouts{}, Provenance{}, "", nil); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := s.Run(ctx, "id"); err == nil {
@@ -340,7 +340,7 @@ func TestTransactHidesWritesUntilCommit(t *testing.T) {
 	id := "33333333-3333-3333-3333-333333333333"
 
 	err := s.Transact(ctx, func(tx *Store) error {
-		if err := tx.CreateRun(ctx, id, "app", RolloutDirect, nil, Timeouts{}, Provenance{}, ""); err != nil {
+		if err := tx.CreateRun(ctx, id, "app", RolloutDirect, nil, Timeouts{}, Provenance{}, "", nil); err != nil {
 			return err
 		}
 		if _, err := s.Run(ctx, id); !errors.Is(err, ErrNotFound) {
@@ -357,7 +357,7 @@ func TestTransactHidesWritesUntilCommit(t *testing.T) {
 	}
 
 	err = s.Transact(ctx, func(tx *Store) error {
-		if err := tx.CreateRun(ctx, "44444444-4444-4444-4444-444444444444", "app", RolloutDirect, nil, Timeouts{}, Provenance{}, ""); err != nil {
+		if err := tx.CreateRun(ctx, "44444444-4444-4444-4444-444444444444", "app", RolloutDirect, nil, Timeouts{}, Provenance{}, "", nil); err != nil {
 			return err
 		}
 

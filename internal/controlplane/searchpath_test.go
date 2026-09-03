@@ -94,7 +94,7 @@ func TestSchedulerAppliesTargetSearchPath(t *testing.T) {
 	targetDSN := registerSearchPathTarget(t, s, "app,public")
 	sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}}, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
 	id := "77777777-0000-0000-0000-000000000001"
-	if err := s.CreateRun(ctx, id, "app", RolloutDirect, searchPathFiles(), Timeouts{}, Provenance{}, ""); err != nil {
+	if err := s.CreateRun(ctx, id, "app", RolloutDirect, searchPathFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	sched.Tick(ctx)

@@ -20,19 +20,20 @@ import (
 const boundRunID = "7b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 
 func expectBoundPlan(mock pgxmock.PgxPoolIface, applied []engine.Applied, migs []controlplane.PlanMigration) {
+	expectIdle(mock)
 	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "target", "key", "rollout", "state", "history_hash", "applied", "repeatables", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
-			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
+			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce", "expansions",
 		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanBound, controlplane.HistoryHash(applied, nil), applied, []engine.Repeatable{},
-			"f2", "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), boundRunID, ""))
+			"f2", "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), boundRunID, "", map[string]controlplane.Expansion{}))
 }
 
 func expectBoundRun(mock pgxmock.PgxPoolIface, state string) {
 	mock.ExpectQuery("FROM cp_runs WHERE id = \\$1").WithArgs(boundRunID).
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before"}).
-			AddRow(boundRunID, "app", state, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", planID, 0, (*time.Time)(nil)))
+			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
+			AddRow(boundRunID, "app", state, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", planID, 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
 }
 
 func expectRunsApplying(mock pgxmock.PgxPoolIface, byVersion map[int64]string) {
@@ -49,9 +50,15 @@ func TestReattachStoreErrors(t *testing.T) {
 	obs := controlplane.Observation{Fingerprint: "f2", Definition: "table a\n"}
 	s, mock := planServer(t, obs, nil)
 
+	expectIdle(mock)
 	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).WillReturnError(errors.New("plans down"))
 	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("bound plan error: %v", err)
+	}
+
+	mock.ExpectQuery("state = 'awaiting_contract'").WithArgs("app").WillReturnError(errors.New("runs down"))
+	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("awaiting run error: %v", err)
 	}
 
 	expectBoundPlan(mock, nil, nil)

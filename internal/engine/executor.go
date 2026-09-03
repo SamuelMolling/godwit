@@ -119,6 +119,9 @@ func (e *Executor) Down(ctx context.Context, p Plan) (Result, error) {
 
 func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	res := Result{Migration: p.Migration.ID()}
+	if len(p.Statements) == 0 && awaitsExpansion(p.Migration, p.Direction) {
+		return res, fmt.Errorf("%s (%s): its godwit directives were never expanded", res.Migration, p.Direction)
+	}
 
 	release, err := acquireLock(ctx, e.db)
 	if err != nil {
@@ -144,10 +147,16 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 			return res, fmt.Errorf("version %d already applied with different content", p.Migration.Version)
 		}
 	}
+	var held string
 	if p.Direction == DirectionDown && !recorded {
-		res.Skipped = true
+		if held, err = heldRun(ctx, e.db, p.Migration); err != nil {
+			return res, err
+		}
+		if held == "" {
+			res.Skipped = true
 
-		return res, nil
+			return res, nil
+		}
 	}
 	if p.MarkOnly {
 		return res, e.mark(ctx, p)
@@ -177,7 +186,7 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 		return res, nil
 	}
 
-	return res, e.finalize(ctx, p, prog.runID)
+	return res, e.finalize(ctx, p, prog.runID, held)
 }
 
 func (e *Executor) mark(ctx context.Context, p Plan) error {
@@ -200,7 +209,29 @@ func (e *Executor) mark(ctx context.Context, p Plan) error {
 		return fmt.Errorf("insert run: %w", err)
 	}
 
-	return e.finalize(ctx, p, runID)
+	return e.finalize(ctx, p, runID, "")
+}
+
+// heldRun is the id of an unfinished up run for m: the contract phase never ran, so the migration has
+// statements to undo even though it has no history row yet.
+func heldRun(ctx context.Context, db DB, m Migration) (string, error) {
+	k := keyOf(m)
+	var id string
+	err := db.QueryRow(ctx,
+		`SELECT id FROM godwit.runs
+		 WHERE direction = 'up' AND state = 'running'
+		   AND version IS NOT DISTINCT FROM $1 AND repeatable IS NOT DISTINCT FROM $2
+		   AND ($1 IS NOT NULL OR checksum = $3)
+		 ORDER BY started_at DESC LIMIT 1`,
+		k.version, k.repeatable, k.checksum).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find held run for %s: %w", m.ID(), err)
+	}
+
+	return id, nil
 }
 
 // recorded reports what the target holds for a migration: a version row, or a repeatable row keyed by name.
@@ -305,7 +336,7 @@ func (e *Executor) timeoutSQL(prefix string) []string {
 	}
 }
 
-func (e *Executor) finalize(ctx context.Context, p Plan, runID string) error {
+func (e *Executor) finalize(ctx context.Context, p Plan, runID, held string) error {
 	tx, err := e.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin finalize: %w", err)
@@ -315,12 +346,31 @@ func (e *Executor) finalize(ctx context.Context, p Plan, runID string) error {
 	if err := record(ctx, tx, p); err != nil {
 		return err
 	}
+	if err := discard(ctx, tx, held); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE godwit.runs SET state = 'succeeded', finished_at = now() WHERE id = $1`, runID); err != nil {
 		return fmt.Errorf("close run: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit finalize: %w", err)
+	}
+
+	return nil
+}
+
+// discard drops the journal of an up run this down just undid, so a later apply starts from scratch
+// instead of resuming past statements that no longer took effect.
+func discard(ctx context.Context, tx DB, runID string) error {
+	if runID == "" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM godwit.journal WHERE run_id = $1`, runID); err != nil {
+		return fmt.Errorf("discard held journal: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM godwit.runs WHERE id = $1`, runID); err != nil {
+		return fmt.Errorf("discard held run: %w", err)
 	}
 
 	return nil

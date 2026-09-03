@@ -42,7 +42,7 @@ func TestPGEngineObserverLogs(t *testing.T) {
 	t.Parallel()
 
 	sink, log := captureLog()
-	observe := PGEngine{Log: log}.observer("run-1", "app")
+	observe := PGEngine{Log: log}.observer(ApplyRequest{RunID: "run-1", Target: "app"})
 	observe(engine.StatementEvent{Migration: "00000000000007_x", Index: 2, Statement: engine.Statement{SQL: "INSERT INTO people VALUES ('pii')"}})
 	observe(engine.StatementEvent{Migration: "00000000000007_x", Index: 3, Statement: engine.Statement{SQL: "SELECT secret_column", NoTx: true}, Err: errors.New("boom")})
 	observe(engine.StatementEvent{Migration: "00000000000007_x", Index: 4, Statement: engine.Statement{SQL: "UPDATE pii SET people = 1", Batch: &engine.BatchSpec{}}})

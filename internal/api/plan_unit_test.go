@@ -58,7 +58,12 @@ func expectApplied(mock pgxmock.PgxPoolIface, versions ...int64) {
 	expectNoRepeatables(mock)
 }
 
+func expectIdle(mock pgxmock.PgxPoolIface) {
+	mock.ExpectQuery("state = 'awaiting_contract'").WithArgs("app").WillReturnError(pgx.ErrNoRows)
+}
+
 func expectNoBound(mock pgxmock.PgxPoolIface) {
+	expectIdle(mock)
 	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
 }
 
@@ -67,9 +72,9 @@ func expectReadyPlan(mock pgxmock.PgxPoolIface, fingerprint string, applied []en
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
 			"id", "target", "key", "rollout", "state", "history_hash", "applied", "repeatables", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
-			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
+			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce", "expansions",
 		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanReady, controlplane.HistoryHash(applied, nil), applied, []engine.Repeatable{},
-			fingerprint, "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), "", ""))
+			fingerprint, "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), "", "", map[string]controlplane.Expansion{}))
 }
 
 func expectSnapshot(mock pgxmock.PgxPoolIface, fingerprint string) {
@@ -84,7 +89,7 @@ func plannedMigrations(t *testing.T) []controlplane.PlanMigration {
 		t.Fatal(err)
 	}
 
-	return controlplane.BuildPlanMigrations(spec.rollout, spec.plans, controlplane.AppliedSet{})
+	return controlplane.BuildPlanMigrations(spec.rollout, spec.plans, controlplane.AppliedSet{}, nil)
 }
 
 func createReq(acked ...string) *connect.Request[godwitv1.CreateRunRequest] {
@@ -123,23 +128,32 @@ func TestPlanRunPersistErrors(t *testing.T) {
 	}
 
 	s.Inspector = stubInspector{err: errors.New("target down")}
+	mock.ExpectQuery("state = 'awaiting_contract'").WithArgs("app").WillReturnError(errors.New("runs down"))
+	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("awaiting run error: %v", err)
+	}
+
+	expectIdle(mock)
 	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("observe error: %v", err)
 	}
 
 	s.Inspector = stubInspector{obs: controlplane.Observation{Applied: []engine.Applied{{Version: 20260901120000, Name: "t", Checksum: "other"}}}}
+	expectIdle(mock)
 	expectApplied(mock, 20260901120000)
 	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "20260901120000_t applied with different content") {
 		t.Fatalf("content mismatch: %v", err)
 	}
 
 	s.Inspector = stubInspector{obs: controlplane.Observation{Fingerprint: "f2", Definition: "table b\n"}}
+	expectIdle(mock)
 	expectApplied(mock)
 	mock.ExpectQuery("FROM cp_snapshots").WithArgs("app").WillReturnError(errors.New("snapshot down"))
 	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("drift error: %v", err)
 	}
 
+	expectIdle(mock)
 	expectApplied(mock)
 	expectSnapshot(mock, "f1")
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
@@ -183,7 +197,7 @@ func TestBindStoreErrors(t *testing.T) {
 	expectReadyPlan(mock, "f2", nil, nil)
 	expectApplied(mock)
 	mock.ExpectBegin()
-	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(anyArgs(10)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(anyArgs(11)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec("SET state = 'bound'").WithArgs(planID, pgxmock.AnyArg()).WillReturnError(errors.New("bind down"))
 	mock.ExpectRollback()
 	if _, err := s.CreateRun(ctx, createReq("H009")); connect.CodeOf(err) != connect.CodeInternal {
@@ -277,6 +291,7 @@ func TestPlanRunDetectsWithValidation(t *testing.T) {
 		{Name: "20260901120000_t.down.sql", Body: "DROP TABLE b;"},
 	}
 
+	expectIdle(mock)
 	expectApplied(mock)
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
 	_, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files, Persist: true}))

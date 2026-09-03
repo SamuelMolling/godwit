@@ -25,9 +25,9 @@ type storedPlanRow struct {
 func expectPlanByID(mock pgxmock.PgxPoolIface, row storedPlanRow) {
 	mock.ExpectQuery("FROM cp_plans WHERE id = \\$1").WithArgs(planID).WillReturnRows(pgxmock.NewRows([]string{
 		"id", "target", "key", "rollout", "state", "history_hash", "applied", "repeatables", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
-		"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
+		"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce", "expansions",
 	}).AddRow(planID, "app", row.key, row.rollout, row.state, controlplane.HistoryHash(row.applied, nil), row.applied, []engine.Repeatable{},
-		"f1", "table a\n", "public", "+ x", []controlplane.PlanMigration{}, true, []string{"H002"}, true, "ci", "repo@sha", row.createdAt, row.runID, row.supersededBy))
+		"f1", "table a\n", "public", "+ x", []controlplane.PlanMigration{}, true, []string{"H002"}, true, "ci", "repo@sha", row.createdAt, row.runID, row.supersededBy, map[string]controlplane.Expansion{}))
 }
 
 func readyRow(t *testing.T) storedPlanRow {
@@ -146,6 +146,7 @@ func TestExplicitPlanRefusals(t *testing.T) {
 	}
 
 	expectPlanByID(mock, row)
+	expectIdle(mock)
 	mock.ExpectQuery("FROM cp_plans WHERE id = \\$1").WithArgs(planID).WillReturnError(errors.New("plans down"))
 	if _, err := s.CreateRun(ctx, byPlan("", "", planFiles())); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("second load error: %v", err)
@@ -156,15 +157,15 @@ func TestExplicitPlanRefusals(t *testing.T) {
 		code   connect.Code
 		want   string
 	}{
-		"bound":      {func(r *storedPlanRow) { r.state, r.runID = controlplane.PlanBound, "r1" }, connect.CodeFailedPrecondition, "is bound to run r1"},
-		"superseded": {func(r *storedPlanRow) { r.state, r.supersededBy = controlplane.PlanSuperseded, "p2" }, connect.CodeFailedPrecondition, "was superseded by p2"},
-		"expired":    {func(r *storedPlanRow) { r.createdAt = time.Now().Add(-2 * time.Hour) }, connect.CodeFailedPrecondition, "expired"},
-		"key":        {func(r *storedPlanRow) { r.key = "other" }, connect.CodeInvalidArgument, "files do not match plan"},
+		"bound":      {mutate: func(r *storedPlanRow) { r.state, r.runID = controlplane.PlanBound, "r1" }, code: connect.CodeFailedPrecondition, want: "is bound to run r1"},
+		"superseded": {mutate: func(r *storedPlanRow) { r.state, r.supersededBy = controlplane.PlanSuperseded, "p2" }, code: connect.CodeFailedPrecondition, want: "was superseded by p2"},
+		"expired":    {mutate: func(r *storedPlanRow) { r.createdAt = time.Now().Add(-2 * time.Hour) }, code: connect.CodeFailedPrecondition, want: "expired"},
+		"key":        {mutate: func(r *storedPlanRow) { r.key = "other" }, code: connect.CodeInvalidArgument, want: "files do not match plan"},
 		"content": {
-			func(r *storedPlanRow) {
+			mutate: func(r *storedPlanRow) {
 				r.applied = []engine.Applied{{Version: 20260901120000, Name: "t", Checksum: "nope"}}
 			},
-			connect.CodeInvalidArgument, "files do not match plan",
+			code: connect.CodeInvalidArgument, want: "files do not match plan",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -172,6 +173,7 @@ func TestExplicitPlanRefusals(t *testing.T) {
 			r := row
 			tc.mutate(&r)
 			expectPlanByID(mock, r)
+			expectIdle(mock)
 			expectPlanByID(mock, r)
 			_, err := s.CreateRun(ctx, byPlan("", "", planFiles()))
 			if connect.CodeOf(err) != tc.code || !strings.Contains(err.Error(), tc.want) {
