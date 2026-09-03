@@ -39,7 +39,8 @@ type diffJSON struct {
 
 func newDiffCmd() *cobra.Command {
 	flags := &clientFlags{}
-	var target, schema, prisma, prismaBin, name, dir string
+	src := &sourceFlags{}
+	var target, name, dir string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "diff",
@@ -49,7 +50,7 @@ func newDiffCmd() *cobra.Command {
 			if target == "" {
 				return errors.New("--target (or target in godwit.yaml) is required")
 			}
-			source, label, err := schemaSource(cmd, schema, prisma, prismaBin)
+			source, label, err := src.pick(cmd)
 			if err != nil {
 				return err
 			}
@@ -78,9 +79,7 @@ func newDiffCmd() *cobra.Command {
 	}
 	flags.register(cmd)
 	cmd.Flags().StringVar(&target, "target", "", "target name")
-	cmd.Flags().StringVar(&schema, "schema", "", "file holding the whole desired database as DDL")
-	cmd.Flags().StringVar(&prisma, "prisma", "", "Prisma schema (schema.prisma) rendered to DDL by the Prisma CLI, no database needed")
-	cmd.Flags().StringVar(&prismaBin, "prisma-bin", envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin), "command line that runs the Prisma CLI ($GODWIT_PRISMA_BIN)")
+	src.register(cmd)
 	cmd.Flags().StringVar(&name, "name", "", "migration name, snake_case; becomes <timestamp>_<name>.{up,down}.sql")
 	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the migration without writing files")
@@ -89,40 +88,100 @@ func newDiffCmd() *cobra.Command {
 	return cmd
 }
 
-func schemaSource(cmd *cobra.Command, schema, prisma, prismaBin string) (schemasource.Source, string, error) {
-	switch {
-	case schema != "" && prisma != "":
-		return nil, "", errors.New("--schema and --prisma are exclusive: one desired schema per diff")
-	case prisma != "":
-		return prismaSource(prisma, prismaBin)
-	case schema != "":
-		return schemasource.File{Path: schema}, schema, nil
+type sourceFlags struct {
+	schema    string
+	prisma    string
+	exec      string
+	gorm      string
+	django    string
+	prismaBin string
+	goBin     string
+	pythonBin string
+	database  string
+	settings  string
+}
+
+func (s *sourceFlags) register(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&s.schema, "schema", "", "file holding the whole desired database as DDL")
+	cmd.Flags().StringVar(&s.prisma, "prisma", "", "Prisma schema (schema.prisma) rendered to DDL by the Prisma CLI, no database needed")
+	cmd.Flags().StringVar(&s.exec, "exec", "", "command line that prints the whole desired database as DDL on stdout")
+	cmd.Flags().StringVar(&s.gorm, "gorm", "", "Go package, run with go run, that prints GORM's dry-run DDL on stdout")
+	cmd.Flags().StringVar(&s.django, "django", "", "Django manage.py whose migrations are rendered with showmigrations and sqlmigrate")
+	cmd.Flags().StringVar(&s.prismaBin, "prisma-bin", envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin), "command line that runs the Prisma CLI ($GODWIT_PRISMA_BIN)")
+	cmd.Flags().StringVar(&s.goBin, "go-bin", envOr("GODWIT_GO_BIN", schemasource.DefaultGoBin), "command line that runs the Go toolchain ($GODWIT_GO_BIN)")
+	cmd.Flags().StringVar(&s.pythonBin, "python-bin", envOr("GODWIT_PYTHON_BIN", schemasource.DefaultPythonBin), "command line that runs manage.py ($GODWIT_PYTHON_BIN)")
+	cmd.Flags().StringVar(&s.database, "django-database", "", "DATABASES alias sqlmigrate introspects; empty leaves Django on its own default")
+	s.settings = os.Getenv("DJANGO_SETTINGS_MODULE")
+}
+
+func (s *sourceFlags) pick(cmd *cobra.Command) (schemasource.Source, string, error) {
+	var given []string
+	for _, f := range []struct{ name, value string }{
+		{"--schema", s.schema}, {"--prisma", s.prisma}, {"--exec", s.exec}, {"--gorm", s.gorm}, {"--django", s.django},
+	} {
+		if f.value != "" {
+			given = append(given, f.name)
+		}
+	}
+	if len(given) > 1 {
+		return nil, "", fmt.Errorf("%s are exclusive: one desired schema per diff", joinAnd(given))
+	}
+	if len(given) == 1 {
+		return s.fromFlag(given[0])
 	}
 	configured := configFrom(cmd.Context()).SchemaSource
 	if configured == nil {
-		return nil, "", errors.New("--schema <ddl file>, --prisma <schema.prisma>, or schema_source in godwit.yaml is required")
+		return nil, "", errors.New("one of --schema, --prisma, --exec, --gorm, --django, or schema_source in godwit.yaml is required")
 	}
 
-	return configuredSource(*configured, prismaBin, cmd.Flags().Changed("prisma-bin"))
+	return s.fromConfig(*configured, cmd)
 }
 
-func configuredSource(source config.SchemaSource, prismaBin string, binFromFlag bool) (schemasource.Source, string, error) {
-	switch source.Kind {
-	case config.SourceFile, config.SourcePrisma:
-		if source.Path == "" {
-			return nil, "", fmt.Errorf("schema_source.path is required for kind %s", source.Kind)
-		}
-	default:
-		return nil, "", fmt.Errorf("schema_source.kind %s has no client in godwit diff yet; use %s or %s", source.Kind, config.SourceFile, config.SourcePrisma)
-	}
-	if source.Kind == config.SourceFile {
-		return schemasource.File{Path: source.Path}, source.Path, nil
-	}
-	if source.Bin != "" && !binFromFlag {
-		prismaBin = source.Bin
+func (s *sourceFlags) fromFlag(name string) (schemasource.Source, string, error) {
+	switch name {
+	case "--schema":
+		return schemasource.File{Path: s.schema}, s.schema, nil
+	case "--prisma":
+		return prismaSource(s.prisma, s.prismaBin)
+	case "--exec":
+		return commandSource(strings.Fields(s.exec))
+	case "--gorm":
+		return gormSource(s.gorm, s.goBin)
 	}
 
-	return prismaSource(source.Path, prismaBin)
+	return s.djangoSource(s.django, s.pythonBin)
+}
+
+func (s *sourceFlags) fromConfig(source config.SchemaSource, cmd *cobra.Command) (schemasource.Source, string, error) {
+	flags := cmd.Flags()
+	if source.Kind == config.SourceCommand {
+		return commandSource(source.Command)
+	}
+	if source.Path == "" {
+		return nil, "", fmt.Errorf("schema_source.path is required for kind %s", source.Kind)
+	}
+	switch source.Kind {
+	case config.SourceFile:
+		return schemasource.File{Path: source.Path}, source.Path, nil
+	case config.SourcePrisma:
+		return prismaSource(source.Path, pick(s.prismaBin, source.Bin, flags.Changed("prisma-bin")))
+	case config.SourceGorm:
+		return gormSource(source.Path, pick(s.goBin, source.Bin, flags.Changed("go-bin")))
+	}
+
+	return s.djangoSource(source.Path, pick(s.pythonBin, source.Bin, flags.Changed("python-bin")))
+}
+
+func pick(fromFlag, fromConfig string, flagGiven bool) string {
+	if fromConfig != "" && !flagGiven {
+		return fromConfig
+	}
+
+	return fromFlag
+}
+
+func joinAnd(names []string) string {
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 func prismaSource(schema, bin string) (schemasource.Source, string, error) {
@@ -131,6 +190,30 @@ func prismaSource(schema, bin string) (schemasource.Source, string, error) {
 	}
 
 	return schemasource.Prisma{Schema: schema, Bin: bin}, schema, nil
+}
+
+func commandSource(argv []string) (schemasource.Source, string, error) {
+	if len(argv) == 0 {
+		return nil, "", errors.New("--exec (or schema_source.command) must name a command that prints the desired schema as DDL")
+	}
+
+	return schemasource.Command{Argv: argv}, strings.Join(argv, " "), nil
+}
+
+func gormSource(pkg, bin string) (schemasource.Source, string, error) {
+	if strings.TrimSpace(bin) == "" {
+		return nil, "", errors.New("--go-bin (or GODWIT_GO_BIN) must name the Go toolchain")
+	}
+
+	return schemasource.Gorm{Pkg: pkg, Bin: bin}, "go run " + pkg, nil
+}
+
+func (s *sourceFlags) djangoSource(managePy, bin string) (schemasource.Source, string, error) {
+	if strings.TrimSpace(bin) == "" {
+		return nil, "", errors.New("--python-bin (or GODWIT_PYTHON_BIN) must name the Python interpreter")
+	}
+
+	return schemasource.Django{ManagePy: managePy, Bin: bin, Settings: s.settings, Database: s.database}, managePy, nil
 }
 
 func writeDiff(dir, name string, m *godwitv1.DiffResponse) ([]string, error) {
