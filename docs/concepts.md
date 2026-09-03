@@ -373,18 +373,46 @@ needs-attention case for a human, not something the generated down can guess at.
 retired it. `godwit diff` takes the drop of a retired column out of the generated `up_sql`, so an ORM that never
 knew about the column stops proposing to drop it on every pull request; a revert forgets the row again.
 
-**Dependent views and functions follow the rename.** The swap is two `RENAME COLUMN` statements, so a view, index or
-function built on `<c>` keeps pointing at the same physical attribute — now called `<c>_old`, and still the old type.
-PostgreSQL does not refuse the rename and the expander does not detect it: nothing warns you. The first symptom is
-usually the object's own migration failing afterwards, for instance a repeatable view whose body no longer replaces:
+**Dependent objects follow the rename, so the expander refuses them.** The swap is two `RENAME COLUMN` statements,
+and PostgreSQL moves every dependency with the *physical* attribute rather than with the name. A view, index,
+constraint, trigger, policy or publication built on `<c>` therefore ends up silently reading `<c>_old`, still the old
+type, with no error at any point. The first symptom is usually the dependent object's own migration failing much
+later, for instance a repeatable view whose body no longer replaces:
 
 ```
 statement 0 of R__order_stats (up): exec: ERROR: cannot change data type of view column "customer_id" from bigint to text (SQLSTATE 42P16)
 ```
 
-Redefine every dependent object in the same run — a repeatable that recreates the view rather than replacing it
-(`DROP VIEW IF EXISTS`, then `CREATE VIEW`) is the simplest form — and check `pg_depend` for the column before
-declaring a `change-type` on a table other things read.
+So `change-type` reads `pg_depend` for the column and refuses when anything at all is bound to it, naming what it
+found:
+
+```
+godwit directive on line 1 (-- godwit: change-type orders.customer_id text): view public.order_stats depends on
+public.orders.customer_id; the swap renames the column and PostgreSQL moves every dependent with the physical
+attribute, so each one would silently keep reading public.orders.customer_id_old. Drop and recreate them around
+this migration, in their own migrations
+```
+
+Every kind `pg_depend` records is covered: views and materialised views, indexes (plain, expression and partial),
+primary key, unique, check and exclusion constraints, foreign keys from other tables, `UPDATE OF` triggers,
+generated columns elsewhere on the table, rules, publication column lists, row security policies, extended
+statistics objects, and a sequence `OWNED BY` the column.
+
+**What is not a dependent object.** The column's own `DEFAULT` does not survive a rename either — it stays on the
+retired attribute — but nothing else is involved, so the expansion carries it over rather than refusing: the expand
+phase adds `ALTER TABLE <t> ALTER COLUMN <c>_new SET DEFAULT <expr>` right after the `ADD COLUMN`, and a plan note
+says so. An expression that is not valid for the new type fails on the scratch during validation, in the pull
+request, not mid-run. A `COMMENT ON COLUMN` is *not* carried over; it stays on `<c>_old`. Neither is a `plpgsql`
+function body that names the column: PostgreSQL records no dependency for it, so godwit cannot see it and cannot
+refuse it. Grep for the column name in your functions before retyping it.
+
+`drop-column` has the same problem in two different shapes, and refuses both. An object PostgreSQL would
+*auto*-drop with the column (index, unique/check/exclusion constraint, extended statistics, owned sequence) goes
+silently — fine when it exists only for that column, which is what a drop means, but a loss when it also covers
+other columns, so a multi-column one is refused. An object with a normal dependency (view, materialised view,
+foreign key from another table, trigger, generated column, rule, publication, policy) makes `DROP COLUMN` fail
+outright — which, in the contract phase, means the run explodes *after* a human confirmed the rollout — so it is
+refused at plan time instead.
 
 ### What the expander refuses
 
@@ -396,6 +424,9 @@ Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, n
 | the relation is partitioned (`relkind = 'p'`) or is not an ordinary table | the swap would have to run per partition |
 | identity or generated column | the sequence or expression stays bound to the physical attribute across the rename |
 | the column takes part in a foreign key, either side | after the swap the constraint still points at the renamed physical column |
+| `change-type` on a column anything in `pg_depend` is bound to — view, materialised view, index, primary key, unique, check or exclusion constraint, foreign key from another table, `UPDATE OF` trigger, generated column, rule, publication column list, row security policy, statistics object, owned sequence | a rename moves dependencies with the physical attribute, so every one of them would silently keep reading `<c>_old`; the refusal names each object it found |
+| `drop-column` on a column a view, materialised view, foreign key, trigger, generated column, rule, publication or policy depends on | PostgreSQL refuses the `DROP COLUMN` itself, and the contract phase runs only after a human confirmed the rollout |
+| `drop-column` on a column whose index, constraint or statistics object also covers other columns | the drop takes it silently, and the other columns lose what it gave them; replace it first |
 | `<c>_new` or `<c>_old` already exists on the table | the expansion would collide |
 | no single-column primary key and no `key=` | nothing to batch on; the message names the option |
 | `key=` that does not exist, is nullable, or has no single-column unique btree index | a cursor over it can skip or repeat rows |
