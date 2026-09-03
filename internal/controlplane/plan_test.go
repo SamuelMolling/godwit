@@ -28,7 +28,7 @@ func TestPendingAndPlanKey(t *testing.T) {
 	a, b, c := mig(1, "a", "SELECT 1;"), mig(2, "b", "SELECT 2;"), mig(3, "c", "SELECT 3;")
 	live := []engine.Applied{applied(a, time.Now())}
 
-	pending, err := Pending([]engine.Migration{c, b, a}, live)
+	pending, err := Pending([]engine.Migration{c, b, a}, live, nil)
 	if err != nil || len(pending) != 2 || pending[0].Version != 2 || pending[1].Version != 3 {
 		t.Fatalf("pending = %+v, err = %v", pending, err)
 	}
@@ -44,7 +44,7 @@ func TestPendingAndPlanKey(t *testing.T) {
 	}
 
 	edited := mig(1, "a", "SELECT 11;")
-	if _, err := Pending([]engine.Migration{edited}, live); !errors.Is(err, ErrAppliedContent) ||
+	if _, err := Pending([]engine.Migration{edited}, live, nil); !errors.Is(err, ErrAppliedContent) ||
 		!strings.HasPrefix(err.Error(), "00000000000001_a ") {
 		t.Fatalf("err = %v", err)
 	}
@@ -54,16 +54,16 @@ func TestHistoryHash(t *testing.T) {
 	t.Parallel()
 	a, b := mig(1, "a", "SELECT 1;"), mig(2, "b", "SELECT 2;")
 	now := time.Now()
-	one := HistoryHash([]engine.Applied{applied(a, now), applied(b, now)})
+	one := HistoryHash([]engine.Applied{applied(a, now), applied(b, now)}, nil)
 	if one != (Observation{Applied: []engine.Applied{applied(b, now), applied(a, now)}}).HistoryHash() {
 		t.Fatal("hash must not depend on order")
 	}
-	if one == HistoryHash([]engine.Applied{applied(a, now)}) || one == HistoryHash(nil) {
+	if one == HistoryHash([]engine.Applied{applied(a, now)}, nil) || one == HistoryHash(nil, nil) {
 		t.Fatal("hash must depend on the versions")
 	}
 	changed := applied(b, now)
 	changed.Checksum = "other"
-	if one == HistoryHash([]engine.Applied{applied(a, now), changed}) {
+	if one == HistoryHash([]engine.Applied{applied(a, now), changed}, nil) {
 		t.Fatal("hash must depend on the checksums")
 	}
 }
@@ -86,7 +86,7 @@ func TestBuildPlanMigrationsAndSameStatements(t *testing.T) {
 	t.Parallel()
 	a := mig(1, "a", "CREATE TABLE a (id int);")
 	b := mig(2, "b", "ALTER TABLE a DROP COLUMN id;\nCREATE INDEX CONCURRENTLY i ON a (id);")
-	ms := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), []int64{1})
+	ms := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), AppliedSet{Versions: []int64{1}})
 	if len(ms) != 2 || !ms[0].Applied || ms[0].Phase != PhaseExpand || ms[1].Applied || ms[1].Phase != PhaseContract ||
 		ms[1].Checksum != b.Checksum || len(ms[1].Statements) != 2 || !ms[1].Statements[1].NoTx ||
 		len(ms[1].Statements[0].Hazards) == 0 || ms[1].Statements[0].Hazards[0].Code == "" {
@@ -97,18 +97,18 @@ func TestBuildPlanMigrationsAndSameStatements(t *testing.T) {
 		t.Fatalf("pending = %+v", pending)
 	}
 
-	again := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), nil)
+	again := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), AppliedSet{})
 	if !SameStatements(p.Pending(), again[1:]) {
 		t.Fatal("same files must have the same statements regardless of the applied flag")
 	}
 	if SameStatements(ms, again[1:]) {
 		t.Fatal("different lengths must differ")
 	}
-	direct := BuildPlanMigrations(RolloutDirect, planFor(t, a, b), nil)
+	direct := BuildPlanMigrations(RolloutDirect, planFor(t, a, b), AppliedSet{})
 	if SameStatements(ms, direct) {
 		t.Fatal("phase changes must differ")
 	}
-	edited := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, mig(2, "b", "ALTER TABLE a DROP COLUMN id;")), nil)
+	edited := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, mig(2, "b", "ALTER TABLE a DROP COLUMN id;")), AppliedSet{})
 	if SameStatements(ms, edited) {
 		t.Fatal("statement changes must differ")
 	}
@@ -270,6 +270,13 @@ func TestPGEngineObserve(t *testing.T) {
 	}
 }
 
+func expectNoGodwitTables(mock pgxmock.PgxConnIface) {
+	for _, table := range []string{"godwit.migrations", "godwit.repeatables"} {
+		mock.ExpectQuery("SELECT to_regclass").WithArgs(table).
+			WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
+	}
+}
+
 func TestObserveQueryErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -278,18 +285,24 @@ func TestObserveQueryErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery("SELECT to_regclass").WillReturnError(errBoom)
+	mock.ExpectQuery("SELECT to_regclass").WithArgs("godwit.migrations").WillReturnError(errBoom)
 	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "probe godwit schema") {
 		t.Fatalf("err = %v", err)
 	}
 
-	mock.ExpectQuery("SELECT to_regclass").WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
+	mock.ExpectQuery("SELECT to_regclass").WithArgs("godwit.migrations").WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
+	mock.ExpectQuery("SELECT to_regclass").WithArgs("godwit.repeatables").WillReturnError(errBoom)
+	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "probe godwit schema") {
+		t.Fatalf("err = %v", err)
+	}
+
+	expectNoGodwitTables(mock)
 	mock.ExpectQuery("SELECT c.table_schema").WillReturnError(errBoom)
 	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v", err)
 	}
 
-	mock.ExpectQuery("SELECT to_regclass").WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
+	expectNoGodwitTables(mock)
 	for range 4 {
 		mock.ExpectQuery("SELECT").WillReturnRows(pgxmock.NewRows([]string{"line"}))
 	}

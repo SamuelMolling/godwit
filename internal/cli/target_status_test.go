@@ -35,10 +35,10 @@ func TestTargetStatus(t *testing.T) {
 	want := strings.Join([]string{
 		"target app: provider static, lock timeout 3s, statement timeout none, search path app,public",
 		"applied (2):",
-		"  1  init   2026-09-01T12:00:00Z  ",
-		"  2  users  2026-09-01T12:00:00Z  checksum mismatch",
+		"  00000000000001_init   2026-09-01T12:00:00Z  ",
+		"  00000000000002_users  2026-09-01T12:00:00Z  checksum mismatch",
 		"pending (1):",
-		"  3  next",
+		"  00000000000003_next",
 		"last run: r1 migrate succeeded finished 2026-09-01T12:00:00Z",
 		"ready plans: 2",
 		"drift baseline: taken 2026-09-01T12:00:00Z by run r1, unresolved drift",

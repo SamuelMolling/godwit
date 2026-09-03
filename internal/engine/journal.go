@@ -16,9 +16,16 @@ var bootstrapDDL = []string{
 		checksum   text NOT NULL,
 		applied_at timestamptz NOT NULL DEFAULT now()
 	)`,
+	`CREATE TABLE IF NOT EXISTS godwit.repeatables (
+		name       text PRIMARY KEY,
+		checksum   text NOT NULL,
+		applied_at timestamptz NOT NULL DEFAULT now()
+	)`,
 	`CREATE TABLE IF NOT EXISTS godwit.runs (
 		id          uuid PRIMARY KEY,
-		version     bigint NOT NULL,
+		version     bigint,
+		repeatable  text,
+		checksum    text,
 		direction   text NOT NULL CHECK (direction IN ('up', 'down')),
 		state       text NOT NULL CHECK (state IN ('running', 'succeeded', 'failed')),
 		stmt_count  int NOT NULL,
@@ -26,6 +33,9 @@ var bootstrapDDL = []string{
 		started_at  timestamptz NOT NULL DEFAULT now(),
 		finished_at timestamptz
 	)`,
+	`ALTER TABLE godwit.runs ALTER COLUMN version DROP NOT NULL`,
+	`ALTER TABLE godwit.runs ADD COLUMN IF NOT EXISTS repeatable text`,
+	`ALTER TABLE godwit.runs ADD COLUMN IF NOT EXISTS checksum text`,
 	`CREATE TABLE IF NOT EXISTS godwit.journal (
 		run_id      uuid NOT NULL REFERENCES godwit.runs (id),
 		stmt_idx    int NOT NULL,
@@ -57,18 +67,37 @@ func newProgress(runID string) runProgress {
 	return runProgress{runID: runID, lastDone: -1, pendingIntent: -1}
 }
 
-// openRun resumes the latest unfinished run for the plan or starts a new one.
+type runKey struct {
+	version    *int64
+	repeatable *string
+	checksum   string
+}
+
+func keyOf(m Migration) runKey {
+	if m.Repeatable {
+		return runKey{repeatable: &m.Name, checksum: m.Checksum}
+	}
+
+	return runKey{version: &m.Version, checksum: m.Checksum}
+}
+
+// openRun resumes the latest unfinished run for the plan or starts a new one; an edited repeatable
+// is a different key, so it starts a run of its own instead of resuming one it no longer matches.
 func openRun(ctx context.Context, db DB, p Plan, newID string) (runProgress, error) {
+	k := keyOf(p.Migration)
 	var id string
 	err := db.QueryRow(ctx,
 		`SELECT id FROM godwit.runs
-		 WHERE version = $1 AND direction = $2 AND state IN ('running', 'failed')
+		 WHERE direction = $3 AND state IN ('running', 'failed')
+		   AND version IS NOT DISTINCT FROM $1 AND repeatable IS NOT DISTINCT FROM $2
+		   AND ($1 IS NOT NULL OR checksum = $4)
 		 ORDER BY started_at DESC LIMIT 1`,
-		p.Migration.Version, string(p.Direction)).Scan(&id)
+		k.version, k.repeatable, string(p.Direction), k.checksum).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := db.Exec(ctx,
-			`INSERT INTO godwit.runs (id, version, direction, state, stmt_count) VALUES ($1, $2, $3, 'running', $4)`,
-			newID, p.Migration.Version, string(p.Direction), len(p.Statements)); err != nil {
+			`INSERT INTO godwit.runs (id, version, repeatable, checksum, direction, state, stmt_count)
+			 VALUES ($1, $2, $3, $4, $5, 'running', $6)`,
+			newID, k.version, k.repeatable, k.checksum, string(p.Direction), len(p.Statements)); err != nil {
 			return runProgress{}, fmt.Errorf("insert run: %w", err)
 		}
 

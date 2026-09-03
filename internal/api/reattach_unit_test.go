@@ -22,9 +22,9 @@ const boundRunID = "7b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 func expectBoundPlan(mock pgxmock.PgxPoolIface, applied []engine.Applied, migs []controlplane.PlanMigration) {
 	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
+			"id", "target", "key", "rollout", "state", "history_hash", "applied", "repeatables", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
 			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
-		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanBound, controlplane.HistoryHash(applied), applied,
+		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanBound, controlplane.HistoryHash(applied, nil), applied, []engine.Repeatable{},
 			"f2", "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), boundRunID, ""))
 }
 
@@ -40,7 +40,7 @@ func expectRunsApplying(mock pgxmock.PgxPoolIface, byVersion map[int64]string) {
 	for v, id := range byVersion {
 		rows.AddRow(v, id)
 	}
-	mock.ExpectQuery("SELECT DISTINCT ON \\(version\\)").WithArgs("app", pgxmock.AnyArg()).WillReturnRows(rows)
+	mock.ExpectQuery("SELECT DISTINCT ON \\(regexp_replace").WithArgs("app", pgxmock.AnyArg()).WillReturnRows(rows)
 }
 
 func TestReattachStoreErrors(t *testing.T) {
@@ -72,7 +72,7 @@ func TestReattachStoreErrors(t *testing.T) {
 	for _, state := range []string{controlplane.StateSucceeded, controlplane.StateFailed} {
 		expectBoundPlan(mock, nil, nil)
 		expectBoundRun(mock, state)
-		mock.ExpectQuery("SELECT DISTINCT ON \\(version\\)").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("runs down"))
+		mock.ExpectQuery("SELECT DISTINCT ON \\(regexp_replace").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("runs down"))
 		if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
 			t.Fatalf("%s attribute error: %v", state, err)
 		}

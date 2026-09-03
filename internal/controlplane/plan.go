@@ -36,15 +36,16 @@ var ErrAppliedContent = errors.New("applied with different content")
 // Observation is a target's live migration history and schema at one moment.
 type Observation struct {
 	Applied     []engine.Applied
+	Repeatables []engine.Repeatable
 	Definition  string
 	Fingerprint string
 	SearchPath  string
 	At          time.Time
 }
 
-// HistoryHash hashes the observed history, ascending by version.
+// HistoryHash hashes the observed history, ascending by version then by repeatable name.
 func (o Observation) HistoryHash() string {
-	return HistoryHash(o.Applied)
+	return HistoryHash(o.Applied, o.Repeatables)
 }
 
 // PlanHazard is one hazard on a planned statement.
@@ -65,6 +66,7 @@ type PlanStatement struct {
 type PlanMigration struct {
 	Version    int64           `json:"version"`
 	Name       string          `json:"name"`
+	Repeatable bool            `json:"repeatable,omitempty"`
 	Checksum   string          `json:"checksum"`
 	Applied    bool            `json:"applied"`
 	Phase      string          `json:"phase"`
@@ -73,6 +75,11 @@ type PlanMigration struct {
 	AlreadyApplied bool   `json:"already_applied,omitempty"`
 	Effect         string `json:"effect,omitempty"`
 	Note           string `json:"note,omitempty"`
+}
+
+// ID identifies the migration in plan keys and reports.
+func (m PlanMigration) ID() string {
+	return engine.MigrationID(m.Version, m.Name, m.Repeatable)
 }
 
 // Plan is a stored admission result plus the observation it was taken against.
@@ -84,6 +91,7 @@ type Plan struct {
 	State             string
 	HistoryHash       string
 	Applied           []engine.Applied
+	Repeatables       []engine.Repeatable
 	SchemaFingerprint string
 	SchemaDefinition  string
 	SearchPath        string
@@ -111,35 +119,52 @@ func (p Plan) Pending() []PlanMigration {
 	return out
 }
 
-// HistoryHash hashes an applied set as "version checksum" lines, ascending by version.
-func HistoryHash(applied []engine.Applied) string {
+// HistoryHash hashes an applied set as "id checksum" lines, versions ascending then repeatables by name.
+func HistoryHash(applied []engine.Applied, reps []engine.Repeatable) string {
 	sorted := slices.Clone(applied)
 	slices.SortFunc(sorted, func(a, b engine.Applied) int { return cmp.Compare(a.Version, b.Version) })
+	repeatables := slices.Clone(reps)
+	slices.SortFunc(repeatables, func(a, b engine.Repeatable) int { return cmp.Compare(a.Name, b.Name) })
 	var b strings.Builder
 	for _, a := range sorted {
 		fmt.Fprintf(&b, "%d %s\n", a.Version, a.Checksum)
+	}
+	for _, r := range repeatables {
+		fmt.Fprintf(&b, "%s%s %s\n", engine.RepeatablePrefix, r.Name, r.Checksum)
 	}
 
 	return sum(b.String())
 }
 
-// Pending returns the migrations whose version the target has not applied, sorted by version.
-func Pending(migs []engine.Migration, applied []engine.Applied) ([]engine.Migration, error) {
+// Pending returns the migrations the target would run: versions it has not applied, plus repeatables
+// whose content differs from what it last recorded under that name.
+func Pending(migs []engine.Migration, applied []engine.Applied, reps []engine.Repeatable) ([]engine.Migration, error) {
 	live := map[int64]string{}
 	for _, a := range applied {
 		live[a.Version] = a.Checksum
 	}
+	recorded := map[string]string{}
+	for _, r := range reps {
+		recorded[r.Name] = r.Checksum
+	}
 	var out []engine.Migration
 	for _, m := range migs {
+		if m.Repeatable {
+			if recorded[m.Name] != m.Checksum {
+				out = append(out, m)
+			}
+
+			continue
+		}
 		sum, ok := live[m.Version]
 		switch {
 		case !ok:
 			out = append(out, m)
 		case sum != m.Checksum:
-			return nil, fmt.Errorf("%014d_%s %w", m.Version, m.Name, ErrAppliedContent)
+			return nil, fmt.Errorf("%s %w", m.ID(), ErrAppliedContent)
 		}
 	}
-	slices.SortFunc(out, func(a, b engine.Migration) int { return cmp.Compare(a.Version, b.Version) })
+	slices.SortFunc(out, engine.CompareMigrations)
 
 	return out, nil
 }
@@ -149,14 +174,28 @@ func PlanKey(target, rollout string, pending []engine.Migration) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "godwit-plan-v1\n%s\n%s\n", target, rollout)
 	for _, m := range pending {
-		fmt.Fprintf(&b, "%014d_%s %s %s\n", m.Version, m.Name, sum(m.UpSQL), sum(m.DownSQL))
+		fmt.Fprintf(&b, "%s %s %s\n", m.ID(), sum(m.UpSQL), sum(m.DownSQL))
 	}
 
 	return sum(b.String())
 }
 
+// AppliedSet is what a target already holds: versions the control plane ran and the content it recorded per repeatable.
+type AppliedSet struct {
+	Versions    []int64
+	Repeatables map[string]string
+}
+
+func (a AppliedSet) has(m engine.Migration) bool {
+	if m.Repeatable {
+		return a.Repeatables[m.Name] == m.Checksum
+	}
+
+	return slices.Contains(a.Versions, m.Version)
+}
+
 // BuildPlanMigrations records what admission decided for each plan: phase under the rollout and whether it is applied.
-func BuildPlanMigrations(rollout string, plans []engine.Plan, applied []int64) []PlanMigration {
+func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet) []PlanMigration {
 	expand, _ := Policies()[rollout].Split(plans)
 	out := make([]PlanMigration, 0, len(plans))
 	for i, p := range plans {
@@ -165,8 +204,8 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied []int64) [
 			phase = PhaseExpand
 		}
 		pm := PlanMigration{
-			Version: p.Migration.Version, Name: p.Migration.Name, Checksum: p.Migration.Checksum,
-			Applied: slices.Contains(applied, p.Migration.Version), Phase: phase,
+			Version: p.Migration.Version, Name: p.Migration.Name, Repeatable: p.Migration.Repeatable,
+			Checksum: p.Migration.Checksum, Applied: applied.has(p.Migration), Phase: phase,
 		}
 		pm.Statements = PlanStatements(p.Statements)
 		out = append(out, pm)
@@ -248,7 +287,7 @@ func SameStatements(a, b []PlanMigration) bool {
 func shape(ms []PlanMigration) string {
 	var b strings.Builder
 	for _, m := range ms {
-		fmt.Fprintf(&b, "%d %s %s %t\n", m.Version, m.Checksum, m.Phase, m.AlreadyApplied)
+		fmt.Fprintf(&b, "%s %s %s %t\n", m.ID(), m.Checksum, m.Phase, m.AlreadyApplied)
 		for _, st := range m.Statements {
 			codes := make([]string, 0, len(st.Hazards))
 			for _, h := range st.Hazards {
@@ -261,17 +300,18 @@ func shape(ms []PlanMigration) string {
 	return b.String()
 }
 
-// HistoryChange is one version that entered or left the target's history since a plan was taken.
+// HistoryChange is one migration that entered or left the target's history since a plan was taken.
 type HistoryChange struct {
-	Version int64
-	Name    string
-	At      time.Time
-	RunID   string
+	Version    int64
+	Name       string
+	Repeatable bool
+	At         time.Time
+	RunID      string
 }
 
 // String renders the change as it appears in a stale report.
 func (c HistoryChange) String() string {
-	return fmt.Sprintf("%014d_%s", c.Version, c.Name)
+	return engine.MigrationID(c.Version, c.Name, c.Repeatable)
 }
 
 // PlanDiff is how a target moved away from a plan's observation.
@@ -288,29 +328,23 @@ func (p Plan) PathMoved(obs Observation) bool {
 	return p.SearchPath != "" && p.SearchPath != obs.SearchPath
 }
 
-// StaleDiff compares a plan's observation with a fresh one.
+// StaleDiff compares a plan's observation with a fresh one; a repeatable recorded under new content
+// counts as removed and added, because the target no longer holds what the plan was taken against.
 func StaleDiff(p Plan, obs Observation) PlanDiff {
-	then := map[int64]engine.Applied{}
-	for _, a := range p.Applied {
-		then[a.Version] = a
-	}
-	now := map[int64]engine.Applied{}
-	for _, a := range obs.Applied {
-		now[a.Version] = a
-	}
+	then, now := historyOf(p.Applied, p.Repeatables), historyOf(obs.Applied, obs.Repeatables)
 	var d PlanDiff
-	for _, a := range obs.Applied {
-		if _, ok := then[a.Version]; !ok {
-			d.Added = append(d.Added, HistoryChange{Version: a.Version, Name: a.Name, At: a.AppliedAt})
+	for id, c := range now {
+		if _, ok := then[id]; !ok {
+			d.Added = append(d.Added, c)
 		}
 	}
-	for _, a := range p.Applied {
-		if _, ok := now[a.Version]; !ok {
-			d.Removed = append(d.Removed, HistoryChange{Version: a.Version, Name: a.Name, At: a.AppliedAt})
+	for id, c := range then {
+		if _, ok := now[id]; !ok {
+			d.Removed = append(d.Removed, c)
 		}
 	}
-	slices.SortFunc(d.Added, func(a, b HistoryChange) int { return cmp.Compare(a.Version, b.Version) })
-	slices.SortFunc(d.Removed, func(a, b HistoryChange) int { return cmp.Compare(a.Version, b.Version) })
+	slices.SortFunc(d.Added, compareChanges)
+	slices.SortFunc(d.Removed, compareChanges)
 	if p.SchemaFingerprint != obs.Fingerprint {
 		d.Schema = engine.DiffSchemas(p.SchemaDefinition, obs.Definition)
 	}
@@ -322,11 +356,57 @@ func StaleDiff(p Plan, obs Observation) PlanDiff {
 	return d
 }
 
-// Explained reports whether every change was made by godwit itself: versions only added, each by a run,
-// the live schema exactly what the last run left (baseline is the stored snapshot fingerprint), and the search_path unmoved.
+// historyOf keys each recorded migration by identity and content, so a changed repeatable is a different entry.
+func historyOf(applied []engine.Applied, reps []engine.Repeatable) map[string]HistoryChange {
+	out := make(map[string]HistoryChange, len(applied)+len(reps))
+	for _, a := range applied {
+		c := HistoryChange{Version: a.Version, Name: a.Name, At: a.AppliedAt}
+		out[c.String()] = c
+	}
+	for _, r := range reps {
+		c := HistoryChange{Name: r.Name, Repeatable: true, At: r.AppliedAt}
+		out[c.String()+" "+r.Checksum] = c
+	}
+
+	return out
+}
+
+func compareChanges(a, b HistoryChange) int {
+	if a.Repeatable != b.Repeatable {
+		if a.Repeatable {
+			return 1
+		}
+
+		return -1
+	}
+	if a.Repeatable {
+		return cmp.Compare(a.Name, b.Name)
+	}
+
+	return cmp.Compare(a.Version, b.Version)
+}
+
+// Explained reports whether every change was made by godwit itself: nothing removed except the old content of a
+// re-recorded repeatable, everything added by a run, the live schema exactly what the last run left
+// (baseline is the stored snapshot fingerprint), and the search_path unmoved.
 func (d PlanDiff) Explained(baseline, fingerprint string) bool {
-	if len(d.Removed) > 0 || d.Path != "" || baseline != fingerprint {
-		return false
+	return d.Path == "" && baseline == fingerprint && d.attributed()
+}
+
+// Reason names what refuses the bind: history when a migration moved without a run, schema otherwise.
+func (d PlanDiff) Reason() string {
+	if !d.attributed() {
+		return StaleHistory
+	}
+
+	return StaleSchema
+}
+
+func (d PlanDiff) attributed() bool {
+	for _, c := range d.Removed {
+		if !d.rerecorded(c) {
+			return false
+		}
 	}
 	for _, c := range d.Added {
 		if c.RunID == "" {
@@ -337,18 +417,11 @@ func (d PlanDiff) Explained(baseline, fingerprint string) bool {
 	return true
 }
 
-// Reason names what refuses the bind: history when a version moved without a run, schema otherwise.
-func (d PlanDiff) Reason() string {
-	if len(d.Removed) > 0 {
-		return StaleHistory
-	}
-	for _, c := range d.Added {
-		if c.RunID == "" {
-			return StaleHistory
-		}
-	}
-
-	return StaleSchema
+// rerecorded reports whether a removed entry is a repeatable that came back under new content.
+func (d PlanDiff) rerecorded(c HistoryChange) bool {
+	return c.Repeatable && slices.ContainsFunc(d.Added, func(a HistoryChange) bool {
+		return a.Repeatable && a.Name == c.Name
+	})
 }
 
 // PlanStale is returned when a stored plan no longer matches the target it was taken against.
@@ -449,14 +522,14 @@ func (e *PlanRequired) FilesDiff() string {
 }
 
 func (e *PlanRequired) filesDiff(p Plan) string {
-	stored := map[int64]string{}
+	stored := map[string]string{}
 	for _, m := range p.Pending() {
-		stored[m.Version] = m.Checksum
+		stored[m.ID()] = m.Checksum
 	}
 	parts := make([]string, 0, len(e.Pending))
 	for _, m := range e.Pending {
-		part := fmt.Sprintf("%014d_%s", m.Version, m.Name)
-		switch sum, ok := stored[m.Version]; {
+		part := m.ID()
+		switch sum, ok := stored[m.ID()]; {
 		case !ok:
 			part += " (not in plan)"
 		case sum != m.Checksum:
@@ -471,7 +544,7 @@ func (e *PlanRequired) filesDiff(p Plan) string {
 func names(ms []PlanMigration) string {
 	parts := make([]string, 0, len(ms))
 	for _, m := range ms {
-		parts = append(parts, fmt.Sprintf("%014d_%s", m.Version, m.Name))
+		parts = append(parts, m.ID())
 	}
 
 	return strings.Join(parts, ", ")

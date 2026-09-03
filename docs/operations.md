@@ -82,7 +82,7 @@ Do not delete `succeeded` runs with `kind = 'migrate'` unless the target has bee
 Target (`godwit` schema):
 
 ```sql
--- statement journal of finished runs; keep godwit.migrations intact
+-- statement journal of finished runs; keep godwit.migrations and godwit.repeatables intact
 DELETE FROM godwit.journal j USING godwit.runs r
 WHERE j.run_id = r.id AND r.state = 'succeeded' AND r.finished_at < now() - interval '90 days';
 DELETE FROM godwit.runs WHERE state = 'succeeded' AND finished_at < now() - interval '90 days';
@@ -221,7 +221,7 @@ Delivery is asynchronous: one worker per provider with a queue of 256 events; a 
 | `run retrying` | warn | `run`, `target`, `attempt`, `wait`, `error` |
 | `run re-attached` | info | `run`, `target`, `state`, `plan`, `resumed` |
 | `run finished` | info, error when the run errored | `run`, `target`, `attempt`, `state`, `duration_ms`, `error` |
-| `statement applied` / `statement failed` | debug / warn | `run`, `target`, `version`, `stmt`, `kind`, `duration_ms`, `error` |
+| `statement applied` / `statement failed` | debug / warn | `run`, `target`, `migration`, `stmt`, `kind`, `duration_ms`, `error` |
 | `heartbeat lost` | warn | `run`, `error` |
 | `drift checked` | debug clean, info drifted | `target`, `result` |
 | `schema drift detected` / `schema drift resolved` | warn / info | `target` |

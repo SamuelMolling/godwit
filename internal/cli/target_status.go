@@ -15,6 +15,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/config"
+	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
 func newTargetStatusCmd() *cobra.Command {
@@ -63,16 +64,19 @@ func statusText(st *godwitv1.GetTargetStatusResponse) string {
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, a := range st.Applied {
 		note := ""
-		if a.ChecksumMismatch {
+		switch {
+		case a.ChecksumMismatch:
 			note = "checksum mismatch"
+		case a.Repeatable:
+			note = "unchanged"
 		}
-		fmt.Fprintf(w, "  %d\t%s\t%s\t%s\n", a.Version, a.Name, stamp(a.AppliedAt), note)
+		fmt.Fprintf(w, "  %s\t%s\t%s\n", engine.MigrationID(a.Version, a.Name, a.Repeatable), stamp(a.AppliedAt), note)
 	}
 	_ = w.Flush()
 	if len(st.Pending) > 0 {
 		fmt.Fprintf(&b, "pending (%d):\n", len(st.Pending))
 		for _, p := range st.Pending {
-			fmt.Fprintf(&b, "  %d  %s\n", p.Version, p.Name)
+			fmt.Fprintf(&b, "  %s\n", engine.MigrationID(p.Version, p.Name, p.Repeatable))
 		}
 	}
 	writeLastRun(&b, st.LastRun)

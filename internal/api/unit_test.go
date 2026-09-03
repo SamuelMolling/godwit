@@ -468,6 +468,7 @@ func TestPlanRunUnit(t *testing.T) {
 
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
+	expectNoRepeatables(mock)
 	res, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{
 		Target: "app", Files: files, Rollout: controlplane.RolloutExpandContract, AcknowledgeHazards: []string{"H003"},
 	}))
@@ -491,6 +492,7 @@ func TestPlanRunUnit(t *testing.T) {
 
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	expectNoRepeatables(mock)
 	res, err = s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files[:2]}))
 	if err != nil || res.Msg.Migrations[0].Phase != controlplane.PhaseExpand || res.Msg.Migrations[0].Applied {
 		t.Fatalf("direct = %+v, err = %v", res, err)
@@ -532,6 +534,7 @@ func TestCreateRunInternalErrors(t *testing.T) {
 
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	expectNoRepeatables(mock)
 	s := NewServer(controlplane.NewStore(mock), nil, failingValidator{err: errors.New("scratch down")}, nil)
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("validator error: %v", err)
@@ -539,6 +542,7 @@ func TestCreateRunInternalErrors(t *testing.T) {
 
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
+	expectNoRepeatables(mock)
 	mock.ExpectBegin()
 	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "", AnonymousActor, "", "").WillReturnError(errors.New("insert down"))
 	mock.ExpectRollback()
@@ -549,4 +553,8 @@ func TestCreateRunInternalErrors(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func expectNoRepeatables(mock pgxmock.PgxPoolIface) {
+	mock.ExpectQuery("SELECT DISTINCT ON \\(f.name\\)").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"name", "body"}))
 }

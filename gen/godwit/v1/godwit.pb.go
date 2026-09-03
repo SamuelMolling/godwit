@@ -1154,7 +1154,9 @@ type PlannedMigration struct {
 	// The schema lines the migration adds ("+ ") or removes ("- "), when already_applied.
 	Effect string `protobuf:"bytes,8,opt,name=effect,proto3" json:"effect,omitempty"`
 	// Why detection was refused for this migration, when it was.
-	Note          string `protobuf:"bytes,9,opt,name=note,proto3" json:"note,omitempty"`
+	Note string `protobuf:"bytes,9,opt,name=note,proto3" json:"note,omitempty"`
+	// Has no version: an R__ file, applied after the versioned ones whenever its content differs from what the target recorded.
+	Repeatable    bool `protobuf:"varint,10,opt,name=repeatable,proto3" json:"repeatable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1250,6 +1252,13 @@ func (x *PlannedMigration) GetNote() string {
 		return x.Note
 	}
 	return ""
+}
+
+func (x *PlannedMigration) GetRepeatable() bool {
+	if x != nil {
+		return x.Repeatable
+	}
+	return false
 }
 
 type PlanRunResponse struct {
@@ -2297,7 +2306,8 @@ func (x *BaselineTargetResponse) GetRunId() string {
 type GetTargetStatusRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Target string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
-	// Optional: when given, versions missing on the target are reported as pending and checksums are compared.
+	// Optional: when given, versions missing on the target and repeatables whose content changed are reported as pending,
+	// and checksums are compared.
 	Files         []*MigrationFile `protobuf:"bytes,2,rep,name=files,proto3" json:"files,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2354,8 +2364,10 @@ type AppliedMigration struct {
 	Checksum         string                 `protobuf:"bytes,3,opt,name=checksum,proto3" json:"checksum,omitempty"`
 	AppliedAt        *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=applied_at,json=appliedAt,proto3" json:"applied_at,omitempty"`
 	ChecksumMismatch bool                   `protobuf:"varint,5,opt,name=checksum_mismatch,json=checksumMismatch,proto3" json:"checksum_mismatch,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Recorded in godwit.repeatables under name, with no version; the file matches what is recorded.
+	Repeatable    bool `protobuf:"varint,6,opt,name=repeatable,proto3" json:"repeatable,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AppliedMigration) Reset() {
@@ -2423,10 +2435,19 @@ func (x *AppliedMigration) GetChecksumMismatch() bool {
 	return false
 }
 
+func (x *AppliedMigration) GetRepeatable() bool {
+	if x != nil {
+		return x.Repeatable
+	}
+	return false
+}
+
 type PendingMigration struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version int64                  `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Name    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// An R__ file whose content differs from what the target recorded, or that it never recorded.
+	Repeatable    bool `protobuf:"varint,3,opt,name=repeatable,proto3" json:"repeatable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2473,6 +2494,13 @@ func (x *PendingMigration) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *PendingMigration) GetRepeatable() bool {
+	if x != nil {
+		return x.Repeatable
+	}
+	return false
 }
 
 type DriftBaseline struct {
@@ -3592,7 +3620,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x10PlannedStatement\x12\x10\n" +
 	"\x03sql\x18\x01 \x01(\tR\x03sql\x12\x13\n" +
 	"\x05no_tx\x18\x02 \x01(\bR\x04noTx\x122\n" +
-	"\ahazards\x18\x03 \x03(\v2\x18.godwit.v1.PlannedHazardR\ahazards\"\x9e\x02\n" +
+	"\ahazards\x18\x03 \x03(\v2\x18.godwit.v1.PlannedHazardR\ahazards\"\xbe\x02\n" +
 	"\x10PlannedMigration\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -3604,7 +3632,11 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"statements\x12'\n" +
 	"\x0falready_applied\x18\a \x01(\bR\x0ealreadyApplied\x12\x16\n" +
 	"\x06effect\x18\b \x01(\tR\x06effect\x12\x12\n" +
-	"\x04note\x18\t \x01(\tR\x04note\"\xa0\x02\n" +
+	"\x04note\x18\t \x01(\tR\x04note\x12\x1e\n" +
+	"\n" +
+	"repeatable\x18\n" +
+	" \x01(\bR\n" +
+	"repeatable\"\xa0\x02\n" +
 	"\x0fPlanRunResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x18\n" +
 	"\arollout\x18\x02 \x01(\tR\arollout\x12;\n" +
@@ -3688,17 +3720,23 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"`\n" +
 	"\x16GetTargetStatusRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
-	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\"\xc4\x01\n" +
+	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\"\xe4\x01\n" +
 	"\x10AppliedMigration\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
 	"\bchecksum\x18\x03 \x01(\tR\bchecksum\x129\n" +
 	"\n" +
 	"applied_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tappliedAt\x12+\n" +
-	"\x11checksum_mismatch\x18\x05 \x01(\bR\x10checksumMismatch\"@\n" +
+	"\x11checksum_mismatch\x18\x05 \x01(\bR\x10checksumMismatch\x12\x1e\n" +
+	"\n" +
+	"repeatable\x18\x06 \x01(\bR\n" +
+	"repeatable\"`\n" +
 	"\x10PendingMigration\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\x88\x01\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1e\n" +
+	"\n" +
+	"repeatable\x18\x03 \x01(\bR\n" +
+	"repeatable\"\x88\x01\n" +
 	"\rDriftBaseline\x125\n" +
 	"\btaken_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\atakenAt\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12)\n" +

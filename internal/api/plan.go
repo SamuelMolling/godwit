@@ -49,7 +49,7 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 
 		return connect.NewResponse(out), nil
 	}
-	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied)
+	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied, obs.Repeatables)
 	if err != nil {
 		return nil, invalid(err.Error())
 	}
@@ -80,7 +80,8 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 }
 
 func observed(p controlplane.Plan, obs controlplane.Observation) controlplane.Plan {
-	p.HistoryHash, p.Applied, p.SchemaFingerprint, p.SchemaDefinition = obs.HistoryHash(), obs.Applied, obs.Fingerprint, obs.Definition
+	p.HistoryHash, p.Applied, p.Repeatables = obs.HistoryHash(), obs.Applied, obs.Repeatables
+	p.SchemaFingerprint, p.SchemaDefinition = obs.Fingerprint, obs.Definition
 	p.SearchPath = obs.SearchPath
 
 	return p
@@ -123,8 +124,8 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 	out := make([]*godwitv1.PlannedMigration, 0, len(migs))
 	for _, m := range migs {
 		pm := &godwitv1.PlannedMigration{
-			Version: m.Version, Name: m.Name, Checksum: m.Checksum, Applied: m.Applied, Phase: m.Phase,
-			AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
+			Version: m.Version, Name: m.Name, Repeatable: m.Repeatable, Checksum: m.Checksum, Applied: m.Applied,
+			Phase: m.Phase, AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
 		}
 		pm.Statements = statementsToProto(m.Statements)
 		out = append(out, pm)
@@ -183,7 +184,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 
 		return b, err
 	}
-	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied)
+	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied, obs.Repeatables)
 	if err != nil {
 		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{Plan: controlplane.Plan{Target: m.Target}, Reason: controlplane.StaleContent, Hint: err.Error()})
 	}
@@ -300,7 +301,7 @@ func (s *Server) attribute(ctx context.Context, plan controlplane.Plan, obs cont
 		return d, err
 	}
 	for i := range d.Added {
-		d.Added[i].RunID = runs[d.Added[i].Version]
+		d.Added[i].RunID = runs[d.Added[i].String()]
 	}
 
 	return d, nil

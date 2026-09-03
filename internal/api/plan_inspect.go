@@ -116,7 +116,7 @@ func (s *Server) lookup(ctx context.Context, m *godwitv1.CreateRunRequest, spec 
 	if plan.CreatedAt.Before(s.planSince()) {
 		return controlplane.Plan{}, precondition(fmt.Sprintf("plan %s expired: planned %s, ttl %s", plan.ID, plan.CreatedAt.UTC().Format(time.RFC3339), s.PlanTTL))
 	}
-	planned, err := controlplane.Pending(migrations(spec.plans), plan.Applied)
+	planned, err := controlplane.Pending(migrations(spec.plans), plan.Applied, plan.Repeatables)
 	if err != nil || controlplane.PlanKey(m.Target, spec.rollout, planned) != plan.Key {
 		return controlplane.Plan{}, invalid(fmt.Sprintf("files do not match plan %s", plan.ID))
 	}

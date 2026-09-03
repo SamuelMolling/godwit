@@ -2,9 +2,12 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -315,13 +318,30 @@ func (s *Store) RunFiles(ctx context.Context, id string) (map[string]string, err
 	return files, nil
 }
 
-// AppliedVersions returns the distinct migration versions held by a target's succeeded runs, ascending.
-func (s *Store) AppliedVersions(ctx context.Context, target string) ([]int64, error) {
+// versionedFile matches the run-file names that carry a version; repeatables are named R__<name>.{up,down}.sql.
+const versionedFile = `f.name ~ '^[0-9]{14}_'`
+
+// Applied returns what a target's succeeded runs already carried: their versions ascending, and the
+// content last carried under each repeatable name.
+func (s *Store) Applied(ctx context.Context, target string) (AppliedSet, error) {
+	versions, err := s.appliedVersions(ctx, target)
+	if err != nil {
+		return AppliedSet{}, err
+	}
+	reps, err := s.appliedRepeatables(ctx, target)
+	if err != nil {
+		return AppliedSet{}, err
+	}
+
+	return AppliedSet{Versions: versions, Repeatables: reps}, nil
+}
+
+func (s *Store) appliedVersions(ctx context.Context, target string) ([]int64, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT left(f.name, 14)::bigint AS version
 		FROM cp_run_files f
 		JOIN cp_runs r ON r.id = f.run_id
-		WHERE r.target = $1 AND r.state = 'succeeded'
+		WHERE r.target = $1 AND r.state = 'succeeded' AND `+versionedFile+`
 		ORDER BY version`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list applied versions: %w", err)
@@ -337,6 +357,35 @@ func (s *Store) AppliedVersions(ctx context.Context, target string) ([]int64, er
 	}
 
 	return out, nil
+}
+
+func (s *Store) appliedRepeatables(ctx context.Context, target string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (f.name) f.name, f.body
+		FROM cp_run_files f
+		JOIN cp_runs r ON r.id = f.run_id
+		WHERE r.target = $1 AND r.state = 'succeeded' AND f.name LIKE 'R\_\_%.up.sql'
+		ORDER BY f.name, r.created_at DESC`, target)
+	if err != nil {
+		return nil, fmt.Errorf("list applied repeatables: %w", err)
+	}
+	out := map[string]string{}
+	var name, body string
+	if _, err := pgx.ForEachRow(rows, []any{&name, &body}, func() error {
+		out[strings.TrimSuffix(strings.TrimPrefix(name, engine.RepeatablePrefix), ".up.sql")] = checksum(body)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read applied repeatables: %w", err)
+	}
+
+	return out, nil
+}
+
+func checksum(body string) string {
+	h := sha256.Sum256([]byte(body))
+
+	return hex.EncodeToString(h[:])
 }
 
 // Claim leases the next queued run, or a running one whose lease expired; one lease per target.

@@ -55,6 +55,7 @@ func expectApplied(mock pgxmock.PgxPoolIface, versions ...int64) {
 		rows.AddRow(v)
 	}
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(rows)
+	expectNoRepeatables(mock)
 }
 
 func expectNoBound(mock pgxmock.PgxPoolIface) {
@@ -65,9 +66,9 @@ func expectReadyPlan(mock pgxmock.PgxPoolIface, fingerprint string, applied []en
 	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
+			"id", "target", "key", "rollout", "state", "history_hash", "applied", "repeatables", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
 			"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
-		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanReady, controlplane.HistoryHash(applied), applied,
+		}).AddRow(planID, "app", "k", controlplane.RolloutDirect, controlplane.PlanReady, controlplane.HistoryHash(applied, nil), applied, []engine.Repeatable{},
 			fingerprint, "table a\n", "", "", migs, false, []string{}, false, "ci", "", time.Now(), "", ""))
 }
 
@@ -83,7 +84,7 @@ func plannedMigrations(t *testing.T) []controlplane.PlanMigration {
 		t.Fatal(err)
 	}
 
-	return controlplane.BuildPlanMigrations(spec.rollout, spec.plans, nil)
+	return controlplane.BuildPlanMigrations(spec.rollout, spec.plans, controlplane.AppliedSet{})
 }
 
 func createReq(acked ...string) *connect.Request[godwitv1.CreateRunRequest] {
@@ -192,7 +193,7 @@ func TestBindStoreErrors(t *testing.T) {
 	obs.Applied = []engine.Applied{{Version: 5, Name: "x", Checksum: "c"}}
 	s.Inspector = stubInspector{obs: obs}
 	expectReadyPlan(mock, "f2", nil, nil)
-	mock.ExpectQuery("SELECT DISTINCT ON \\(version\\)").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("runs down"))
+	mock.ExpectQuery("SELECT DISTINCT ON \\(regexp_replace").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("runs down"))
 	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("attribute error: %v", err)
 	}

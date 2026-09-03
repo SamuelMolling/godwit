@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -34,8 +35,8 @@ func expectLock(mock pgxmock.PgxConnIface) {
 }
 
 func expectBootstrap(mock pgxmock.PgxConnIface) {
-	for range bootstrapDDL {
-		mock.ExpectExec("CREATE").WillReturnResult(pgxmock.NewResult("CREATE", 0))
+	for _, ddl := range bootstrapDDL {
+		mock.ExpectExec(regexp.QuoteMeta(ddl)).WillReturnResult(pgxmock.NewResult("DDL", 0))
 	}
 }
 
@@ -44,8 +45,8 @@ func expectNotApplied(mock pgxmock.PgxConnIface) {
 }
 
 func expectNewRun(mock pgxmock.PgxConnIface) {
-	mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
+	mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 }
 
 func expectMarkFailed(mock pgxmock.PgxConnIface) {
@@ -116,7 +117,7 @@ func TestUpErrorPaths(t *testing.T) {
 				expectBootstrap(mock)
 				mock.ExpectQuery("SELECT checksum FROM godwit.migrations").WithArgs(pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
-			wantErr: "check applied version",
+			wantErr: "check applied 00000000000001_m",
 		},
 		{
 			name: "find open run fails",
@@ -124,7 +125,7 @@ func TestUpErrorPaths(t *testing.T) {
 				expectLock(mock)
 				expectBootstrap(mock)
 				expectNotApplied(mock)
-				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
+				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
 			wantErr: "find open run",
 		},
@@ -134,8 +135,8 @@ func TestUpErrorPaths(t *testing.T) {
 				expectLock(mock)
 				expectBootstrap(mock)
 				expectNotApplied(mock)
-				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
-				mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
+				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
+				mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
 			wantErr: "insert run",
 		},
@@ -145,7 +146,7 @@ func TestUpErrorPaths(t *testing.T) {
 				expectLock(mock)
 				expectBootstrap(mock)
 				expectNotApplied(mock)
-				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
@@ -157,7 +158,7 @@ func TestUpErrorPaths(t *testing.T) {
 				expectLock(mock)
 				expectBootstrap(mock)
 				expectNotApplied(mock)
-				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}).AddRow("no", "done", "h"))
@@ -170,7 +171,7 @@ func TestUpErrorPaths(t *testing.T) {
 				expectLock(mock)
 				expectBootstrap(mock)
 				expectNotApplied(mock)
-				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}).
@@ -184,7 +185,7 @@ func TestUpErrorPaths(t *testing.T) {
 				expectLock(mock)
 				expectBootstrap(mock)
 				expectNotApplied(mock)
-				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+				mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 				mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}))
@@ -355,7 +356,7 @@ func TestNoTxErrorPaths(t *testing.T) {
 		expectLock(mock)
 		expectBootstrap(mock)
 		expectNotApplied(mock)
-		mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+		mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("r1"))
 		mock.ExpectQuery("SELECT stmt_idx, state, sql_hash").WithArgs(pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"stmt_idx", "state", "sql_hash"}).
@@ -539,9 +540,9 @@ func TestWithIDGenerator(t *testing.T) {
 	expectLock(mock)
 	expectBootstrap(mock)
 	expectNotApplied(mock)
-	mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
+	mock.ExpectQuery("SELECT id FROM godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectExec("INSERT INTO godwit.runs").
-		WithArgs("fixed-id", int64(1), "up", 1).
+		WithArgs("fixed-id", &[]int64{1}[0], (*string)(nil), "c", "up", 1).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectBegin().WillReturnError(errBoom)
 	expectMarkFailed(mock)

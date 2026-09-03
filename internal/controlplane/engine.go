@@ -26,7 +26,7 @@ type Engine interface {
 	Apply(ctx context.Context, req ApplyRequest) error
 	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
-	Applied(ctx context.Context, dsn string) ([]engine.Applied, error)
+	Applied(ctx context.Context, dsn string) ([]engine.Applied, []engine.Repeatable, error)
 	Observe(ctx context.Context, dsn string) (Observation, error)
 }
 
@@ -64,7 +64,7 @@ func (e PGEngine) observer(runID, target string) func(engine.StatementEvent) {
 			e.Metrics.Statement(target, kind, ev.Duration, ev.Err)
 		}
 		attrs := []any{
-			"run", runID, "target", target, "version", ev.Version, "stmt", ev.Index,
+			"run", runID, "target", target, "migration", ev.Migration, "stmt", ev.Index,
 			"kind", kind, "duration_ms", ev.Duration.Milliseconds(),
 		}
 		if ev.Err != nil {
@@ -99,14 +99,24 @@ func (PGEngine) Snapshot(ctx context.Context, dsn string) (string, string, error
 }
 
 // Applied implements Engine.
-func (PGEngine) Applied(ctx context.Context, dsn string) ([]engine.Applied, error) {
+func (PGEngine) Applied(ctx context.Context, dsn string) ([]engine.Applied, []engine.Repeatable, error) {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("connect target: %w", err)
+		return nil, nil, fmt.Errorf("connect target: %w", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	return engine.ListApplied(ctx, conn)
+	return listApplied(ctx, conn)
+}
+
+func listApplied(ctx context.Context, db engine.DB) ([]engine.Applied, []engine.Repeatable, error) {
+	applied, err := engine.ListApplied(ctx, db)
+	if err != nil {
+		return nil, nil, err
+	}
+	reps, err := engine.ListRepeatables(ctx, db)
+
+	return applied, reps, err
 }
 
 // Observe implements Engine: history and schema read over one connection.
@@ -124,6 +134,9 @@ func observe(ctx context.Context, db engine.DB) (Observation, error) {
 	obs := Observation{At: time.Now().UTC()}
 	var err error
 	if obs.Applied, err = engine.ListApplied(ctx, db); err != nil {
+		return Observation{}, err
+	}
+	if obs.Repeatables, err = engine.ListRepeatables(ctx, db); err != nil {
 		return Observation{}, err
 	}
 	if obs.Definition, obs.Fingerprint, err = engine.Snapshot(ctx, db); err != nil {

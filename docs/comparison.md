@@ -2,14 +2,14 @@
 
 godwit against Flyway, Liquibase and Atlas, as of the code on `main`. Written by the godwit side; the other columns come from their public documentation (linked at the end), not from running them. Where godwit lacks something, it says so.
 
-godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, and it is a service rather than a CLI. If you need another database, a DSL, or declarative schema-as-code, stop reading: it is not a fit.
+godwit is narrower on purpose: PostgreSQL only, plain SQL only, and it is a service rather than a CLI. If you need another database, a DSL, or declarative schema-as-code, stop reading: it is not a fit.
 
 ## Feature by feature
 
 | Capability | godwit | Flyway | Liquibase | Atlas |
 |---|---|---|---|---|
 | Databases | PostgreSQL | many | many | many |
-| Migration format | plain SQL, up + down required | SQL, Java | XML/YAML/JSON/SQL changelogs | SQL, HCL, ORM-derived |
+| Migration format | plain SQL, up + down required, versioned or repeatable | SQL, Java | XML/YAML/JSON/SQL changelogs | SQL, HCL, ORM-derived |
 | Schema history | `godwit.migrations` in the target, plus per-statement `godwit.runs`/`godwit.journal`; run history in the service store | `flyway_schema_history` | `DATABASECHANGELOG` | `atlas_schema_revisions` |
 | Checksum validation | yes: applied version with a different checksum refuses; resume refuses if a statement's hash changed; `lint --base` flags edited merged files (`E003`) | `validate` | checksum on changesets | `atlas.sum` file |
 | Repair / realign checksums | no, by design; write a new migration | `repair` | `clearCheckSums` | `migrate hash` |
@@ -24,7 +24,7 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 | Out-of-order migrations | refused unless `--allow-out-of-order` | refused unless `outOfOrder=true` | allowed by default | refused by default (`--exec-order`) |
 | Baseline an existing database | `BaselineTarget` (target's journal must be empty) | `baseline` | `changelogSync` | `migrate set` |
 | Target version (`--to`) | no; send fewer files | `-target` | `update-to-tag`/count | `migrate apply N` |
-| Repeatable migrations | no | `R__` migrations | `runOnChange` / `runAlways` | no |
+| Repeatable migrations | `R__<name>.up.sql` + `.down.sql`: no version, applied after the run's versioned files when the checksum differs from `godwit.repeatables`, part of the plan key and the hazard gate; no `runAlways` | `R__` migrations | `runOnChange` / `runAlways` | no |
 | Placeholders / templating | no; template in the pipeline | placeholders | properties | template dirs |
 | SQL hooks (before/after) | no; webhook and Slack notifications only | callbacks | not built in | no |
 | `search_path` per target | `--search-path app,public` on the target: every session (run, revert, plan, diff, scratch validation) sets it; journal stays schema-qualified in `godwit` and `godwit` is refused on the path | `schemas` | `defaultSchemaName` | `--schema` |
@@ -46,7 +46,6 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 
 ## What godwit does not have, and why
 
-- **Repeatable migrations.** A view or function file that re-applies whenever its content changes conflicts with "the journal is the truth" unless modelled as checksum-keyed re-runs. Planned for after v1; today, put the `CREATE OR REPLACE` in a versioned migration.
 - **`--to <version>`.** Send fewer files. A client-side filter is planned; the service does not need to change.
 - **Retention command.** Growth is one journal row per statement and one file body per run; the SQL to prune is in [operations](operations.md#retention).
 - **SQL hooks.** Notifications are the operational hook. Running SQL before or after a run needs a design decision (per run or per migration) that has not been taken.

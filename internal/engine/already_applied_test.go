@@ -182,7 +182,7 @@ func TestMarkErrorPaths(t *testing.T) {
 	expectBootstrap(mock)
 	expectNotApplied(mock)
 	mock.ExpectQuery("FROM pg_index").WillReturnRows(pgxmock.NewRows([]string{"name"}))
-	mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), int64(1)).WillReturnError(errBoom)
+	mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
 	wantErr(t, must2(exec.Up(ctx, up)), "insert run")
 
 	mock, exec = newMockExec(t)
@@ -190,7 +190,7 @@ func TestMarkErrorPaths(t *testing.T) {
 	expectBootstrap(mock)
 	expectNotApplied(mock)
 	mock.ExpectQuery("FROM pg_index").WillReturnRows(pgxmock.NewRows([]string{"name"}))
-	mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), int64(1)).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec("INSERT INTO godwit.runs").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO godwit.migrations").WithArgs(int64(1), "m", "c").WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec("UPDATE godwit.runs SET state = 'succeeded'").WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("UPDATE", 1))

@@ -393,7 +393,7 @@ func TestAppliedVersions(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.AppliedVersions(ctx, "app"); err != nil || len(got) != 0 {
+	if got, err := s.Applied(ctx, "app"); err != nil || len(got.Versions) != 0 || len(got.Repeatables) != 0 {
 		t.Fatalf("empty target = %v, err = %v", got, err)
 	}
 	first, second, third := "77777777-0000-0000-0000-000000000001", "77777777-0000-0000-0000-000000000002", "77777777-0000-0000-0000-000000000003"
@@ -402,7 +402,10 @@ func TestAppliedVersions(t *testing.T) {
 		"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;",
 	})
 	queueRun(t, s, second, map[string]string{"20260901120002_b.up.sql": upBody, "20260901120002_b.down.sql": "SELECT 1;"})
-	queueRun(t, s, third, map[string]string{"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;"})
+	queueRun(t, s, third, map[string]string{
+		"20260901120001_a.up.sql": upBody, "20260901120001_a.down.sql": "SELECT 1;",
+		"R__v.up.sql": "CREATE OR REPLACE VIEW v AS SELECT 1;", "R__v.down.sql": "DROP VIEW IF EXISTS v;",
+	})
 	if err := s.Finish(ctx, first, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -413,8 +416,11 @@ func TestAppliedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := s.AppliedVersions(ctx, "app")
-	if err != nil || !slices.Equal(got, []int64{20260901120001, 20260901120003}) {
+	got, err := s.Applied(ctx, "app")
+	if err != nil || !slices.Equal(got.Versions, []int64{20260901120001, 20260901120003}) {
 		t.Fatalf("applied = %v, err = %v", got, err)
+	}
+	if want := checksum("CREATE OR REPLACE VIEW v AS SELECT 1;"); got.Repeatables["v"] != want {
+		t.Fatalf("repeatables = %v", got.Repeatables)
 	}
 }

@@ -56,7 +56,21 @@ func statusToProto(st controlplane.TargetStatus, migs []engine.Migration) *godwi
 		byVersion[a.Version] = pb
 		out.Applied = append(out.Applied, pb)
 	}
+	recorded := make(map[string]string, len(st.Repeatables))
+	for _, r := range st.Repeatables {
+		recorded[r.Name] = r.Checksum
+		out.Applied = append(out.Applied, &godwitv1.AppliedMigration{
+			Name: r.Name, Repeatable: true, Checksum: r.Checksum, AppliedAt: timestamppb.New(r.AppliedAt),
+		})
+	}
 	for _, m := range migs {
+		if m.Repeatable {
+			if recorded[m.Name] != m.Checksum {
+				out.Pending = append(out.Pending, &godwitv1.PendingMigration{Name: m.Name, Repeatable: true})
+			}
+
+			continue
+		}
 		if pb, ok := byVersion[m.Version]; ok {
 			pb.ChecksumMismatch = pb.Checksum != m.Checksum
 

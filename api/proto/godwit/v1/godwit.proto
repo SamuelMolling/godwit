@@ -177,6 +177,8 @@ message PlannedMigration {
   string effect = 8;
   // Why detection was refused for this migration, when it was.
   string note = 9;
+  // Has no version: an R__ file, applied after the versioned ones whenever its content differs from what the target recorded.
+  bool repeatable = 10;
 }
 
 message PlanRunResponse {
@@ -297,7 +299,8 @@ message BaselineTargetResponse {
 
 message GetTargetStatusRequest {
   string target = 1;
-  // Optional: when given, versions missing on the target are reported as pending and checksums are compared.
+  // Optional: when given, versions missing on the target and repeatables whose content changed are reported as pending,
+  // and checksums are compared.
   repeated MigrationFile files = 2;
 }
 
@@ -307,11 +310,15 @@ message AppliedMigration {
   string checksum = 3;
   google.protobuf.Timestamp applied_at = 4;
   bool checksum_mismatch = 5;
+  // Recorded in godwit.repeatables under name, with no version; the file matches what is recorded.
+  bool repeatable = 6;
 }
 
 message PendingMigration {
   int64 version = 1;
   string name = 2;
+  // An R__ file whose content differs from what the target recorded, or that it never recorded.
+  bool repeatable = 3;
 }
 
 message DriftBaseline {

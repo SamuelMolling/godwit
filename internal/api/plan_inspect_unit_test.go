@@ -24,9 +24,9 @@ type storedPlanRow struct {
 
 func expectPlanByID(mock pgxmock.PgxPoolIface, row storedPlanRow) {
 	mock.ExpectQuery("FROM cp_plans WHERE id = \\$1").WithArgs(planID).WillReturnRows(pgxmock.NewRows([]string{
-		"id", "target", "key", "rollout", "state", "history_hash", "applied", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
+		"id", "target", "key", "rollout", "state", "history_hash", "applied", "repeatables", "schema_fingerprint", "schema_definition", "search_path", "drift", "plan",
 		"validated", "acked", "allow_out_of_order", "created_by", "source", "created_at", "coalesce", "coalesce",
-	}).AddRow(planID, "app", row.key, row.rollout, row.state, controlplane.HistoryHash(row.applied), row.applied,
+	}).AddRow(planID, "app", row.key, row.rollout, row.state, controlplane.HistoryHash(row.applied, nil), row.applied, []engine.Repeatable{},
 		"f1", "table a\n", "public", "+ x", []controlplane.PlanMigration{}, true, []string{"H002"}, true, "ci", "repo@sha", row.createdAt, row.runID, row.supersededBy))
 }
 
@@ -36,7 +36,7 @@ func readyRow(t *testing.T) storedPlanRow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := controlplane.Pending(migrations(spec.plans), nil)
+	pending, err := controlplane.Pending(migrations(spec.plans), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestGetPlanUnit(t *testing.T) {
 	if p.Id != planID || p.Target != "app" || p.Key != row.key || p.Rollout != "direct" || p.State != "ready" || p.Drift != "+ x" ||
 		!p.Validated || p.AcknowledgedHazards[0] != "H002" || !p.AllowOutOfOrder || p.CreatedBy != "ci" || p.Source != "repo@sha" ||
 		p.CreatedAt == nil || p.RunId != "r1" || p.SupersededBy != "p2" || p.Observed.AppliedCount != 2 || p.Observed.NewestApplied != 3 ||
-		p.Observed.HistoryHash != controlplane.HistoryHash(row.applied) || p.Observed.SchemaFingerprint != "f1" {
+		p.Observed.HistoryHash != controlplane.HistoryHash(row.applied, nil) || p.Observed.SchemaFingerprint != "f1" {
 		t.Fatalf("plan = %+v", p)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
