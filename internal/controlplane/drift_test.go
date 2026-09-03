@@ -265,6 +265,9 @@ func TestValidator(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s2, pool := newStore(t)
+	if err := s2.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
+		t.Fatal(err)
+	}
 	v := NewValidator(pool, s2, func() string { return strings.ReplaceAll(uuid.NewString(), "-", "") })
 
 	good, err := buildPlans([]engine.Migration{{

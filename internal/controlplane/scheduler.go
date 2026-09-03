@@ -140,6 +140,9 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	}
 	// Watchers must find the snapshot once they see the final state.
 	s.baseline(ctx, run, log)
+	if held.plans == 0 {
+		s.retire(ctx, run, log)
+	}
 	if held.plans > 0 {
 		log.Info("expand phase applied; awaiting rollout confirmation", "held", held.plans, "held_statements", held.statements)
 		finish(StateAwaitingContract, "")
@@ -230,6 +233,9 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	if err != nil {
 		return heldWork{}, err
 	}
+	if plans, err = s.expanded(ctx, run, plans, dir); err != nil {
+		return heldWork{}, err
+	}
 	var held heldWork
 	if run.Reverts == "" && run.Phase != PhaseContract {
 		policy, ok := s.policies[run.Rollout]
@@ -255,7 +261,65 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 		}
 	}
 
-	return held, s.engine.Apply(ctx, ApplyRequest{RunID: run.ID, Target: run.Target, DSN: tg.dsn, Plans: plans, Opts: opts})
+	return held, s.engine.Apply(ctx, ApplyRequest{
+		RunID: run.ID, Target: run.Target, DSN: tg.dsn, Plans: plans, Opts: opts, Progress: s.progress(ctx, run.ID),
+	})
+}
+
+// expanded swaps in the directive expansions frozen when the run was created, so the contract phase
+// resumes the very statements the expand phase journalled.
+func (s *Scheduler) expanded(ctx context.Context, run Run, plans []engine.Plan, dir engine.Direction) ([]engine.Plan, error) {
+	if dir == engine.DirectionUp {
+		return ExpandUp(plans, run.Expansions)
+	}
+	orig, err := s.store.Run(ctx, run.Reverts)
+	if err != nil {
+		return nil, err
+	}
+
+	return ExpandDown(plans, orig.Expansions, orig.State == StateAwaitingContract)
+}
+
+// progress records the newest statement event under the heartbeat, so a backfill that runs for an hour
+// is visible without notifying once per batch.
+func (s *Scheduler) progress(ctx context.Context, runID string) func(engine.StatementEvent) {
+	return func(ev engine.StatementEvent) {
+		p := RunProgress{
+			Migration: ev.Migration, Statement: ev.Index, Phase: ev.Statement.Phase,
+			RowsDone: ev.RowsDone, RowsTotal: ev.RowsTotal, Batches: ev.Batches,
+		}
+		if err := s.store.SaveProgress(ctx, runID, p); err != nil {
+			s.log.Warn("progress not recorded", "run", runID, "error", err)
+		}
+	}
+}
+
+// retire records the columns a completed run left behind as its rollback, and clears the ones a revert
+// just renamed back, so a desired-schema diff stops proposing to drop them.
+func (s *Scheduler) retire(ctx context.Context, run Run, log *slog.Logger) {
+	exps := run.Expansions
+	if run.Reverts != "" {
+		orig, err := s.store.Run(ctx, run.Reverts)
+		if err != nil {
+			log.Warn("retired columns skipped", "error", err)
+
+			return
+		}
+		exps = orig.Expansions
+	}
+	for migration, cols := range Retired(exps) {
+		if err := s.record(ctx, run, migration, cols); err != nil {
+			log.Warn("retired columns not recorded", "migration", migration, "error", err)
+		}
+	}
+}
+
+func (s *Scheduler) record(ctx context.Context, run Run, migration string, cols []RetiredColumn) error {
+	if run.Reverts != "" {
+		return s.store.UnretireColumns(ctx, run.Target, cols)
+	}
+
+	return s.store.RetireColumns(ctx, run.Target, run.ID, migration, cols)
 }
 
 func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.Plan, dsn string) ([]engine.Plan, error) {

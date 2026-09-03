@@ -35,6 +35,54 @@ type SchemaDiff struct {
 	UpSQL    string
 	DownSQL  string
 	Drift    []string
+	// Retained names the retired columns whose drop was taken out of UpSQL.
+	Retained []string
+}
+
+// keepRetired drops the statements that would remove a column a change-type kept as its rollback; the
+// ORM never knew about it, so every diff would otherwise propose the same drop again.
+func keepRetired(sql string, retired []RetiredColumn) (string, []string) {
+	if sql == "" || len(retired) == 0 {
+		return sql, nil
+	}
+	kept := make([]string, 0, len(retired))
+	lines := make([]string, 0, len(retired))
+	for _, l := range strings.Split(sql, "\n") {
+		if c, ok := dropsRetired(l, retired); ok {
+			kept = append(kept, c.String())
+
+			continue
+		}
+		lines = append(lines, l)
+	}
+
+	return strings.Join(lines, "\n"), kept
+}
+
+func dropsRetired(line string, retired []RetiredColumn) (RetiredColumn, bool) {
+	for _, c := range retired {
+		if mentions(line, c.Schema, c.Table) && mentions(line, "DROP COLUMN "+c.Column) {
+			return c, true
+		}
+	}
+
+	return RetiredColumn{}, false
+}
+
+// mentions matches a reference however the generator quoted it: pg-schema-diff always quotes, godwit's
+// own recipes only where PostgreSQL requires it.
+func mentions(line string, parts ...string) bool {
+	prefix := ""
+	if n := strings.LastIndex(parts[len(parts)-1], " "); n >= 0 {
+		prefix, parts[len(parts)-1] = parts[len(parts)-1][:n+1], parts[len(parts)-1][n+1:]
+	}
+	bare := make([]string, 0, len(parts))
+	for _, p := range parts {
+		bare = append(bare, engine.Ident(p))
+	}
+
+	return strings.Contains(line, prefix+pgx.Identifier(parts).Sanitize()) ||
+		strings.Contains(line, prefix+strings.Join(bare, "."))
 }
 
 // Differ generates the migration between a target's live schema and a desired DDL applied on a scratch database.
@@ -89,6 +137,11 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string) (SchemaDiff, erro
 	if out.UpSQL, err = generate(ctx, live, desired.ConnPool, factory); err != nil {
 		return SchemaDiff{}, fmt.Errorf("diff live to desired: %w", err)
 	}
+	retired, err := d.sched.store.RetiredColumns(ctx, target)
+	if err != nil {
+		return SchemaDiff{}, err
+	}
+	out.UpSQL, out.Retained = keepRetired(out.UpSQL, retired)
 	if out.DownSQL, err = generate(ctx, desired.ConnPool, live, factory); err != nil {
 		return SchemaDiff{}, fmt.Errorf("diff desired to live: %w", err)
 	}

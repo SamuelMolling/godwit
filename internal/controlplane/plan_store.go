@@ -15,7 +15,7 @@ import (
 )
 
 const planColumns = `id, target, key, rollout, state, history_hash, applied, repeatables, schema_fingerprint, schema_definition, search_path, drift, plan,
-	validated, acked, allow_out_of_order, created_by, source, created_at, coalesce(run_id::text, ''), coalesce(superseded_by::text, '')`
+	validated, acked, allow_out_of_order, created_by, source, created_at, coalesce(run_id::text, ''), coalesce(superseded_by::text, ''), expansions`
 
 // SavePlan stores a ready plan with its files; a ready plan with the same key on the target is replaced.
 func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) error {
@@ -33,11 +33,11 @@ func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) e
 	if _, err := s.pool.Exec(ctx, `
 		WITH p AS (
 			INSERT INTO cp_plans (id, target, key, rollout, state, history_hash, applied, schema_fingerprint, schema_definition,
-				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash, search_path, repeatables)
-			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18, $19, $20)
+				drift, plan, validated, acked, allow_out_of_order, created_by, source, files_hash, search_path, repeatables, expansions)
+			VALUES ($1, $2, $3, $4, 'ready', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $18, $19, $20, $21)
 			ON CONFLICT (target, key) WHERE state = 'ready' DO UPDATE SET
 				id = EXCLUDED.id, rollout = EXCLUDED.rollout, history_hash = EXCLUDED.history_hash, applied = EXCLUDED.applied,
-				repeatables = EXCLUDED.repeatables,
+				repeatables = EXCLUDED.repeatables, expansions = EXCLUDED.expansions,
 				schema_fingerprint = EXCLUDED.schema_fingerprint, schema_definition = EXCLUDED.schema_definition,
 				drift = EXCLUDED.drift, plan = EXCLUDED.plan, validated = EXCLUDED.validated, acked = EXCLUDED.acked,
 				allow_out_of_order = EXCLUDED.allow_out_of_order, created_by = EXCLUDED.created_by, source = EXCLUDED.source,
@@ -47,7 +47,7 @@ func (s *Store) SavePlan(ctx context.Context, p Plan, files map[string]string) e
 		SELECT (SELECT id FROM p), n, b FROM unnest($16::text[], $17::text[]) AS f (n, b)`,
 		p.ID, p.Target, p.Key, p.Rollout, p.HistoryHash, jsonOf(p.Applied), p.SchemaFingerprint, p.SchemaDefinition,
 		p.Drift, jsonOf(p.Migrations), p.Validated, append([]string{}, p.Acked...), p.AllowOutOfOrder, p.CreatedBy, p.Source, names, bodies,
-		FilesHash(files), p.SearchPath, jsonOf(p.Repeatables)); err != nil {
+		FilesHash(files), p.SearchPath, jsonOf(p.Repeatables), jsonOf(orEmpty(p.Expansions))); err != nil {
 		return fmt.Errorf("save plan: %w", err)
 	}
 
@@ -230,9 +230,18 @@ func scanPlan(row pgx.Row) (Plan, error) {
 	var p Plan
 	err := row.Scan(&p.ID, &p.Target, &p.Key, &p.Rollout, &p.State, &p.HistoryHash, &p.Applied, &p.Repeatables, &p.SchemaFingerprint,
 		&p.SchemaDefinition, &p.SearchPath, &p.Drift, &p.Migrations, &p.Validated, &p.Acked, &p.AllowOutOfOrder, &p.CreatedBy,
-		&p.Source, &p.CreatedAt, &p.RunID, &p.SupersededBy)
+		&p.Source, &p.CreatedAt, &p.RunID, &p.SupersededBy, &p.Expansions)
 
 	return p, err
+}
+
+// orEmpty keeps a nil map out of the column: jsonb is NOT NULL and 'null' is not an object.
+func orEmpty(m map[string]Expansion) map[string]Expansion {
+	if m == nil {
+		return map[string]Expansion{}
+	}
+
+	return m
 }
 
 // FilesHash identifies a set of submitted files independent of what is pending; the retry migration computes the same value in SQL.

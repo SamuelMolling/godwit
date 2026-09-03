@@ -86,7 +86,7 @@ func TestBuildPlanMigrationsAndSameStatements(t *testing.T) {
 	t.Parallel()
 	a := mig(1, "a", "CREATE TABLE a (id int);")
 	b := mig(2, "b", "ALTER TABLE a DROP COLUMN id;\nCREATE INDEX CONCURRENTLY i ON a (id);")
-	ms := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), AppliedSet{Versions: []int64{1}})
+	ms := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), AppliedSet{Versions: []int64{1}}, nil)
 	if len(ms) != 2 || !ms[0].Applied || ms[0].Phase != PhaseExpand || ms[1].Applied || ms[1].Phase != PhaseContract ||
 		ms[1].Checksum != b.Checksum || len(ms[1].Statements) != 2 || !ms[1].Statements[1].NoTx ||
 		len(ms[1].Statements[0].Hazards) == 0 || ms[1].Statements[0].Hazards[0].Code == "" {
@@ -97,18 +97,18 @@ func TestBuildPlanMigrationsAndSameStatements(t *testing.T) {
 		t.Fatalf("pending = %+v", pending)
 	}
 
-	again := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), AppliedSet{})
+	again := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, b), AppliedSet{}, nil)
 	if !SameStatements(p.Pending(), again[1:]) {
 		t.Fatal("same files must have the same statements regardless of the applied flag")
 	}
 	if SameStatements(ms, again[1:]) {
 		t.Fatal("different lengths must differ")
 	}
-	direct := BuildPlanMigrations(RolloutDirect, planFor(t, a, b), AppliedSet{})
+	direct := BuildPlanMigrations(RolloutDirect, planFor(t, a, b), AppliedSet{}, nil)
 	if SameStatements(ms, direct) {
 		t.Fatal("phase changes must differ")
 	}
-	edited := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, mig(2, "b", "ALTER TABLE a DROP COLUMN id;")), AppliedSet{})
+	edited := BuildPlanMigrations(RolloutExpandContract, planFor(t, a, mig(2, "b", "ALTER TABLE a DROP COLUMN id;")), AppliedSet{}, nil)
 	if SameStatements(ms, edited) {
 		t.Fatal("statement changes must differ")
 	}

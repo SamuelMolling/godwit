@@ -91,7 +91,7 @@ func TestBuildPlanMigrationsRepeatable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ms := BuildPlanMigrations(RolloutDirect, plans, AppliedSet{Versions: []int64{1}})
+	ms := BuildPlanMigrations(RolloutDirect, plans, AppliedSet{Versions: []int64{1}}, nil)
 	if len(ms) != 2 || !ms[1].Repeatable || ms[1].ID() != "R__stats" || ms[1].Applied {
 		t.Fatalf("migrations = %+v", ms)
 	}
@@ -99,7 +99,7 @@ func TestBuildPlanMigrationsRepeatable(t *testing.T) {
 		t.Fatal("a repeatable the target has not recorded is pending")
 	}
 
-	ms = BuildPlanMigrations(RolloutDirect, plans, AppliedSet{Repeatables: map[string]string{"stats": stats.Checksum}})
+	ms = BuildPlanMigrations(RolloutDirect, plans, AppliedSet{Repeatables: map[string]string{"stats": stats.Checksum}}, nil)
 	if !ms[1].Applied || ms[0].Applied {
 		t.Fatalf("migrations = %+v", ms)
 	}

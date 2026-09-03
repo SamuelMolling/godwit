@@ -55,10 +55,20 @@ type PlanHazard struct {
 	Recipe string `json:"recipe,omitempty"`
 }
 
+// PlanBatch describes a statement the executor runs as a resumable loop instead of once.
+type PlanBatch struct {
+	Key   string `json:"key"`
+	Kind  string `json:"kind"`
+	Size  int    `json:"size"`
+	Pause string `json:"pause,omitempty"`
+}
+
 // PlanStatement is one classified statement of a stored plan.
 type PlanStatement struct {
 	SQL     string       `json:"sql"`
 	NoTx    bool         `json:"no_tx,omitempty"`
+	Phase   string       `json:"phase,omitempty"`
+	Batch   *PlanBatch   `json:"batch,omitempty"`
 	Hazards []PlanHazard `json:"hazards,omitempty"`
 }
 
@@ -75,6 +85,11 @@ type PlanMigration struct {
 	AlreadyApplied bool   `json:"already_applied,omitempty"`
 	Effect         string `json:"effect,omitempty"`
 	Note           string `json:"note,omitempty"`
+
+	Directives []string `json:"directives,omitempty"`
+	Expanded   bool     `json:"expanded,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
+	Expansion  string   `json:"expansion,omitempty"`
 }
 
 // ID identifies the migration in plan keys and reports.
@@ -105,6 +120,7 @@ type Plan struct {
 	CreatedAt         time.Time
 	RunID             string
 	SupersededBy      string
+	Expansions        map[string]Expansion
 }
 
 // Pending returns the migrations the plan would run.
@@ -195,7 +211,7 @@ func (a AppliedSet) has(m engine.Migration) bool {
 }
 
 // BuildPlanMigrations records what admission decided for each plan: phase under the rollout and whether it is applied.
-func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet) []PlanMigration {
+func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet, exps map[string]Expansion) []PlanMigration {
 	expand, _ := Policies()[rollout].Split(plans)
 	out := make([]PlanMigration, 0, len(plans))
 	for i, p := range plans {
@@ -208,6 +224,9 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet
 			Checksum: p.Migration.Checksum, Applied: applied.has(p.Migration), Phase: phase,
 		}
 		pm.Statements = PlanStatements(p.Statements)
+		if exp, ok := exps[pm.ID()]; ok {
+			pm.Directives, pm.Expanded, pm.Notes, pm.Expansion = exp.Lines, true, exp.Notes, exp.Hash
+		}
 		out = append(out, pm)
 	}
 
@@ -218,7 +237,10 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet
 func PlanStatements(sts []engine.Statement) []PlanStatement {
 	var out []PlanStatement
 	for _, st := range sts {
-		ps := PlanStatement{SQL: st.SQL, NoTx: st.NoTx}
+		ps := PlanStatement{SQL: st.SQL, NoTx: st.NoTx, Phase: st.Phase}
+		if st.Batch != nil {
+			ps.Batch = &PlanBatch{Key: st.Batch.Key, Kind: st.Batch.KeyKind, Size: st.Batch.Size, Pause: pauseText(st.Batch.Pause)}
+		}
 		for _, h := range st.Hazards {
 			ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 		}
@@ -287,13 +309,13 @@ func SameStatements(a, b []PlanMigration) bool {
 func shape(ms []PlanMigration) string {
 	var b strings.Builder
 	for _, m := range ms {
-		fmt.Fprintf(&b, "%s %s %s %t\n", m.ID(), m.Checksum, m.Phase, m.AlreadyApplied)
+		fmt.Fprintf(&b, "%s %s %s %t %s\n", m.ID(), m.Checksum, m.Phase, m.AlreadyApplied, m.Expansion)
 		for _, st := range m.Statements {
 			codes := make([]string, 0, len(st.Hazards))
 			for _, h := range st.Hazards {
 				codes = append(codes, h.Code)
 			}
-			fmt.Fprintf(&b, "  %s %t %s\n", sum(st.SQL), st.NoTx, strings.Join(codes, ","))
+			fmt.Fprintf(&b, "  %s %t %s %s\n", sum(st.SQL), st.NoTx, st.Phase, strings.Join(codes, ","))
 		}
 	}
 
@@ -548,6 +570,14 @@ func names(ms []PlanMigration) string {
 	}
 
 	return strings.Join(parts, ", ")
+}
+
+func pauseText(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+
+	return d.String()
 }
 
 func sum(s string) string {

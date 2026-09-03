@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -22,6 +23,9 @@ var (
 
 // Validator replays a target's history on a scratch database and applies new plans on top.
 type Validator struct {
+	// Expander renders `-- godwit:` directives against the scratch catalog before each plan is applied.
+	Expander *Expander
+
 	pool  *pgxpool.Pool
 	store *Store
 	newID func() string
@@ -29,7 +33,7 @@ type Validator struct {
 
 // NewValidator wires a Validator over the control-plane pool.
 func NewValidator(pool *pgxpool.Pool, store *Store, newID func() string) *Validator {
-	return &Validator{pool: pool, store: store, newID: newID}
+	return &Validator{Expander: NewExpander(), pool: pool, store: store, newID: newID}
 }
 
 // Validation is what the scratch database looked like after the history and after each plan in turn.
@@ -37,11 +41,20 @@ type Validation struct {
 	Base         string
 	Effects      [][]string
 	Fingerprints []string
+	// Expansions is the SQL godwit generated per migration id, empty when no plan carried a directive.
+	Expansions map[string]Expansion
+	// Plans is the validated set: every directive migration replaced by its expansion.
+	Plans []engine.Plan
 }
 
 // Validate replays the history, applies each plan on top and snapshots the schema after every step.
 func (v *Validator) Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (Validation, error) {
 	history, err := v.store.HistoryFiles(ctx, target)
+	if err != nil {
+		return Validation{}, err
+	}
+
+	expander, err := v.expander(ctx, target)
 	if err != nil {
 		return Validation{}, err
 	}
@@ -66,9 +79,12 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 		return Validation{}, err
 	}
 
-	for i, files := range history {
-		histPlans, err := PlansFromFiles(files, engine.DirectionUp)
+	for i, run := range history {
+		histPlans, err := PlansFromFiles(run.Files, engine.DirectionUp)
 		if err != nil {
+			return Validation{}, fmt.Errorf("history run %d: %w", i, err)
+		}
+		if histPlans, err = ExpandUp(histPlans, run.Expansions); err != nil {
 			return Validation{}, fmt.Errorf("history run %d: %w", i, err)
 		}
 		if _, err := applyPlans(ctx, conn, engine.Options{}, histPlans); err != nil {
@@ -76,7 +92,24 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 		}
 	}
 
-	return validateEach(ctx, conn, plans)
+	return expander.validateEach(ctx, conn, plans)
+}
+
+// expander applies the target's keep_old default over the service's; a directive can still override it.
+func (v *Validator) expander(ctx context.Context, target string) (*Validator, error) {
+	_, config, err := v.store.Target(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if config[ConfigKeepOld] == "" {
+		return v, nil
+	}
+	next := *v
+	x := *v.Expander
+	x.KeepOld = config[ConfigKeepOld] != "false"
+	next.Expander = &x
+
+	return &next, nil
 }
 
 // The scratch role is not the target's; without this, unqualified names land in a different schema than on the target.
@@ -101,13 +134,19 @@ func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) er
 	return nil
 }
 
-func validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan) (Validation, error) {
+// validateEach applies the plans in order, expanding each directive migration against the catalog the
+// ones before it left behind, and snapshots the schema after every step.
+func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan) (Validation, error) {
 	def, fp, err := snapshotScratch(ctx, conn)
 	if err != nil {
 		return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
 	}
-	val := Validation{Base: def, Fingerprints: []string{fp}}
-	for _, p := range plans {
+	val := Validation{Base: def, Fingerprints: []string{fp}, Expansions: map[string]Expansion{}, Plans: slices.Clone(plans)}
+	for i, p := range val.Plans {
+		if p, err = v.expandPlan(ctx, conn, p, val.Expansions); err != nil {
+			return Validation{}, err
+		}
+		val.Plans[i] = p
 		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}); err != nil {
 			return Validation{}, fmt.Errorf("%w: %w", ErrValidationFailed, err)
 		}
@@ -121,4 +160,55 @@ func validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan) (Val
 	}
 
 	return val, nil
+}
+
+// expandPlan renders an up plan's directives; a down plan is already carrying the inverse its run froze.
+func (v *Validator) expandPlan(ctx context.Context, conn engine.DB, p engine.Plan, into map[string]Expansion) (engine.Plan, error) {
+	if len(p.Migration.Directives) == 0 || p.Direction != engine.DirectionUp {
+		return p, nil
+	}
+	exp, err := v.Expander.Expand(ctx, conn, p.Migration)
+	if err != nil {
+		return engine.Plan{}, err
+	}
+	into[exp.ID] = exp
+
+	return ExpandPlan(p, exp)
+}
+
+// ExpandPlan rebuilds a plan from its frozen expansion; the migration keeps the checksum of the file,
+// so the target records what the pull request carried and not what godwit generated from it.
+func ExpandPlan(p engine.Plan, exp Expansion) (engine.Plan, error) {
+	m := p.Migration
+	m.UpSQL, m.DownSQL = exp.UpSQL, exp.DownSQL
+	out, err := engine.BuildPlan(m, p.Direction)
+	if err != nil {
+		return engine.Plan{}, fmt.Errorf("%w: %s: expansion does not parse: %w", ErrDirective, exp.ID, err)
+	}
+	if p.Direction == engine.DirectionDown {
+		// The whole body is generated, so the hazard gate has nothing of the author's to warn about.
+		for i := range out.Statements {
+			out.Statements[i].Hazards = nil
+		}
+
+		return out, nil
+	}
+	if len(out.Statements) != len(exp.Phase) {
+		return engine.Plan{}, fmt.Errorf("%w: %s: expansion has %d statements, recorded %d",
+			ErrDirective, exp.ID, len(out.Statements), len(exp.Phase))
+	}
+	for i := range out.Statements {
+		st := &out.Statements[i]
+		st.Phase = exp.Phase[i]
+		if st.Phase == "" {
+			continue
+		}
+		// godwit generated these; the hazard gate speaks about what the author wrote.
+		st.Hazards = nil
+		if b := exp.Batches[i]; b != nil {
+			st.Batch, st.Verifier = b, engine.VerifierBatch
+		}
+	}
+
+	return out, nil
 }

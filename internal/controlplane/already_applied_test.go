@@ -126,7 +126,7 @@ func detectFixture(t *testing.T, sql ...string) ([]PlanMigration, []engine.Plan,
 		val.Fingerprints = append(val.Fingerprints, "f"+string(rune('1'+i)))
 	}
 
-	return BuildPlanMigrations(RolloutDirect, plans, AppliedSet{}), plans, val
+	return BuildPlanMigrations(RolloutDirect, plans, AppliedSet{}, nil), plans, val
 }
 
 func TestDetectPrefix(t *testing.T) {
@@ -216,7 +216,7 @@ func (observeFails) Observe(context.Context, string) (Observation, error) {
 
 func markRun(t *testing.T, s *Store, id, planID string) {
 	t.Helper()
-	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, planID); err != nil {
+	if err := s.CreateRun(context.Background(), id, "app", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, planID, nil); err != nil {
 		t.Fatal(err)
 	}
 }

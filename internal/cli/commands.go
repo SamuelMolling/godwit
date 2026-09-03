@@ -56,6 +56,34 @@ type planItem struct {
 	alreadyApplied bool
 	effect         string
 	note           string
+	directives     []string
+	expanded       bool
+	notes          []string
+}
+
+func (p planItem) phaseSplit() (expand, contract int) {
+	for _, st := range p.Statements {
+		if st.Phase == engine.PhaseContract {
+			contract++
+
+			continue
+		}
+		expand++
+	}
+
+	return expand, contract
+}
+
+func (p planItem) directiveSuffix() string {
+	if !p.expanded {
+		return ""
+	}
+	expand, contract := p.phaseSplit()
+	if contract == 0 {
+		return "   directive, expanded"
+	}
+
+	return fmt.Sprintf("   directive, expand %d / contract %d", expand, contract)
 }
 
 type planObservation struct {
@@ -221,15 +249,57 @@ func writePlanText(w io.Writer, r planReport) {
 		fmt.Fprint(w, r.driftBlock("drift since baseline:", "  ", "", ""))
 	}
 	for _, p := range r.items {
-		fmt.Fprintf(w, "%s (%s): %d statement(s)%s\n", p.Migration.ID(), p.Direction, len(p.Statements), p.liveSuffix())
+		fmt.Fprintf(w, "%s (%s): %d statement(s)%s%s\n", p.Migration.ID(), p.Direction, len(p.Statements),
+			p.liveSuffix(), p.directiveSuffix())
+		for _, d := range p.directives {
+			fmt.Fprintln(w, "  "+d)
+		}
 		for i, st := range p.Statements {
-			fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(st), firstLine(st.SQL))
+			fmt.Fprintf(w, "  [%d] %-5s %s%s\n", i, statementMode(st), firstLine(st.SQL), phaseSuffix(st))
+			if b := st.Batch; b != nil {
+				fmt.Fprintf(w, "        batch over %s (%s), %d rows per transaction%s\n", b.Key, b.KeyKind, b.Size, pauseSuffix(b.Pause))
+			}
 			for _, h := range st.Hazards {
 				fmt.Fprintf(w, "        hazard %s: %s\n", h.Code, h.Detail)
 				writeRecipeText(w, "          ", h.Recipe)
 			}
 		}
+		for _, n := range p.notes {
+			fmt.Fprintln(w, "  note: "+n)
+		}
 	}
+}
+
+func phaseSuffix(st engine.Statement) string {
+	if st.Phase == "" {
+		return ""
+	}
+
+	return "   [" + st.Phase + "]"
+}
+
+func phaseLabel(st engine.Statement) string {
+	if st.Phase == "" {
+		return "expand"
+	}
+
+	return st.Phase
+}
+
+func pauseSuffix(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+
+	return ", pausing " + d.String()
+}
+
+func durationText(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+
+	return d.String()
 }
 
 func writePlanMarkdown(w io.Writer, r planReport) {
@@ -275,6 +345,7 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 			}
 		}
 	}
+	fmt.Fprint(w, r.expansionBlock())
 	fmt.Fprint(w, r.alreadyAppliedBlock())
 	if hazards > 0 {
 		fmt.Fprintf(w, "⚠️ %d hazard(s); acknowledge them with `--ack`\n", hazards)
@@ -314,6 +385,29 @@ func (r planReport) liveRule() string {
 	}
 
 	return ""
+}
+
+// expansionBlock renders each directive's generated SQL the way the hazard recipes are rendered.
+func (r planReport) expansionBlock() string {
+	var b strings.Builder
+	for _, p := range r.items {
+		if !p.expanded {
+			continue
+		}
+		for _, d := range p.directives {
+			fmt.Fprintf(&b, "<details><summary>expansion of <code>%s</code> (%d statements)</summary>\n\n```sql\n",
+				d, len(p.Statements))
+			for _, st := range p.Statements {
+				fmt.Fprintf(&b, "-- %s\n%s;\n", phaseLabel(st), st.SQL)
+			}
+			b.WriteString("```\n\n</details>\n\n")
+		}
+		for _, n := range p.notes {
+			fmt.Fprintf(&b, "note: %s\n\n", n)
+		}
+	}
+
+	return b.String()
 }
 
 func (r planReport) alreadyAppliedBlock() string {
@@ -384,7 +478,16 @@ type planJSON struct {
 type statementJSON struct {
 	SQL     string       `json:"sql"`
 	Mode    string       `json:"mode"`
+	Phase   string       `json:"phase,omitempty"`
+	Batch   *batchJSON   `json:"batch,omitempty"`
 	Hazards []hazardJSON `json:"hazards"`
+}
+
+type batchJSON struct {
+	Key   string `json:"key"`
+	Kind  string `json:"kind"`
+	Size  int    `json:"size"`
+	Pause string `json:"pause,omitempty"`
 }
 
 type hazardJSON struct {
@@ -395,11 +498,14 @@ type hazardJSON struct {
 
 type livePlanJSON struct {
 	planJSON
-	Applied        bool   `json:"applied"`
-	Phase          string `json:"phase"`
-	AlreadyApplied bool   `json:"already_applied,omitempty"`
-	Effect         string `json:"effect,omitempty"`
-	Note           string `json:"note,omitempty"`
+	Applied        bool     `json:"applied"`
+	Phase          string   `json:"phase"`
+	AlreadyApplied bool     `json:"already_applied,omitempty"`
+	Effect         string   `json:"effect,omitempty"`
+	Note           string   `json:"note,omitempty"`
+	Directives     []string `json:"directives,omitempty"`
+	Expanded       bool     `json:"expanded,omitempty"`
+	Notes          []string `json:"notes,omitempty"`
 }
 
 type dryRunJSON struct {
@@ -424,7 +530,11 @@ func toPlanJSON(p engine.Plan) planJSON {
 		for _, h := range st.Hazards {
 			hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 		}
-		pj.Statements = append(pj.Statements, statementJSON{SQL: st.SQL, Mode: statementMode(st), Hazards: hazards})
+		sj := statementJSON{SQL: st.SQL, Mode: statementMode(st), Phase: st.Phase, Hazards: hazards}
+		if b := st.Batch; b != nil {
+			sj.Batch = &batchJSON{Key: b.Key, Kind: b.KeyKind, Size: b.Size, Pause: durationText(b.Pause)}
+		}
+		pj.Statements = append(pj.Statements, sj)
 	}
 
 	return pj
@@ -441,6 +551,7 @@ func writePlanJSON(w io.Writer, r planReport) {
 			live.Migrations = append(live.Migrations, livePlanJSON{
 				planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase,
 				AlreadyApplied: p.alreadyApplied, Effect: p.effect, Note: p.note,
+				Directives: p.directives, Expanded: p.expanded, Notes: p.notes,
 			})
 		}
 		out = live
@@ -472,11 +583,14 @@ func writeRecipeDetails(w io.Writer, summary, recipe string) {
 }
 
 func statementMode(st engine.Statement) string {
-	if st.NoTx {
+	switch {
+	case st.Batch != nil:
+		return "batch"
+	case st.NoTx:
 		return "no-tx"
+	default:
+		return "tx"
 	}
-
-	return "tx"
 }
 
 func firstLine(sql string) string {

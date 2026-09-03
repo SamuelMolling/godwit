@@ -7,11 +7,12 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// Target config keys holding the per-target timeouts and the plan requirement.
+// Target config keys holding the per-target timeouts, the plan requirement and the change-type default.
 const (
 	ConfigLockTimeout      = "lock_timeout"
 	ConfigStatementTimeout = "statement_timeout"
 	ConfigRequirePlan      = "require_plan"
+	ConfigKeepOld          = "keep_old"
 )
 
 // Timeouts are per-statement timeouts as Go duration strings; empty means inherit.

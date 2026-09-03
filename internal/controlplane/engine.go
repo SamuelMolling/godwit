@@ -19,6 +19,8 @@ type ApplyRequest struct {
 	DSN    string
 	Plans  []engine.Plan
 	Opts   engine.Options
+	// Progress receives every statement event; nil drops them.
+	Progress func(engine.StatementEvent)
 }
 
 // Engine applies plans to a target database, marks migrations applied and inspects its schema and journal.
@@ -44,18 +46,22 @@ func (e PGEngine) Apply(ctx context.Context, req ApplyRequest) error {
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	_, err = applyPlans(ctx, conn, req.Opts, req.Plans, engine.WithObserver(e.observer(req.RunID, req.Target)))
+	_, err = applyPlans(ctx, conn, req.Opts, req.Plans, engine.WithObserver(e.observer(req)))
 
 	return err
 }
 
-func (e PGEngine) observer(runID, target string) func(engine.StatementEvent) {
+func (e PGEngine) observer(req ApplyRequest) func(engine.StatementEvent) {
+	runID, target := req.RunID, req.Target
 	log := e.Log
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
 
 	return func(ev engine.StatementEvent) {
+		if req.Progress != nil {
+			req.Progress(ev)
+		}
 		kind := "tx"
 		switch {
 		case ev.Statement.Batch != nil:

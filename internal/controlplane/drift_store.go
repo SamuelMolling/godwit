@@ -120,10 +120,16 @@ func (s *Store) ResolveDrift(ctx context.Context, target string) (bool, error) {
 	return tag.RowsAffected() > 0, nil
 }
 
-// HistoryFiles returns the files of every succeeded run for a target, oldest first.
-func (s *Store) HistoryFiles(ctx context.Context, target string) ([]map[string]string, error) {
+// HistoryRun is one succeeded run: the files it carried and the directive expansions it ran in their place.
+type HistoryRun struct {
+	Files      map[string]string
+	Expansions map[string]Expansion
+}
+
+// HistoryFiles returns every succeeded run for a target, oldest first.
+func (s *Store) HistoryFiles(ctx context.Context, target string) ([]HistoryRun, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.run_id, f.name, f.body
+		SELECT f.run_id, f.name, f.body, r.expansions
 		FROM cp_run_files f
 		JOIN cp_runs r ON r.id = f.run_id
 		WHERE r.target = $1 AND r.state = 'succeeded'
@@ -132,15 +138,16 @@ func (s *Store) HistoryFiles(ctx context.Context, target string) ([]map[string]s
 		return nil, fmt.Errorf("list history files: %w", err)
 	}
 
-	var out []map[string]string
+	var out []HistoryRun
 	var lastRun string
 	var runID, name, body string
-	if _, err := pgx.ForEachRow(rows, []any{&runID, &name, &body}, func() error {
+	var exps map[string]Expansion
+	if _, err := pgx.ForEachRow(rows, []any{&runID, &name, &body, &exps}, func() error {
 		if runID != lastRun {
-			out = append(out, map[string]string{})
+			out = append(out, HistoryRun{Files: map[string]string{}, Expansions: exps})
 			lastRun = runID
 		}
-		out[len(out)-1][name] = body
+		out[len(out)-1].Files[name] = body
 
 		return nil
 	}); err != nil {

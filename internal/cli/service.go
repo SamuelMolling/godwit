@@ -64,12 +64,16 @@ func newTargetBaselineCmd() *cobra.Command {
 func newTargetAddCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.RegisterTargetRequest{}
+	var keepOld bool
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Register a target with its credential provider",
 		Args:  cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
 			req.Name = args[0]
+			if cmd.Flags().Changed("keep-old") {
+				req.KeepOld = &keepOld
+			}
 			resp, err := client.RegisterTarget(cmd.Context(), connect.NewRequest(req))
 			if err != nil {
 				return err
@@ -87,6 +91,7 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
 	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
 	cmd.Flags().StringVar(&req.SearchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
+	cmd.Flags().BoolVar(&keepOld, "keep-old", true, "change-type on this target keeps the pre-swap column as the rollback")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for runs on this target")
 	_ = cmd.MarkFlagRequired("provider")
 
@@ -215,7 +220,10 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 			Direction: engine.DirectionUp,
 		}
 		for _, ps := range pm.Statements {
-			st := engine.Statement{SQL: ps.Sql, NoTx: ps.NoTx}
+			st := engine.Statement{SQL: ps.Sql, NoTx: ps.NoTx, Phase: ps.Phase}
+			if b := ps.Batch; b != nil {
+				st.Batch = &engine.BatchSpec{Key: b.Key, KeyKind: b.Kind, Size: int(b.Size), Pause: parsePause(b.Pause)}
+			}
 			for _, h := range ps.Hazards {
 				st.Hazards = append(st.Hazards, engine.Hazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 			}
@@ -223,10 +231,17 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 		}
 		r.items = append(r.items, planItem{
 			Plan: p, applied: pm.Applied, phase: pm.Phase, alreadyApplied: pm.AlreadyApplied, effect: pm.Effect, note: pm.Note,
+			directives: pm.Directives, expanded: pm.Expanded, notes: pm.Notes,
 		})
 	}
 
 	return r
+}
+
+func parsePause(v string) time.Duration {
+	d, _ := time.ParseDuration(v)
+
+	return d
 }
 
 func observationFromProto(o *godwitv1.PlanObservation) *planObservation {
@@ -326,8 +341,24 @@ func runLine(r *godwitv1.Run) string {
 	if wait := time.Until(r.NotBefore.AsTime()).Round(time.Second); r.NotBefore != nil && wait > 0 {
 		line += fmt.Sprintf(" (retry in %s)", wait)
 	}
+	if p := progressLine(r.Progress); p != "" {
+		line += " " + p
+	}
 
 	return line
+}
+
+func progressLine(p *godwitv1.RunProgress) string {
+	switch {
+	case p == nil:
+		return ""
+	case p.Batches == 0:
+		return fmt.Sprintf("[statement %d of %s]", p.Statement, p.Migration)
+	case p.RowsTotal == 0:
+		return fmt.Sprintf("[backfill %d rows (batch %d)]", p.RowsDone, p.Batches)
+	default:
+		return fmt.Sprintf("[backfill %d/~%d rows (batch %d)]", p.RowsDone, p.RowsTotal, p.Batches)
+	}
 }
 
 func stamp(ts *timestamppb.Timestamp) string {

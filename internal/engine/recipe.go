@@ -110,6 +110,11 @@ func plainIndexElem(e *pgquery.IndexElem) bool {
 	return asc && nulls && len(e.Collation) == 0 && len(e.Opclass) == 0
 }
 
+// Ident renders name as a SQL identifier, quoting it only where PostgreSQL requires it.
+func Ident(name string) string {
+	return ident(name)
+}
+
 func ident(name string) string {
 	sel := &pgquery.SelectStmt{TargetList: []*pgquery.Node{pgquery.MakeResTargetNodeWithVal(columnRef(name), 0)}}
 

@@ -422,6 +422,9 @@ func TestValidatorScratchConnectFails(t *testing.T) {
 	connectScratch = func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error) { return nil, errBoom }
 	defer func() { connectScratch = orig }()
 
+	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
+		t.Fatal(err)
+	}
 	v := NewValidator(pool, s, func() string { return "connfail" })
 	good, err := buildPlans([]engine.Migration{{
 		Version: 1, Name: "ok",

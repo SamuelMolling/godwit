@@ -186,6 +186,9 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if m.RequirePlan {
 		config[controlplane.ConfigRequirePlan] = "true"
 	}
+	if m.KeepOld != nil {
+		config[controlplane.ConfigKeepOld] = strconv.FormatBool(*m.KeepOld)
+	}
 	searchPath, err := controlplane.ParseSearchPath(m.SearchPath)
 	if err != nil {
 		return nil, invalid(err.Error())
@@ -229,15 +232,23 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 		return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: b.reattached, PlanId: b.planID, Reattached: true}), nil
 	}
 	if b.adm == nil {
-		if _, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, b.searchPath); err != nil {
+		adm, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, b.searchPath)
+		if err != nil {
 			return nil, err
 		}
+		b.adm = &adm
+	}
+	if b.expansions == nil {
+		b.expansions = b.adm.expansions
+	}
+	if err := checkRollout(spec.rollout, b.adm.expanded(spec)); err != nil {
+		return nil, err
 	}
 
 	id := s.newID()
 	p := controlplane.Provenance{CreatedBy: Actor(ctx), Source: m.Source}
 	_, err = s.queue(ctx, notify.RunCreated, b.detail(), func(tx *controlplane.Store) (controlplane.Run, error) {
-		if err := tx.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID); err != nil {
+		if err := tx.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID, b.expansions); err != nil {
 			return controlplane.Run{}, err
 		}
 		if b.planID != "" {
@@ -258,7 +269,8 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 		"files", len(spec.files), "acked", b.acked, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
 		"allow_out_of_order", b.allowOutOfOrder)
 	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target,
-		fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", spec.rollout, len(spec.plans), strings.Join(b.acked, ","), m.Source, b.planID))
+		join(fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", spec.rollout, len(spec.plans),
+			strings.Join(b.acked, ","), m.Source, b.planID), b.expanded()))
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id, PlanId: b.planID}), nil
 }
@@ -314,6 +326,9 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	}
 	plans, err := controlplane.PlansFromFiles(files, engine.DirectionDown)
 	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	if plans, err = controlplane.ExpandDown(plans, orig.Expansions, orig.State == controlplane.StateAwaitingContract); err != nil {
 		return nil, invalid(err.Error())
 	}
 	searchPath, err := s.observedSearchPath(ctx, orig.Target)
@@ -395,6 +410,19 @@ type admission struct {
 	applied    controlplane.AppliedSet
 	validated  bool
 	validation *controlplane.Validation
+	// plans is the admitted set with every directive migration replaced by its expansion.
+	plans      []engine.Plan
+	expansions map[string]controlplane.Expansion
+}
+
+// expanded is what admission decided to run; it falls back to the submitted plans when a validator
+// stub reported none.
+func (a admission) expanded(spec runSpec) []engine.Plan {
+	if a.plans != nil {
+		return a.plans
+	}
+
+	return spec.plans
 }
 
 // admit refuses unacknowledged hazards, out-of-order versions and plans that fail on the scratch database.
@@ -414,13 +442,17 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	if err := s.checkOrder(target, plans, applied.Versions, allowOutOfOrder); err != nil {
 		return admission{}, err
 	}
-	adm := admission{applied: applied}
+	adm := admission{applied: applied, plans: plans}
 	if s.validator == nil || skipValidation {
+		if id := directiveID(plans); id != "" {
+			return admission{}, invalid(id + " carries a godwit directive: directives need validation, so drop --skip-validation")
+		}
+
 		return adm, nil
 	}
 	val, err := s.validator.Validate(ctx, target, plans, searchPath)
 	if err != nil {
-		if errors.Is(err, controlplane.ErrValidationFailed) {
+		if errors.Is(err, controlplane.ErrValidationFailed) || errors.Is(err, controlplane.ErrDirective) {
 			s.Metrics.ValidationFailed(target)
 			s.Log.Warn("run refused by validation", "target", target, "error", err.Error())
 
@@ -430,8 +462,55 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 		return admission{}, rpcErr(err)
 	}
 	adm.validated, adm.validation = true, &val
+	adm.expansions = val.Expansions
+	if val.Plans != nil {
+		adm.plans = val.Plans
+	}
 
 	return adm, nil
+}
+
+func directiveID(plans []engine.Plan) string {
+	for _, p := range plans {
+		if len(p.Migration.Directives) > 0 {
+			return p.Migration.ID()
+		}
+	}
+
+	return ""
+}
+
+// checkRollout refuses a directive that splits into two phases under a rollout that runs everything at
+// once: the rollout is part of the plan key, so godwit will not silently upgrade it.
+func checkRollout(rollout string, plans []engine.Plan) error {
+	if rollout != controlplane.RolloutDirect {
+		return nil
+	}
+	for _, p := range plans {
+		for _, st := range p.Statements {
+			if st.Phase == engine.PhaseContract {
+				return connect.NewError(connect.CodeFailedPrecondition,
+					fmt.Errorf("%s expands into expand and contract phases; use rollout: expand-contract", p.Migration.ID()))
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkIdle refuses to plan or run against a target parked between the phases of an earlier run: its
+// schema matches no recorded state, so nothing can be validated against it.
+func (s *Server) checkIdle(ctx context.Context, target string) error {
+	run, ok, err := s.store.AwaitingContract(ctx, target)
+	if err != nil {
+		return rpcErr(err)
+	}
+	if !ok {
+		return nil
+	}
+
+	return connect.NewError(connect.CodeFailedPrecondition,
+		fmt.Errorf("target %s has run %s awaiting contract; confirm or revert it first", target, run.ID))
 }
 
 func toProto(r controlplane.Run) *godwitv1.Run {
@@ -467,6 +546,12 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 	}
 	if r.NotBefore != nil {
 		out.NotBefore = timestamppb.New(*r.NotBefore)
+	}
+	if p := r.Progress; p != nil {
+		out.Progress = &godwitv1.RunProgress{
+			Migration: p.Migration, Statement: int32(p.Statement), Phase: p.Phase,
+			RowsDone: p.RowsDone, RowsTotal: p.RowsTotal, Batches: int32(p.Batches),
+		}
 	}
 
 	return out
