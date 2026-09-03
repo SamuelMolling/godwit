@@ -77,3 +77,19 @@ func TestAppliedVersionsRowError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestTransactCommitError(t *testing.T) {
+	t.Parallel()
+	mock, s := newMockStore(t)
+
+	mock.ExpectBegin()
+	mock.ExpectCommit().WillReturnError(errBoom)
+
+	if err := s.Transact(context.Background(), func(*Store) error { return nil }); err == nil ||
+		!strings.Contains(err.Error(), "commit transaction") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

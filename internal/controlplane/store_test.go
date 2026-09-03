@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -118,18 +119,19 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("resume queued: err = %v", err)
 	}
 
-	if err := s.Confirm(ctx, r.ID); !errors.Is(err, ErrNotAwaitingContract) {
+	if _, err := s.Confirm(ctx, r.ID); !errors.Is(err, ErrNotAwaitingContract) {
 		t.Fatalf("confirm queued: err = %v", err)
 	}
 	if err := s.Finish(ctx, r.ID, StateAwaitingContract, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Confirm(ctx, r.ID); err != nil {
+	confirmed, err := s.Confirm(ctx, r.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	r, _ = s.Run(ctx, r.ID)
-	if r.State != StateQueued || r.Phase != PhaseContract || r.Attempts != 0 || r.FinishedAt != nil {
-		t.Fatalf("confirmed run = %+v", r)
+	if r.State != StateQueued || r.Phase != PhaseContract || r.Attempts != 0 || r.FinishedAt != nil || confirmed.Phase != r.Phase {
+		t.Fatalf("confirmed run = %+v, returned %+v", r, confirmed)
 	}
 }
 
@@ -320,8 +322,52 @@ func TestStoreQueryErrors(t *testing.T) {
 	if err := s.CreateBaseline(ctx, "id", "x", nil, Provenance{}); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.Confirm(ctx, "id"); err == nil {
+	if _, err := s.Confirm(ctx, "id"); err == nil {
 		t.Fatal("want error")
+	}
+	if err := s.Transact(ctx, func(*Store) error { return nil }); err == nil {
+		t.Fatal("want error")
+	}
+}
+
+func TestTransactHidesWritesUntilCommit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	if err := s.RegisterTarget(ctx, "app", "static", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	id := "33333333-3333-3333-3333-333333333333"
+
+	err := s.Transact(ctx, func(tx *Store) error {
+		if err := tx.CreateRun(ctx, id, "app", RolloutDirect, nil, Timeouts{}, Provenance{}, ""); err != nil {
+			return err
+		}
+		if _, err := s.Run(ctx, id); !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("run visible before commit: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Run(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.Transact(ctx, func(tx *Store) error {
+		if err := tx.CreateRun(ctx, "44444444-4444-4444-4444-444444444444", "app", RolloutDirect, nil, Timeouts{}, Provenance{}, ""); err != nil {
+			return err
+		}
+
+		return errBoom
+	})
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := s.Run(ctx, "44444444-4444-4444-4444-444444444444"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rolled-back run: err = %v", err)
 	}
 }
 

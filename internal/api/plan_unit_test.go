@@ -181,8 +181,10 @@ func TestBindStoreErrors(t *testing.T) {
 
 	expectReadyPlan(mock, "f2", nil, nil)
 	expectApplied(mock)
+	mock.ExpectBegin()
 	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(anyArgs(10)...).WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec("SET state = 'bound'").WithArgs(planID, pgxmock.AnyArg()).WillReturnError(errors.New("bind down"))
+	mock.ExpectRollback()
 	if _, err := s.CreateRun(ctx, createReq("H009")); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("bind error: %v", err)
 	}

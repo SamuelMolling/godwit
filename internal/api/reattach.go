@@ -94,13 +94,13 @@ func (s *Server) resumeFresh(ctx context.Context, m *godwitv1.CreateRunRequest, 
 		plan.AllowOutOfOrder || m.AllowOutOfOrder, obs.SearchPath); err != nil {
 		return s.replanFailure(ctx, plan, d, err)
 	}
-	next, err := s.store.Resume(ctx, run.ID)
-	if err != nil {
+	if _, err := s.queue(ctx, notify.RunResumed, "re-attached by a pipeline re-run", func(tx *controlplane.Store) (controlplane.Run, error) {
+		return tx.Resume(ctx, run.ID)
+	}); err != nil {
 		return rpcErr(err)
 	}
 	s.Metrics.RunResumed(run.Target)
 	s.joined(ctx, run, plan, true)
-	s.emit(ctx, next, notify.RunResumed, "re-attached by a pipeline re-run")
 
 	return nil
 }

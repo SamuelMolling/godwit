@@ -82,7 +82,9 @@ func TestReattachStoreErrors(t *testing.T) {
 	expectBoundRun(mock, controlplane.StateFailed)
 	expectRunsApplying(mock, nil)
 	expectApplied(mock)
+	mock.ExpectBegin()
 	mock.ExpectQuery("UPDATE cp_runs SET state = 'queued', attempts = 0").WithArgs(boundRunID).WillReturnError(errors.New("resume down"))
+	mock.ExpectRollback()
 	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("resume error: %v", err)
 	}

@@ -228,23 +228,29 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 
 	id := s.newID()
 	p := controlplane.Provenance{CreatedBy: Actor(ctx), Source: m.Source}
-	if err := s.store.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID); err != nil {
-		return nil, rpcErr(err)
-	}
-	if b.planID != "" {
-		if err := s.store.BindPlan(ctx, b.planID, id); err != nil {
-			return nil, rpcErr(err)
+	_, err = s.queue(ctx, notify.RunCreated, b.detail(), func(tx *controlplane.Store) (controlplane.Run, error) {
+		if err := tx.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID); err != nil {
+			return controlplane.Run{}, err
 		}
+		if b.planID != "" {
+			if err := tx.BindPlan(ctx, b.planID, id); err != nil {
+				return controlplane.Run{}, err
+			}
+		}
+
+		return controlplane.Run{
+			ID: id, Target: m.Target, State: controlplane.StateQueued, PlanID: b.planID,
+			Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t, Provenance: p,
+		}, nil
+	})
+	if err != nil {
+		return nil, rpcErr(err)
 	}
 	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout, "source", m.Source, "plan", b.planID,
 		"files", len(spec.files), "acked", b.acked, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
 		"allow_out_of_order", b.allowOutOfOrder)
 	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target,
 		fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", spec.rollout, len(spec.plans), strings.Join(b.acked, ","), m.Source, b.planID))
-	s.emit(ctx, controlplane.Run{
-		ID: id, Target: m.Target, State: controlplane.StateQueued, PlanID: b.planID,
-		Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t, Provenance: p,
-	}, notify.RunCreated, b.detail())
 
 	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id, PlanId: b.planID}), nil
 }
@@ -308,15 +314,20 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 
 	id := s.newID()
 	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
-	if err := s.store.CreateRevert(ctx, id, m.RunId, t, p); err != nil {
+	_, err = s.queue(ctx, notify.RunCreated, "reverts run "+notify.ShortID(m.RunId), func(tx *controlplane.Store) (controlplane.Run, error) {
+		if err := tx.CreateRevert(ctx, id, m.RunId, t, p); err != nil {
+			return controlplane.Run{}, err
+		}
+
+		return controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId, Timeouts: t, Provenance: p}, nil
+	})
+	if err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards,
 		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
 	s.audit(ctx, controlplane.AuditRunRevert, id, orig.Target,
 		fmt.Sprintf("reverts=%s acked=%s", m.RunId, strings.Join(m.AcknowledgeHazards, ",")))
-	s.emit(ctx, controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId, Timeouts: t, Provenance: p},
-		notify.RunCreated, "reverts run "+notify.ShortID(m.RunId))
 
 	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
 }
@@ -325,6 +336,23 @@ func (s *Server) emit(ctx context.Context, run controlplane.Run, typ, detail str
 	e := controlplane.RunEvent(run, typ, detail)
 	e.Actor = Actor(ctx)
 	notify.Emit(ctx, s.Notifier, s.Log, e)
+}
+
+// queue commits mutate and emits typ for the run it returns; the scheduler cannot claim the run before the event is out.
+func (s *Server) queue(ctx context.Context, typ, detail string, mutate func(tx *controlplane.Store) (controlplane.Run, error)) (controlplane.Run, error) {
+	var run controlplane.Run
+	err := s.store.Transact(ctx, func(tx *controlplane.Store) error {
+		r, err := mutate(tx)
+		if err != nil {
+			return err
+		}
+		run = r
+		s.emit(ctx, r, typ, detail)
+
+		return nil
+	})
+
+	return run, err
 }
 
 // record audits an operator action on a run and notifies with the run's current state; the audit survives a failed lookup.
@@ -497,14 +525,15 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 
 // ResumeRun requeues a failed or parked run.
 func (s *Server) ResumeRun(ctx context.Context, req *connect.Request[godwitv1.ResumeRunRequest]) (*connect.Response[godwitv1.ResumeRunResponse], error) {
-	run, err := s.store.Resume(ctx, req.Msg.RunId)
+	run, err := s.queue(ctx, notify.RunResumed, "", func(tx *controlplane.Store) (controlplane.Run, error) {
+		return tx.Resume(ctx, req.Msg.RunId)
+	})
 	if err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Metrics.RunResumed(run.Target)
 	s.Log.Info("run resumed", "run", run.ID, "target", run.Target)
 	s.audit(ctx, controlplane.AuditRunResume, run.ID, run.Target, "")
-	s.emit(ctx, run, notify.RunResumed, "")
 
 	return connect.NewResponse(&godwitv1.ResumeRunResponse{}), nil
 }
@@ -522,11 +551,14 @@ func (s *Server) ParkRun(ctx context.Context, req *connect.Request[godwitv1.Park
 
 // ConfirmRollout releases a run's contract phase.
 func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwitv1.ConfirmRolloutRequest]) (*connect.Response[godwitv1.ConfirmRolloutResponse], error) {
-	if err := s.store.Confirm(ctx, req.Msg.RunId); err != nil {
+	run, err := s.queue(ctx, notify.RunConfirmed, "", func(tx *controlplane.Store) (controlplane.Run, error) {
+		return tx.Confirm(ctx, req.Msg.RunId)
+	})
+	if err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("rollout confirmed", "run", req.Msg.RunId)
-	s.record(ctx, req.Msg.RunId, controlplane.AuditRunConfirm, notify.RunConfirmed, "")
+	s.Log.Info("rollout confirmed", "run", run.ID)
+	s.audit(ctx, controlplane.AuditRunConfirm, run.ID, run.Target, "")
 
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }
