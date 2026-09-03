@@ -1,19 +1,19 @@
 name: godwit
-description: Lint, plan, apply, verify, revert or generate plain-SQL PostgreSQL migrations with godwit
+description: Lint, plan, apply, confirm, verify, revert or generate plain-SQL PostgreSQL migrations with godwit
 author: Samuel Molling
 
 inputs:
   command:
-    description: "What to run: lint, plan, apply, verify, revert, migrate or diff"
+    description: "What to run: lint, plan, apply, confirm, verify, revert, migrate or diff"
     required: true
   mode:
-    description: "apply-on-pr (default: apply runs from the pull request, verify on push, migrate is refused) or apply-on-merge (migrate runs on push; apply and revert are refused)"
+    description: "apply-on-pr (default: apply runs from the pull request, verify on push, migrate is refused) or apply-on-merge (migrate runs on push; apply, confirm and revert are refused)"
     default: apply-on-pr
   apply-on:
     description: "What triggers apply: comment (a '/godwit apply' comment or review), approve (an approved review), or comment,approve"
     default: comment
   allowed-associations:
-    description: "author_association values allowed to command apply or revert from a comment or review"
+    description: "author_association values allowed to command apply, confirm or revert from a comment or review"
     default: OWNER,MEMBER,COLLABORATOR
   dir:
     description: "Migration directory (default: dir from godwit.yaml, else migrations)"
@@ -28,10 +28,10 @@ inputs:
     description: "godwit service URL (plan, apply, verify, revert, migrate, diff; default: server from godwit.yaml or GODWIT_SERVER)"
     default: ""
   token:
-    description: "Bearer token for the service (plan, verify, diff: read scope; apply, revert, migrate: pipeline scope)"
+    description: "Bearer token for the service (plan, verify, diff: read scope; apply, confirm, revert, migrate: pipeline scope)"
     default: ""
   target:
-    description: "Target name (plan, apply, verify, migrate, diff; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
+    description: "Target name (plan, apply, verify, migrate, diff; confirm and revert narrow the run search with it; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
     default: ""
   rollout:
     description: "Rollout policy for plan, apply and migrate: direct or expand-contract (default: godwit.yaml, else direct)"
@@ -80,6 +80,9 @@ outputs:
   stale:
     description: "true when apply or migrate was refused because the stored plan is stale or required (exit 3)"
     value: ${{ steps.godwit.outputs.stale }}
+  phase:
+    description: "awaiting-contract when the run applied its expand phase and holds the contract one, contract when the contract phase ran, empty otherwise"
+    value: ${{ steps.godwit.outputs.phase }}
   pending:
     description: "Number of migrations verify found not applied"
     value: ${{ steps.godwit.outputs.pending }}
@@ -93,7 +96,7 @@ outputs:
     description: "Head commit of that pull request; apply sets the godwit/applied status on it"
     value: ${{ steps.context.outputs.head-sha }}
   skipped:
-    description: "true when the event did not carry a command for apply or revert (nothing ran)"
+    description: "true when the event did not carry a command for apply, confirm or revert (nothing ran)"
     value: ${{ steps.context.outputs.skipped }}
   changed:
     description: "true when diff found the target and the desired schema differ"
@@ -176,6 +179,7 @@ runs:
         SUMMARY: ${{ steps.godwit.outputs.summary-path }}
         STATUS: ${{ steps.godwit.outputs.status }}
         STALE: ${{ steps.godwit.outputs.stale }}
+        PHASE: ${{ steps.godwit.outputs.phase }}
         RUN_ID: ${{ steps.godwit.outputs.run-id }}
         EVENT_NAME: ${{ github.event_name }}
         REPOSITORY: ${{ github.repository }}

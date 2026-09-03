@@ -50,8 +50,9 @@ jobs:
       - run: echo "plan ${{ steps.plan.outputs.plan-id }} (key ${{ steps.plan.outputs.plan-key }})"
 
   # `/godwit apply` as a comment or review on the pull request applies the stored plan from the
-  # pull request head; `/godwit revert` runs the down files of that run when the pull request is
-  # abandoned. Both only from OWNER, MEMBER or COLLABORATOR; other events end the job as skipped.
+  # pull request head; `/godwit confirm` runs the contract phase it held back; `/godwit revert`
+  # runs the down files of that run when the pull request is abandoned. Only from OWNER, MEMBER or
+  # COLLABORATOR; other events end the job as skipped.
   apply:
     if: >-
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/godwit '))
@@ -75,6 +76,18 @@ jobs:
           target: orders
           rollout: expand-contract
           # ack: H003
+
+      # With rollout: expand-contract the apply above can end in awaiting_contract: the expand phase
+      # is applied and godwit/applied stays pending. Deploy the application version that reads both
+      # shapes, then comment `/godwit confirm` to release the same run's contract phase.
+      - name: Run the contract phase the apply held back
+        if: contains(github.event.comment.body, '/godwit confirm')
+        uses: SamuelMolling/godwit@main
+        with:
+          command: confirm
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}
+          target: orders
 
       - name: Revert the run of the pull request
         if: contains(github.event.comment.body, '/godwit revert')
