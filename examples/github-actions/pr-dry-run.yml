@@ -1,5 +1,6 @@
-# Non-persisting variant of pr-lint-and-plan.yml: the same admitted plan, but nothing is stored,
-# so the merge step runs an implicit plan (or is refused when the target has require_plan).
+# Non-persisting variant of the plan step in pr-plan-and-apply.yml: the same admitted plan, but
+# nothing is stored, so the apply runs an implicit plan (or is refused when the target has
+# require_plan). dry-run is allowed in both modes.
 name: migrations dry run
 
 on:

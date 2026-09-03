@@ -38,7 +38,7 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 | Service / API | connect (gRPC + JSON) service with scoped tokens, leases, replicas | CLI (Enterprise has a hub) | CLI (Pro has a hub) | CLI (Atlas Cloud) |
 | Audit trail | `cp_audit` with actor per mutation; `created_by` and `source` on runs | history table only | history table only | Atlas Cloud |
 | Per-target / per-run timeouts | `lock_timeout` and `statement_timeout` on the target and per run | connection properties | connection properties | connection properties |
-| CI/CD | composite GitHub Action (lint and stored plan on the pull request, migrate bound to it on the merge commit, outcome posted back on the pull request), ArgoCD hook Jobs, Helm chart | Docker image, various actions | Docker image, GitHub Action | `atlas-action` |
+| CI/CD | composite GitHub Action, apply before merge (lint and stored plan on the pull request, `/godwit apply` bound to it with a `godwit/applied` commit status gating the merge, verify on push, `/godwit revert`; `apply-on-merge` mode), ArgoCD hook Jobs, Helm chart | Docker image, various actions | Docker image, GitHub Action | `atlas-action` |
 | Notifications | webhook JSON, Slack (thread or edit mode) | no | no | Atlas Cloud |
 | Web UI | in progress (`feat/ui` branch, not merged) | Desktop (paid) | Hub (paid) | Cloud |
 | Licence | Apache 2 | Apache 2 core, paid tiers | Apache 2 core, paid tiers | Apache 2 core, paid tiers |

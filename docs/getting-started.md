@@ -184,7 +184,7 @@ Then `godwit lint`, `godwit plan` and `godwit migrate` work bare. The token stay
 
 ## 5. CI
 
-Pull request gate and merge step with the composite Action in this repository:
+Plan on the pull request, apply from it, verify on the merge, with the composite Action in this repository:
 
 ```yaml
 # on pull_request
@@ -194,19 +194,36 @@ steps:
   - uses: SamuelMolling/godwit@main
     with: { command: lint }
   - uses: SamuelMolling/godwit@main
-    with: { command: plan }
+    with:
+      command: plan
+      server: https://godwit.internal
+      token: ${{ secrets.GODWIT_TOKEN_READ }}
+      target: orders
+
+# on issue_comment (created): a collaborator comments "/godwit apply" once the review is done
+permissions: { contents: read, pull-requests: write, statuses: write }
+steps:
+  - uses: actions/checkout@v4
+    with: { ref: "refs/pull/${{ github.event.issue.number }}/head" }
+  - uses: SamuelMolling/godwit@main
+    with:
+      command: apply
+      server: https://godwit.internal
+      token: ${{ secrets.GODWIT_TOKEN_PIPELINE }}
+      target: orders
 
 # on push to main
 steps:
   - uses: actions/checkout@v4
   - uses: SamuelMolling/godwit@main
     with:
-      command: migrate
+      command: verify
       server: https://godwit.internal
-      token: ${{ secrets.GODWIT_TOKEN }}
+      token: ${{ secrets.GODWIT_TOKEN_READ }}
+      target: orders
 ```
 
-`lint` and `plan` keep one sticky comment on the pull request; `migrate` streams the run and fails the job with the run. Inputs, outputs, the dry-run comment and the ArgoCD variant are in [CI/CD](ci-cd.md).
+`lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head and sets the `godwit/applied` commit status the branch protection requires; `verify` on the merge proves `main` carries nothing unapplied. Inputs, outputs, the revert command, the `apply-on-merge` mode and the ArgoCD variant are in [CI/CD](ci-cd.md).
 
 ## Next
 

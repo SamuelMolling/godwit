@@ -4,7 +4,10 @@ on:
   pull_request:
     paths:
       - action.yml
+      - scripts/action-context.sh
+      - scripts/action-run.sh
       - scripts/action-comment.sh
+      - scripts/action-status.sh
       - internal/cli/**
       - testdata/action/**
       - .github/workflows/action-smoke.yml
@@ -30,9 +33,13 @@ jobs:
         options: --health-cmd "pg_isready -U godwit" --health-interval 2s --health-timeout 5s --health-retries 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Stub gh
         shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           stub="${RUNNER_TEMP}/stub-bin"
@@ -42,16 +49,24 @@ jobs:
           printf '%s\n' "$*" >>"${GH_STUB_LOG}"
           case "$*" in
             *"/pulls --jq"*) printf '%s\n' "${GH_STUB_PULLS:-}" ;;
+            *"/commits --jq"*) printf '%s\n' "${GH_STUB_COMMITS:-}" ;;
+            *"/pulls/"*) printf '%s\n' "${GH_STUB_PR:-}" ;;
             *"--method "*)
               for arg in "$@"; do
                 case "${arg}" in body=@*) cat "${arg#body=@}" >>"${GH_STUB_LOG}" ;; esac
               done
+              case "$*" in *"/comments"*) printf '%s\n' "${GH_STUB_COMMENT_URL:-}" ;; esac
               ;;
           esac
           EOF
           chmod +x "${stub}/gh"
           echo "${stub}" >>"${GITHUB_PATH}"
-          echo "GH_STUB_LOG=${RUNNER_TEMP}/gh-stub.log" >>"${GITHUB_ENV}"
+          {
+            echo "GH_STUB_LOG=${RUNNER_TEMP}/gh-stub.log"
+            echo "GH_STUB_PR={\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"open\",\"merged\":false}"
+            echo "GH_STUB_COMMITS=${HEAD_SHA}"
+            echo "GH_STUB_COMMENT_URL=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1"
+          } >>"${GITHUB_ENV}"
 
       - name: lint without acknowledging H001
         id: blocking
@@ -88,6 +103,17 @@ jobs:
           command: plan
           dir: testdata/action/migrations
 
+      - name: migrate is refused in mode apply-on-pr
+        id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          command: migrate
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-pipe
+          ack: H001
+
       - name: Start the service and register a target
         shell: bash
         env:
@@ -122,14 +148,14 @@ jobs:
         shell: bash
         env:
           POSTGRES_ID: ${{ job.services.postgres.id }}
-        run: docker exec "${POSTGRES_ID}" psql -U godwit -d app -c 'CREATE TABLE rogue (id int)'
+        run: docker exec "${POSTGRES_ID}" psql -U godwit -d app -c 'CREATE TABLE public.rogue (id int)'
 
-      - name: migrate against a stale plan
+      - name: apply against a stale plan
         id: stale
         continue-on-error: true
         uses: ./
         with:
-          command: migrate
+          command: apply
           dir: testdata/action/migrations
           target: app
           token: smoke-pipe
@@ -145,31 +171,153 @@ jobs:
           token: smoke-read
           ack: H001
 
-      - name: migrate bound to the stored plan
-        id: migrate
+      - name: apply bound to the stored plan
+        id: apply
         uses: ./
         with:
-          command: migrate
+          command: apply
           dir: testdata/action/migrations
           target: app
           token: smoke-pipe
           ack: H001
 
-      - name: Comment on push through the merged pull request
+      - name: verify finds everything applied
+        id: verified
+        uses: ./
+        with:
+          command: verify
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-read
+          ack: H001
+
+      - name: revert the run of the pull request
+        id: revert
+        uses: ./
+        with:
+          command: revert
+          target: app
+          token: smoke-pipe
+          ack: H001,H002,H009
+
+      - name: verify on push after the revert
+        id: pending
         shell: bash
         env:
+          GODWIT_BIN: ${{ runner.temp }}/godwit
+          GH_TOKEN: stub
+          GH_STUB_PULLS: "7"
           EVENT_NAME: push
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          GH_STUB_PULLS: "7"
-          GH_TOKEN: stub
-          COMMAND: migrate
-          DRY_RUN: "false"
-          COMMENT_ON_PUSH: "true"
-          MARKER: "<!-- godwit:migrate -->"
-          SUMMARY: ${{ steps.migrate.outputs.summary-path }}
+          HEAD_SHA: ${{ github.sha }}
           PR_NUMBER: ""
-        run: ./scripts/action-comment.sh
+          SKIPPED: "false"
+          COMMAND: verify
+          DIR: testdata/action/migrations
+          BASE: ""
+          ACK: H001
+          SERVER: ""
+          TARGET: app
+          ROLLOUT: ""
+          DRY_RUN: "false"
+          SOURCE: ""
+          GODWIT_TOKEN: smoke-read
+          COMMENT: "true"
+          COMMENT_ON_PUSH: "true"
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          ./scripts/action-run.sh
+          STATUS="$(sed -n 's/^status=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          STALE="$(sed -n 's/^stale=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          RUN_ID="$(sed -n 's/^run-id=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          SUMMARY="$(sed -n 's/^summary-path=//p' "${GITHUB_OUTPUT}" | tail -n 1)"
+          export STATUS STALE RUN_ID SUMMARY
+          ./scripts/action-comment.sh
+
+      - name: Read comment and review events
+        shell: bash
+        env:
+          GH_TOKEN: stub
+          MODE: apply-on-pr
+          DRY_RUN: "false"
+          ALLOWED_ASSOCIATIONS: OWNER,MEMBER,COLLABORATOR
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          export EVENT_PATH="${RUNNER_TEMP}/event.json"
+          out="${RUNNER_TEMP}/context.out"
+          export GITHUB_OUTPUT="${out}"
+          context() {
+            : >"${out}"
+            local rc=0
+            ./scripts/action-context.sh || rc=$?
+            printf 'rc=%s\n' "${rc}" >>"${out}"
+          }
+          expect() { grep -qx "$1" "${out}"; }
+          absent() { if grep -q "$1" "${out}"; then exit 1; fi; }
+          comment() {
+            printf '{"action":"%s","issue":{"number":7%s},"comment":{"body":"%s","author_association":"%s","user":{"login":"dev"}}}' \
+              "$1" "$2" "$3" "$4" >"${EVENT_PATH}"
+          }
+          review() {
+            printf '{"action":"submitted","review":{"state":"%s","body":"%s","author_association":"%s","user":{"login":"rev"}},"pull_request":{"number":7}}' \
+              "$1" "$2" "$3" >"${EVENT_PATH}"
+          }
+
+          export EVENT_NAME=issue_comment COMMAND=apply APPLY_ON=comment
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply' MEMBER
+          context; expect rc=0; expect skipped=false; expect pr-number=7; expect "head-sha=${HEAD_SHA}"
+          comment created ',"pull_request":{"url":"x"}' '  /godwit apply\r\n' OWNER
+          context; expect rc=0; expect skipped=false
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply' CONTRIBUTOR
+          context; expect rc=1; absent '^skipped='
+          comment created ',"pull_request":{"url":"x"}' 'looks good' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' 'please /godwit apply' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created '' '/godwit apply' OWNER
+          context; expect rc=0; expect skipped=true
+          comment edited ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
+          context; expect rc=0; expect skipped=true
+          APPLY_ON=approve comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
+          APPLY_ON=approve context; expect rc=0; expect skipped=true
+          COMMAND=revert comment created ',"pull_request":{"url":"x"}' '/godwit revert' COLLABORATOR
+          COMMAND=revert context; expect rc=0; expect skipped=false; expect pr-number=7
+          COMMAND=revert comment created ',"pull_request":{"url":"x"}' '/godwit apply' COLLABORATOR
+          COMMAND=revert context; expect rc=0; expect skipped=true
+
+          export EVENT_NAME=pull_request_review
+          review approved '' COLLABORATOR
+          context; expect rc=0; expect skipped=true
+          APPLY_ON=approve context; expect rc=0; expect skipped=false; expect "head-sha=${HEAD_SHA}"
+          APPLY_ON=comment,approve context; expect rc=0; expect skipped=false
+          review commented '/godwit apply' MEMBER
+          context; expect rc=0; expect skipped=false
+          review approved '' NONE
+          APPLY_ON=approve context; expect rc=1
+          review changes_requested '' OWNER
+          APPLY_ON=approve context; expect rc=0; expect skipped=true
+
+          export EVENT_NAME=issue_comment
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
+          GH_STUB_PR='{"head":{"sha":"0000000000000000000000000000000000000000"},"state":"open","merged":false}' context; expect rc=1
+          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true}" context; expect rc=1
+          comment created ',"pull_request":{"url":"x"}' '/godwit revert' OWNER
+          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true}" COMMAND=revert context; expect rc=1
+          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":false}" COMMAND=revert context; expect rc=0; expect skipped=false
+          EVENT_NAME=push context; expect rc=1
+          APPLY_ON=never context; expect rc=2
+          MODE=apply-on-merge context; expect rc=2
+          MODE=apply-on-merge COMMAND=revert context; expect rc=2
+          MODE=apply-on-merge COMMAND=migrate context; expect rc=0; expect skipped=false; expect "head-sha=${GITHUB_SHA}"
+          MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request printf '{"pull_request":{"number":7,"head":{"sha":"abc"}}}' >"${EVENT_PATH}"
+          MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request context; expect rc=0; expect pr-number=7; expect head-sha=abc
+          MODE=other context; expect rc=2
+          COMMAND=other context; expect rc=2
 
       - name: Check outputs
         shell: bash
@@ -180,6 +328,8 @@ jobs:
           LINT_SUMMARY: ${{ steps.lint.outputs.summary-path }}
           PLAN_SUMMARY: ${{ steps.plan.outputs.summary-path }}
           PLAN_ID: ${{ steps.plan.outputs.plan-id }}
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
+          GATE_SKIPPED: ${{ steps.gate.outputs.skipped }}
           STORED_ID: ${{ steps.stored.outputs.plan-id }}
           STORED_KEY: ${{ steps.stored.outputs.plan-key }}
           STORED_SUMMARY: ${{ steps.stored.outputs.summary-path }}
@@ -187,15 +337,24 @@ jobs:
           STALE: ${{ steps.stale.outputs.stale }}
           STALE_RUN: ${{ steps.stale.outputs.run-id }}
           STALE_SUMMARY: ${{ steps.stale.outputs.summary-path }}
+          STALE_HEAD: ${{ steps.stale.outputs.head-sha }}
           REPLAN_ID: ${{ steps.replan.outputs.plan-id }}
           REPLAN_KEY: ${{ steps.replan.outputs.plan-key }}
-          MIGRATE_STALE: ${{ steps.migrate.outputs.stale }}
-          MIGRATE_RUN: ${{ steps.migrate.outputs.run-id }}
-          MIGRATE_PLAN: ${{ steps.migrate.outputs.plan-id }}
-          MIGRATE_SUMMARY: ${{ steps.migrate.outputs.summary-path }}
+          APPLY_STALE: ${{ steps.apply.outputs.stale }}
+          APPLY_RUN: ${{ steps.apply.outputs.run-id }}
+          APPLY_PLAN: ${{ steps.apply.outputs.plan-id }}
+          APPLY_SUMMARY: ${{ steps.apply.outputs.summary-path }}
+          APPLY_PR: ${{ steps.apply.outputs.pr-number }}
+          APPLY_HEAD: ${{ steps.apply.outputs.head-sha }}
+          VERIFIED_PENDING: ${{ steps.verified.outputs.pending }}
+          VERIFIED_SUMMARY: ${{ steps.verified.outputs.summary-path }}
+          REVERT_RUN: ${{ steps.revert.outputs.run-id }}
+          REVERT_SUMMARY: ${{ steps.revert.outputs.summary-path }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          absent() { if grep -q "$1" "${GH_STUB_LOG}"; then exit 1; fi; }
           test "${BLOCKING_OUTCOME}" = "failure"
           test "${BLOCKING_COUNT}" = "1"
           test "${LINT_COUNT}" = "0"
@@ -204,6 +363,8 @@ jobs:
           grep -q '^## godwit plan$' "${PLAN_SUMMARY}"
           grep -q 'H001: CREATE INDEX without CONCURRENTLY' "${PLAN_SUMMARY}"
           test -z "${PLAN_ID}"
+          test "${GATE_OUTCOME}" = "failure"
+          test -z "${GATE_SKIPPED}"
 
           test -n "${STORED_ID}"
           test -n "${STORED_KEY}"
@@ -214,24 +375,45 @@ jobs:
           test "${STALE_OUTCOME}" = "failure"
           test "${STALE}" = "true"
           test -z "${STALE_RUN}"
-          grep -q '^## godwit migrate$' "${STALE_SUMMARY}"
+          test "${STALE_HEAD}" = "${HEAD_SHA}"
+          grep -q '^## godwit apply$' "${STALE_SUMMARY}"
           grep -q 'is stale' "${STALE_SUMMARY}"
           grep -q 'reason : schema' "${STALE_SUMMARY}"
           grep -q '+ column public.rogue.id integer' "${STALE_SUMMARY}"
 
           test "${REPLAN_KEY}" = "${STORED_KEY}"
           test "${REPLAN_ID}" != "${STORED_ID}"
-          test "${MIGRATE_STALE}" = "false"
-          test -n "${MIGRATE_RUN}"
-          test "${MIGRATE_PLAN}" = "${REPLAN_ID}"
-          grep -q "^run \`${MIGRATE_RUN}\`: \*\*succeeded\*\* (plan \`${REPLAN_ID}\`)$" "${MIGRATE_SUMMARY}"
+          test "${APPLY_STALE}" = "false"
+          test -n "${APPLY_RUN}"
+          test "${APPLY_PLAN}" = "${REPLAN_ID}"
+          test "${APPLY_PR}" = "${PR_NUMBER}"
+          test "${APPLY_HEAD}" = "${HEAD_SHA}"
+          grep -q "^run \`${APPLY_RUN}\`: \*\*succeeded\*\* (plan \`${REPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${APPLY_SUMMARY}"
+
+          test "${VERIFIED_PENDING}" = "0"
+          grep -q "^target \`app\`: 2 migrations, all applied$" "${VERIFIED_SUMMARY}"
+
+          test -n "${REVERT_RUN}"
+          test "${REVERT_RUN}" != "${APPLY_RUN}"
+          grep -q "^run \`${REVERT_RUN}\` reverts \`${APPLY_RUN}\`: \*\*succeeded\*\* (implicit plan)$" "${REVERT_SUMMARY}"
 
           cat "${GH_STUB_LOG}"
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 3
+          statuses="repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA} -f state="
+          grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=applying ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
+          grep -q "^api --method POST ${statuses}failure -f context=godwit/applied -f description=plan stale or missing: re-plan on the pull request, then /godwit apply again -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
+          grep -q "^api --method POST ${statuses}success -f context=godwit/applied -f description=applied by run ${APPLY_RUN:0:8}; merge when the review is done -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
+          grep -q "^api --method POST ${statuses}failure -f context=godwit/applied -f description=reverted by run ${REVERT_RUN:0:8}; comment /godwit apply to apply again -f target_url=" "${GH_STUB_LOG}"
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 10
+          absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
+
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 6
           grep -q '^<!-- godwit:plan -->$' "${GH_STUB_LOG}"
+          grep -c '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -qx 3
+          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -c '^## godwit apply$' | grep -qx 2
+          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -q '^## godwit revert$'
           grep -q "^api repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls --jq" "${GH_STUB_LOG}"
           grep -q "^api --method POST repos/${GITHUB_REPOSITORY}/issues/7/comments -F body=@" "${GH_STUB_LOG}"
-          grep -q '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}"
-          grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -q '^## godwit migrate$'
-          ! grep -q '^<!-- godwit:dry-run -->$' "${GH_STUB_LOG}"
-          ! grep -q '^<!-- godwit:lint -->$' "${GH_STUB_LOG}"
+          grep -A3 '^<!-- godwit:verify -->$' "${GH_STUB_LOG}" | grep -q '2 of 2 migrations are not applied'
+          grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/commits --jq" "${GH_STUB_LOG}"
+          absent '^<!-- godwit:dry-run -->$'
+          absent '^<!-- godwit:lint -->$'
