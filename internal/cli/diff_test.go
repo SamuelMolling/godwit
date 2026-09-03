@@ -146,7 +146,9 @@ func TestDiffErrors(t *testing.T) {
 		want string
 	}{
 		{"no target", []string{"diff", "--server", url, "--schema", schema}, "--target"},
-		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "--schema is required"},
+		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "--schema <ddl file> or --prisma <schema.prisma> is required"},
+		{"schema and prisma", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--prisma", "schema.prisma"}, "--schema and --prisma are exclusive"},
+		{"empty prisma bin", []string{"diff", "--server", url, "--target", "app", "--prisma", "schema.prisma", "--prisma-bin", " "}, "--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI"},
 		{"no name", base, "--name is required"},
 		{"bad name", append(base, "--name", "Drop-A"), "snake_case"},
 		{"missing schema file", []string{"diff", "--server", url, "--target", "app", "--schema", filepath.Join(dir, "nope.sql"), "--name", "x"}, "no such file"},
@@ -160,5 +162,66 @@ func TestDiffErrors(t *testing.T) {
 	stub.err = connect.NewError(connect.CodeInvalidArgument, errors.New("desired schema failed to apply: type nosuchtype does not exist"))
 	if code, _, errOut := runCLI(append(base, "--name", "x")...); code != 1 || !strings.Contains(errOut, "type nosuchtype does not exist") {
 		t.Fatalf("service error: code = %d, stderr = %q", code, errOut)
+	}
+}
+
+const prismaSchema = "datasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel T {\n  id Int @id\n  b  Int\n}\n"
+
+func fakePrisma(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	script := "#!/bin/sh\necho \"$@\" >> " + log + "\ncase \"$*\" in\n  *--version) echo 'prisma : 6.19.3' ;;\n" +
+		"  *\"migrate diff\"*) printf '%s' '-- CreateTable\nCREATE TABLE \"T\" (\"id\" INTEGER NOT NULL, \"b\" INTEGER NOT NULL);\n' ;;\nesac\n"
+	bin := filepath.Join(dir, "prisma")
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	return bin, log
+}
+
+func TestDiffPrisma(t *testing.T) {
+	diffNow = func() time.Time { return time.Date(2026, 9, 2, 10, 30, 0, 0, time.UTC) }
+	defer func() { diffNow = time.Now }()
+	stub := diffStub()
+	url := startStub(t, stub)
+	dir := t.TempDir()
+	schema := filepath.Join(dir, "schema.prisma")
+	if err := os.WriteFile(schema, []byte(prismaSchema), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin, log := fakePrisma(t)
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--prisma", schema, "--prisma-bin", bin, "--name", "sync_prisma", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "-- CreateTable\nCREATE TABLE \"T\" (\"id\" INTEGER NOT NULL, \"b\" INTEGER NOT NULL);\n" {
+		t.Fatalf("schema sent = %q", stub.diffed.Schema)
+	}
+	if !strings.Contains(out, "app -> "+schema+": 2 statement(s)\n") || !strings.Contains(out, "wrote "+filepath.Join(dir, "20260902103000_sync_prisma.up.sql")+"\n") {
+		t.Fatalf("out = %q", out)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil || string(calls) != "--version\nmigrate diff --from-empty --to-schema-datamodel "+schema+" --script\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+
+	t.Setenv("GODWIT_PRISMA_BIN", bin)
+	if code, _, errOut := runCLI("diff", "--server", url, "--target", "app", "--prisma", schema, "--dir", dir, "--dry-run"); code != 0 {
+		t.Fatalf("env bin: code = %d, stderr = %s", code, errOut)
+	}
+	if calls, _ := os.ReadFile(log); strings.Count(string(calls), "--version\n") != 2 {
+		t.Fatalf("calls = %q", calls)
+	}
+
+	mysql := filepath.Join(dir, "mysql.prisma")
+	if err := os.WriteFile(mysql, []byte(strings.Replace(prismaSchema, "postgresql", "mysql", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runCLI("diff", "--server", url, "--target", "app", "--prisma", mysql, "--dir", dir, "--dry-run")
+	if code != 1 || !strings.Contains(errOut, `datasource provider is "mysql"; godwit targets PostgreSQL only`) {
+		t.Fatalf("mysql: code = %d, stderr = %q", code, errOut)
 	}
 }

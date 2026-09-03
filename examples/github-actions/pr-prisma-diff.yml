@@ -1,0 +1,86 @@
+name: prisma migrations
+
+on:
+  pull_request:
+    paths:
+      - prisma/schema.prisma   # the Prisma schema
+      - db/migrations/**       # your migration directory
+      - godwit.yaml
+
+permissions:
+  contents: write        # the generated files are committed to the pull request branch
+  pull-requests: write   # the sticky comment
+
+concurrency:
+  group: prisma-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# A pull request that edits prisma/schema.prisma carries exactly one generated pair,
+# <timestamp>_prisma.{up,down}.sql, regenerated from the live target on every push. A push made with
+# GITHUB_TOKEN does not trigger workflows, which is why lint and plan run here, after the commit: the
+# plan the `/godwit apply` of pr-plan-and-apply.yml binds to must include the generated files.
+jobs:
+  diff:
+    if: github.event.pull_request.head.repo.full_name == github.repository   # a fork cannot receive the commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}   # the branch itself, so the commit lands on it
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the Prisma CLI the project pins
+        run: npm ci   # `npx prisma` then runs node_modules/.bin/prisma, no download
+
+      - name: Drop the pair a previous run of this pull request generated
+        run: |
+          git diff --diff-filter=A --name-only origin/main...HEAD -- 'db/migrations/*_prisma.up.sql' 'db/migrations/*_prisma.down.sql' \
+            | xargs -r git rm -q --
+
+      - name: Generate the migration from the Prisma schema
+        id: diff
+        uses: SamuelMolling/godwit@main
+        with:
+          command: diff
+          dir: db/migrations
+          server: https://godwit.internal           # your godwit service URL
+          token: ${{ secrets.GODWIT_TOKEN_READ }}   # token with the read scope
+          target: orders                            # target registered on the service
+          prisma: prisma/schema.prisma
+          name: prisma   # the step above looks for <timestamp>_prisma.{up,down}.sql
+          # Prisma 7 moved the datasource url out of the schema: point the CLI at the config, whose
+          # datasource.url must be set to something (any value; migrate diff never connects to it).
+          # prisma-bin: node_modules/.bin/prisma --config prisma.config.ts
+
+      - name: Commit the generated files to the pull request
+        run: |
+          git add --all db/migrations
+          if git diff --cached --quiet; then
+            echo "migrations already match prisma/schema.prisma"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(db): migration generated from prisma/schema.prisma"
+          git push
+
+      - name: Lint the generated migration
+        uses: SamuelMolling/godwit@main
+        with:
+          command: lint
+          dir: db/migrations
+          base: origin/main
+
+      - name: Plan against the live target and store the plan the apply will bind to
+        uses: SamuelMolling/godwit@main
+        with:
+          command: plan
+          dir: db/migrations
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_READ }}
+          target: orders

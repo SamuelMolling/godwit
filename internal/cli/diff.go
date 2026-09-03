@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -17,12 +18,12 @@ import (
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/schemasource"
 )
 
 var (
-	diffNow    = time.Now
-	nameRe     = regexp.MustCompile(`^[a-z0-9_]+$`)
-	readSchema = os.ReadFile
+	diffNow = time.Now
+	nameRe  = regexp.MustCompile(`^[a-z0-9_]+$`)
 )
 
 type diffJSON struct {
@@ -38,7 +39,7 @@ type diffJSON struct {
 
 func newDiffCmd() *cobra.Command {
 	flags := &clientFlags{}
-	var target, schema, name, dir string
+	var target, schema, prisma, prismaBin, name, dir string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "diff",
@@ -48,17 +49,18 @@ func newDiffCmd() *cobra.Command {
 			if target == "" {
 				return errors.New("--target (or target in godwit.yaml) is required")
 			}
-			if schema == "" {
-				return errors.New("--schema is required")
+			source, label, err := schemaSource(schema, prisma, prismaBin)
+			if err != nil {
+				return err
 			}
 			if !dryRun && !nameRe.MatchString(name) {
 				return errors.New("--name is required and must be snake_case ([a-z0-9_]+)")
 			}
-			ddl, err := readSchema(schema)
+			ddl, err := source.Load(cmd.Context())
 			if err != nil {
 				return err
 			}
-			res, err := client.Diff(cmd.Context(), connect.NewRequest(&godwitv1.DiffRequest{Target: target, Schema: string(ddl)}))
+			res, err := client.Diff(cmd.Context(), connect.NewRequest(&godwitv1.DiffRequest{Target: target, Schema: ddl}))
 			if err != nil {
 				return err
 			}
@@ -69,7 +71,7 @@ func newDiffCmd() *cobra.Command {
 				}
 			}
 
-			writeDiffReport(cmd.OutOrStdout(), res.Msg, files, schema, flags.json)
+			writeDiffReport(cmd.OutOrStdout(), res.Msg, files, label, flags.json)
 
 			return nil
 		}),
@@ -77,12 +79,31 @@ func newDiffCmd() *cobra.Command {
 	flags.register(cmd)
 	cmd.Flags().StringVar(&target, "target", "", "target name")
 	cmd.Flags().StringVar(&schema, "schema", "", "file holding the whole desired database as DDL")
+	cmd.Flags().StringVar(&prisma, "prisma", "", "Prisma schema (schema.prisma) rendered to DDL by the Prisma CLI, no database needed")
+	cmd.Flags().StringVar(&prismaBin, "prisma-bin", envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin), "command line that runs the Prisma CLI ($GODWIT_PRISMA_BIN)")
 	cmd.Flags().StringVar(&name, "name", "", "migration name, snake_case; becomes <timestamp>_<name>.{up,down}.sql")
 	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the migration without writing files")
 	configKeys(cmd, "target", "dir")
 
 	return cmd
+}
+
+func schemaSource(schema, prisma, prismaBin string) (schemasource.Source, string, error) {
+	switch {
+	case schema != "" && prisma != "":
+		return nil, "", errors.New("--schema and --prisma are exclusive: one desired schema per diff")
+	case prisma != "":
+		if strings.TrimSpace(prismaBin) == "" {
+			return nil, "", errors.New("--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI")
+		}
+
+		return schemasource.Prisma{Schema: prisma, Bin: prismaBin}, prisma, nil
+	case schema != "":
+		return schemasource.File{Path: schema}, schema, nil
+	}
+
+	return nil, "", errors.New("--schema <ddl file> or --prisma <schema.prisma> is required")
 }
 
 func writeDiff(dir, name string, m *godwitv1.DiffResponse) ([]string, error) {

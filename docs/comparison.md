@@ -33,6 +33,7 @@ godwit is narrower on purpose: PostgreSQL only, plain SQL only, versioned only, 
 | Checkpoints | no; baseline is the escape hatch when history replay gets slow | no | no | yes |
 | Declarative schema | no | no | no | yes (`schema apply`) |
 | Migration from a desired schema | `Diff` / `godwit diff --schema`: up and down SQL from the live target to a DDL file, hazards and recipes on the result, drift against the history shown; tables, keys, foreign keys, indexes, sequences, enums, functions, triggers, views, policies, extensions (via pg-schema-diff); no domains, composite types, exclusion constraints, comments or roles | no | `diff-changelog` | `migrate diff` (schema in HCL, SQL or from an ORM; dev database) |
+| ORM model as the desired state | Prisma directly (`godwit diff --prisma`, the project's own Prisma CLI renders it, no database); any other ORM through its schema dump as `--schema` | no | no | external schema providers for Prisma, GORM, Sequelize, SQLAlchemy, Django, Ent and more, each a loader command in `atlas.hcl` |
 | Retention of history | no command; documented SQL | n/a | n/a | n/a |
 | Multi-target ordering | no; one target per run, the pipeline orchestrates | n/a | n/a | n/a |
 | Service / API | connect (gRPC + JSON) service with scoped tokens, leases, replicas | CLI (Enterprise has a hub) | CLI (Pro has a hub) | CLI (Atlas Cloud) |

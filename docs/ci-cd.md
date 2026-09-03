@@ -20,7 +20,7 @@ The Action's last step re-exits with the CLI status after the summary, the comme
 ```yaml
 - uses: SamuelMolling/godwit@main
   with:
-    command: lint | plan | apply | verify | revert | migrate
+    command: lint | plan | apply | verify | revert | migrate | diff
 ```
 
 It builds godwit from the checked-out action ref with `actions/setup-go` (`CGO_ENABLED=1`, needs `gcc`), so the first run in a job takes a minute; `go-version` pins the toolchain. The runner also needs `jq` and `gh` (present on GitHub-hosted runners).
@@ -42,20 +42,24 @@ In this mode `command: migrate` is refused (exit 2) unless `dry-run: "true"`. `m
 
 | Input | Default | Used by |
 |---|---|---|
-| `command` | required | `lint`, `plan`, `apply`, `verify`, `revert`, `migrate` |
+| `command` | required | `lint`, `plan`, `apply`, `verify`, `revert`, `migrate`, `diff` |
 | `mode` | `apply-on-pr` | `apply-on-pr` (apply and revert from the pull request, verify on push, migrate refused) or `apply-on-merge` (migrate on push, apply and revert refused) |
 | `apply-on` | `comment` | apply: `comment` (a `/godwit apply` comment or review body), `approve` (an approved review), or `comment,approve` |
 | `allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | apply, revert: `author_association` values whose comment or review counts; anyone else is refused with exit 1 |
-| `dir` | `dir` from `godwit.yaml`, else `migrations` | all but revert |
+| `dir` | `dir` from `godwit.yaml`, else `migrations` | all but revert; diff writes the generated pair there |
 | `base` | `origin/main` | lint: only migrations added since the ref are linted, files modified since it are `E003`; empty checks every file. The ref is fetched depth-1 when missing |
 | `ack` | — | lint, plan, apply, verify, migrate: comma-separated hazard codes; revert: the codes found in the down files (`H002` for `DROP TABLE`, `H009` for `DROP INDEX`, ...) |
-| `server` | `server` from `godwit.yaml` or `GODWIT_SERVER` | plan, apply, verify, revert, migrate |
-| `token` | — | plan and verify (`read`), apply, revert and migrate (`pipeline`); exported as `GODWIT_TOKEN`, never passed on the command line |
-| `target` | `target` from `godwit.yaml` | plan, apply, verify, migrate; revert (optional, narrows the run search). With a target, `plan` runs on the service and stores the plan; without one it parses the files offline |
+| `server` | `server` from `godwit.yaml` or `GODWIT_SERVER` | plan, apply, verify, revert, migrate, diff |
+| `token` | — | plan, verify and diff (`read`), apply, revert and migrate (`pipeline`); exported as `GODWIT_TOKEN`, never passed on the command line |
+| `target` | `target` from `godwit.yaml` | plan, apply, verify, migrate, diff; revert (optional, narrows the run search). With a target, `plan` runs on the service and stores the plan; without one it parses the files offline |
 | `rollout` | `godwit.yaml`, else `direct` | plan, apply, migrate: part of the plan key, so all must agree |
-| `dry-run` | `false` | migrate: `PlanRun` without persisting, markdown report, no run (`command: plan` is the persisting variant); allowed in both modes |
+| `dry-run` | `false` | migrate: `PlanRun` without persisting, markdown report, no run (`command: plan` is the persisting variant); allowed in both modes. diff: report the migration without writing the files |
+| `schema` | — | diff: file holding the whole desired database as DDL |
+| `prisma` | — | diff: `schema.prisma` rendered to DDL by the Prisma CLI, which the checkout must provide (`npm ci`); exclusive with `schema` |
+| `prisma-bin` | `npx prisma`, or `GODWIT_PRISMA_BIN` | diff: command line that runs the Prisma CLI, e.g. `node_modules/.bin/prisma --config prisma.config.ts` |
+| `name` | — | diff: migration name, snake_case; the files are `<timestamp>_<name>.{up,down}.sql` in `dir` (required unless `dry-run`) |
 | `source` | `<host>/<owner>/<repo>@<pull request head sha, else sha>[:<dir>]` | plan, apply, verify, migrate: provenance stored on the plan (`cp_plans.source`) or run (`cp_runs.source`); revert finds the runs of a pull request by it |
-| `comment` | `true` | post the lint, plan, dry-run, apply or revert report as one sticky pull request comment |
+| `comment` | `true` | post the lint, plan, diff, dry-run, apply or revert report as one sticky pull request comment |
 | `comment-on-push` | `true` | on `push`, post the migrate outcome, or a failed verify, on the pull request(s) the commit merged |
 | `github-token` | `${{ github.token }}` | reads the pull request, posts the comments (`pull-requests: write`) and sets the status (`statuses: write`) |
 | `go-version` | `1.26` | build |
@@ -68,12 +72,14 @@ In this mode `command: migrate` is refused (exit 2) unless `dry-run: "true"`. `m
 | `stale` | `true` when `apply` or `migrate` exited 3: the stored plan is stale or the target requires one |
 | `pending` | number of migrations `verify` found not applied |
 | `blocking` | number of blocking lint findings |
+| `changed` | `true` when `diff` found the target and the desired schema differ |
+| `files` | space-separated paths of the up and down files `diff` wrote (empty on `dry-run` or `no changes`) |
 | `pr-number` | pull request `apply` or `revert` acted on (or the pull request of a `pull_request` event) |
 | `head-sha` | head commit of that pull request: the one checked out, applied and carrying the status |
 | `skipped` | `true` when the event carried no command for `apply` or `revert` (a comment that is not `/godwit apply`, a review that does not apply): nothing ran, the step succeeds |
 | `summary-path` | file with the markdown report, also appended to the job summary |
 
-Comments are sticky: each is found and replaced by a hidden marker, `<!-- godwit:lint -->`, `<!-- godwit:plan -->`, `<!-- godwit:dry-run -->`, `<!-- godwit:verify -->` or `<!-- godwit:migrate -->` (shared by `apply`, `revert` and `migrate`: one comment tells the story of the run), so each command keeps one comment per pull request. On `pull_request` events lint, plan and dry run post their report; `apply` and `revert` post on the pull request they were commanded from; a real `migrate` never posts there. On `push` events only `migrate` and a failed `verify` post, and they look the pull request(s) up from the commit (`GET /repos/{owner}/{repo}/commits/{sha}/pulls`): the outcome of the merge lands on the pull request that shipped it, with the run id and state, the SQL error, the `PlanStale` report or the list of migrations still pending. A push that merged no pull request posts nothing; a failed comment is a workflow warning, not a failure.
+Comments are sticky: each is found and replaced by a hidden marker, `<!-- godwit:lint -->`, `<!-- godwit:plan -->`, `<!-- godwit:diff -->`, `<!-- godwit:dry-run -->`, `<!-- godwit:verify -->` or `<!-- godwit:migrate -->` (shared by `apply`, `revert` and `migrate`: one comment tells the story of the run), so each command keeps one comment per pull request. On `pull_request` events lint, plan, diff and dry run post their report; `apply` and `revert` post on the pull request they were commanded from; a real `migrate` never posts there. On `push` events only `migrate` and a failed `verify` post, and they look the pull request(s) up from the commit (`GET /repos/{owner}/{repo}/commits/{sha}/pulls`): the outcome of the merge lands on the pull request that shipped it, with the run id and state, the SQL error, the `PlanStale` report or the list of migrations still pending. A push that merged no pull request posts nothing; a failed comment is a workflow warning, not a failure.
 
 ### Pull request: lint and plan
 
@@ -108,6 +114,30 @@ Acknowledging a hazard is a code change, visible in the workflow file or in the 
           command: lint
           ack: H003
 ```
+
+### Pull request: a migration from the Prisma schema
+
+A team that edits `prisma/schema.prisma` and never writes SQL gets the migration written for it, on the pull request, before lint and plan see it ([pr-prisma-diff.yml](../examples/github-actions/pr-prisma-diff.yml) is the whole workflow):
+
+```yaml
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - id: diff
+        uses: SamuelMolling/godwit@main
+        with:
+          command: diff
+          dir: db/migrations
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_READ }}
+          target: orders
+          prisma: prisma/schema.prisma
+          name: prisma
+```
+
+The step runs `prisma migrate diff --from-empty --script` on the schema with the CLI the project pins, sends the resulting DDL as the desired state and writes the pair into `dir`; `changed` and `files` say whether it wrote anything and what. The Action never commits: the workflow does, with a bot identity, so `contents: write` and a checkout of `github.event.pull_request.head.ref` (not the merge commit) are what let the pair land on the branch. Because a push made with `GITHUB_TOKEN` triggers no workflow, the same job continues with `lint` and `plan` after the commit, otherwise the stored plan would not cover the files just added. The generated pair is regenerated on every push: delete the pair the previous run added (`git rm` the `*_<name>.{up,down}.sql` files added since the base) before the diff step, so the pull request always carries exactly one.
+
+The desired schema must describe the whole database ([getting started](getting-started.md#3b-write-the-next-migration-from-a-schema)); anything the target has that the Prisma schema does not is a `DROP` in the generated `up`, including `_prisma_migrations` if the project ever ran `prisma migrate` against that database.
 
 ### Pull request: apply
 

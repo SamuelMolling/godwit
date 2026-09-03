@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-# Env: GODWIT_BIN COMMAND DIR BASE ACK SERVER TARGET ROLLOUT DRY_RUN SOURCE GODWIT_TOKEN HEAD_SHA PR_NUMBER
+# Env: GODWIT_BIN COMMAND DIR BASE ACK SERVER TARGET ROLLOUT DRY_RUN SOURCE SCHEMA PRISMA PRISMA_BIN NAME GODWIT_TOKEN HEAD_SHA PR_NUMBER
 #      GH_TOKEN REPOSITORY GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA RUNNER_TEMP GITHUB_OUTPUT GITHUB_STEP_SUMMARY
 godwit="${GODWIT_BIN}"
 work="$(mktemp -d "${RUNNER_TEMP}/godwit-${COMMAND}.XXXXXX")"
@@ -15,6 +15,8 @@ plan_id=""
 plan_key=""
 stale=false
 pending=""
+changed=""
+files=""
 
 ensure_base() {
   if git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
@@ -153,6 +155,38 @@ revert() {
   done
 }
 
+diff() {
+  args=(${dir_args[@]+"${dir_args[@]}"})
+  if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+  if [ -n "${TARGET}" ]; then args+=(--target "${TARGET}"); fi
+  if [ -n "${SCHEMA}" ]; then args+=(--schema "${SCHEMA}"); fi
+  if [ -n "${PRISMA}" ]; then args+=(--prisma "${PRISMA}"); fi
+  if [ -n "${PRISMA_BIN}" ]; then args+=(--prisma-bin "${PRISMA_BIN}"); fi
+  if [ -n "${NAME}" ]; then args+=(--name "${NAME}"); fi
+  if [ "${DRY_RUN}" = "true" ]; then args+=(--dry-run); fi
+  "${godwit}" diff ${args[@]+"${args[@]}"} --json >"${work}/diff.json" 2>"${errors}" || status=$?
+  cat "${errors}" >&2
+  if [ "${status}" != "0" ]; then
+    refused diff refused
+    status=1
+
+    return 0
+  fi
+  changed="$(jq -r '.changed' "${work}/diff.json")"
+  files="$(jq -r '.files | join(" ")' "${work}/diff.json")"
+  jq -r --arg schema "${PRISMA:-${SCHEMA}}" '
+    "## godwit diff\n",
+    (if .changed | not then "target `\(.target)`: no changes, it already matches `\($schema)`"
+     else
+       (if (.drift // "") != "" then "drift (the target'"'"'s live schema, not its history, is the starting point):\n\n```\n\(.drift)\n```\n" else empty end),
+       "target `\(.target)` -> `\($schema)`: \(.statements | length) statement(s)\n",
+       (.statements | to_entries[] | "- [\(.key)] `\(.value.mode)` \(.value.sql | split("\n")[0])",
+         (.value.hazards[] | "  - hazard `\(.code)`: \(.detail)")),
+       "\n<details><summary>up</summary>\n\n```sql\n\(.up_sql)\n```\n\n</details>\n<details><summary>down</summary>\n\n```sql\n\(.down_sql)\n```\n\n</details>",
+       (if (.files | length) > 0 then "\nwrote " + (.files | map("`\(.)`") | join(", ")) else empty end)
+     end)' "${work}/diff.json" >"${summary}"
+}
+
 dir_args=()
 if [ -n "${DIR}" ]; then dir_args+=(--dir "${DIR}"); fi
 
@@ -203,8 +237,11 @@ case "${COMMAND}" in
   revert)
     revert
     ;;
+  diff)
+    diff
+    ;;
   *)
-    echo "unknown command '${COMMAND}' (want lint, plan, migrate, apply, verify or revert)" >&2
+    echo "unknown command '${COMMAND}' (want lint, plan, migrate, apply, verify, revert or diff)" >&2
     exit 2
     ;;
 esac
@@ -219,5 +256,7 @@ cat "${summary}" >>"${GITHUB_STEP_SUMMARY}"
   printf 'plan-key=%s\n' "${plan_key}"
   printf 'stale=%s\n' "${stale}"
   printf 'pending=%s\n' "${pending}"
+  printf 'changed=%s\n' "${changed}"
+  printf 'files=%s\n' "${files}"
   printf 'summary-path=%s\n' "${summary}"
 } >>"${GITHUB_OUTPUT}"

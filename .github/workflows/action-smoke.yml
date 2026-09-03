@@ -133,6 +133,17 @@ jobs:
           curl -fs "${GODWIT_SERVER}/readyz"
           "${RUNNER_TEMP}/godwit" target add app --token smoke-admin --provider static \
             --dsn 'postgres://godwit@127.0.0.1:5432/app?sslmode=disable'
+          mkdir -p "${RUNNER_TEMP}/diff"
+
+      - name: diff dry run against the empty target
+        id: diffdry
+        uses: ./
+        with:
+          command: diff
+          target: app
+          token: smoke-read
+          schema: testdata/action/schema.sql
+          dry-run: "true"
 
       - name: plan on the service
         id: stored
@@ -199,6 +210,17 @@ jobs:
           target: app
           token: smoke-pipe
           ack: H001,H002,H009
+
+      - name: diff writes the migration after the revert
+        id: diff
+        uses: ./
+        with:
+          command: diff
+          dir: ${{ runner.temp }}/diff
+          target: app
+          token: smoke-read
+          schema: testdata/action/schema.sql
+          name: users_from_schema
 
       - name: verify on push after the revert
         id: pending
@@ -350,6 +372,12 @@ jobs:
           VERIFIED_SUMMARY: ${{ steps.verified.outputs.summary-path }}
           REVERT_RUN: ${{ steps.revert.outputs.run-id }}
           REVERT_SUMMARY: ${{ steps.revert.outputs.summary-path }}
+          DIFFDRY_CHANGED: ${{ steps.diffdry.outputs.changed }}
+          DIFFDRY_FILES: ${{ steps.diffdry.outputs.files }}
+          DIFFDRY_SUMMARY: ${{ steps.diffdry.outputs.summary-path }}
+          DIFF_CHANGED: ${{ steps.diff.outputs.changed }}
+          DIFF_FILES: ${{ steps.diff.outputs.files }}
+          DIFF_SUMMARY: ${{ steps.diff.outputs.summary-path }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -397,6 +425,26 @@ jobs:
           test "${REVERT_RUN}" != "${APPLY_RUN}"
           grep -q "^run \`${REVERT_RUN}\` reverts \`${APPLY_RUN}\`: \*\*succeeded\*\* (implicit plan)$" "${REVERT_SUMMARY}"
 
+          test "${DIFFDRY_CHANGED}" = "true"
+          test -z "${DIFFDRY_FILES}"
+          grep -q '^## godwit diff$' "${DIFFDRY_SUMMARY}"
+          grep -q "^target \`app\` -> \`testdata/action/schema.sql\`: [0-9]* statement(s)$" "${DIFFDRY_SUMMARY}"
+          grep -q 'CREATE TABLE' "${DIFFDRY_SUMMARY}"
+          absent_in() { if grep -q "$1" "$2"; then exit 1; fi; }
+          absent_in '^wrote ' "${DIFFDRY_SUMMARY}"
+          test "${DIFF_CHANGED}" = "true"
+          # shellcheck disable=SC2086
+          set -- ${DIFF_FILES}
+          test "$#" = "2"
+          test -s "$1"
+          test -s "$2"
+          case "$1" in "${RUNNER_TEMP}"/diff/*_users_from_schema.up.sql) ;; *) exit 1 ;; esac
+          case "$2" in "${RUNNER_TEMP}"/diff/*_users_from_schema.down.sql) ;; *) exit 1 ;; esac
+          grep -q 'CREATE TABLE' "$1"
+          grep -q 'DROP TABLE' "$2"
+          grep -q '^drift (' "${DIFF_SUMMARY}"
+          grep -q "^wrote \`$1\`, \`$2\`$" "${DIFF_SUMMARY}"
+
           cat "${GH_STUB_LOG}"
           statuses="repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA} -f state="
           grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=applying ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
@@ -406,7 +454,8 @@ jobs:
           grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 10
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 6
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 8
+          grep -c '^<!-- godwit:diff -->$' "${GH_STUB_LOG}" | grep -qx 2
           grep -q '^<!-- godwit:plan -->$' "${GH_STUB_LOG}"
           grep -c '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -qx 3
           grep -A1 '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -c '^## godwit apply$' | grep -qx 2
