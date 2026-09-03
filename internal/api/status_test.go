@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +17,12 @@ import (
 )
 
 type stubInspector struct {
-	status controlplane.TargetStatus
-	obs    controlplane.Observation
-	err    error
+	status   controlplane.TargetStatus
+	obs      controlplane.Observation
+	losses   []engine.Loss
+	lossErr  error
+	err      error
+	observed *[]engine.Drop
 }
 
 func (i stubInspector) Status(context.Context, string) (controlplane.TargetStatus, error) {
@@ -27,6 +31,23 @@ func (i stubInspector) Status(context.Context, string) (controlplane.TargetStatu
 
 func (i stubInspector) Observe(context.Context, string) (controlplane.Observation, error) {
 	return i.obs, i.err
+}
+
+func (i stubInspector) DataLoss(_ context.Context, _ string, drops []engine.Drop) ([]engine.Loss, error) {
+	if i.observed != nil {
+		*i.observed = append(*i.observed, drops...)
+	}
+	if i.lossErr != nil {
+		return nil, i.lossErr
+	}
+	var out []engine.Loss
+	for _, l := range i.losses {
+		if slices.Contains(drops, l.Drop) {
+			out = append(out, l)
+		}
+	}
+
+	return out, nil
 }
 
 func TestGetTargetStatus(t *testing.T) {
@@ -183,4 +204,24 @@ func expectTargetRows(mock pgxmock.PgxPoolIface) {
 				[]byte(`{"lock_timeout":"3s","statement_timeout":"1m","require_plan":"true","keep_old":"false","search_path":"app,public"}`),
 				7, 1, 2, true).
 			AddRow("bare", "static", []byte(`{}`), 0, 0, 0, false))
+}
+
+func TestGetRunLedgerError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mock.Close)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+
+	mock.ExpectQuery("FROM cp_runs WHERE id").WithArgs("r1").WillReturnRows(runRow())
+	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnError(errors.New("ledger down"))
+	if _, err := s.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: "r1"})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("err = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }

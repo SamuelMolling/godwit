@@ -34,6 +34,20 @@
         {{if eq (state .Run.State) "needs_attention"}}<p class="note">The journal on <span class="mono">{{.Run.Target}}</span> keeps every committed statement; a resume continues from the first one that did not commit.</p>{{end}}
       </div>
       {{end}}
+      {{if .Ledger}}
+      <div class="blk">
+        <h3>What it applied</h3>
+        <p class="note">A revert of this run undoes exactly these, newest first — never the rest of the directory it submitted.</p>
+        <ul class="tl">
+          {{range .Ledger}}
+          <li><i class="{{if .RevertedBy}}warn{{else}}ok{{end}}"></i><div>
+            <div class="d"><span class="mono">{{.Migration}}</span>{{if .Held}} <span class="chip">contract held</span>{{end}}{{with .RevertedBy}} <span class="chip">reverted by <a href="/ui/runs/{{.}}">{{short .}}</a></span>{{end}}</div>
+            <div class="t">{{stamp .AppliedAt}}</div>
+          </div></li>
+          {{end}}
+        </ul>
+      </div>
+      {{end}}
       {{with .Plan}}
       <div class="blk">
         <h3>Plan</h3>
@@ -93,8 +107,8 @@
         {{end}}
         {{if and (eq (state .Run.State) "succeeded") .Can.revert}}
         <div class="opt">
-          <form method="post" action="/ui/runs/{{.Run.Id}}/revert"><input class="in" name="ack" placeholder="Hazards to acknowledge, e.g. H002" aria-label="Acknowledged hazards"><button class="btn dng"><svg class="ic"><use href="#i-undo"/></svg>Revert</button></form>
-          <p>Queues the down migrations as a new run through the same hazard gate and validation.</p>
+          <form method="post" action="/ui/runs/{{.Run.Id}}/revert"><input class="in" name="ack" placeholder="Hazards to acknowledge, e.g. H002" aria-label="Acknowledged hazards"><label class="note"><input type="checkbox" name="force" value="1"> Force past a newer run</label><label class="note"><input type="checkbox" name="allow-data-loss" value="1"> Allow data loss</label><button class="btn dng"><svg class="ic"><use href="#i-undo"/></svg>Revert</button></form>
+          <p>Undoes the migrations listed under <em>What it applied</em>, newest first, through the same hazard gate and validation. Refused when it would drop a table or column that still holds rows.</p>
         </div>
         {{end}}
         {{if .Locked}}

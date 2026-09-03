@@ -137,8 +137,10 @@ func TestNotificationsEndToEnd(t *testing.T) {
 
 	created, err = client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: []*godwitv1.MigrationFile{
-			{Name: "20260901140000_bad.up.sql", Body: "SELECT 1/0;"},
-			{Name: "20260901140000_bad.down.sql", Body: "SELECT 1;"},
+			{Name: "20260901140000_ok.up.sql", Body: "CREATE TABLE bad_ok (id int);"},
+			{Name: "20260901140000_ok.down.sql", Body: "DROP TABLE bad_ok;"},
+			{Name: "20260901140001_bad.up.sql", Body: "SELECT 1/0;"},
+			{Name: "20260901140001_bad.down.sql", Body: "SELECT 1;"},
 		},
 		SkipValidation: true,
 	}))
@@ -154,7 +156,9 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	if _, err := client.ParkRun(ctx, connect.NewRequest(&godwitv1.ParkRunRequest{RunId: badID, Reason: "manual hold"})); err != nil {
 		t.Fatal(err)
 	}
-	reverted, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: badID}))
+	reverted, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{
+		RunId: badID, AcknowledgeHazards: []string{"H002"},
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}

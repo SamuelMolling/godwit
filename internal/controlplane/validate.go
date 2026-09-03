@@ -94,7 +94,7 @@ func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPa
 		if p, err = expander.expandPlan(ctx, conn, p, map[string]Expansion{}, replayed); err != nil {
 			return err
 		}
-		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil); err != nil {
 			return fmt.Errorf("%w: %w", ErrValidationFailed, err)
 		}
 	}
@@ -128,7 +128,7 @@ func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searc
 		if histPlans, err = ExpandUp(histPlans, run.Expansions); err != nil {
 			return nil, fmt.Errorf("history run %d: %w", i, err)
 		}
-		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans)); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans), nil); err != nil {
 			return nil, fmt.Errorf("replay history run %d: %w", i, err)
 		}
 		for _, p := range histPlans {
@@ -202,7 +202,7 @@ func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []en
 			return Validation{}, err
 		}
 		val.Plans[i] = p
-		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil); err != nil {
 			return Validation{}, fmt.Errorf("%w: %w", ErrValidationFailed, err)
 		}
 		next, nextFP, err := snapshotScratch(ctx, conn)
@@ -242,9 +242,10 @@ func ExpandPlan(p engine.Plan, exp Expansion) (engine.Plan, error) {
 		return engine.Plan{}, fmt.Errorf("%w: %s: expansion does not parse: %w", ErrDirective, exp.ID, err)
 	}
 	if p.Direction == engine.DirectionDown {
-		// The whole body is generated, so the hazard gate has nothing of the author's to warn about.
+		// The whole body is generated, and godwit only generates an inverse it considers lossless, so
+		// neither the hazard gate nor the data-loss gate has anything of the author's to speak about.
 		for i := range out.Statements {
-			out.Statements[i].Hazards = nil
+			out.Statements[i].Hazards, out.Statements[i].Drops = nil, nil
 		}
 
 		return out, nil

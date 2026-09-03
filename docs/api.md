@@ -50,7 +50,7 @@ Missing or unknown token: `unauthenticated: invalid or missing bearer token`. In
 | `unauthenticated` | 401 | bad bearer |
 | `permission_denied` | 403 | scope too low |
 | `not_found` | 404 | unknown target or run id |
-| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not the latest on its target or the target is busy`, `baseline runs cannot be reverted`, `target already has applied migrations`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`), `plan <id> is bound to run <r>`, `plan <id> was superseded by <id>`, `plan <id> expired ...` |
+| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not revertable: ...` (a newer run stands — pass `force`, the target is busy, or the run applied nothing that still stands), `revert would destroy data: ...` (pass `allowDataLoss`), `baseline runs cannot be reverted`, `target already has applied migrations`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`), `plan <id> is bound to run <r>`, `plan <id> was superseded by <id>`, `plan <id> expired ...` |
 | `unimplemented` | 501 | `drift detection is not enabled`, `baselining is not enabled`, `target status is not enabled`, `stored plans are not enabled` (server wired without those components; not the case for `godwit serve`) |
 | `internal` | 500 | store errors, credential provider errors, `replay history run N: ...` from validation |
 
@@ -129,6 +129,8 @@ call GetRun '{"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c"}'
  "rollout":"direct","phase":"expand","kind":"migrate","createdBy":"ci","source":"github.com/acme/app@1f2e3d4"}}
 ```
 
+`GetRun` also returns `applied`: the ledger of what the run actually put into the target's history, in the order it applied them, each with `migration`, `appliedAt`, `held` (its contract phase never ran) and `revertedBy` (the revert that undid it). It is what `RevertRun` is scoped to.
+
 `Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan), `progress` (`migration`, `statement`, `phase`, `rowsDone`, `rowsTotal`, `batches`: what the statement being executed last reported, written under the heartbeat so a long backfill is visible while it runs).
 
 ### ListRuns — read
@@ -158,7 +160,13 @@ call RevertRun '{"runId":"0d3c6c6e-...","acknowledgeHazards":["H002"]}'
 # {"runId":"7a1b...."}
 ```
 
-Queues a run whose plans are the down sides of the original's files, newest version first, with `reverts` set. Same admission as `CreateRun` minus the order guard. Original must be `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, be the newest non-reverted run on its target, with nothing `queued`/`running` there; baseline runs are refused.
+Plans, and unless `dryRun` queues, the down sides of the migrations the original run **actually applied** (its `cp_run_applied` ledger), in reverse order of application — never the rest of the directory it submitted. Same admission as `CreateRun` minus the order guard.
+
+Request: `runId` (empty picks the newest un-reverted run of `target`), `target` (required without `runId`, and checked against the run's own otherwise), `dryRun`, `force`, `allowDataLoss`, `acknowledgeHazards`, `skipValidation`, `lockTimeout`, `statementTimeout`.
+
+Response: `runId` (empty on a dry run), `reverts`, `target`, `migrations` (the down plan, same `PlannedMigration` shape as `PlanRun`), `dataLoss` (`migration`, `kind` `table`/`column`, `object`, `rows`) and `forced` (a newer run stands and `force` allowed it anyway).
+
+The original must be `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, must still have a migration standing in its ledger, and its target must have nothing `queued`/`running`. Reverting anything but the newest un-reverted run needs `force`; a plan that would drop a table or column still holding rows needs `allowDataLoss`. Baseline runs and reverts of reverts are refused.
 
 ### Diff — read
 

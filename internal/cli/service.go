@@ -275,25 +275,65 @@ func newRevertCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.RevertRunRequest{}
 	cmd := &cobra.Command{
-		Use:   "revert <run-id>",
-		Short: "Apply the down side of a run and watch the revert",
-		Args:  cobra.ExactArgs(1),
+		Use:   "revert [run-id]",
+		Short: "Undo what one run applied, newest migration first; with no run id, the newest un-reverted run on --target",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			req.RunId = args[0]
+			if len(args) == 1 {
+				req.RunId = args[0]
+			}
 			resp, err := client.RevertRun(cmd.Context(), connect.NewRequest(req))
 			if err != nil {
 				return err
+			}
+			flags.print(cmd, resp.Msg, revertPlanText(resp.Msg))
+			if req.DryRun {
+				return nil
 			}
 
 			return flags.watch(cmd, client, resp.Msg.RunId)
 		}),
 	}
 	flags.register(cmd)
+	cmd.Flags().StringVar(&req.Target, "target", "", "target whose newest un-reverted run to revert when no run id is given")
+	cmd.Flags().BoolVar(&req.DryRun, "dry-run", false, "print the plan and queue nothing")
+	cmd.Flags().BoolVar(&req.Force, "force", false, "revert a run that is not the newest un-reverted one on its target")
+	cmd.Flags().BoolVar(&req.AllowDataLoss, "allow-data-loss", false, "run a plan that drops a table or column still holding rows")
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this revert, overriding the target's")
+	configKeys(cmd, "target")
 
 	return cmd
+}
+
+// revertPlanText is the plan godwit prints before it runs anything, and all a --dry-run prints.
+func revertPlanText(m *godwitv1.RevertRunResponse) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "revert of run %s on %s: %d migration(s), reverse order of application",
+		m.Reverts, m.Target, len(m.Migrations))
+	if m.Forced {
+		b.WriteString("; forced past a newer run")
+	}
+	for _, pm := range m.Migrations {
+		fmt.Fprintf(&b, "\n  %s (down): %d statement(s)", migrationID(pm), len(pm.Statements))
+		for i, st := range pm.Statements {
+			mode := "tx"
+			if st.NoTx {
+				mode = "no_tx"
+			}
+			fmt.Fprintf(&b, "\n    [%d] %-5s %s", i, mode, firstLine(st.Sql))
+		}
+	}
+	for _, l := range m.DataLoss {
+		fmt.Fprintf(&b, "\n  data loss: %s drops %s %s holding %d row(s)", l.Migration, l.Kind, l.Object, l.Rows)
+	}
+
+	return b.String()
+}
+
+func migrationID(pm *godwitv1.PlannedMigration) string {
+	return engine.MigrationID(pm.Version, pm.Name, pm.Repeatable)
 }
 
 func timeoutFlags(cmd *cobra.Command, lock, statement *string, scope string) {
@@ -394,8 +434,9 @@ func newRunGetCmd() *cobra.Command {
 				return err
 			}
 			r := resp.Msg.Run
-			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created_by: %s\n  source: %s\n  plan: %s\n  created: %s\n  finished: %s",
-				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, r.PlanId, stamp(r.CreatedAt), stamp(r.FinishedAt)))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created_by: %s\n  source: %s\n  plan: %s\n  created: %s\n  finished: %s%s",
+				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, r.PlanId, stamp(r.CreatedAt), stamp(r.FinishedAt),
+				appliedText(resp.Msg.Applied)))
 
 			return nil
 		}),
@@ -403,6 +444,26 @@ func newRunGetCmd() *cobra.Command {
 	flags.register(cmd)
 
 	return cmd
+}
+
+// appliedText lists the ledger of what the run put into the target's history, which is what a revert acts on.
+func appliedText(applied []*godwitv1.RunMigration) string {
+	if len(applied) == 0 {
+		return "\n  applied: none"
+	}
+	var b strings.Builder
+	b.WriteString("\n  applied:")
+	for _, m := range applied {
+		fmt.Fprintf(&b, "\n    %s at %s", m.Migration, stamp(m.AppliedAt))
+		if m.Held {
+			b.WriteString(" (contract held)")
+		}
+		if m.RevertedBy != "" {
+			b.WriteString(" (reverted by " + m.RevertedBy + ")")
+		}
+	}
+
+	return b.String()
 }
 
 func newRunWatchCmd() *cobra.Command {

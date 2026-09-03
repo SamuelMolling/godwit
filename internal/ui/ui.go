@@ -304,6 +304,7 @@ type page struct {
 	Queue     []*godwitv1.Run
 	Strip     strip
 	Run       *godwitv1.Run
+	Ledger    []*godwitv1.RunMigration
 	Steps     []step
 	Plan      *godwitv1.Plan
 	Planned   []planned
@@ -473,7 +474,7 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	p.Run, p.Steps = resp.Run, timeline(resp.Run, audit.Entries)
+	p.Run, p.Steps, p.Ledger = resp.Run, timeline(resp.Run, audit.Entries), resp.Applied
 	p.Plan, p.Planned = plan, plannedOf(plan)
 	p.Locked = locked(resp.Run.State, p.Can)
 	h.render(w, http.StatusOK, "run.html", p)
@@ -597,6 +598,7 @@ func (h *Handler) runAction(w http.ResponseWriter, r *http.Request) {
 		var resp *godwitv1.RevertRunResponse
 		resp, err = call(ctx, godwitv1connect.GodwitServiceRevertRunProcedure, &godwitv1.RevertRunRequest{
 			RunId: id, AcknowledgeHazards: splitCSV(r.FormValue("ack")),
+			Force: r.FormValue("force") != "", AllowDataLoss: r.FormValue("allow-data-loss") != "",
 		}, h.svc.RevertRun)
 		if err == nil {
 			id = resp.RunId

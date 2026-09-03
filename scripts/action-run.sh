@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-# Env: GODWIT_BIN COMMAND DIR BASE ACK SERVER TARGET ROLLOUT DRY_RUN SOURCE SCHEMA PRISMA PRISMA_BIN NAME GODWIT_TOKEN HEAD_SHA PR_NUMBER
+# Env: GODWIT_BIN COMMAND DIR BASE ACK ALLOW_DATA_LOSS FORCE SERVER TARGET ROLLOUT DRY_RUN SOURCE SCHEMA PRISMA PRISMA_BIN NAME GODWIT_TOKEN HEAD_SHA PR_NUMBER
 #      GH_TOKEN REPOSITORY GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA RUNNER_TEMP GITHUB_OUTPUT GITHUB_STEP_SUMMARY
 godwit="${GODWIT_BIN}"
 work="$(mktemp -d "${RUNNER_TEMP}/godwit-${COMMAND}.XXXXXX")"
@@ -132,6 +132,27 @@ pr_runs() {
   fi
 }
 
+# revert_plan puts the dry run in the comment before anything is queued; a refusal (data loss, a newer
+# run) lands there too and stops the revert.
+revert_plan() {
+  local plan="${work}/revert-plan.json"
+  if ! "${godwit}" revert "$1" ${args[@]+"${args[@]}"} --dry-run --json >"${plan}" 2>"${errors}"; then
+    cat "${errors}" >&2
+    { printf 'run `%s`: revert refused\n\n```\n' "$1"; sed 's/^godwit: //' "${errors}"; printf '```\n'; } >>"${summary}"
+    status=1
+
+    return 1
+  fi
+  {
+    printf 'run `%s` on `%s`: reverting %s migration(s), newest first%s\n\n' "$1" \
+      "$(jq -r '.target' "${plan}")" "$(jq -r '.migrations | length' "${plan}")" \
+      "$(jq -r 'if .forced then " (forced past a newer run)" else "" end' "${plan}")"
+    jq -r '.migrations[] | "- `\(if .repeatable then "R__" + .name else (.version | tostring) + "_" + .name end)` (down): \(.statements | length) statement(s)"' "${plan}"
+    jq -r '.dataLoss[]? | "- ⚠️ `\(.migration)` drops \(.kind) `\(.object)` holding \(.rows) row(s)"' "${plan}"
+    printf '\n'
+  } >>"${summary}"
+}
+
 cmd_revert() {
   local ids id last
   if ! pr_runs revert; then
@@ -151,9 +172,14 @@ cmd_revert() {
   args=()
   if [ -n "${ACK}" ]; then args+=(--ack "${ACK}"); fi
   if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+  if [ "${ALLOW_DATA_LOSS}" = "true" ]; then args+=(--allow-data-loss); fi
+  if [ "${FORCE}" = "true" ]; then args+=(--force); fi
   events="${work}/events.jsonl"
   for id in ${ids}; do
     : >"${events}"
+    if ! revert_plan "${id}"; then
+      return 0
+    fi
     "${godwit}" revert "${id}" ${args[@]+"${args[@]}"} --json 2>"${errors}" | tee "${events}" || status=$?
     cat "${errors}" >&2
     last="$(tail -n 1 "${events}" 2>/dev/null || true)"

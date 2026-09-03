@@ -119,7 +119,7 @@ func TestRevertLatest(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("revert of a non-latest run exit = %d, want 1", code)
 	}
-	expectContains(t, errOut, "not the latest")
+	expectContains(t, errOut, "is newer and still stands")
 	_, err := r.client().RevertRun(context.Background(), connect.NewRequest(&godwitv1.RevertRunRequest{
 		RunId: first.Id, AcknowledgeHazards: []string{"H002"},
 	}))
@@ -127,11 +127,16 @@ func TestRevertLatest(t *testing.T) {
 		t.Fatalf("revert code = %v, want failed_precondition", connect.CodeOf(err))
 	}
 
+	expectContains(t, r.mustCLI("revert", second.Id, "--ack", "H003", "--dry-run"),
+		"1 migration(s), reverse order of application", "20260901120001_plan (down)")
+	if !columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("a dry run must not touch the target")
+	}
 	expectContains(t, r.mustCLI("revert", second.Id, "--ack", "H003"), "succeeded")
 	r.expectRun(second.Id, godwitv1.RunState_RUN_STATE_REVERTED, 1)
 	expectContains(t, r.mustCLI("run", "get", second.Id), "created_by: "+actor)
 	expectContains(t, r.mustCLI("audit", "--target", "app", "--limit", "2"),
-		actor+"    run.revert", "reverts="+second.Id+" acked=H003", actor+"    run.create", "migrations=1")
+		actor+"    run.revert", "reverts="+second.Id+" migrations=1 acked=H003", actor+"    run.create", "migrations=1")
 	if !r.alive().logs.has("api call", "actor", actor) {
 		t.Fatal("access log must carry the actor")
 	}
@@ -140,6 +145,9 @@ func TestRevertLatest(t *testing.T) {
 	}
 	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations WHERE version = $1`, v2); n != 0 {
 		t.Fatalf("version %d still recorded after revert", v2)
+	}
+	if !columnExists(t, r.appDSN, "users", "email") {
+		t.Fatal("the revert must leave the first run's migration alone")
 	}
 }
 

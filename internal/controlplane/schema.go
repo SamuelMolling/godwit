@@ -289,6 +289,35 @@ DROP TABLE cp_retired_columns;
 ALTER TABLE cp_runs DROP COLUMN expansions, DROP COLUMN progress;
 ALTER TABLE cp_plans DROP COLUMN expansions;`,
 	},
+	{
+		Version:  20260903000015,
+		Name:     "run_ledger",
+		Checksum: "cp-run-ledger-v1",
+		UpSQL: `
+CREATE TABLE cp_run_applied (
+	run_id      uuid NOT NULL REFERENCES cp_runs (id),
+	migration   text NOT NULL,
+	seq         int NOT NULL,
+	held        boolean NOT NULL DEFAULT false,
+	expansion   jsonb,
+	applied_at  timestamptz NOT NULL DEFAULT now(),
+	reverted_by uuid REFERENCES cp_runs (id),
+	PRIMARY KEY (run_id, migration)
+);
+
+INSERT INTO cp_run_applied (run_id, migration, seq, applied_at)
+SELECT run_id, migration, row_number() OVER (PARTITION BY run_id ORDER BY migration), applied_at
+FROM (
+	SELECT DISTINCT ON (f.name, f.body) r.id AS run_id, left(f.name, length(f.name) - 7) AS migration, r.created_at AS applied_at
+	FROM cp_run_files f JOIN cp_runs r ON r.id = f.run_id
+	WHERE f.name LIKE '%.up.sql' AND r.state IN ('succeeded', 'awaiting_contract')
+	ORDER BY f.name, f.body, r.created_at
+) first_run;
+
+UPDATE cp_run_applied a SET expansion = r.expansions -> a.migration
+FROM cp_runs r WHERE r.id = a.run_id AND r.expansions ? a.migration;`,
+		DownSQL: `DROP TABLE cp_run_applied;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.
@@ -327,7 +356,10 @@ func buildPlans(migs []engine.Migration, dir engine.Direction) ([]engine.Plan, e
 	return plans, nil
 }
 
-func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan, extra ...engine.Option) (int, error) {
+// Recorder sees the outcome of every plan as it completes, so the ledger survives a failure mid-run.
+type Recorder func(ctx context.Context, res engine.Result) error
+
+func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []engine.Plan, rec Recorder, extra ...engine.Option) (int, error) {
 	exec := engine.New(db, opts, extra...)
 	applied := 0
 	for _, p := range plans {
@@ -338,6 +370,11 @@ func applyPlans(ctx context.Context, db engine.DB, opts engine.Options, plans []
 		res, err := run(ctx, p)
 		if err != nil {
 			return applied, err
+		}
+		if rec != nil {
+			if err := rec(ctx, res); err != nil {
+				return applied, err
+			}
 		}
 		if !res.Skipped {
 			applied++

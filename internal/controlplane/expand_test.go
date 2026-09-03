@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,11 @@ func applyExpansion(t *testing.T, conn engine.DB, up, down string, exp Expansion
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyPlans(context.Background(), conn, engine.Options{}, []engine.Plan{p}); err != nil {
+	boom := func(context.Context, engine.Result) error { return errBoom }
+	if _, err := applyPlans(context.Background(), conn, engine.Options{}, []engine.Plan{p}, boom); !errors.Is(err, errBoom) {
+		t.Fatalf("a ledger write that fails must stop the run: %v", err)
+	}
+	if _, err := applyPlans(context.Background(), conn, engine.Options{}, []engine.Plan{p}, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -202,7 +207,7 @@ func TestExpandBackfillResumesAfterCrash(t *testing.T) {
 			}
 		}
 	}
-	if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, engine.WithHook(crash)); err != nil {
+	if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithHook(crash)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,7 +224,7 @@ func TestExpandBackfillResumesAfterCrash(t *testing.T) {
 	if _, err := conn.Exec(ctx, `UPDATE public.t SET b = NULL WHERE k > 50`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}); err != nil {
+	if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var pending int
@@ -367,14 +372,18 @@ func TestExpandPlanRejectsBrokenExpansion(t *testing.T) {
 		t.Fatal("ExpandUp must report a broken expansion")
 	}
 	down := engine.Plan{Migration: p.Migration, Direction: engine.DirectionDown}
-	out, err := ExpandDown([]engine.Plan{down}, map[string]Expansion{p.Migration.ID(): {DownHeld: "SELECT 1;"}}, true)
+	held := []RunMigration{{Migration: p.Migration.ID(), Held: true, Expansion: &Expansion{DownHeld: "SELECT 1;"}}}
+	out, err := ExpandDown([]engine.Plan{down}, held)
 	if err != nil || len(out[0].Statements) != 1 || out[0].Statements[0].Hazards != nil {
 		t.Fatalf("held down = %+v, err = %v", out, err)
 	}
-	if kept, err := ExpandDown([]engine.Plan{down}, map[string]Expansion{}, false); err != nil || len(kept[0].Statements) != 0 {
+	kept, err := ExpandDown([]engine.Plan{down}, []RunMigration{{Migration: p.Migration.ID()}})
+	if err != nil || len(kept[0].Statements) != 0 {
 		t.Fatalf("hand-written down must be left alone: %+v %v", kept, err)
 	}
-	swap, err := ExpandDown([]engine.Plan{down}, map[string]Expansion{p.Migration.ID(): {DownSQL: "SELECT 1; SELECT 2;"}}, false)
+	swap, err := ExpandDown([]engine.Plan{down}, []RunMigration{
+		{Migration: p.Migration.ID(), Expansion: &Expansion{DownSQL: "SELECT 1; SELECT 2;"}},
+	})
 	if err != nil || len(swap[0].Statements) != 2 {
 		t.Fatalf("after-swap down = %+v, err = %v", swap, err)
 	}

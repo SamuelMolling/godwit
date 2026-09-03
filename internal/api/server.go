@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -46,6 +47,7 @@ type Baseliner interface {
 type Inspector interface {
 	Status(ctx context.Context, target string) (controlplane.TargetStatus, error)
 	Observe(ctx context.Context, target string) (controlplane.Observation, error)
+	DataLoss(ctx context.Context, target string, drops []engine.Drop) ([]engine.Loss, error)
 }
 
 // Differ generates the migration between a base schema and a desired DDL (implemented by the control plane).
@@ -306,57 +308,142 @@ func upSpec(target, rollout string, in []*godwitv1.MigrationFile) (runSpec, erro
 	return runSpec{rollout: rollout, files: files, plans: plans}, nil
 }
 
-// RevertRun queues a run applying the down side of an earlier run's migrations.
+// ErrDataLoss marks a revert plan that would drop a table or column the target still has rows in.
+var ErrDataLoss = errors.New("revert would destroy data")
+
+// RevertRun plans, and unless dry_run queues, the down side of what an earlier run actually applied.
+// With no run_id it acts on the newest un-reverted run of target, and never on anything wider.
 func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
 	m := req.Msg
 	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
 	if err != nil {
 		return nil, err
 	}
-	orig, err := s.store.Run(ctx, m.RunId)
+	rp, err := s.revertPlan(ctx, m)
 	if err != nil {
-		return nil, rpcErr(err)
+		return nil, err
 	}
-	if orig.Kind == controlplane.KindBaseline {
-		return nil, rpcErr(fmt.Errorf("run %q: %w", m.RunId, controlplane.ErrBaselineRun))
-	}
-	files, err := s.store.RunFiles(ctx, m.RunId)
+	orig := rp.Run
+	loss, err := s.dataLoss(ctx, rp, m.AllowDataLoss)
 	if err != nil {
-		return nil, rpcErr(err)
-	}
-	plans, err := controlplane.PlansFromFiles(files, engine.DirectionDown)
-	if err != nil {
-		return nil, invalid(err.Error())
-	}
-	if plans, err = controlplane.ExpandDown(plans, orig.Expansions, orig.State == controlplane.StateAwaitingContract); err != nil {
-		return nil, invalid(err.Error())
+		return nil, err
 	}
 	searchPath, err := s.observedSearchPath(ctx, orig.Target)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.admit(ctx, orig.Target, plans, m.AcknowledgeHazards, m.SkipValidation, true, searchPath); err != nil {
+	adm, err := s.admit(ctx, orig.Target, rp.Plans, m.AcknowledgeHazards, m.SkipValidation, true, searchPath)
+	if err != nil {
 		return nil, err
+	}
+	out := &godwitv1.RevertRunResponse{
+		Reverts: orig.ID, Target: orig.Target, DataLoss: lossToProto(loss), Forced: rp.Newer,
+		Migrations: migrationsToProto(controlplane.BuildPlanMigrations(controlplane.RolloutDirect, rp.Plans, adm.applied, nil)),
+	}
+	if m.DryRun {
+		s.Log.Info("revert planned", "target", orig.Target, "reverts", orig.ID, "migrations", len(rp.Plans), "data_loss", len(loss))
+
+		return connect.NewResponse(out), nil
 	}
 
 	id := s.newID()
 	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
-	_, err = s.queue(ctx, notify.RunCreated, "reverts run "+notify.ShortID(m.RunId), func(tx *controlplane.Store) (controlplane.Run, error) {
-		if err := tx.CreateRevert(ctx, id, m.RunId, t, p); err != nil {
+	_, err = s.queue(ctx, notify.RunCreated, "reverts run "+notify.ShortID(orig.ID), func(tx *controlplane.Store) (controlplane.Run, error) {
+		if err := tx.CreateRevert(ctx, id, orig, m.Force, t, p); err != nil {
 			return controlplane.Run{}, err
 		}
 
-		return controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: m.RunId, Timeouts: t, Provenance: p}, nil
+		return controlplane.Run{ID: id, Target: orig.Target, State: controlplane.StateQueued, Reverts: orig.ID, Timeouts: t, Provenance: p}, nil
 	})
 	if err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", m.RunId, "acked", m.AcknowledgeHazards,
+	s.Log.Info("revert created", "run", id, "target", orig.Target, "reverts", orig.ID, "acked", m.AcknowledgeHazards,
+		"migrations", len(rp.Plans), "forced", rp.Newer, "data_loss", len(loss),
 		"lock_timeout", t.Lock, "statement_timeout", t.Statement)
 	s.audit(ctx, controlplane.AuditRunRevert, id, orig.Target,
-		fmt.Sprintf("reverts=%s acked=%s", m.RunId, strings.Join(m.AcknowledgeHazards, ",")))
+		fmt.Sprintf("reverts=%s migrations=%d acked=%s forced=%t allow_data_loss=%t",
+			orig.ID, len(rp.Plans), strings.Join(m.AcknowledgeHazards, ","), rp.Newer, m.AllowDataLoss))
+	out.RunId = id
 
-	return connect.NewResponse(&godwitv1.RevertRunResponse{RunId: id}), nil
+	return connect.NewResponse(out), nil
+}
+
+// revertPlan resolves which run the request means and builds the down side of what it applied.
+func (s *Server) revertPlan(ctx context.Context, m *godwitv1.RevertRunRequest) (controlplane.RevertPlan, error) {
+	id := m.RunId
+	if id == "" {
+		if m.Target == "" {
+			return controlplane.RevertPlan{}, invalid("run_id or target is required")
+		}
+		run, err := s.store.RevertTarget(ctx, m.Target)
+		if err != nil {
+			return controlplane.RevertPlan{}, rpcErr(err)
+		}
+		id = run.ID
+	}
+	rp, err := s.store.PlanRevert(ctx, id)
+	if errors.Is(err, controlplane.ErrRevertPlan) {
+		return controlplane.RevertPlan{}, invalid(err.Error())
+	}
+	if err != nil {
+		return controlplane.RevertPlan{}, rpcErr(err)
+	}
+	if rp.Run.Kind == controlplane.KindBaseline {
+		return controlplane.RevertPlan{}, rpcErr(fmt.Errorf("run %q: %w", id, controlplane.ErrBaselineRun))
+	}
+	if m.Target != "" && m.Target != rp.Run.Target {
+		return controlplane.RevertPlan{}, invalid(fmt.Sprintf("run %s is on target %s, not %s", id, rp.Run.Target, m.Target))
+	}
+
+	return rp, nil
+}
+
+// dataLoss refuses a plan that drops a table or column the target still has rows in, unless allowed.
+func (s *Server) dataLoss(ctx context.Context, rp controlplane.RevertPlan, allow bool) (map[string][]engine.Loss, error) {
+	if s.Inspector == nil {
+		return nil, nil
+	}
+	out := map[string][]engine.Loss{}
+	total := 0
+	for migration, drops := range rp.Drops() {
+		losses, err := s.Inspector.DataLoss(ctx, rp.Run.Target, drops)
+		if err != nil {
+			return nil, rpcErr(err)
+		}
+		if len(losses) > 0 {
+			out[migration], total = losses, total+len(losses)
+		}
+	}
+	if total == 0 || allow {
+		return out, nil
+	}
+	s.Log.Warn("revert refused by the data-loss gate", "target", rp.Run.Target, "reverts", rp.Run.ID, "objects", total)
+
+	return nil, connect.NewError(connect.CodeFailedPrecondition,
+		fmt.Errorf("%w: %s; pass allow_data_loss (--allow-data-loss) to run it anyway", ErrDataLoss, lossDetail(out)))
+}
+
+func lossDetail(losses map[string][]engine.Loss) string {
+	var out []string
+	for _, migration := range slices.Sorted(maps.Keys(losses)) {
+		for _, l := range losses[migration] {
+			out = append(out, migration+" drops "+l.String())
+		}
+	}
+
+	return strings.Join(out, ", ")
+}
+
+func lossToProto(losses map[string][]engine.Loss) []*godwitv1.DataLoss {
+	var out []*godwitv1.DataLoss
+	for _, migration := range slices.Sorted(maps.Keys(losses)) {
+		for _, l := range losses[migration] {
+			out = append(out, &godwitv1.DataLoss{Migration: migration, Kind: l.Kind(), Object: l.Drop.String(), Rows: l.Rows})
+		}
+	}
+
+	return out
 }
 
 func (s *Server) emit(ctx context.Context, run controlplane.Run, typ, detail string) {
@@ -558,14 +645,29 @@ func toProto(r controlplane.Run) *godwitv1.Run {
 	return out
 }
 
-// GetRun returns one run.
+// GetRun returns one run and the ledger of what it applied.
 func (s *Server) GetRun(ctx context.Context, req *connect.Request[godwitv1.GetRunRequest]) (*connect.Response[godwitv1.GetRunResponse], error) {
 	r, err := s.store.Run(ctx, req.Msg.RunId)
 	if err != nil {
 		return nil, rpcErr(err)
 	}
+	applied, err := s.store.AppliedMigrations(ctx, r.ID)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
 
-	return connect.NewResponse(&godwitv1.GetRunResponse{Run: toProto(r)}), nil
+	return connect.NewResponse(&godwitv1.GetRunResponse{Run: toProto(r), Applied: appliedToProto(applied)}), nil
+}
+
+func appliedToProto(applied []controlplane.RunMigration) []*godwitv1.RunMigration {
+	out := make([]*godwitv1.RunMigration, 0, len(applied))
+	for _, m := range applied {
+		out = append(out, &godwitv1.RunMigration{
+			Migration: m.Migration, AppliedAt: timestamppb.New(m.AppliedAt), RevertedBy: m.RevertedBy, Held: m.Held,
+		})
+	}
+
+	return out
 }
 
 // ListRuns returns recent runs, optionally filtered by target.

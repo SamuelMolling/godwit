@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,8 +50,17 @@ var (
 	ErrLeaseLost           = errors.New("lease lost")
 	ErrNotResumable        = errors.New("run is not failed or parked")
 	ErrNotAwaitingContract = errors.New("run is not awaiting contract")
-	ErrNotRevertable       = errors.New("run is not the latest on its target or the target is busy")
+	ErrNotRevertable       = errors.New("run is not revertable")
 	ErrBaselineRun         = errors.New("baseline runs cannot be reverted")
+)
+
+// Reasons a run cannot be reverted, appended to ErrNotRevertable.
+const (
+	reasonState    = "its state is %q; a revertable run is succeeded, awaiting_contract, failed or needs_attention"
+	reasonBusy     = "target %s has a queued or running run"
+	reasonNewer    = "run %s is newer and still stands; revert it first, or force this one"
+	reasonNothing  = "it applied no migration that still stands"
+	reasonIsRevert = "it is itself a revert"
 )
 
 // Run kinds.
@@ -143,7 +153,7 @@ func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration)
 		return 0, err
 	}
 
-	return applyPlans(ctx, db, engine.Options{}, plans)
+	return applyPlans(ctx, db, engine.Options{}, plans, nil)
 }
 
 // RegisterTarget upserts a target and its credential config.
@@ -202,8 +212,8 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.name, t.provider, t.config,
-			(SELECT count(DISTINCT left(f.name, 14)) FROM cp_run_files f JOIN cp_runs r ON r.id = f.run_id
-			 WHERE r.target = t.name AND r.state = 'succeeded' AND `+versionedFile+`),
+			(SELECT count(DISTINCT left(a.migration, 14)) FROM cp_run_applied a JOIN cp_runs r ON r.id = a.run_id
+			 WHERE r.target = t.name AND `+standingRow+`),
 			(SELECT count(*) FROM cp_runs r WHERE r.target = t.name AND r.state IN ('needs_attention', 'awaiting_contract')),
 			(SELECT count(*) FROM cp_plans p WHERE p.target = t.name AND p.state = 'ready' AND p.created_at >= $1),
 			EXISTS (SELECT 1 FROM cp_drift_events d WHERE d.target = t.name AND d.resolved_at IS NULL)
@@ -351,9 +361,12 @@ func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map
 	}
 	if _, err := s.pool.Exec(ctx, `
 		WITH r AS (INSERT INTO cp_runs (id, target, state, kind, finished_at, created_by, source)
-			VALUES ($1, $2, 'succeeded', 'baseline', now(), $5, $6))
-		INSERT INTO cp_run_files (run_id, name, body)
-		SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b)`,
+			VALUES ($1, $2, 'succeeded', 'baseline', now(), $5, $6)),
+		f AS (INSERT INTO cp_run_files (run_id, name, body)
+			SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b))
+		INSERT INTO cp_run_applied (run_id, migration, seq)
+		SELECT $1, left(n, length(n) - 7), row_number() OVER (ORDER BY n)
+		FROM unnest($3::text[]) AS u (n) WHERE n LIKE '%.up.sql'`,
 		id, target, names, bodies, p.CreatedBy, p.Source); err != nil {
 		return fmt.Errorf("create baseline: %w", err)
 	}
@@ -361,26 +374,91 @@ func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map
 	return nil
 }
 
-// CreateRevert queues a run that applies the down side of another run's files.
-// Only the latest non-reverted run on an idle target can be reverted.
-func (s *Store) CreateRevert(ctx context.Context, id, original string, t Timeouts, p Provenance) error {
+// CreateRevert queues a run that undoes what another run applied; force allows a run that is not the
+// newest un-reverted one on its target.
+func (s *Store) CreateRevert(ctx context.Context, id string, orig Run, force bool, t Timeouts, p Provenance) error {
+	if err := s.checkRevertable(ctx, orig, force); err != nil {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO cp_runs (id, target, state, reverts, lock_timeout, statement_timeout, created_by, source)
 		SELECT $1, o.target, 'queued', o.id, nullif($3, ''), nullif($4, ''), $5, $6 FROM cp_runs o
-		WHERE o.id = $2 AND o.state IN ('succeeded', 'awaiting_contract', 'failed', 'needs_attention')
-		  AND NOT EXISTS (
-			SELECT 1 FROM cp_runs r WHERE r.target = o.target AND r.id <> o.id
-			  AND (r.state IN ('queued', 'running')
-			    OR (r.reverts IS NULL AND r.state <> 'reverted' AND r.created_at > o.created_at)))`,
-		id, original, t.Lock, t.Statement, p.CreatedBy, p.Source)
+		WHERE o.id = $2 AND o.state = $7`,
+		id, orig.ID, t.Lock, t.Statement, p.CreatedBy, p.Source, orig.State)
 	if err != nil {
 		return fmt.Errorf("create revert: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("run %q: %w", original, ErrNotRevertable)
+		return notRevertable(orig.ID, reasonState, orig.State)
 	}
 
 	return nil
+}
+
+func notRevertable(id, reason string, args ...any) error {
+	return fmt.Errorf("run %q: %w: %s", id, ErrNotRevertable, fmt.Sprintf(reason, args...))
+}
+
+var revertableStates = []string{StateSucceeded, StateAwaitingContract, StateFailed, StateNeedsAttention}
+
+// checkRevertable reports why orig cannot be reverted right now, or nil.
+func (s *Store) checkRevertable(ctx context.Context, orig Run, force bool) error {
+	if orig.Kind == KindBaseline {
+		return fmt.Errorf("run %q: %w", orig.ID, ErrBaselineRun)
+	}
+	if orig.Reverts != "" {
+		return notRevertable(orig.ID, reasonIsRevert)
+	}
+	if !slices.Contains(revertableStates, orig.State) {
+		return notRevertable(orig.ID, reasonState, orig.State)
+	}
+	var busy bool
+	var newer *string
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM cp_runs r WHERE r.target = $1 AND r.id <> $2 AND r.state IN ('queued', 'running')),
+		       (SELECT r.id::text FROM cp_runs r WHERE r.target = $1 AND r.id <> $2 AND r.reverts IS NULL
+			         AND r.state <> 'reverted' AND r.created_at > $3 ORDER BY r.created_at DESC LIMIT 1)`,
+		orig.Target, orig.ID, orig.CreatedAt).Scan(&busy, &newer); err != nil {
+		return fmt.Errorf("check revertable: %w", err)
+	}
+	if busy {
+		return notRevertable(orig.ID, reasonBusy, orig.Target)
+	}
+	if newer != nil && !force {
+		return notRevertable(orig.ID, reasonNewer, *newer)
+	}
+
+	return nil
+}
+
+// Newer reports whether a run created after orig still stands on its target.
+func (s *Store) Newer(ctx context.Context, orig Run) (bool, error) {
+	var newer bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM cp_runs r WHERE r.target = $1 AND r.id <> $2 AND r.reverts IS NULL
+		                AND r.state <> 'reverted' AND r.created_at > $3)`,
+		orig.Target, orig.ID, orig.CreatedAt).Scan(&newer); err != nil {
+		return false, fmt.Errorf("check newer runs: %w", err)
+	}
+
+	return newer, nil
+}
+
+// RevertTarget returns the newest un-reverted run on target, which is what a revert with no run id acts on.
+func (s *Store) RevertTarget(ctx context.Context, target string) (Run, error) {
+	r, err := scanRun(s.pool.QueryRow(ctx, `
+		SELECT `+runColumns+` FROM cp_runs r
+		WHERE r.target = $1 AND r.reverts IS NULL AND r.kind = 'migrate'
+		  AND r.state IN ('succeeded', 'awaiting_contract', 'failed', 'needs_attention')
+		ORDER BY r.created_at DESC LIMIT 1`, target))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, fmt.Errorf("target %q has no revertable run: %w", target, ErrNotFound)
+	}
+	if err != nil {
+		return Run{}, fmt.Errorf("load revertable run: %w", err)
+	}
+
+	return r, nil
 }
 
 const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
@@ -473,11 +551,14 @@ func (s *Store) RunFiles(ctx context.Context, id string) (map[string]string, err
 	return files, nil
 }
 
-// versionedFile matches the run-file names that carry a version; repeatables are named R__<name>.{up,down}.sql.
-const versionedFile = `f.name ~ '^[0-9]{14}_'`
+// standingRow matches a ledger row of a succeeded run that no revert has undone.
+const standingRow = `r.state = 'succeeded' AND a.reverted_by IS NULL`
 
-// Applied returns what a target's succeeded runs already carried: their versions ascending, and the
-// content last carried under each repeatable name.
+// versionedMigration matches a ledger migration id that carries a version; repeatables are named R__<name>.
+const versionedMigration = `a.migration ~ '^[0-9]{14}_'`
+
+// Applied returns what a target's succeeded runs actually applied and no revert undid: their versions
+// ascending, and the content last recorded under each repeatable name.
 func (s *Store) Applied(ctx context.Context, target string) (AppliedSet, error) {
 	versions, err := s.appliedVersions(ctx, target)
 	if err != nil {
@@ -493,10 +574,10 @@ func (s *Store) Applied(ctx context.Context, target string) (AppliedSet, error) 
 
 func (s *Store) appliedVersions(ctx context.Context, target string) ([]int64, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT left(f.name, 14)::bigint AS version
-		FROM cp_run_files f
-		JOIN cp_runs r ON r.id = f.run_id
-		WHERE r.target = $1 AND r.state = 'succeeded' AND `+versionedFile+`
+		SELECT DISTINCT left(a.migration, 14)::bigint AS version
+		FROM cp_run_applied a
+		JOIN cp_runs r ON r.id = a.run_id
+		WHERE r.target = $1 AND `+standingRow+` AND `+versionedMigration+`
 		ORDER BY version`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list applied versions: %w", err)
@@ -516,18 +597,19 @@ func (s *Store) appliedVersions(ctx context.Context, target string) ([]int64, er
 
 func (s *Store) appliedRepeatables(ctx context.Context, target string) (map[string]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT ON (f.name) f.name, f.body
-		FROM cp_run_files f
-		JOIN cp_runs r ON r.id = f.run_id
-		WHERE r.target = $1 AND r.state = 'succeeded' AND f.name LIKE 'R\_\_%.up.sql'
-		ORDER BY f.name, r.created_at DESC`, target)
+		SELECT DISTINCT ON (a.migration) a.migration, f.body
+		FROM cp_run_applied a
+		JOIN cp_runs r ON r.id = a.run_id
+		JOIN cp_run_files f ON f.run_id = a.run_id AND f.name = a.migration || '.up.sql'
+		WHERE r.target = $1 AND `+standingRow+` AND a.migration LIKE 'R\_\_%'
+		ORDER BY a.migration, r.created_at DESC`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list applied repeatables: %w", err)
 	}
 	out := map[string]string{}
 	var name, body string
 	if _, err := pgx.ForEachRow(rows, []any{&name, &body}, func() error {
-		out[strings.TrimSuffix(strings.TrimPrefix(name, engine.RepeatablePrefix), ".up.sql")] = checksum(body)
+		out[strings.TrimPrefix(name, engine.RepeatablePrefix)] = checksum(body)
 
 		return nil
 	}); err != nil {

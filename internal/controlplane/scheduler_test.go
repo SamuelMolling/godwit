@@ -51,6 +51,16 @@ func queueRun(t *testing.T, s *Store, id string, files map[string]string) {
 	}
 }
 
+// ledger records what a run applied, which is what the scheduler writes and what a revert reads back.
+func ledger(t *testing.T, s *Store, id string, migrations ...string) {
+	t.Helper()
+	for _, m := range migrations {
+		if err := s.RecordApplied(context.Background(), id, m, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func waitState(t *testing.T, s *Store, id, want string) Run {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -388,7 +398,11 @@ func TestSchedulerRevertsRun(t *testing.T) {
 	waitState(t, s, id, StateSucceeded)
 
 	revert := "77777777-0000-0000-0000-000000000002"
-	if err := s.CreateRevert(ctx, revert, id, Timeouts{}, Provenance{}); err != nil {
+	orig, err := s.Run(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRevert(ctx, revert, orig, false, Timeouts{}, Provenance{}); err != nil {
 		t.Fatal(err)
 	}
 	sched.Tick(ctx)

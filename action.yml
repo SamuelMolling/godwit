@@ -24,6 +24,12 @@ inputs:
   ack:
     description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002)"
     default: ""
+  allow-data-loss:
+    description: "revert: run a plan that drops a table or column still holding rows (godwit refuses it by default)"
+    default: "false"
+  force:
+    description: "revert: undo a run that is not the newest un-reverted one on its target"
+    default: "false"
   server:
     description: "godwit service URL (lint, plan, apply, verify, revert, migrate, diff; lint uses it for the schema_source check, warning W002 without it; default: server from godwit.yaml or GODWIT_SERVER)"
     default: ""
@@ -152,6 +158,8 @@ runs:
         DIR: ${{ inputs.dir }}
         BASE: ${{ inputs.base }}
         ACK: ${{ inputs.ack }}
+        ALLOW_DATA_LOSS: ${{ inputs.allow-data-loss }}
+        FORCE: ${{ inputs.force }}
         SERVER: ${{ inputs.server }}
         TARGET: ${{ inputs.target }}
         ROLLOUT: ${{ inputs.rollout }}

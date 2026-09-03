@@ -116,7 +116,7 @@ func TestExpansionStoreErrors(t *testing.T) {
 	}
 }
 
-func TestSchedulerExpandedErrors(t *testing.T) {
+func TestSchedulerPlansErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s, _ := newStore(t)
@@ -130,22 +130,18 @@ func TestSchedulerExpandedErrors(t *testing.T) {
 	if err := s.CreateRun(ctx, runID, "app", RolloutDirect, files, Timeouts{}, Provenance{}, "", broken); err != nil {
 		t.Fatal(err)
 	}
-	plans, err := PlansFromFiles(files, engine.DirectionUp)
-	if err != nil {
-		t.Fatal(err)
-	}
 	run := Run{ID: runID, Target: "app", Expansions: broken}
-	if _, err := sched.expanded(ctx, run, plans, engine.DirectionUp); err == nil {
+	if _, err := sched.plans(ctx, run); err == nil {
 		t.Fatal("a broken up expansion must fail the run")
 	}
-	down, err := PlansFromFiles(files, engine.DirectionDown)
-	if err != nil {
+	exp := broken["20260101000000_x"]
+	if err := s.RecordApplied(ctx, runID, "20260101000000_x", false, &exp); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sched.expanded(ctx, Run{ID: "r2", Target: "app", Reverts: runID}, down, engine.DirectionDown); err == nil {
+	if _, err := sched.plans(ctx, Run{ID: "r2", Target: "app", Reverts: runID}); err == nil {
 		t.Fatal("a broken down expansion must fail the revert")
 	}
-	if _, err := sched.expanded(ctx, Run{ID: "r2", Reverts: uuid.NewString()}, down, engine.DirectionDown); err == nil {
+	if _, err := sched.plans(ctx, Run{ID: "r2", Reverts: uuid.NewString()}); err == nil {
 		t.Fatal("a missing original run must fail")
 	}
 }
@@ -179,7 +175,25 @@ func TestSchedulerRetireAndProgressWarn(t *testing.T) {
 	if err != nil || len(got) != 1 {
 		t.Fatalf("retired = %+v, err = %v", got, err)
 	}
-	sched.retire(ctx, Run{ID: uuid.NewString(), Target: "app", Reverts: runID}, testLog)
+	exp := exps["20260101000000_x"]
+	if err := s.RecordApplied(ctx, runID, "20260101000000_x", false, &exp); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Finish(ctx, runID, StateSucceeded, ""); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.Run(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revertID := uuid.NewString()
+	if err := s.CreateRevert(ctx, revertID, stored, false, Timeouts{}, Provenance{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkReverted(ctx, runID, revertID, "20260101000000_x"); err != nil {
+		t.Fatal(err)
+	}
+	sched.retire(ctx, Run{ID: revertID, Target: "app", Reverts: runID}, testLog)
 	if got, err := s.RetiredColumns(ctx, "app"); err != nil || len(got) != 0 {
 		t.Fatalf("after revert = %+v, err = %v", got, err)
 	}
@@ -195,6 +209,8 @@ func (failPool) Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
 func (failPool) QueryRow(context.Context, string, ...any) pgx.Row { return errRow{} }
+
+func (failPool) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, errBoom }
 
 type errRow struct{}
 

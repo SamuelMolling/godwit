@@ -221,19 +221,8 @@ type heldWork struct {
 
 // applyRun applies the current phase and reports what it held back.
 func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
-	filesID, dir := run.ID, engine.DirectionUp
-	if run.Reverts != "" {
-		filesID, dir = run.Reverts, engine.DirectionDown
-	}
-	files, err := s.store.RunFiles(ctx, filesID)
+	plans, err := s.plans(ctx, run)
 	if err != nil {
-		return heldWork{}, err
-	}
-	plans, err := PlansFromFiles(files, dir)
-	if err != nil {
-		return heldWork{}, err
-	}
-	if plans, err = s.expanded(ctx, run, plans, dir); err != nil {
 		return heldWork{}, err
 	}
 	var held heldWork
@@ -262,22 +251,51 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	}
 
 	return held, s.engine.Apply(ctx, ApplyRequest{
-		RunID: run.ID, Target: run.Target, DSN: tg.dsn, Plans: plans, Opts: opts, Progress: s.progress(ctx, run.ID),
+		RunID: run.ID, Target: run.Target, DSN: tg.dsn, Plans: plans, Opts: opts,
+		Progress: s.progress(ctx, run.ID), Record: s.record(run),
 	})
 }
 
-// expanded swaps in the directive expansions frozen when the run was created, so the contract phase
-// resumes the very statements the expand phase journalled.
-func (s *Scheduler) expanded(ctx context.Context, run Run, plans []engine.Plan, dir engine.Direction) ([]engine.Plan, error) {
-	if dir == engine.DirectionUp {
-		return ExpandUp(plans, run.Expansions)
+// plans is what the run executes: the up side of its own files with the directive expansions frozen
+// when it was created, or, for a revert, the down side of what the run it undoes actually applied.
+func (s *Scheduler) plans(ctx context.Context, run Run) ([]engine.Plan, error) {
+	if run.Reverts != "" {
+		rp, err := s.store.PlanRevert(ctx, run.Reverts)
+		if err != nil {
+			return nil, err
+		}
+
+		return rp.Plans, nil
 	}
-	orig, err := s.store.Run(ctx, run.Reverts)
+	files, err := s.store.RunFiles(ctx, run.ID)
+	if err != nil {
+		return nil, err
+	}
+	plans, err := PlansFromFiles(files, engine.DirectionUp)
 	if err != nil {
 		return nil, err
 	}
 
-	return ExpandDown(plans, orig.Expansions, orig.State == StateAwaitingContract)
+	return ExpandUp(plans, run.Expansions)
+}
+
+// record keeps the ledger of what the run actually applied, statement by statement, so a later revert
+// acts on that and not on the directory the run submitted.
+func (s *Scheduler) record(run Run) Recorder {
+	return func(ctx context.Context, res engine.Result) error {
+		if res.Skipped {
+			return nil
+		}
+		if run.Reverts != "" {
+			return s.store.MarkReverted(ctx, run.Reverts, run.ID, res.Migration)
+		}
+		var exp *Expansion
+		if e, ok := run.Expansions[res.Migration]; ok {
+			exp = &e
+		}
+
+		return s.store.RecordApplied(ctx, run.ID, res.Migration, res.Held, exp)
+	}
 }
 
 // progress records the newest statement event under the heartbeat, so a backfill that runs for an hour
@@ -297,24 +315,40 @@ func (s *Scheduler) progress(ctx context.Context, runID string) func(engine.Stat
 // retire records the columns a completed run left behind as its rollback, and clears the ones a revert
 // just renamed back, so a desired-schema diff stops proposing to drop them.
 func (s *Scheduler) retire(ctx context.Context, run Run, log *slog.Logger) {
-	exps := run.Expansions
-	if run.Reverts != "" {
-		orig, err := s.store.Run(ctx, run.Reverts)
-		if err != nil {
-			log.Warn("retired columns skipped", "error", err)
+	exps, err := s.expansions(ctx, run)
+	if err != nil {
+		log.Warn("retired columns skipped", "error", err)
 
-			return
-		}
-		exps = orig.Expansions
+		return
 	}
 	for migration, cols := range Retired(exps) {
-		if err := s.record(ctx, run, migration, cols); err != nil {
+		if err := s.retired(ctx, run, migration, cols); err != nil {
 			log.Warn("retired columns not recorded", "migration", migration, "error", err)
 		}
 	}
 }
 
-func (s *Scheduler) record(ctx context.Context, run Run, migration string, cols []RetiredColumn) error {
+// expansions are the ones this run is accountable for: its own going up, and the ones it just undid
+// going down, each read back from the ledger row of the migration it belongs to.
+func (s *Scheduler) expansions(ctx context.Context, run Run) (map[string]Expansion, error) {
+	if run.Reverts == "" {
+		return run.Expansions, nil
+	}
+	rows, err := s.store.AppliedMigrations(ctx, run.Reverts)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]Expansion{}
+	for _, m := range rows {
+		if m.RevertedBy == run.ID && m.Expansion != nil {
+			out[m.Migration] = *m.Expansion
+		}
+	}
+
+	return out, nil
+}
+
+func (s *Scheduler) retired(ctx context.Context, run Run, migration string, cols []RetiredColumn) error {
 	if run.Reverts != "" {
 		return s.store.UnretireColumns(ctx, run.Target, cols)
 	}
