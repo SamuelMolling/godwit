@@ -1,6 +1,6 @@
 # 0003 — The ORM model is a desired schema, rendered client-side, gated by `lint`
 
-Shipped in #46 (`Diff` RPC and `godwit diff`), #48 (Prisma), #55 (`schema_source` in `godwit.yaml`), #60 (command, GORM, Django), #61 (`E005`), #PR (Alembic, Rails, Drizzle).
+Shipped in #46 (`Diff` RPC and `godwit diff`), #48 (Prisma), #55 (`schema_source` in `godwit.yaml`), #60 (command, GORM, Django), #61 (`E005`), #79 (Alembic, Rails, Drizzle).
 
 ## The open question
 
