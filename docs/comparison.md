@@ -29,7 +29,7 @@ Everything in the godwit column is covered by tests against real PostgreSQL in c
 | Expand/contract rollout | built in, and split by **statement**: `expand-contract` applies the additive statements, parks the run in `awaiting_contract`, and `ConfirmRollout` resumes the *same* run from the statement it stopped at. A hand-written migration still splits at the migration boundary; a directive splits inside one migration | no | no | no |
 | Out-of-order migrations | refused unless `--allow-out-of-order` | refused unless `outOfOrder=true` | allowed by default | refused by default (`--exec-order`) |
 | Baseline an existing database | `BaselineTarget` (target's journal must be empty) | `baseline` | `changelogSync` | `migrate set` |
-| Target version (`--to`) | no; send fewer files | `-target` | `update-to-tag`/count | `migrate apply N` |
+| Target version (`--to`) | `--to <version>` on `plan` and `migrate`: the whole directory is still submitted and validated, only the migrations at or below the version run, and the rest are stored on the plan and printed in the pull-request comment as **withheld**, so the reviewer cannot mistake the plan for the whole set. Repeatables are held back with them and run once nothing is. Refused by name: a version the directory does not hold, one behind what the target has applied (`--to` never reverts), one selecting nothing while work above it is pending, and `--to` on top of `--plan` | `-target` | `update-to-tag`/count | `migrate apply N` |
 | Repeatable migrations | `R__<name>.up.sql` + `.down.sql`: no version, applied after the run's versioned files when the checksum differs from `godwit.repeatables`, part of the plan key and the hazard gate; no `runAlways` | `R__` migrations | `runOnChange` / `runAlways` | no |
 | Placeholders / templating | no; template in the pipeline | placeholders | properties | template dirs |
 | SQL hooks (before/after) | no; webhook and Slack notifications only | callbacks | not built in | no |
@@ -55,7 +55,6 @@ Everything in the godwit column is covered by tests against real PostgreSQL in c
 
 ## What godwit does not have, and why
 
-- **`--to <version>`.** Send fewer files. A client-side filter is planned; the service does not need to change.
 - **A retention command.** Plans are swept on the service's own ticker, but runs, `cp_run_files`, drift events and audit rows are not: growth is one journal row per statement and one file body per run, and the SQL to prune is in [operations](operations.md#retention).
 - **SQL hooks.** Notifications are the operational hook. Running SQL before or after a run needs a design decision (per run or per migration) that has not been taken.
 - **A declarative apply.** `godwit diff` generates the migration from a desired schema, but what runs is always a versioned file that went through the gate, and the output has holes (domains, composite types, exclusion constraints, comments, roles) that Atlas does not have. It is a shortcut for writing the file, not a replacement for the history.

@@ -665,7 +665,9 @@ type CreateRunRequest struct {
 	// Where the files come from, kept on the run for provenance (free text).
 	Source string `protobuf:"bytes,9,opt,name=source,proto3" json:"source,omitempty"`
 	// Bind this stored plan explicitly; files may be omitted (the plan supplies them) and target must match when set.
-	PlanId        string `protobuf:"bytes,10,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	PlanId string `protobuf:"bytes,10,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	// Stop at this version: only migrations at or below it run, the rest are reported as withheld. Zero runs everything.
+	ToVersion     int64 `protobuf:"varint,11,opt,name=to_version,json=toVersion,proto3" json:"to_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -770,6 +772,13 @@ func (x *CreateRunRequest) GetPlanId() string {
 	return ""
 }
 
+func (x *CreateRunRequest) GetToVersion() int64 {
+	if x != nil {
+		return x.ToVersion
+	}
+	return 0
+}
+
 type CreateRunResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	RunId string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
@@ -843,7 +852,9 @@ type PlanRunRequest struct {
 	// Store the plan so a later CreateRun with the same migration set binds to it.
 	Persist bool `protobuf:"varint,7,opt,name=persist,proto3" json:"persist,omitempty"`
 	// Free-text provenance stored with the plan, e.g. github.com/org/repo@<sha>:db/migrations.
-	Source        string `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
+	Source string `protobuf:"bytes,8,opt,name=source,proto3" json:"source,omitempty"`
+	// Stop at this version: only migrations at or below it are planned, the rest are reported as withheld. Zero plans everything.
+	ToVersion     int64 `protobuf:"varint,9,opt,name=to_version,json=toVersion,proto3" json:"to_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -932,6 +943,13 @@ func (x *PlanRunRequest) GetSource() string {
 		return x.Source
 	}
 	return ""
+}
+
+func (x *PlanRunRequest) GetToVersion() int64 {
+	if x != nil {
+		return x.ToVersion
+	}
+	return 0
 }
 
 type PlanObservation struct {
@@ -1410,7 +1428,9 @@ type PlannedMigration struct {
 	// Its statements were generated from those directives against the target's catalog.
 	Expanded bool `protobuf:"varint,12,opt,name=expanded,proto3" json:"expanded,omitempty"`
 	// What the expansion leaves behind or costs, one line each.
-	Notes         []string `protobuf:"bytes,13,rep,name=notes,proto3" json:"notes,omitempty"`
+	Notes []string `protobuf:"bytes,13,rep,name=notes,proto3" json:"notes,omitempty"`
+	// Kept out of this plan by a version target: it is in the directory, it is not in the run.
+	Withheld      bool `protobuf:"varint,14,opt,name=withheld,proto3" json:"withheld,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1534,6 +1554,13 @@ func (x *PlannedMigration) GetNotes() []string {
 		return x.Notes
 	}
 	return nil
+}
+
+func (x *PlannedMigration) GetWithheld() bool {
+	if x != nil {
+		return x.Withheld
+	}
+	return false
 }
 
 type PlanRunResponse struct {
@@ -4331,7 +4358,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	" \x01(\tR\n" +
 	"searchPathB\v\n" +
 	"\t_keep_old\"\x18\n" +
-	"\x16RegisterTargetResponse\"\xfc\x02\n" +
+	"\x16RegisterTargetResponse\"\x9b\x03\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
 	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\x12/\n" +
@@ -4343,13 +4370,15 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x12allow_out_of_order\x18\b \x01(\bR\x0fallowOutOfOrder\x12\x16\n" +
 	"\x06source\x18\t \x01(\tR\x06source\x12\x17\n" +
 	"\aplan_id\x18\n" +
-	" \x01(\tR\x06planId\"c\n" +
+	" \x01(\tR\x06planId\x12\x1d\n" +
+	"\n" +
+	"to_version\x18\v \x01(\x03R\ttoVersion\"c\n" +
 	"\x11CreateRunResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1e\n" +
 	"\n" +
 	"reattached\x18\x03 \x01(\bR\n" +
-	"reattached\"\xab\x02\n" +
+	"reattached\"\xca\x02\n" +
 	"\x0ePlanRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
 	"\x05files\x18\x02 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\x12/\n" +
@@ -4358,7 +4387,9 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\arollout\x18\x05 \x01(\tR\arollout\x12+\n" +
 	"\x12allow_out_of_order\x18\x06 \x01(\bR\x0fallowOutOfOrder\x12\x18\n" +
 	"\apersist\x18\a \x01(\bR\apersist\x12\x16\n" +
-	"\x06source\x18\b \x01(\tR\x06source\"\xfc\x01\n" +
+	"\x06source\x18\b \x01(\tR\x06source\x12\x1d\n" +
+	"\n" +
+	"to_version\x18\t \x01(\x03R\ttoVersion\"\xfc\x01\n" +
 	"\x0fPlanObservation\x12!\n" +
 	"\fhistory_hash\x18\x01 \x01(\tR\vhistoryHash\x12-\n" +
 	"\x12schema_fingerprint\x18\x02 \x01(\tR\x11schemaFingerprint\x12#\n" +
@@ -4395,7 +4426,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x05no_tx\x18\x02 \x01(\bR\x04noTx\x122\n" +
 	"\ahazards\x18\x03 \x03(\v2\x18.godwit.v1.PlannedHazardR\ahazards\x12\x14\n" +
 	"\x05phase\x18\x04 \x01(\tR\x05phase\x12-\n" +
-	"\x05batch\x18\x05 \x01(\v2\x17.godwit.v1.PlannedBatchR\x05batch\"\x90\x03\n" +
+	"\x05batch\x18\x05 \x01(\v2\x17.godwit.v1.PlannedBatchR\x05batch\"\xac\x03\n" +
 	"\x10PlannedMigration\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -4416,7 +4447,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"directives\x18\v \x03(\tR\n" +
 	"directives\x12\x1a\n" +
 	"\bexpanded\x18\f \x01(\bR\bexpanded\x12\x14\n" +
-	"\x05notes\x18\r \x03(\tR\x05notes\"\xa0\x02\n" +
+	"\x05notes\x18\r \x03(\tR\x05notes\x12\x1a\n" +
+	"\bwithheld\x18\x0e \x01(\bR\bwithheld\"\xa0\x02\n" +
 	"\x0fPlanRunResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x18\n" +
 	"\arollout\x18\x02 \x01(\tR\arollout\x12;\n" +

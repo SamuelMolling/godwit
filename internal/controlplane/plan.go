@@ -85,6 +85,7 @@ type PlanMigration struct {
 	AlreadyApplied bool   `json:"already_applied,omitempty"`
 	Effect         string `json:"effect,omitempty"`
 	Note           string `json:"note,omitempty"`
+	Withheld       bool   `json:"withheld,omitempty"`
 
 	Directives []string `json:"directives,omitempty"`
 	Expanded   bool     `json:"expanded,omitempty"`
@@ -123,11 +124,11 @@ type Plan struct {
 	Expansions        map[string]Expansion
 }
 
-// Pending returns the migrations the plan would run.
+// Pending returns the migrations the plan would run; one a version target withheld is not among them.
 func (p Plan) Pending() []PlanMigration {
 	var out []PlanMigration
 	for _, m := range p.Migrations {
-		if !m.Applied {
+		if !m.Applied && !m.Withheld {
 			out = append(out, m)
 		}
 	}
@@ -183,6 +184,45 @@ func Pending(migs []engine.Migration, applied []engine.Applied, reps []engine.Re
 	slices.SortFunc(out, engine.CompareMigrations)
 
 	return out, nil
+}
+
+// Truncate splits plans at a version target: versioned migrations at or below to, plus the repeatables only when nothing versioned is held back, since a repeatable declares what the whole directory produces.
+func Truncate(plans []engine.Plan, to int64, applied AppliedSet) (keep, withheld []engine.Plan) {
+	cut := false
+	for _, p := range plans {
+		cut = cut || (!p.Migration.Repeatable && p.Migration.Version > to && !applied.Has(p.Migration))
+	}
+	for _, p := range plans {
+		if held(p.Migration, to, cut) {
+			withheld = append(withheld, p)
+
+			continue
+		}
+		keep = append(keep, p)
+	}
+
+	return keep, withheld
+}
+
+func held(m engine.Migration, to int64, cut bool) bool {
+	if m.Repeatable {
+		return cut
+	}
+
+	return m.Version > to
+}
+
+// WithheldMigrations reports what a version target kept out of the run, so a plan says what it is not doing.
+func WithheldMigrations(plans []engine.Plan, applied AppliedSet) []PlanMigration {
+	out := make([]PlanMigration, 0, len(plans))
+	for _, p := range plans {
+		out = append(out, PlanMigration{
+			Version: p.Migration.Version, Name: p.Migration.Name, Repeatable: p.Migration.Repeatable,
+			Checksum: p.Migration.Checksum, Applied: applied.Has(p.Migration), Withheld: true,
+		})
+	}
+
+	return out
 }
 
 // PlanKey identifies a pending set on a target: the files and what the target has applied, nothing else.

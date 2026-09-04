@@ -44,7 +44,7 @@ func plansTable(plans []*godwitv1.Plan) string {
 	for _, p := range plans {
 		pending := 0
 		for _, m := range p.Migrations {
-			if !m.Applied {
+			if !m.Applied && !m.Withheld {
 				pending++
 			}
 		}

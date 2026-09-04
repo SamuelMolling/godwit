@@ -247,6 +247,8 @@ jobs:
 
 `verify` runs `godwit migrate --dry-run --json` with a `read` token: the same admission as a plan (hazards, `ack`, scratch validation) plus the list of versions the target has. Exit 0 with `pending=0` when every migration on `main` is applied; exit 1 with the pending list, posted on the merged pull request, otherwise. It never applies: a migration that reached `main` unapplied is fixed by applying it from a new pull request (or by `mode: apply-on-merge`, below).
 
+**There is no `to-version` Action input, on purpose.** A [version target](concepts.md#version-targets) applies part of a branch and leaves the rest pending, which is exactly the state `verify` exists to fail on and the `godwit/applied` status exists to keep out of `main`: the status would turn green on a pull request whose migrations are only half applied, and the merge would then fail `verify`. Run `godwit migrate --to` from a shell or from a workflow of your own that calls the binary, and split the pull request when the split is meant to be permanent.
+
 ### Merge: apply-on-merge
 
 ```yaml

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -59,6 +60,7 @@ type planItem struct {
 	directives     []string
 	expanded       bool
 	notes          []string
+	withheld       bool
 }
 
 func (p planItem) phaseSplit() (expand, contract int) {
@@ -164,6 +166,21 @@ func (r planReport) contract() []string {
 	return lines
 }
 
+// withheldLine names what a version target left out, so the plan and the pull-request comment cannot be read as the whole set.
+func (r planReport) withheldLine() string {
+	ids := make([]string, 0, len(r.items))
+	for _, p := range r.items {
+		if p.withheld {
+			ids = append(ids, p.Migration.ID())
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("withheld: %d migration(s) in the directory this plan does not cover (%s)", len(ids), strings.Join(ids, ", "))
+}
+
 func (r planReport) driftBlock(heading, indent, open, close string) string {
 	if r.drift == "" {
 		return ""
@@ -196,6 +213,9 @@ func newPlanCmd() *cobra.Command {
 			write, ok := planFormats[format]
 			if !ok {
 				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			}
+			if err := checkToVersion(cmd, req.ToVersion, "", req.Target); err != nil {
+				return err
 			}
 			if req.Target != "" {
 				files, err := migrationFiles(flags.dir)
@@ -235,15 +255,36 @@ func newPlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
 	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "plan pending versions older than the newest applied one instead of refusing them")
 	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the plan (e.g. github.com/org/repo@<sha>:db/migrations)")
+	cmd.Flags().Int64Var(&req.ToVersion, "to", 0, "stop at this migration version: pending ones above it are reported as withheld and left for a later plan")
 	configKeys(cmd, "target", "rollout", "allow-out-of-order")
 
 	return cmd
+}
+
+// checkToVersion refuses a version target godwit cannot resolve here; the ones that need the target's history are refused by the service.
+func checkToVersion(cmd *cobra.Command, to int64, planID, target string) error {
+	if !cmd.Flags().Changed("to") {
+		return nil
+	}
+	switch {
+	case to < 1:
+		return errors.New("--to takes a migration version, the 14 digits its file name starts with")
+	case planID != "":
+		return errors.New("--to cannot be combined with --plan: the stored plan already fixes the set it covers")
+	case target == "":
+		return errors.New("--to needs --target: what it holds back is decided against the versions that target has applied")
+	}
+
+	return nil
 }
 
 func writePlanText(w io.Writer, r planReport) {
 	if r.live {
 		fmt.Fprintln(w, r.headline())
 		for _, l := range r.contract() {
+			fmt.Fprintln(w, l)
+		}
+		if l := r.withheldLine(); l != "" {
 			fmt.Fprintln(w, l)
 		}
 		fmt.Fprint(w, r.driftBlock("drift since baseline:", "  ", "", ""))
@@ -310,6 +351,10 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 		for _, l := range r.contract() {
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, l)
+		}
+		if l := r.withheldLine(); l != "" {
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "**%s**\n", l)
 		}
 		if block := r.driftBlock("### Changes outside migrations", "", "\n```diff\n", "```\n"); block != "" {
 			fmt.Fprintln(w)
@@ -429,6 +474,8 @@ func (p planItem) status() string {
 		return "unchanged"
 	case p.applied:
 		return "applied"
+	case p.withheld:
+		return "withheld"
 	case p.alreadyApplied:
 		return "already applied"
 	case p.note != "":
@@ -439,6 +486,9 @@ func (p planItem) status() string {
 }
 
 func (p planItem) liveSuffix() string {
+	if p.withheld {
+		return " [" + p.status() + "]"
+	}
 	if p.phase == "" {
 		return ""
 	}
@@ -506,6 +556,7 @@ type livePlanJSON struct {
 	Directives     []string `json:"directives,omitempty"`
 	Expanded       bool     `json:"expanded,omitempty"`
 	Notes          []string `json:"notes,omitempty"`
+	Withheld       bool     `json:"withheld,omitempty"`
 }
 
 type dryRunJSON struct {
@@ -551,7 +602,7 @@ func writePlanJSON(w io.Writer, r planReport) {
 			live.Migrations = append(live.Migrations, livePlanJSON{
 				planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase,
 				AlreadyApplied: p.alreadyApplied, Effect: p.effect, Note: p.note,
-				Directives: p.directives, Expanded: p.expanded, Notes: p.notes,
+				Directives: p.directives, Expanded: p.expanded, Notes: p.notes, Withheld: p.withheld,
 			})
 		}
 		out = live

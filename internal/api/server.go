@@ -213,6 +213,9 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 // CreateRun validates and queues a run.
 func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
 	m := req.Msg
+	if m.PlanId != "" && m.ToVersion > 0 {
+		return nil, invalid("to_version cannot be combined with plan_id: the stored plan already fixes the set it covers")
+	}
 	if m.PlanId != "" {
 		if err := s.explicitPlan(ctx, m); err != nil {
 			return nil, err
@@ -220,6 +223,9 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 	spec, err := upSpec(m.Target, m.Rollout, m.Files)
 	if err != nil {
+		return nil, err
+	}
+	if spec, err = s.stopAt(ctx, m.Target, spec, m.ToVersion); err != nil {
 		return nil, err
 	}
 	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
@@ -269,7 +275,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout, "source", m.Source, "plan", b.planID,
 		"files", len(spec.files), "acked", b.acked, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
-		"allow_out_of_order", b.allowOutOfOrder)
+		"allow_out_of_order", b.allowOutOfOrder, "to_version", m.ToVersion, "withheld", len(spec.withheld))
 	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target,
 		join(fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", spec.rollout, len(spec.plans),
 			strings.Join(b.acked, ","), m.Source, b.planID), b.expanded()))
@@ -281,6 +287,8 @@ type runSpec struct {
 	rollout string
 	files   map[string]string
 	plans   []engine.Plan
+	// withheld is what a version target kept out of plans and files: reported, never run.
+	withheld []engine.Plan
 }
 
 func upSpec(target, rollout string, in []*godwitv1.MigrationFile) (runSpec, error) {

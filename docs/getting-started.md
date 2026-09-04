@@ -159,6 +159,16 @@ H001: CREATE INDEX without CONCURRENTLY blocks writes on orders
 
 Hazards are reported for the direction being planned; a normal `migrate` plans the up side only, so the `DROP TABLE` in the down file above is not in the way (it will be when that run is reverted). Acknowledge with `--ack H001` when you do mean it.
 
+To land a branch one migration at a time, stop the run at a version instead of editing the directory:
+
+```
+$ godwit migrate --target app --dir db/migrations --to 20260901120400
+withheld: 1 migration(s) in the directory this plan does not cover (20260901120500_orders_customer_idx)
+run 4b1c…: succeeded (attempt 1)
+```
+
+The migrations above the version stay in the directory and in the plan, marked `withheld`, so nobody reads the report as the whole set; the next `migrate` without `--to` applies them. A version below what the target has already applied is refused — `--to` stops a run short, it never reverts ([concepts](concepts.md#version-targets)).
+
 Look around:
 
 ```bash
