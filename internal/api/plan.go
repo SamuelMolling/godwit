@@ -24,7 +24,7 @@ var errPlanDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("st
 // with persist the plan is stored together with an observation of the target so a later CreateRun binds to it.
 func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
 	m := req.Msg
-	spec, err := upSpec(m.Target, m.Rollout, m.Files)
+	spec, err := s.upSpec(m.Target, m.Rollout, m.Files)
 	if err != nil {
 		return nil, err
 	}

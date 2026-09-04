@@ -109,11 +109,9 @@ func (s *Store) Plan(ctx context.Context, id string) (Plan, error) {
 	return p, nil
 }
 
-// ListPlans returns a target's plans, newest first; limit caps the page (100 when zero).
+// ListPlans returns a target's plans, newest first; limit caps the page (100 when zero, MaxPageSize at most).
 func (s *Store) ListPlans(ctx context.Context, target string, limit int) ([]Plan, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = pageSize(limit)
 	rows, err := s.pool.Query(ctx, `SELECT `+planColumns+` FROM cp_plans
 		WHERE target = $1 ORDER BY created_at DESC, id LIMIT $2`, target, limit)
 	if err != nil {

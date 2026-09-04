@@ -32,7 +32,7 @@ func expectPlanByID(mock pgxmock.PgxPoolIface, row storedPlanRow) {
 
 func readyRow(t *testing.T) storedPlanRow {
 	t.Helper()
-	spec, err := upSpec("app", "", planFiles())
+	spec, err := (&Server{}).upSpec("app", "", planFiles())
 	if err != nil {
 		t.Fatal(err)
 	}

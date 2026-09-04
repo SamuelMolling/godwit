@@ -145,7 +145,12 @@ func (s *stub) AcceptBaseline(ctx context.Context, req *connect.Request[godwitv1
 	return connect.NewResponse(&godwitv1.AcceptBaselineResponse{}), s.call(ctx, "AcceptBaseline:"+req.Msg.Target)
 }
 
+// newUI opts the open handler back up to operator; New itself gives an anonymous visitor read only,
+// which TestAnonymousScopeIsRead covers.
 func newUI(s godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
+	if cfg.AnonymousScope == "" {
+		cfg.AnonymousScope = api.ScopeOperator
+	}
 	h := New(s, cfg)
 	h.now = func() time.Time { return now }
 
@@ -571,10 +576,25 @@ func TestSharedIdentityScope(t *testing.T) {
 	want(t, do(admin, http.MethodGet, "/ui/runs/r-bad-00001", nil, "Authorization", basic("sam", "pw")),
 		http.StatusOK, "/ui/runs/r-bad-00001/resume")
 
-	open := newUI(fixture(), Config{Scope: api.ScopeRead})
+	open := newUI(fixture(), Config{AnonymousScope: api.ScopeRead})
 	rec = do(open, http.MethodGet, "/ui/", nil)
 	want(t, rec, http.StatusOK, "No sign-in configured")
 	absent(t, rec, noAction)
+}
+
+// A service with no way to sign anyone in must not hand a visitor the rights of the identity it would
+// have authenticated: New defaults the anonymous principal to read, whatever Scope says.
+func TestAnonymousScopeIsRead(t *testing.T) {
+	t.Parallel()
+
+	h := New(fixture(), Config{Scope: api.ScopeAdmin})
+	h.now = func() time.Time { return now }
+	rec := do(h, http.MethodGet, "/ui/", nil)
+	want(t, rec, http.StatusOK, `class="chip">read<`)
+	absent(t, rec, noAction)
+	if p, ok := h.principal(httptest.NewRequest(http.MethodGet, "/ui/", nil)); !ok || p.Scope != api.ScopeRead {
+		t.Fatalf("anonymous principal = %+v %v, want read", p, ok)
+	}
 }
 
 func TestRenderError(t *testing.T) {

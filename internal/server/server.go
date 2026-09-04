@@ -2,6 +2,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -33,7 +34,7 @@ type Config struct {
 	// ScratchTemplate is the database scratch databases are cloned from; empty means template0.
 	ScratchTemplate string
 	MasterKey       []byte
-	// Tokens are bearer token specs, "name:scope:secret"; "name:secret" and a bare secret (named anonymous) are admin.
+	// Tokens are bearer token specs, "name:scope:secret"; a bare secret is an admin token named anonymous.
 	Tokens        []string
 	Holder        string
 	Scheduler     controlplane.Config
@@ -47,6 +48,11 @@ type Config struct {
 	PublicURL string
 	// Notifier is an extra synchronous notifier called in-process (tests, embedding).
 	Notifier notify.Notifier
+	// StoreMaxConns caps the API pool against the store; zero takes the default. It wins over
+	// pool_max_conns in the DSN.
+	StoreMaxConns int
+	// Limits are the API admission bounds; a zero field takes its default.
+	Limits api.Limits
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
 	RequirePlan    bool
@@ -65,6 +71,21 @@ type Config struct {
 	Log       *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
+}
+
+// DefaultStoreMaxConns bounds the pool the API handlers, the scheduler, the drift monitor, the validator
+// and the scratch factory share. Unsized, pgx defaults it to max(4, NumCPU), which is both unpredictable
+// across nodes and small enough that a burst of Diff calls leaves the scheduler waiting on Acquire.
+const DefaultStoreMaxConns = 20
+
+func openPool(ctx context.Context, dsn string, maxConns int) (*pgxpool.Pool, error) {
+	pcfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	pcfg.MaxConns = int32(maxConns)
+
+	return pgxpool.NewWithConfig(ctx, pcfg)
 }
 
 // Run migrates the store, starts the scheduler and serves the API until ctx ends.
@@ -97,13 +118,16 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	pool, err := pgxpool.New(ctx, cfg.StoreDSN)
+	pool, err := openPool(ctx, cfg.StoreDSN, cmp.Or(cfg.StoreMaxConns, DefaultStoreMaxConns))
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
 	log := cfg.Log.With("replica", cfg.Holder, "build", version.Version)
+	if len(tokens) == 0 {
+		log.Warn("no tokens configured; every caller is anonymous with scope admin")
+	}
 	applied, err := controlplane.Migrate(ctx, pool)
 	if err != nil {
 		return err
@@ -161,10 +185,11 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Differ = controlplane.NewDiffer(scratch, sched, history, newID)
 	apiSrv.Checkpointer = controlplane.NewCheckpointer(scratch, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
+	apiSrv.Limits = cfg.Limits
 	handler := api.Handler(apiSrv, tokens)
 	if cfg.UI {
 		if cfg.UIUser == "" && len(tokens) == 0 {
-			log.Warn("ui enabled without basic auth")
+			log.Warn("ui enabled without basic auth", "anonymous_scope", string(ui.AnonymousScope))
 		}
 		mux := http.NewServeMux()
 		mux.Handle("/", handler)
@@ -174,9 +199,13 @@ func Run(ctx context.Context, cfg Config) error {
 		}))
 		handler = mux
 	}
+	// No ReadTimeout or WriteTimeout: both are per-stream in HTTP/2 and per-connection in HTTP/1, and
+	// WatchRun holds a response open for the length of a run. Request bodies are bounded by size instead.
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
 		Protocols:         h2cProtocols(),
 	}
 	go func() {

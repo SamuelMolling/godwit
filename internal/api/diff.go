@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -22,6 +23,13 @@ func (s *Server) Diff(ctx context.Context, req *connect.Request[godwitv1.DiffReq
 	}
 	if strings.TrimSpace(m.Schema) == "" {
 		return nil, invalid("schema is required")
+	}
+	l := s.limits()
+	if len(m.Schema) > l.FileBytes {
+		return nil, invalid(fmt.Sprintf("schema is %d bytes, limit %d", len(m.Schema), l.FileBytes))
+	}
+	if err := l.checkFiles(m.Files); err != nil {
+		return nil, err
 	}
 	if s.Differ == nil {
 		return nil, errDiffDisabled

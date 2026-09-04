@@ -81,6 +81,13 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--lease-ttl` | `30s` | how long a claimed run stays leased without a heartbeat; heartbeats run every third of it |
 | `--tick-interval` | `2s` | how often the scheduler looks for runnable runs |
 | `--max-attempts` | `5` | attempts a run may take (lost leases and transient failures alike) before it is finished as `needs_attention` |
+| `--max-concurrent-runs` | `4` | runs this replica executes at once; a slow run holds one slot, never the ticker |
+| `--run-timeout` | `24h` | wall clock one run may take; past it the run is cancelled and finished as `failed` |
+| `--store-max-conns` | `20` | size of the pool against the store; wins over `pool_max_conns` in `--store-dsn` |
+| `--max-request-bytes` | `33554432` (32 MiB) | largest request body the API decodes; over it the transport refuses before any handler runs |
+| `--max-files` | `2000` | migration files one `CreateRun`, `PlanRun`, `RevertRun`, `Diff` or `Checkpoint` may carry |
+| `--max-file-bytes` | `4194304` (4 MiB) | largest single migration body, and the largest desired schema `Diff` accepts |
+| `--max-concurrent-diffs` | `4` | `Diff`, `PlanRun`, `CreateRun`, `RevertRun` and `Checkpoint` calls admitted at once; each builds scratch databases on `--scratch-dsn`, or on the store server when it is unset |
 | `--skip-validation` | `false` | disable the scratch-database validation at admission (also disables `validated` in `PlanRun`) |
 | `--require-plan` | `false` | refuse every `CreateRun` that does not bind to a stored plan, on every target (targets registered with `--require-plan` refuse on their own) |
 | `--plan-ttl` | `720h` | stored plans older than this are ignored at `CreateRun` (treated as no plan) |
@@ -90,19 +97,27 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--ui` | `false` | serve the operator web UI at `/ui` on the same listener (also `GODWIT_UI=true`) |
 | `--ui-user` | `GODWIT_UI_USER` | basic auth user for a shared `/ui` identity; needs `--ui-password` |
 | `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for that shared identity |
-| `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared identity (and the anonymous one, when the UI is open) may do: `read`, `pipeline`, `operator` or `admin` |
+| `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared `--ui-user` identity may do: `read`, `pipeline`, `operator` or `admin`; an anonymous visitor on an open UI is always `read` |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
 A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts. A `--scratch-dsn` that does not parse, cannot be reached, or names a role that can act outside its own scratch databases fails it right after the store migration.
 
-`/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth` and audits as `ui:anonymous`. Pages offer only the actions the scope allows and a request beyond it is refused with `403`. Every form post must also come from the UI's own origin, so a `POST /ui/…` from a script — with no `Origin` and no `Sec-Fetch-Site` — is refused with `403 cross-site request refused`; see [security](security.md#cross-site-requests).
+### Admission limits
+
+Everything above the `--max-*` line is refused with `invalid_argument` naming the limit, except a body over `--max-request-bytes`, which the connect transport refuses before the request is decoded. The defaults hold roughly an order of magnitude more than a real directory: 200 migrations of 8 KiB is about 400 files and 2 MiB, well inside 2000 files and 32 MiB. Raise `--max-file-bytes` for a generated schema dump, `--max-files` for a directory past a thousand migrations, and `--max-request-bytes` above the sum of what one run sends.
+
+`--max-concurrent-diffs` is a queue, not a hard refusal: a call waits 30 seconds for a free slot and is then refused with `resource_exhausted`. Each admitted call creates four to five databases on whatever `--scratch-dsn` points at — the store server itself when it is unset — so this is the number to size that server's `max_connections` and disk against. The pool that creates and drops them is sized from this flag (`max(4, 2 × --max-concurrent-diffs)`) and needs no knob of its own. `Checkpoint` is in the queue too: it needs only `read` and builds two databases per call. The UI calls the service in process and does not pass through the queue.
+
+`--max-concurrent-runs` and `--run-timeout` are the scheduler's side: the replica claims up to `--max-concurrent-runs` runs and executes each on its own goroutine, so a backfill with `batch=1 pause=1h` occupies one slot instead of the whole replica; `--run-timeout` is the wall clock past which such a run is cancelled and recorded as `failed`. Raise it above the longest backfill you expect to run in one go.
+
+`/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth`, audits as `ui:anonymous` and carries scope **`read`** — not `--ui-scope`, which applies only to the identity that signed in. Pages offer only the actions the scope allows and a request beyond it is refused with `403`. Every form post must also come from the UI's own origin, so a `POST /ui/…` from a script — with no `Origin` and no `Sec-Fetch-Site` — is refused with `403 cross-site request refused`; see [security](security.md#cross-site-requests).
 
 ### Environment
 
 | Variable | Required | Meaning |
 |---|---|---|
 | `GODWIT_MASTER_KEY` | yes | 64 hex characters (32 bytes); AES-256-GCM key for DSNs of `static` targets |
-| `GODWIT_TOKENS` | no | comma-separated bearer token specs ([below](#token-spec)); unset means every caller is `anonymous` with scope `admin` |
+| `GODWIT_TOKENS` | no | comma-separated bearer token specs ([below](#token-spec)); unset means every caller is `anonymous` with scope `admin`, and `serve` logs `no tokens configured` at warn level |
 | `GODWIT_SCRATCH_DSN` | no | default for `--scratch-dsn` |
 | `GODWIT_SCRATCH_TEMPLATE` | no | default for `--scratch-template` |
 | `GODWIT_WEBHOOK_URL` | no | POST every run and drift event here as JSON |
@@ -132,10 +147,11 @@ The replica's lease holder name is the hostname; there is no flag for it.
 | Form | Name | Scope |
 |---|---|---|
 | `name:scope:secret` | `name` | `scope` |
-| `name:secret` | `name` | `admin` |
 | `secret` | `anonymous` | `admin` |
 
-Rules, enforced at start-up: name and secret must be non-empty; scope must be one of `read`, `pipeline`, `operator`, `admin` (a two-field spec whose secret contains `:` is parsed as three fields and fails on the unknown scope); the same secret under two names is refused, naming both. Scopes are cumulative:
+**A two-field spec is refused.** `name:secret` used to mean an admin token whose secret was the second field, so `GODWIT_TOKENS=deploy:pipeline` parsed as an *admin* token with the secret `pipeline` rather than the pipeline token it reads as. `serve` now refuses it, naming the first field only, and the fix is to write the scope out: `deploy:pipeline:<secret>`. [Decision 0011](decisions/0011-token-spec-is-three-fields.md) has the reasoning.
+
+Rules, enforced at start-up: exactly one or three colon-separated fields; name and secret must be non-empty; scope must be one of `read`, `pipeline`, `operator`, `admin`; the same secret under two names is refused, naming both. A secret may contain `:` in the three-field form (everything after the second colon is the secret); a bare secret may not. Scopes are cumulative:
 
 | Scope | Allows |
 |---|---|

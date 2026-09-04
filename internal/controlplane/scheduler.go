@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
@@ -19,9 +20,22 @@ type Config struct {
 	TTL         time.Duration
 	Interval    time.Duration
 	MaxAttempts int
+	// MaxConcurrentRuns is how many runs this replica executes at once; zero takes the default.
+	MaxConcurrentRuns int
+	// RunTimeout bounds one run's execution; zero takes the default. It never bounds the bookkeeping
+	// that finishes the run, so a run that hits it is still recorded as failed.
+	RunTimeout time.Duration
 	// Jitter returns a value in [0, 1) that spreads retry backoff; nil means random.
 	Jitter func() float64
 }
+
+// Scheduler defaults. MaxConcurrentRuns keeps a long backfill on one target from parking every other
+// target on the replica; RunTimeout is the wall clock no single run may exceed, generous enough for an
+// overnight backfill and finite enough that a stuck advisory lock cannot hold a slot forever.
+const (
+	DefaultMaxConcurrentRuns = 4
+	DefaultRunTimeout        = 24 * time.Hour
+)
 
 func (c Config) withDefaults() Config {
 	if c.TTL <= 0 {
@@ -32,6 +46,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxAttempts <= 0 {
 		c.MaxAttempts = 5
+	}
+	if c.MaxConcurrentRuns <= 0 {
+		c.MaxConcurrentRuns = DefaultMaxConcurrentRuns
+	}
+	if c.RunTimeout <= 0 {
+		c.RunTimeout = DefaultRunTimeout
 	}
 	if c.Jitter == nil {
 		c.Jitter = defaultJitter
@@ -53,10 +73,14 @@ type Scheduler struct {
 	policies  map[string]RolloutPolicy
 	cfg       Config
 	log       *slog.Logger
+	slots     chan struct{}
+	inflight  sync.WaitGroup
 }
 
 // NewScheduler wires a Scheduler.
 func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine, policies map[string]RolloutPolicy, cfg Config, log *slog.Logger) *Scheduler {
+	cfg = cfg.withDefaults()
+
 	return &Scheduler{
 		Metrics:   metrics.New(),
 		Notifier:  notify.None{},
@@ -64,23 +88,42 @@ func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine,
 		providers: providers,
 		engine:    eng,
 		policies:  policies,
-		cfg:       cfg.withDefaults(),
+		cfg:       cfg,
 		log:       log,
+		slots:     make(chan struct{}, cfg.MaxConcurrentRuns),
 	}
 }
 
-// Run polls for work until ctx is done.
+// Run polls for work until ctx is done, then waits for the runs it started.
 func (s *Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			s.inflight.Wait()
+
 			return
 		case <-ticker.C:
-			s.Tick(ctx)
+			s.dispatch(ctx)
 		}
 	}
+}
+
+// dispatch starts one Tick per free slot, off the ticker's goroutine, so a run that takes an hour
+// neither blocks the next tick nor keeps this replica from claiming work for another target.
+func (s *Scheduler) dispatch(ctx context.Context) {
+	select {
+	case s.slots <- struct{}{}:
+	default:
+		return
+	}
+	s.inflight.Add(1)
+	go func() {
+		defer s.inflight.Done()
+		defer func() { <-s.slots }()
+		s.Tick(ctx)
+	}()
 }
 
 // Tick claims and executes at most one run.
@@ -132,7 +175,9 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	defer stopHB()
 	go s.heartbeat(hbCtx, run.ID)
 
-	held, err := s.applyRun(ctx, run)
+	applyCtx, stopRun := context.WithTimeout(ctx, s.cfg.RunTimeout)
+	defer stopRun()
+	held, err := s.applyRun(applyCtx, run)
 	if err != nil {
 		s.fail(ctx, run, err, finish)
 

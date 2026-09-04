@@ -12,10 +12,13 @@ Bearer tokens are static secrets in `GODWIT_TOKENS`, compared in the auth interc
 
 - one token per caller (`ci`, `argocd-orders`, `oncall`), named, so `cp_runs.created_by` and `cp_audit.actor` mean something;
 - `read` for pull request plans and dry runs, `pipeline` for merge pipelines and ArgoCD hooks, `operator` for humans on call, `admin` only for the process that registers targets;
-- never run with `GODWIT_TOKENS` unset outside a laptop: everyone becomes `anonymous` with `admin`;
+- never run with `GODWIT_TOKENS` unset outside a laptop: everyone becomes `anonymous` with `admin`, and `serve` says so at warn level on every start (`no tokens configured`);
+- write the scope out. A spec is `name:scope:secret` or a bare secret, and nothing else: the old two-field `name:secret` form meant *admin*, so `GODWIT_TOKENS=deploy:pipeline` read as an admin token whose secret was the word `pipeline`. It is refused now ([decision 0011](decisions/0011-token-spec-is-three-fields.md));
 - rotate by adding the new secret under the same name, rolling callers, removing the old one; the service refuses to start when two entries share a secret, and every change needs a restart (tokens are read at start-up).
 
 Tokens are never logged; the access log carries `actor` (the name) and `scope`.
+
+The identity behind a call fails closed. A context that never passed the auth interceptor carries **no scope**, so every procedure is denied — it used to default to an anonymous `admin`, which meant any future path reaching a handler around the interceptor would have run as admin. The open-service principal (no `GODWIT_TOKENS`) is now built explicitly where the tokens are parsed, not inherited from a missing value.
 
 ## Master key
 
@@ -39,9 +42,14 @@ Targets using the `kubernetes` or `vault` providers store no secret and need not
 | `kubernetes` | `path` | every use: the file is read and trimmed, so a rotated Secret is picked up without restart | the Secret mounted at that path in the godwit pod |
 | `vault` | `path`, `template` | every use: `GET <VAULT_ADDR>/v1/<path>`, KV v2 `data.data` unwrapped, `{{field}}` substituted into `template` | `VAULT_ADDR`, plus `VAULT_TOKEN` or Kubernetes auth (`VAULT_K8S_ROLE`, `VAULT_K8S_MOUNT`, `VAULT_K8S_JWT`) |
 
-Vault login (`POST auth/<mount>/login` with the pod's service-account JWT) happens on every fetch; the client token is not cached. A missing template field fails with `vault secret has no field for {{x}}`. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
+Vault login (`POST auth/<mount>/login` with the pod's service-account JWT) happens on every fetch; the client token is not cached. A missing template field fails with `vault secret has no field for x`, naming the template's own keys and never the rendered string — the substitution is one pass over the template, so a field whose value contains `{{...}}` is not rescanned either. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
 
-The DSN, whichever provider produced it, exists only in the replica's memory for the duration of the operation and is never logged or returned by any RPC.
+The DSN, whichever provider produced it, exists only in the replica's memory for the duration of the operation and is never logged or returned by any RPC. Two paths used to break that:
+
+- a Vault template with a missing field returned everything from the first unresolved marker to the end of the *partially rendered* string, so `postgres://{{missing}}:{{password}}@host/db` handed the substituted password back to the caller, into `cp_runs.error` and into Slack;
+- a `pgx` parse or dial failure redacts the password and nothing else, so the target's host, port, user and database name — and, for a `kubernetes` target whose `path` names a file that is not a DSN, that file's contents — reached any `read` caller inside an `internal` error.
+
+Both now return `cannot reach the database for this call; the detail is in the server log`, and the access log carries the original under `detail`.
 
 ## Database privileges
 
@@ -107,9 +115,12 @@ Why the UI has no account model of its own: [decision 0004](decisions/0004-ui-is
 |---|---|---|
 | the secret of one of `GODWIT_TOKENS` (the username is ignored) | `ui:<token name>` | that token's scope |
 | `--ui-password`, with `--ui-user` as the username | `ui:<user>` | `--ui-scope` (default `operator`) |
+| nothing, on a service with neither tokens nor `--ui-user` | `ui:anonymous` | `read`, always |
 | anything else | refused with `401` and `WWW-Authenticate: Basic realm="godwit"` | — |
 
-Every secret is compared in constant time as a SHA-256 digest, and the password is never logged. The UI is protected as soon as the service has tokens **or** the `--ui-user` / `--ui-password` pair; with neither it is open to anyone who reaches the port, acts as `ui:anonymous` with `--ui-scope`, and `serve` logs `ui enabled without basic auth` — treat that as a development setting.
+Every secret is compared in constant time as a SHA-256 digest, and the password is never logged. The UI is protected as soon as the service has tokens **or** the `--ui-user` / `--ui-password` pair; with neither it is open to anyone who reaches the port and `serve` logs `ui enabled without basic auth` — treat that as a development setting.
+
+An anonymous visitor on an open UI gets **`read`**, not `--ui-scope`. `--ui-scope` is the scope of the identity that signed in with `--ui-user`; handing it to someone who signed in with nothing was the same fail-open shape as the anonymous-admin default above, and `GODWIT_UI=true` alone was enough to reach it. Every page still renders, and every button that changes something is gone.
 
 The UI calls the service in process, so its actions appear in `cp_audit` under `ui:<name>` rather than under the token that a browser would have used over HTTP. That in-process path does **not** pass the auth interceptor, so the UI runs the same decision itself: every call goes through `api.Authorize(procedure, principal)`, the identical `procedure → scope` table the interceptor uses. A page therefore renders only the actions the scope allows, and a request posted around the page — `POST /ui/runs/<id>/resume` typed by hand — is refused with `403` and the scope message (`ResumeRun requires scope operator; token ui:viewer has scope read`). Scopes reach the UI as: `read` sees every page and can change nothing; `pipeline` adds confirm rollout and revert; `operator` adds resume, park, check drift and accept baseline, which is everything the UI offers; `admin` adds nothing, because the UI calls no admin RPC.
 
@@ -157,6 +168,15 @@ What this does **not** protect against, stated so nobody reads more into it:
 - **A fork's SQL still runs on the target when a maintainer commands the apply.** That is the point of reviewing a contribution: the guard is that a human with write permission approved *that exact commit*, not that the code is trusted a priori.
 - **`require-approval: "false"` removes the anchor.** The comment path then has no sha of its own; `/godwit apply <sha>` in the comment body restores an anchor a commenter chose deliberately, and is refused when the head has moved past it.
 - **Anything the checkout runs inherits the job's environment.** `lint` and `diff` with an ORM `schema_source` execute code from the repository (`go run`, `npx prisma`, `python manage.py`) in a step that carries `GODWIT_TOKEN` and `GH_TOKEN`. Keep those steps on `pull_request` with a `read` token, and install dependencies with lifecycle scripts off (`npm ci --ignore-scripts`).
+
+## Admission limits
+
+Request size, file count, page size and concurrency are bounded, and the knobs are in [configuration](configuration.md#admission-limits). What the limits are for, from a security point of view:
+
+- `--max-request-bytes` (32 MiB) and `--max-file-bytes` (4 MiB) bound the memory one call can make the replica allocate; a submitted directory is held about five times over between the proto message, the file map, the loader's in-memory FS, the migration bodies and the split statements.
+- `--max-concurrent-diffs` (4) bounds how many calls build scratch databases at once — `Diff`, `PlanRun`, `CreateRun`, `RevertRun` and `Checkpoint`, three of which need only `read`. Each `Diff` creates four to five databases and each `Checkpoint` two, so without a cap a `read` token could exhaust the scratch server's `max_connections` or its disk.
+- `ListAudit` and `ListPlans` clamp their `limit` to 1000. It used to be clamped only at the bottom, so a `read` caller could pull the whole audit trail into one response.
+- `--max-concurrent-runs` (4) and `--run-timeout` (24h) bound what one run can take from the others on the replica: the scheduler now executes each claimed run on its own goroutine instead of inline in its ticker, and cancels one that outlives the timeout.
 
 ## Network
 

@@ -49,6 +49,15 @@ spec:
             - --scratch-dsn=$(GODWIT_SCRATCH_DSN)
             {{- end }}
             - --scratch-template={{ .Values.serve.scratch.template }}
+            {{- with .Values.serve.limits }}
+            - --store-max-conns={{ .storeMaxConns }}
+            - --max-concurrent-runs={{ .maxConcurrentRuns }}
+            - --run-timeout={{ .runTimeout }}
+            - --max-request-bytes={{ int64 .maxRequestBytes }}
+            - --max-files={{ .maxFiles }}
+            - --max-file-bytes={{ int64 .maxFileBytes }}
+            - --max-concurrent-diffs={{ .maxConcurrentDiffs }}
+            {{- end }}
             {{- if .Values.serve.skipValidation }}
             - --skip-validation
             {{- end }}

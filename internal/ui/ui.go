@@ -41,6 +41,9 @@ type Config struct {
 	Password string
 	Scope    api.Scope
 	Origins  []Origin
+	// AnonymousScope is what a visitor gets when neither Tokens nor User/Password can sign anyone in;
+	// it defaults to AnonymousScope, never to Scope, and widening it is an explicit choice.
+	AnonymousScope api.Scope
 }
 
 // Handler renders the UI by calling svc in-process with a ui:<user> principal.
@@ -56,6 +59,9 @@ type Handler struct {
 func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	if cfg.Scope == "" {
 		cfg.Scope = api.ScopeOperator
+	}
+	if cfg.AnonymousScope == "" {
+		cfg.AnonymousScope = AnonymousScope
 	}
 	h := &Handler{svc: svc, cfg: cfg, mux: http.NewServeMux(), now: time.Now}
 	h.tmpl = template.Must(template.New("").Funcs(h.funcs()).ParseFS(files, "templates/*.html"))
@@ -98,9 +104,14 @@ func digestEqual(a, b string) int {
 	return subtle.ConstantTimeCompare(x[:], y[:])
 }
 
+// AnonymousScope is what an unauthenticated visitor gets when the UI has no way to sign anyone in.
+// It is read, never Config.Scope: a service with no credential configured must not hand out the rights
+// of the identity it would have authenticated.
+const AnonymousScope = api.ScopeRead
+
 func (h *Handler) principal(r *http.Request) (api.Principal, bool) {
 	if !h.protected() {
-		return api.Principal{Name: "ui:" + api.AnonymousActor, Scope: h.cfg.Scope}, true
+		return api.Principal{Name: "ui:" + api.AnonymousActor, Scope: h.cfg.AnonymousScope}, true
 	}
 	user, pass, ok := r.BasicAuth()
 	if !ok {

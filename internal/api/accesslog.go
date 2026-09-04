@@ -21,6 +21,9 @@ func (a accessLog) observe(ctx context.Context, spec connect.Spec, header string
 	if err != nil {
 		code, level = connect.CodeOf(err).String(), slog.LevelWarn
 		extra = []any{"error", err.Error()}
+		if d := detail(err); d != "" {
+			extra = append(extra, "detail", d)
+		}
 	}
 	attrs := []any{"method", method}
 	if p, ok := a.actor(header); ok {

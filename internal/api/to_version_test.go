@@ -27,7 +27,7 @@ func toFiles() []*godwitv1.MigrationFile {
 
 func toSpec(t *testing.T, files []*godwitv1.MigrationFile) runSpec {
 	t.Helper()
-	spec, err := upSpec("app", "", files)
+	spec, err := (&Server{}).upSpec("app", "", files)
 	if err != nil {
 		t.Fatal(err)
 	}

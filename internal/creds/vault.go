@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -113,18 +114,30 @@ func (p Vault) call(ctx context.Context, method, path, token string, body, out a
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+var marker = regexp.MustCompile(`{{([^{}]*)}}`)
+
+// render substitutes the secret's fields into the template in one pass, so a value that itself contains
+// a marker is never re-substituted, and names only the template's own keys on failure — the error travels
+// to the caller, to cp_runs.error and to notifications, and must carry nothing the secret held.
 func render(template string, data map[string]any) (string, error) {
 	if template == "" {
 		template = "{{dsn}}"
 	}
-	out := template
-	for k, v := range data {
-		if s, ok := v.(string); ok {
-			out = strings.ReplaceAll(out, "{{"+k+"}}", s)
+	var missing []string
+	out := marker.ReplaceAllStringFunc(template, func(m string) string {
+		key := m[2 : len(m)-2]
+		if s, ok := data[key].(string); ok {
+			return s
 		}
+		missing = append(missing, key)
+
+		return m
+	})
+	if len(missing) > 0 {
+		return "", fmt.Errorf("vault secret has no field for %s", strings.Join(missing, ", "))
 	}
-	if i := strings.Index(out, "{{"); i >= 0 {
-		return "", fmt.Errorf("vault secret has no field for %s", out[i:])
+	if strings.Contains(marker.ReplaceAllLiteralString(template, ""), "{{") {
+		return "", errors.New("vault template has an unclosed {{ marker")
 	}
 
 	return out, nil
