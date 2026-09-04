@@ -14,6 +14,14 @@ rpc() { # rpc <Method> <json-body> [port]
   curl -s -X POST "http://localhost:${3:-18474}/godwit.v1.GodwitService/$1" -H "$AUTH" -H "$JSON" -d "$2"
 }
 
+field() { # field <name>, response on stdin; aborts instead of feeding an error body to the next call
+  local body v
+  body=$(cat)
+  v=$(printf '%s' "$body" | sed -nE "s/.*\"$1\":\"([^\"]+)\".*/\1/p")
+  [ -n "$v" ] || { printf 'no %s in response: %s\n' "$1" "$body" >&2; exit 1; }
+  printf '%s' "$v"
+}
+
 echo "==> registering target 'app' (static provider, encrypted at rest)"
 rpc RegisterTarget '{
   "name": "app",
@@ -30,7 +38,7 @@ RUN_ID=$(rpc CreateRun '{
      "body": "CREATE TABLE users (id bigint PRIMARY KEY, email text);"},
     {"name": "20260901120000_users.down.sql", "body": "DROP TABLE users;"}
   ]
-}' | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+}' | field runId)
 echo "run: $RUN_ID"
 
 echo "==> waiting for it to succeed"
@@ -52,7 +60,7 @@ SLOW_ID=$(rpc CreateRun '{
     {"name": "20260901130000_slow.down.sql",
      "body": "ALTER TABLE users DROP COLUMN plan;"}
   ]
-}' | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+}' | field runId)
 echo "run: $SLOW_ID"
 
 echo "==> waiting until a replica picks it up"
@@ -149,7 +157,7 @@ EC_ID=$(rpc CreateRun '{
     {"name": "20260901160001_drop_plan.up.sql", "body": "ALTER TABLE users DROP COLUMN plan;"},
     {"name": "20260901160001_drop_plan.down.sql", "body": "ALTER TABLE users ADD COLUMN plan text;"}
   ]
-}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+}' 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$EC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_AWAITING_CONTRACT" ] && break
@@ -172,7 +180,7 @@ echo
 echo "==> revert: only what that run applied, planned before anything runs"
 echo "dry run (nothing is queued):"
 rpc RevertRun "{\"runId\": \"$EC_ID\", \"acknowledgeHazards\": [\"H003\"], \"dryRun\": true}" 18475
-RV_ID=$(rpc RevertRun "{\"runId\": \"$EC_ID\", \"acknowledgeHazards\": [\"H003\"]}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+RV_ID=$(rpc RevertRun "{\"runId\": \"$EC_ID\", \"acknowledgeHazards\": [\"H003\"]}" 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$RV_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -188,7 +196,7 @@ PLAN_FILES='[
   {"name": "20260901170000_users_email_idx.up.sql", "body": "CREATE INDEX CONCURRENTLY users_email_idx ON users (email);"},
   {"name": "20260901170000_users_email_idx.down.sql", "body": "DROP INDEX CONCURRENTLY users_email_idx;"}
 ]'
-PLAN_ID=$(rpc PlanRun "{\"target\": \"app\", \"persist\": true, \"source\": \"github.com/acme/app@9c1e2f\", \"files\": $PLAN_FILES}" 18475 | sed -E 's/.*"planId":"([^"]+)".*/\1/')
+PLAN_ID=$(rpc PlanRun "{\"target\": \"app\", \"persist\": true, \"source\": \"github.com/acme/app@9c1e2f\", \"files\": $PLAN_FILES}" 18475 | field planId)
 echo "plan: $PLAN_ID"
 
 echo "==> someone changes the schema by hand between the review and the deploy"
@@ -199,7 +207,7 @@ echo
 
 echo "==> the change is blessed as the new baseline; the same migrate now re-plans and binds"
 rpc AcceptBaseline '{"target": "app"}' 18475
-PC_ID=$(rpc CreateRun "{\"target\": \"app\", \"files\": $PLAN_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+PC_ID=$(rpc CreateRun "{\"target\": \"app\", \"files\": $PLAN_FILES}" 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$PC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -222,10 +230,10 @@ rpc RegisterTarget '{
 VT_ID=$(rpc CreateRun '{
   "target": "app-vault",
   "files": [
-    {"name": "20260901170000_audit.up.sql", "body": "CREATE TABLE audit (id bigint PRIMARY KEY, note text);"},
-    {"name": "20260901170000_audit.down.sql", "body": "DROP TABLE audit;"}
+    {"name": "20260901175000_audit.up.sql", "body": "CREATE TABLE audit (id bigint PRIMARY KEY, note text);"},
+    {"name": "20260901175000_audit.down.sql", "body": "DROP TABLE audit;"}
   ]
-}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+}' 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$VT_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -242,7 +250,7 @@ TO_ID=$(rpc CreateRun '{
     {"name": "20260901180000_slow.up.sql", "body": "SELECT pg_sleep(3);"},
     {"name": "20260901180000_slow.down.sql", "body": "SELECT 1;"}
   ]
-}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+}' 18475 | field runId)
 for _ in $(seq 1 30); do
   rpc GetRun "{\"runId\": \"$TO_ID\"}" 18475 | grep -q '"retries":' && break
   sleep 1
@@ -266,13 +274,12 @@ BASELINE_FILES='[
     {"name": "20260901190000_orders_status.up.sql", "body": "ALTER TABLE orders ADD COLUMN status text;"},
     {"name": "20260901190000_orders_status.down.sql", "body": "ALTER TABLE orders DROP COLUMN status;"}
   ]'
-BL_ID=$(rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475 \
-  | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+BL_ID=$(rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475 | field runId)
 docker compose exec -T godwit-2 /godwit run get "$BL_ID" --server http://localhost:8474 --token demo-token
 docker compose exec -T target-db psql -U app -d legacy \
   -c "SELECT version, name FROM godwit.migrations ORDER BY version;"
 echo "==> version 1 is marked applied without running; the next migration applies on top (validation replays the baseline files first)"
-BL2_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+BL2_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$BL2_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -302,7 +309,7 @@ echo "==> the plan sees the effect is already there (alreadyApplied, effect) ins
 NOTE_PLAN=$(rpc PlanRun "{\"target\": \"legacy\", \"persist\": true, \"files\": $NOTE_FILES}" 18475)
 echo "$NOTE_PLAN" | sed -E 's/.*"alreadyApplied":true,"effect":"([^"]+)".*/alreadyApplied: \1/'
 echo "==> migrate binds to the plan and records the migration without running a statement"
-NOTE_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $NOTE_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+NOTE_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $NOTE_FILES}" 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$NOTE_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -324,7 +331,7 @@ JSON
 }
 run_and_wait() {
   local id
-  id=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $1}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+  id=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $1}" 18475 | field runId)
   for _ in $(seq 1 30); do
     STATE=$(rpc GetRun "{\"runId\": \"$id\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
     [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -336,7 +343,7 @@ run_and_wait "$(rep_files '')"
 echo "==> same file again: the checksum matches, so the plan reports it unchanged and nothing runs"
 rpc PlanRun "{\"target\": \"legacy\", \"files\": $(rep_files '')}" 18475 | sed -E 's/.*("repeatable":true[^}]*).*/\1/'
 echo "==> edit the view body and it applies again, under the same name"
-run_and_wait "$(rep_files ' * 2 AS doubled')"
+run_and_wait "$(rep_files ', total * 2 AS doubled')"
 docker compose exec -T target-db psql -U app -d legacy \
   -c "SELECT name, left(checksum, 12) AS checksum FROM godwit.repeatables;" \
   -c "SELECT pg_get_viewdef('order_totals'::regclass, true);"
@@ -348,23 +355,27 @@ rpc Diff '{
   "schema": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text, customer_id bigint); CREATE INDEX orders_customer_idx ON orders (customer_id);"
 }' 18475
 echo
-echo "==> upSql adds the column and creates the index CONCURRENTLY, downSql drops both; the schema legacy already has reports no changes"
+echo "==> upSql adds the column and creates the index CONCURRENTLY, downSql drops both; both calls also drop order_totals, because a repeatable's view is not in the desired schema unless you declare it there"
 rpc Diff '{"target": "legacy", "schema": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text);"}' 18475
 echo
 
 echo
 echo "==> directive: one comment line asks godwit to run the lock-safe type change itself"
+echo "==> the column it retypes arrives as a migration, so validation replays it; only the 5000 rows are loaded by hand"
+run_and_wait '[
+    {"name": "20260901190002_orders_quantity.up.sql", "body": "ALTER TABLE orders ADD COLUMN quantity integer NOT NULL DEFAULT 1;"},
+    {"name": "20260901190002_orders_quantity.down.sql", "body": "ALTER TABLE orders DROP COLUMN quantity;"}
+  ]'
 docker compose exec -T target-db psql -U app -d legacy \
-  -c "ALTER TABLE orders ADD COLUMN quantity integer NOT NULL DEFAULT 1;" \
   -c "INSERT INTO orders (id, total, quantity) SELECT g, g, g FROM generate_series(1, 5000) g ON CONFLICT DO NOTHING;" > /dev/null
 CT_FILES='[
-    {"name": "20260901190000_quantity.up.sql", "body": "-- godwit: change-type public.orders.quantity bigint batch=1000\n"},
-    {"name": "20260901190000_quantity.down.sql", "body": "-- godwit: revert\n"}
+    {"name": "20260901190003_quantity.up.sql", "body": "-- godwit: change-type public.orders.quantity bigint batch=1000\n"},
+    {"name": "20260901190003_quantity.down.sql", "body": "-- godwit: revert\n"}
   ]'
 echo "==> plan: the expansion is computed against the target's catalog and frozen into the plan"
 rpc PlanRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"persist\": true, \"files\": $CT_FILES}" 18475 \
   | tr ',' '\n' | grep -E '"(sql|phase|key|size)"' | head -20
-CT_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"files\": $CT_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+CT_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"files\": $CT_FILES}" 18475 | field runId)
 for _ in $(seq 1 60); do
   STATE=$(rpc GetRun "{\"runId\": \"$CT_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_AWAITING_CONTRACT" ] && break
@@ -396,7 +407,7 @@ SD_FILES='[
   ]'
 rpc PlanRun "{\"target\": \"legacy\", \"persist\": true, \"files\": $SD_FILES}" 18475 \
   | tr ',' '\n' | grep -E '"sql"' | head -10
-SD_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $SD_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+SD_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $SD_FILES}" 18475 | field runId)
 for _ in $(seq 1 60); do
   STATE=$(rpc GetRun "{\"runId\": \"$SD_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
@@ -410,7 +421,7 @@ DC_FILES='[
     {"name": "20260901192000_drop_old.up.sql", "body": "-- godwit: drop-column public.orders.quantity_old\n"},
     {"name": "20260901192000_drop_old.down.sql", "body": "ALTER TABLE orders ADD COLUMN quantity_old integer;\n"}
   ]'
-DC_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"files\": $DC_FILES}" 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+DC_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"rollout\": \"expand-contract\", \"files\": $DC_FILES}" 18475 | field runId)
 for _ in $(seq 1 60); do
   STATE=$(rpc GetRun "{\"runId\": \"$DC_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_AWAITING_CONTRACT" ] && break
@@ -445,7 +456,7 @@ SP_ID=$(rpc CreateRun '{
     {"name": "20260901200000_shadow.up.sql", "body": "CREATE TABLE migrations (id bigint PRIMARY KEY, note text);"},
     {"name": "20260901200000_shadow.down.sql", "body": "DROP TABLE migrations;"}
   ]
-}' 18475 | sed -E 's/.*"runId":"([^"]+)".*/\1/')
+}' 18475 | field runId)
 for _ in $(seq 1 30); do
   STATE=$(rpc GetRun "{\"runId\": \"$SP_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
   [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break

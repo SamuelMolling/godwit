@@ -47,8 +47,6 @@ services:
     environment:
       GODWIT_MASTER_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
       GODWIT_TOKENS: demo:demo-token
-      GODWIT_UI_USER: demo
-      GODWIT_UI_PASSWORD: demo
       GODWIT_LOG_FORMAT: text
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: demo-root
@@ -76,8 +74,6 @@ services:
     environment:
       GODWIT_MASTER_KEY: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
       GODWIT_TOKENS: demo:demo-token
-      GODWIT_UI_USER: demo
-      GODWIT_UI_PASSWORD: demo
       GODWIT_LOG_FORMAT: text
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: demo-root

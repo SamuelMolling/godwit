@@ -274,7 +274,7 @@ func TestDownCommand(t *testing.T) {
 		t.Fatal(errOut)
 	}
 	code, out, errOut := runCLI("down", "--dsn", dsn, "--dir", dir, "--version", "20260901120000", "--yes")
-	if code != 0 || !strings.Contains(out, "applied (1 statement(s))") {
+	if code != 0 || !strings.Contains(out, "reverted (1 statement(s))") {
 		t.Fatalf("code = %d, out = %s, stderr = %s", code, out, errOut)
 	}
 	code, out, _ = runCLI("down", "--dsn", dsn, "--dir", dir, "--version", "20260901120000", "--yes")

@@ -624,7 +624,7 @@ func newApplyCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				printResult(cmd, m, res)
+				printResult(cmd, m, p.Direction, res)
 			}
 
 			return nil
@@ -635,8 +635,12 @@ func newApplyCmd() *cobra.Command {
 	return cmd
 }
 
-func printResult(cmd *cobra.Command, m engine.Migration, res engine.Result) {
-	state := fmt.Sprintf("applied (%d statement(s))", res.Applied)
+func printResult(cmd *cobra.Command, m engine.Migration, dir engine.Direction, res engine.Result) {
+	verb := "applied"
+	if dir == engine.DirectionDown {
+		verb = "reverted"
+	}
+	state := fmt.Sprintf("%s (%d statement(s))", verb, res.Applied)
 	if res.Skipped {
 		state = "skipped"
 	}
@@ -717,7 +721,7 @@ func newDownCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				printResult(cmd, m, res)
+				printResult(cmd, m, p.Direction, res)
 
 				return nil
 			}

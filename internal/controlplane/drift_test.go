@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -294,8 +295,9 @@ func TestValidator(t *testing.T) {
 	}
 
 	// A pre-existing scratch database makes CREATE DATABASE fail.
-	dup := NewValidator(pool, s2, func() string { return "dup" })
-	if _, err := pool.Exec(ctx, "CREATE DATABASE godwit_validate_dup"); err != nil {
+	taken := fmt.Sprintf("dup%d", dbSeq.Add(1))
+	dup := NewValidator(pool, s2, func() string { return taken })
+	if _, err := pool.Exec(ctx, "CREATE DATABASE godwit_validate_"+taken); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dup.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "create scratch database") {
