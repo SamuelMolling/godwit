@@ -40,8 +40,10 @@ jobs:
           node-version: 22
           cache: npm
 
+      # --ignore-scripts: this job holds contents: write and GODWIT_TOKEN_READ, and a lifecycle
+      # script in any dependency would run with both in its environment.
       - name: Install the Prisma CLI the project pins
-        run: npm ci   # `npx prisma` then runs node_modules/.bin/prisma, no download
+        run: npm ci --ignore-scripts   # `npx prisma` then runs node_modules/.bin/prisma, no download
 
       - name: Drop the pair a previous run of this pull request generated
         run: |
@@ -50,7 +52,7 @@ jobs:
 
       - name: Generate the migration from the Prisma schema
         id: diff
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: diff
           dir: db/migrations
@@ -80,7 +82,7 @@ jobs:
       # (a hand-edited .sql, or a schema edited with the generation step skipped). Without them the
       # check reports W002 and lint stays offline.
       - name: Lint the generated migration and check it still matches the Prisma schema
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: lint
           dir: db/migrations
@@ -90,7 +92,7 @@ jobs:
           target: orders
 
       - name: Plan against the live target and store the plan the apply will bind to
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: plan
           dir: db/migrations

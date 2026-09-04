@@ -48,6 +48,9 @@ jobs:
           #!/usr/bin/env bash
           printf '%s\n' "$*" >>"${GH_STUB_LOG}"
           case "$*" in
+            *"/reviews"*) printf '%s\n' "${GH_STUB_REVIEWS:-[]}" ;;
+            *"/collaborators/rev/"*) printf '%s\n' "${GH_STUB_APPROVER_PERMISSION:-write}" ;;
+            *"/collaborators/"*) printf '%s\n' "${GH_STUB_PERMISSION:-write}" ;;
             *"/pulls --jq"*) printf '%s\n' "${GH_STUB_PULLS:-}" ;;
             *"/commits --jq"*) printf '%s\n' "${GH_STUB_COMMITS:-}" ;;
             *"/pulls/"*) printf '%s\n' "${GH_STUB_PR:-}" ;;
@@ -63,7 +66,9 @@ jobs:
           echo "${stub}" >>"${GITHUB_PATH}"
           {
             echo "GH_STUB_LOG=${RUNNER_TEMP}/gh-stub.log"
-            echo "GH_STUB_PR={\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"open\",\"merged\":false}"
+            echo "GH_STUB_PR={\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"open\",\"merged\":false,\"user\":{\"login\":\"pr-author\"}}"
+            echo "GH_STUB_REVIEWS=[{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"reviewer\"}}]"
+            echo "GH_STUB_PERMISSION=write"
             echo "GH_STUB_COMMITS=${HEAD_SHA}"
             echo "GH_STUB_COMMENT_URL=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1"
           } >>"${GITHUB_ENV}"
@@ -344,36 +349,48 @@ jobs:
           export STATUS STALE RUN_ID SUMMARY
           ./scripts/action-comment.sh
 
-      - name: Read comment and review events
+      - name: Read comment, review and pull request events
         shell: bash
         env:
           GH_TOKEN: stub
           MODE: apply-on-pr
           DRY_RUN: "false"
           ALLOWED_ASSOCIATIONS: OWNER,MEMBER,COLLABORATOR
+          REQUIRE_APPROVAL: "false"
           REPOSITORY: ${{ github.repository }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OTHER_SHA: "1111111111111111111111111111111111111111"
         run: |
           set -euo pipefail
           export EVENT_PATH="${RUNNER_TEMP}/event.json"
           out="${RUNNER_TEMP}/context.out"
+          log="${RUNNER_TEMP}/context.log"
           export GITHUB_OUTPUT="${out}"
           context() {
             : >"${out}"
             local rc=0
-            ./scripts/action-context.sh || rc=$?
+            ./scripts/action-context.sh >"${log}" 2>&1 || rc=$?
+            cat "${log}"
             printf 'rc=%s\n' "${rc}" >>"${out}"
           }
           expect() { grep -qx "$1" "${out}"; }
           absent() { if grep -q "$1" "${out}"; then exit 1; fi; }
+          says() { grep -qF "$1" "${log}"; }
           comment() {
             printf '{"action":"%s","issue":{"number":7%s},"comment":{"body":"%s","author_association":"%s","user":{"login":"dev"}}}' \
               "$1" "$2" "$3" "$4" >"${EVENT_PATH}"
           }
           review() {
-            printf '{"action":"submitted","review":{"state":"%s","body":"%s","author_association":"%s","user":{"login":"rev"}},"pull_request":{"number":7}}' \
-              "$1" "$2" "$3" >"${EVENT_PATH}"
+            printf '{"action":"submitted","review":{"state":"%s","body":"%s","author_association":"%s","commit_id":"%s","user":{"login":"rev"}},"pull_request":{"number":7}}' \
+              "$1" "$2" "$3" "${4:-${HEAD_SHA}}" >"${EVENT_PATH}"
+          }
+          pull() {
+            printf '{"pull_request":{"number":7,"head":{"sha":"%s","repo":{"full_name":"%s"}}}}' \
+              "${1:-${HEAD_SHA}}" "${2-${GITHUB_REPOSITORY}}" >"${EVENT_PATH}"
+          }
+          approval() {
+            printf '[{"state":"%s","commit_id":"%s","user":{"login":"%s"}}]' "$1" "$2" "$3"
           }
 
           export EVENT_NAME=issue_comment COMMAND=apply APPLY_ON=comment
@@ -404,7 +421,57 @@ jobs:
           COMMAND=confirm comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
           COMMAND=confirm context; expect rc=0; expect skipped=true
 
-          export EVENT_NAME=pull_request_review
+          comment created ',"pull_request":{"url":"x"}' "/godwit apply ${HEAD_SHA}" OWNER
+          context; expect rc=0; expect skipped=false
+          comment created ',"pull_request":{"url":"x"}' "/godwit apply ${HEAD_SHA:0:8}" OWNER
+          context; expect rc=0; expect skipped=false
+          comment created ',"pull_request":{"url":"x"}' "/godwit apply ${OTHER_SHA}" OWNER
+          context; expect rc=1; says 'the head moved after the comment'
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply notasha' OWNER
+          context; expect rc=0; expect skipped=true
+
+          comment created ',"pull_request":{"url":"x"}' "\`\`\`\n/godwit apply\n\`\`\`" OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' '~~~\n/godwit apply\n~~~' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' "log:\n\`\`\`\n/godwit apply\n\`\`\`\n/godwit apply" OWNER
+          context; expect rc=0; expect skipped=false
+
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply' MEMBER
+          GH_STUB_PERMISSION="read" context; expect rc=1; says "has permission 'read'"
+          GH_STUB_PERMISSION="none" context; expect rc=1; says "has permission 'none'"
+          GH_STUB_PERMISSION="admin" context; expect rc=0; expect skipped=false
+          printf '{"action":"created","issue":{"number":7,"pull_request":{"url":"x"}},"comment":{"body":"/godwit apply","author_association":"OWNER","user":{"login":"dev;id"}}}' >"${EVENT_PATH}"
+          context; expect rc=1; says 'is not a GitHub login'
+          printf '{"action":"created","issue":{"number":"7x","pull_request":{"url":"x"}},"comment":{"body":"/godwit apply","author_association":"OWNER","user":{"login":"dev"}}}' >"${EVENT_PATH}"
+          context; expect rc=1; says 'carries no pull request number'
+
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
+          ALLOWED_ASSOCIATIONS=OWNER,CONTRIBUTOR context; expect rc=2; says 'must not contain CONTRIBUTOR'
+          ALLOWED_ASSOCIATIONS=NONE context; expect rc=2
+          ALLOWED_ASSOCIATIONS=owner context; expect rc=2; says 'unknown value'
+          ALLOWED_ASSOCIATIONS='' context; expect rc=2; says 'allowed-associations is empty'
+          REQUIRE_APPROVAL=maybe context; expect rc=2; says 'unknown require-approval'
+
+          export REQUIRE_APPROVAL=true GH_STUB_REVIEWS='[]'
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
+          context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" context; expect rc=0; expect skipped=false
+          GH_STUB_REVIEWS="$(approval APPROVED "${OTHER_SHA}" rev)" context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" pr-author)" context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="[{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}},{\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}}]" \
+            context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="[{\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}},{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}}]" \
+            context; expect rc=0; expect skipped=false
+          GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" GH_STUB_APPROVER_PERMISSION="read" context; expect rc=1; says 'approver rev'
+          COMMAND=confirm comment created ',"pull_request":{"url":"x"}' '/godwit confirm' OWNER
+          COMMAND=confirm context; expect rc=1; says 'no approving review'
+          COMMAND=confirm GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" context; expect rc=0; expect skipped=false
+          COMMAND=revert comment created ',"pull_request":{"url":"x"}' '/godwit revert' OWNER
+          COMMAND=revert context; expect rc=0; expect skipped=false
+          export REQUIRE_APPROVAL=false
+
+          export EVENT_NAME=pull_request_review COMMAND=apply APPLY_ON=comment
           review approved '' COLLABORATOR
           context; expect rc=0; expect skipped=true
           APPLY_ON=approve context; expect rc=0; expect skipped=false; expect "head-sha=${HEAD_SHA}"
@@ -415,24 +482,50 @@ jobs:
           APPLY_ON=approve context; expect rc=1
           review changes_requested '' OWNER
           APPLY_ON=approve context; expect rc=0; expect skipped=true
+          review approved '' COLLABORATOR "${OTHER_SHA}"
+          APPLY_ON=approve context; expect rc=1; says 'the head moved after the review'
+          review commented '/godwit apply' MEMBER "${OTHER_SHA}"
+          context; expect rc=1; says 'the head moved after the review'
 
           export EVENT_NAME=issue_comment
           comment created ',"pull_request":{"url":"x"}' '/godwit apply' OWNER
-          GH_STUB_PR='{"head":{"sha":"0000000000000000000000000000000000000000"},"state":"open","merged":false}' context; expect rc=1
-          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true}" context; expect rc=1
+          GH_STUB_PR="{\"head\":{\"sha\":\"${OTHER_SHA}\"},\"state\":\"open\",\"merged\":false,\"user\":{\"login\":\"pr-author\"}}" context; expect rc=1
+          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true,\"user\":{\"login\":\"pr-author\"}}" context; expect rc=1
           comment created ',"pull_request":{"url":"x"}' '/godwit revert' OWNER
-          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true}" COMMAND=revert context; expect rc=1
-          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":false}" COMMAND=revert context; expect rc=0; expect skipped=false
+          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true,\"user\":{\"login\":\"pr-author\"}}" COMMAND=revert context; expect rc=1
+          GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":false,\"user\":{\"login\":\"pr-author\"}}" COMMAND=revert context; expect rc=0; expect skipped=false
           EVENT_NAME=push context; expect rc=1
           APPLY_ON=never context; expect rc=2
           MODE=apply-on-merge context; expect rc=2
           MODE=apply-on-merge COMMAND=revert context; expect rc=2
           MODE=apply-on-merge COMMAND=confirm context; expect rc=2
           MODE=apply-on-merge COMMAND=migrate context; expect rc=0; expect skipped=false; expect "head-sha=${GITHUB_SHA}"
-          MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request printf '{"pull_request":{"number":7,"head":{"sha":"abc"}}}' >"${EVENT_PATH}"
-          MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request context; expect rc=0; expect pr-number=7; expect head-sha=abc
           MODE=other context; expect rc=2
           COMMAND=other context; expect rc=2
+
+          export EVENT_NAME=pull_request COMMAND=lint
+          pull
+          context; expect rc=0; expect skipped=false; expect pr-number=7; expect "head-sha=${HEAD_SHA}"
+          pull "${HEAD_SHA}" someone/fork
+          context; expect rc=0; expect skipped=false
+          EVENT_NAME=pull_request_target context; expect rc=1; says 'would run that fork'
+          pull
+          EVENT_NAME=pull_request_target context; expect rc=0; expect skipped=false
+          pull abc
+          context; expect rc=1; says 'carries no head commit'
+          pull "${HEAD_SHA}" ''
+          COMMAND=apply context; expect rc=1; says 'a fork may not apply'
+          pull "${HEAD_SHA}" someone/fork
+          COMMAND=apply context; expect rc=1; says 'a fork may not apply'
+          MODE=apply-on-merge COMMAND=migrate context; expect rc=1; says 'a fork may not apply'
+          MODE=apply-on-merge COMMAND=migrate DRY_RUN=true context; expect rc=0; expect skipped=false
+          pull
+          COMMAND=apply context; expect rc=0; expect skipped=false
+          COMMAND=apply EVENT_NAME=pull_request_target context; expect rc=2; says 'refused on pull_request_target'
+          COMMAND=confirm EVENT_NAME=pull_request_target context; expect rc=2
+          COMMAND=revert EVENT_NAME=pull_request_target context; expect rc=2
+          MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request_target context; expect rc=2; says 'refused on pull_request_target'
+          MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request_target DRY_RUN=true context; expect rc=0; expect skipped=false
 
       - name: Check outputs
         shell: bash
@@ -578,8 +671,12 @@ jobs:
           grep -q "^api --method POST ${statuses}pending -f context=godwit/applied -f description=expand applied; comment /godwit confirm to run the contract phase -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
           grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=confirming the contract phase of ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
           grep -q "^api --method POST ${statuses}success -f context=godwit/applied -f description=contract applied by run ${CONTRACT_RUN:0:8}; merge when the review is done -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 16
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 24
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
+
+          grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews$" "${GH_STUB_LOG}"
+          grep -q "^api repos/${GITHUB_REPOSITORY}/collaborators/reviewer/permission --jq .permission$" "${GH_STUB_LOG}"
+          absent "^api repos/${GITHUB_REPOSITORY}/collaborators/pr-author/permission"
 
           grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 12
           grep -c '^<!-- godwit:diff -->$' "${GH_STUB_LOG}" | grep -qx 2

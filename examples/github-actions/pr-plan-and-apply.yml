@@ -27,8 +27,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Every action is pinned to a commit, never a moving tag: whoever can push that tag otherwise
+      # owns this job's GODWIT_TOKEN_PIPELINE. Replace the sha with the godwit commit you reviewed.
       - name: Lint migrations added since main
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: lint
           dir: db/migrations   # drop when godwit.yaml sets dir
@@ -37,7 +39,7 @@ jobs:
 
       - name: Plan against the live target and store the plan the apply will bind to
         id: plan
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: plan
           dir: db/migrations
@@ -51,8 +53,10 @@ jobs:
 
   # `/godwit apply` as a comment or review on the pull request applies the stored plan from the
   # pull request head; `/godwit confirm` runs the contract phase it held back; `/godwit revert`
-  # runs the down files of that run when the pull request is abandoned. Only from OWNER, MEMBER or
-  # COLLABORATOR; other events end the job as skipped.
+  # runs the down files of that run when the pull request is abandoned. The commander must hold
+  # write or admin permission on this repository (allowed-associations only narrows further), and
+  # apply and confirm additionally need an approving review standing on the exact head commit.
+  # Other events end the job as skipped.
   apply:
     if: >-
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/godwit '))
@@ -66,7 +70,7 @@ jobs:
 
       - name: Apply the stored plan from the pull request
         id: apply
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: apply
           # apply-on: comment,approve   # also apply when a review approves the pull request
@@ -76,13 +80,14 @@ jobs:
           target: orders
           rollout: expand-contract
           # ack: H003
+          # require-approval: "false"   # apply without an approving review on the head (not advised)
 
       # With rollout: expand-contract the apply above can end in awaiting_contract: the expand phase
       # is applied and godwit/applied stays pending. Deploy the application version that reads both
       # shapes, then comment `/godwit confirm` to release the same run's contract phase.
       - name: Run the contract phase the apply held back
         if: contains(github.event.comment.body, '/godwit confirm')
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: confirm
           server: https://godwit.internal
@@ -91,7 +96,7 @@ jobs:
 
       - name: Revert the run of the pull request
         if: contains(github.event.comment.body, '/godwit revert')
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: revert
           server: https://godwit.internal

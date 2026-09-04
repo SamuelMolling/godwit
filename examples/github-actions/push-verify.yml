@@ -21,7 +21,7 @@ jobs:
 
       - name: Verify that every migration on main is applied on the target
         id: verify
-        uses: SamuelMolling/godwit@main
+        uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: verify
           dir: db/migrations                        # drop when godwit.yaml sets dir
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: SamuelMolling/godwit
-          ref: main
+          ref: f4d803c9aae750b85ee35c75cabb990ea98d2eb6   # a commit, never a branch: this job holds GODWIT_TOKEN_PIPELINE
           path: .godwit
           # token: ${{ secrets.GODWIT_REPO_TOKEN }}   # only when the godwit repository is private for this workflow
 

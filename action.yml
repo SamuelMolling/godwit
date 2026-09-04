@@ -13,8 +13,11 @@ inputs:
     description: "What triggers apply: comment (a '/godwit apply' comment or review), approve (an approved review), or comment,approve"
     default: comment
   allowed-associations:
-    description: "author_association values allowed to command apply, confirm or revert from a comment or review"
+    description: "author_association values whose comment or review may command apply, confirm or revert; it narrows, it does not authorise — the commander must also hold write or admin permission on the repository. Only OWNER, MEMBER and COLLABORATOR are accepted"
     default: OWNER,MEMBER,COLLABORATOR
+  require-approval:
+    description: "apply and confirm need an approving review, by someone other than the pull request author who holds write or admin permission, standing on the exact commit being applied"
+    default: "true"
   dir:
     description: "Migration directory (default: dir from godwit.yaml, else migrations)"
     default: ""
@@ -67,7 +70,7 @@ inputs:
     description: "On push events, post the migrate outcome, or a failed verify, on the pull request(s) merged by the commit (needs pull-requests: write)"
     default: "true"
   github-token:
-    description: "Token used to read the pull request, post the comment and set the godwit/applied status"
+    description: "Token used to read the pull request, its reviews and the commander's repository permission, post the comment and set the godwit/applied status"
     default: ${{ github.token }}
   go-version:
     description: "Go version used to build godwit (cgo: libpg_query)"
@@ -127,6 +130,7 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         APPLY_ON: ${{ inputs.apply-on }}
         ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
+        REQUIRE_APPROVAL: ${{ inputs.require-approval }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_PATH: ${{ github.event_path }}
         REPOSITORY: ${{ github.repository }}

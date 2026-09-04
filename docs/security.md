@@ -107,6 +107,23 @@ Every `/ui` response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'
 
 The `Content-Security-Policy` is `default-src 'none'` with `script-src 'self' https://cdnjs.cloudflare.com`, `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`, `font-src https://fonts.gstatic.com`, `img-src 'self'`, `connect-src 'self'` (htmx's three-second poll), `form-action 'self'` and `base-uri 'none'`. The pages carry no inline script — the copy button moved to `/ui/app.js`, served from the same `embed.FS` as the templates — so `script-src` needs no `'unsafe-inline'`. `style-src` still does: the backfill bar's width is an inline `style` attribute computed per run, which no nonce or hash can cover. htmx and the fonts are still loaded from a CDN without `integrity`; pinning or vendoring them is open.
 
+## GitHub Action
+
+A job running `command: apply`, `confirm`, `revert` or a real `migrate` holds a `pipeline` token, which by the threat model above is the target's own credential. The Action's guards decide who may make that job run, so they authorise rather than advise. Full mechanics in [CI/CD: who may command an apply](ci-cd.md#who-may-command-an-apply).
+
+**`pull_request_target` never reaches an applying command** (exit 2), and is refused outright for a pull request opened from a fork (exit 1). That event runs in the base repository, with its secrets and a write token, on code the fork controls; anything godwit did under it would be done with credentials the fork's author must not have. Use `pull_request`, which withholds secrets from forks, or command the apply from a comment.
+
+**A comment is not a permission.** `author_association` says how someone relates to the owning organisation — `MEMBER` is every member of the org, including those with no access to this repository. The Action treats `allowed-associations` as a narrowing filter and authorises with `GET /repos/{owner}/{repo}/collaborators/{login}/permission`, requiring `admin` or `write`, for the commander and for the approver. `CONTRIBUTOR`, `NONE`, `FIRST_TIME_CONTRIBUTOR` and `MANNEQUIN` are refused as configuration: anyone who opened a pull request carries one. If the permission call fails the command is refused, never allowed.
+
+**The apply is anchored to the commit that was reviewed.** With `require-approval` (default `true`), `apply` and `confirm` need an `APPROVED` review whose `commit_id` is the head being applied, by someone other than the pull request author. A push after the approval moves the head, the approval no longer matches, and the command is refused. The checked-out-commit check alone cannot do this: the checkout and the API head move together with the push. A review that triggers the apply is checked against its own `commit_id` as well.
+
+What this does **not** protect against, stated so nobody reads more into it:
+
+- **Two people with write permission are enough.** One writes the migration, another approves it. That is the intended trust boundary — the same one that lets them merge — not a residual to be closed by the Action.
+- **A fork's SQL still runs on the target when a maintainer commands the apply.** That is the point of reviewing a contribution: the guard is that a human with write permission approved *that exact commit*, not that the code is trusted a priori.
+- **`require-approval: "false"` removes the anchor.** The comment path then has no sha of its own; `/godwit apply <sha>` in the comment body restores an anchor a commenter chose deliberately, and is refused when the head has moved past it.
+- **Anything the checkout runs inherits the job's environment.** `lint` and `diff` with an ORM `schema_source` execute code from the repository (`go run`, `npx prisma`, `python manage.py`) in a step that carries `GODWIT_TOKEN` and `GH_TOKEN`. Keep those steps on `pull_request` with a `read` token, and install dependencies with lifecycle scripts off (`npm ci --ignore-scripts`).
+
 ## Network
 
 - The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it (the Helm Ingress needs an h2c- or gRPC-capable class, or a service mesh); the CLI accepts `https://` URLs.
@@ -117,4 +134,6 @@ The `Content-Security-Policy` is `default-src 'none'` with `script-src 'self' ht
 
 ## Supply chain
 
-The binary embeds `libpg_query` through cgo; the Dockerfile builds it from source in the repository at a pinned Go version and ships a distroless image. `ghcr.io/samuelmolling/godwit` is built from `main` by `.github/workflows/publish.yml` with the workflow's own `GITHUB_TOKEN` (no long-lived registry credential) and carries `org.opencontainers.image.source` / `revision` labels; images are not signed yet, so pin `sha-<short commit>` or build and sign your own from the same Dockerfile. Release binaries (`v*` tags, GoReleaser) ship with a `checksums.txt`.
+The binary embeds `libpg_query` through cgo; the Dockerfile builds it from source in the repository at a pinned Go version and ships a distroless image. `ghcr.io/samuelmolling/godwit` is built from `main` by `.github/workflows/publish.yml` with the workflow's own `GITHUB_TOKEN` (no long-lived registry credential) and carries `org.opencontainers.image.source` / `revision` labels; images are not signed yet, so pin `sha-<short commit>` or build and sign your own from the same Dockerfile. Release binaries (`v*` tags, GoReleaser) ship with a `checksums.txt`, which is itself unsigned: it detects corruption, not substitution.
+
+Every action used by `.github/workflows/` is pinned to a full commit sha, not a tag: `release.yml` holds `contents: write` and `HOMEBREW_TAP_TOKEN`, a token with write access to a second repository, so a moved `v2` tag on any action in that job would publish a trojaned release and formula for a binary that holds production database credentials. Pin the same way in your own workflows, and pin `SamuelMolling/godwit` to a commit rather than `@main` ([CI/CD](ci-cd.md#github-action)).

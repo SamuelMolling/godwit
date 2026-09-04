@@ -16,6 +16,8 @@ Copy into `.github/workflows/` of the repository that holds the migrations.
 
 Branch protection for the default mode: require the `godwit/applied` status and "Require branches to be up to date before merging" on `main`; the status is set on the pull request head, so any push after the apply needs `/godwit apply` again.
 
+`SamuelMolling/godwit` is pinned to a commit in every example, not `@main`: the apply job holds a `pipeline` token, and a moving ref means whoever can push to this repository runs DDL on your database at your next apply. Replace the sha with the commit you reviewed, and pin the other actions the same way. Who may command an apply — repository permission, and an approving review standing on the exact commit — is in [docs/ci-cd.md](../docs/ci-cd.md#who-may-command-an-apply).
+
 The action builds godwit from source with cgo (`go-version` pins the toolchain), so the first step of a job takes about a minute.
 
 ## GORM schema package
