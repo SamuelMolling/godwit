@@ -63,6 +63,7 @@ func TestTokenScopesEndToEnd(t *testing.T) {
 		"read lists runs":    call(bot.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{}))),
 		"read gets status":   call(bot.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: "app"}))),
 		"read lists targets": call(bot.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{}))),
+		"read lists fleet":   call(bot.ListMigrations(ctx, connect.NewRequest(&godwitv1.ListMigrationsRequest{}))),
 		"read plans":         call(bot.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: migrationFiles()}))),
 		"read lists drift":   call(bot.ListDriftEvents(ctx, connect.NewRequest(&godwitv1.ListDriftEventsRequest{Target: "app"}))),
 		"read lists audit":   call(bot.ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{}))),

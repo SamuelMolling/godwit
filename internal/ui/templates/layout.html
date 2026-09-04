@@ -238,6 +238,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3.5 3.5L13 4.5"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3"/></symbol>
   <symbol id="i-ext" viewBox="0 0 16 16"><path d="M7 3H3v10h10V9M9.5 2.5H13.5V6.5M13.5 2.5L7.5 8.5"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 16 16"><path d="M2.5 2.5h5v5h-5zM8.5 2.5h5v5h-5zM2.5 8.5h5v5h-5zM8.5 8.5h5v5h-5z"/></symbol>
   <symbol id="i-chev" viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5"/></symbol>
   <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2.5l6 10.5H2z"/><path d="M8 7v3M8 12.2v.3"/></symbol>
   <symbol id="i-ne" viewBox="0 0 16 16"><path d="M3.5 6h9M3.5 10h9M10.5 3l-5 10"/></symbol>
@@ -254,6 +255,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <nav class="nav" aria-label="Sections">
     <a href="/ui/" {{if eq .Nav "runs"}}class="on"{{end}}><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span>{{if .Attention}}<span class="cnt">{{.Attention}}</span>{{end}}</a>
     <a href="/ui/targets" {{if eq .Nav "targets"}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">Targets</span></a>
+    <a href="/ui/migrations" {{if eq .Nav "fleet"}}class="on"{{end}}><svg class="ic"><use href="#i-grid"/></svg><span class="lbl">Fleet</span></a>
     <a href="/ui/plans" {{if eq .Nav "plans"}}class="on"{{end}}><svg class="ic"><use href="#i-plan"/></svg><span class="lbl">Plans</span></a>
     <a href="/ui/drift" {{if eq .Nav "drift"}}class="on"{{end}}><svg class="ic"><use href="#i-drift"/></svg><span class="lbl">Drift</span></a>
     <a href="/ui/diff" {{if eq .Nav "diff"}}class="on"{{end}}><svg class="ic"><use href="#i-ne"/></svg><span class="lbl">Diff</span></a>
@@ -262,8 +264,8 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <div>
     <h4>Targets</h4>
     <div class="targets">
-      <a href="{{if eq .Nav "plans"}}/ui/plans{{else if eq .Nav "targets"}}/ui/targets{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (or (eq .Nav "plans") (eq .Nav "targets"))) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
-      {{range .Targets}}<a href="{{if eq $.Nav "targets"}}/ui/targets/{{.Name}}{{else if eq $.Nav "drift"}}/ui/drift?target={{.Name}}{{else if eq $.Nav "plans"}}/ui/plans?target={{.Name}}{{else}}/ui/?target={{.Name}}{{end}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
+      <a href="{{if eq .Nav "plans"}}/ui/plans{{else if eq .Nav "targets"}}/ui/targets{{else if eq .Nav "fleet"}}/ui/migrations{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (or (eq .Nav "plans") (or (eq .Nav "targets") (eq .Nav "fleet")))) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
+      {{range .Targets}}<a href="{{if eq $.Nav "targets"}}/ui/targets/{{.Name}}{{else if eq $.Nav "fleet"}}/ui/migrations?target={{.Name}}{{else if eq $.Nav "drift"}}/ui/drift?target={{.Name}}{{else if eq $.Nav "plans"}}/ui/plans?target={{.Name}}{{else}}/ui/?target={{.Name}}{{end}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
       {{end}}
     </div>
   </div>

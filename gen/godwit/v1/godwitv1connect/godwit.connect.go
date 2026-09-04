@@ -73,6 +73,9 @@ const (
 	// GodwitServiceListTargetsProcedure is the fully-qualified name of the GodwitService's ListTargets
 	// RPC.
 	GodwitServiceListTargetsProcedure = "/godwit.v1.GodwitService/ListTargets"
+	// GodwitServiceListMigrationsProcedure is the fully-qualified name of the GodwitService's
+	// ListMigrations RPC.
+	GodwitServiceListMigrationsProcedure = "/godwit.v1.GodwitService/ListMigrations"
 	// GodwitServiceListAuditProcedure is the fully-qualified name of the GodwitService's ListAudit RPC.
 	GodwitServiceListAuditProcedure = "/godwit.v1.GodwitService/ListAudit"
 	// GodwitServiceGetPlanProcedure is the fully-qualified name of the GodwitService's GetPlan RPC.
@@ -106,6 +109,9 @@ type GodwitServiceClient interface {
 	GetTargetStatus(context.Context, *connect.Request[v1.GetTargetStatusRequest]) (*connect.Response[v1.GetTargetStatusResponse], error)
 	// Summarises every registered target from the control plane alone, without opening a connection to any of them.
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
+	// Answers, per migration and content, which targets hold it and which do not, from the control plane's
+	// ledger alone, without opening a connection to any of them.
+	ListMigrations(context.Context, *connect.Request[v1.ListMigrationsRequest]) (*connect.Response[v1.ListMigrationsResponse], error)
 	ListAudit(context.Context, *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error)
 	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
@@ -222,6 +228,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("ListTargets")),
 			connect.WithClientOptions(opts...),
 		),
+		listMigrations: connect.NewClient[v1.ListMigrationsRequest, v1.ListMigrationsResponse](
+			httpClient,
+			baseURL+GodwitServiceListMigrationsProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("ListMigrations")),
+			connect.WithClientOptions(opts...),
+		),
 		listAudit: connect.NewClient[v1.ListAuditRequest, v1.ListAuditResponse](
 			httpClient,
 			baseURL+GodwitServiceListAuditProcedure,
@@ -273,6 +285,7 @@ type godwitServiceClient struct {
 	baselineTarget  *connect.Client[v1.BaselineTargetRequest, v1.BaselineTargetResponse]
 	getTargetStatus *connect.Client[v1.GetTargetStatusRequest, v1.GetTargetStatusResponse]
 	listTargets     *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
+	listMigrations  *connect.Client[v1.ListMigrationsRequest, v1.ListMigrationsResponse]
 	listAudit       *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
 	getPlan         *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	listPlans       *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
@@ -360,6 +373,11 @@ func (c *godwitServiceClient) ListTargets(ctx context.Context, req *connect.Requ
 	return c.listTargets.CallUnary(ctx, req)
 }
 
+// ListMigrations calls godwit.v1.GodwitService.ListMigrations.
+func (c *godwitServiceClient) ListMigrations(ctx context.Context, req *connect.Request[v1.ListMigrationsRequest]) (*connect.Response[v1.ListMigrationsResponse], error) {
+	return c.listMigrations.CallUnary(ctx, req)
+}
+
 // ListAudit calls godwit.v1.GodwitService.ListAudit.
 func (c *godwitServiceClient) ListAudit(ctx context.Context, req *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error) {
 	return c.listAudit.CallUnary(ctx, req)
@@ -405,6 +423,9 @@ type GodwitServiceHandler interface {
 	GetTargetStatus(context.Context, *connect.Request[v1.GetTargetStatusRequest]) (*connect.Response[v1.GetTargetStatusResponse], error)
 	// Summarises every registered target from the control plane alone, without opening a connection to any of them.
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
+	// Answers, per migration and content, which targets hold it and which do not, from the control plane's
+	// ledger alone, without opening a connection to any of them.
+	ListMigrations(context.Context, *connect.Request[v1.ListMigrationsRequest]) (*connect.Response[v1.ListMigrationsResponse], error)
 	ListAudit(context.Context, *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error)
 	GetPlan(context.Context, *connect.Request[v1.GetPlanRequest]) (*connect.Response[v1.GetPlanResponse], error)
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
@@ -517,6 +538,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("ListTargets")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceListMigrationsHandler := connect.NewUnaryHandler(
+		GodwitServiceListMigrationsProcedure,
+		svc.ListMigrations,
+		connect.WithSchema(godwitServiceMethods.ByName("ListMigrations")),
+		connect.WithHandlerOptions(opts...),
+	)
 	godwitServiceListAuditHandler := connect.NewUnaryHandler(
 		GodwitServiceListAuditProcedure,
 		svc.ListAudit,
@@ -581,6 +608,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceGetTargetStatusHandler.ServeHTTP(w, r)
 		case GodwitServiceListTargetsProcedure:
 			godwitServiceListTargetsHandler.ServeHTTP(w, r)
+		case GodwitServiceListMigrationsProcedure:
+			godwitServiceListMigrationsHandler.ServeHTTP(w, r)
 		case GodwitServiceListAuditProcedure:
 			godwitServiceListAuditHandler.ServeHTTP(w, r)
 		case GodwitServiceGetPlanProcedure:
@@ -662,6 +691,10 @@ func (UnimplementedGodwitServiceHandler) GetTargetStatus(context.Context, *conne
 
 func (UnimplementedGodwitServiceHandler) ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ListTargets is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) ListMigrations(context.Context, *connect.Request[v1.ListMigrationsRequest]) (*connect.Response[v1.ListMigrationsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ListMigrations is not implemented"))
 }
 
 func (UnimplementedGodwitServiceHandler) ListAudit(context.Context, *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error) {

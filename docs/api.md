@@ -35,7 +35,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 | Scope | RPCs |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
 | `admin` | + `RegisterTarget` |
@@ -281,6 +281,36 @@ journal. `appliedCount` counts the distinct versions the target's runs applied t
 `needs_attention` or `awaiting_contract`, and `readyPlans` the stored plans still bindable (`ready` and younger than
 `--plan-ttl`). `requirePlan` is true when the target was registered with it **or** the service runs with
 `--require-plan`. The CLI renders it as `godwit targets`.
+
+### ListMigrations — read
+
+```bash
+call ListMigrations '{"inTarget":"staging","notInTarget":"production"}'
+```
+
+```json
+{"targets":["production","staging"],
+ "migrations":[
+  {"migration":"20260904120000_add_status","version":"20260904120000","name":"add_status","checksum":"9f2a...",
+   "appliedOn":[{"target":"staging","appliedAt":"...","runId":"..."}],
+   "missingFrom":[{"target":"production","newestVersion":"20260903100000"}]},
+  {"migration":"20260901000000_x","checksum":"1ab3...","divergent":true,
+   "appliedOn":[{"target":"staging","appliedAt":"..."}],
+   "missingFrom":[{"target":"production","holds":true,"otherChecksum":"77c0..."}]}]}
+```
+
+One entry per migration **and content**: a version two targets applied from different files is two entries, both
+`divergent`, and each names the other's checksum under `missingFrom[].otherChecksum`. Repeatables are keyed the same
+way, by name and content. Like `ListTargets` this reads the control plane's ledger and opens no connection to any
+target; a migration stands when the row is not `held` and no revert withdrew it, whatever state the run that applied
+it ended in. `appliedOn[].collapsedBy` names the checkpoint that recorded a migration on a target without running it.
+`missingFrom[].behind` marks a target below the migration (it has not got there yet) as opposed to one already past
+it, which skipped it; `newestVersion` is that target's newest standing version.
+
+Filters, all optional and combined with AND: `targets` (only these, an unregistered name is `not_found`),
+`fromVersion` / `toVersion` (inclusive, and either one leaves the versionless repeatables out), `notEverywhere`
+(only what at least one target lacks), `inTarget` and `notInTarget`. The CLI renders it as `godwit migrations`
+and the UI as `/ui/migrations`.
 
 ### GetPlan — read
 

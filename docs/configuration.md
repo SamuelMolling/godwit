@@ -199,6 +199,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
 | `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them. The applied count is versioned migrations only; `target status` also lists the repeatables, so its `applied (N)` is the larger number |
+| `godwit migrations` | `--target` (repeatable), `--from`, `--to`, `--not-everywhere`, `--in`, `--not-in` | read; one row per migration and content with a column per target, so a version standing on two targets under different checksums is two rows and reads `differs`. `--in staging --not-in production` is what is ahead in staging ([concepts](concepts.md#the-fleet-view)) |
 | `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--to <version>`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
 | `godwit plan show <plan-id>` | `--format text\|markdown\|json` | read; statements, hazards and recipes, observation, drift, state, run id, superseded-by |
 | `godwit plans` | `--target`, `--limit` | read; newest first |

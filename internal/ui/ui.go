@@ -84,6 +84,7 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	h.mux.HandleFunc("POST /ui/drift/{target}/{action}", h.driftAction)
 	h.mux.HandleFunc("GET /ui/diff", h.diffForm)
 	h.mux.HandleFunc("POST /ui/diff", h.diffRun)
+	h.mux.HandleFunc("GET /ui/migrations", h.migrations)
 	h.mux.HandleFunc("GET /ui/targets", h.targets)
 	h.mux.HandleFunc("GET /ui/targets/{name}", h.target)
 
@@ -398,6 +399,7 @@ type page struct {
 	Open      *godwitv1.DriftEvent
 	Checked   string
 	Diff      *diffView
+	Fleet     *fleetData
 	Summaries []*godwitv1.TargetSummary
 	Summary   *godwitv1.TargetSummary
 	Status    *godwitv1.GetTargetStatusResponse
