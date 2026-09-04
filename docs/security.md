@@ -30,7 +30,7 @@ There is no re-encryption command. The ciphertext does not identify the key, so 
 
 1. Start the replicas with the new key (`kubectl create secret ... --dry-run | kubectl apply`, roll).
 2. `godwit target add <name> --provider static --dsn <dsn> --lock-timeout ...` for every static target; `RegisterTarget` replaces the row in place, runs and history are untouched.
-3. Until step 2 is done for a target, runs on it fail at claim with a `decrypt` error in `cp_runs.error` (`failed`, resumable once re-registered with `godwit run resume`).
+3. Until step 2 is done for a target, `CreateRun` on it is **refused outright** with `decrypt: cipher: message authentication failed` — admission observes the target before it queues anything, with or without `--skip-validation` — so no run row exists and there is nothing to resume. A run already queued when the key changed fails at claim instead, with the same error in `cp_runs.error` (`failed`, not transient, resumable with `godwit run resume` once the target is re-registered).
 
 Targets using the `kubernetes` or `vault` providers store no secret and need nothing.
 
@@ -41,6 +41,8 @@ Targets using the `kubernetes` or `vault` providers store no secret and need not
 | `static` | `dsn` (encrypted) | every run, drift check, status, baseline | master key |
 | `kubernetes` | `path` | every use: the file is read and trimmed, so a rotated Secret is picked up without restart | the Secret mounted at that path in the godwit pod |
 | `vault` | `path`, `template` | every use: `GET <VAULT_ADDR>/v1/<path>`, KV v2 `data.data` unwrapped, `{{field}}` substituted into `template` | `VAULT_ADDR`, plus `VAULT_TOKEN` or Kubernetes auth (`VAULT_K8S_ROLE`, `VAULT_K8S_MOUNT`, `VAULT_K8S_JWT`) |
+
+Setting each of them up — the manifest a `kubernetes` target's path resolves in, the Vault policy, the Kubernetes auth role, and what TTL a dynamic credential needs against `--run-timeout` — is [deployment](deployment.md#the-three-credential-providers).
 
 Vault login (`POST auth/<mount>/login` with the pod's service-account JWT) happens on every fetch; the client token is not cached. A missing template field fails with `vault secret has no field for x`, naming the template's own keys and never the rendered string — the substitution is one pass over the template, so a field whose value contains `{{...}}` is not rescanned either. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
 
