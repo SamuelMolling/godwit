@@ -347,9 +347,9 @@ Plan on the pull request, apply from it, verify on the merge, with the composite
 permissions: { contents: read, pull-requests: write }
 steps:
   - uses: actions/checkout@v4
-  - uses: SamuelMolling/godwit@main
+  - uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
     with: { command: lint }
-  - uses: SamuelMolling/godwit@main
+  - uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
     with:
       command: plan
       server: https://godwit.internal
@@ -361,7 +361,7 @@ permissions: { contents: read, pull-requests: write, statuses: write }
 steps:
   - uses: actions/checkout@v4
     with: { ref: "refs/pull/${{ github.event.issue.number }}/head" }
-  - uses: SamuelMolling/godwit@main
+  - uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
     with:
       command: apply
       server: https://godwit.internal
@@ -371,7 +371,7 @@ steps:
 # on push to main
 steps:
   - uses: actions/checkout@v4
-  - uses: SamuelMolling/godwit@main
+  - uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
     with:
       command: verify
       server: https://godwit.internal
@@ -381,12 +381,14 @@ steps:
 
 `lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head and sets the `godwit/applied` commit status the branch protection requires; `verify` on the merge proves `main` carries nothing unapplied.
 
+`/godwit apply` is refused unless the commenter holds write or admin permission on the repository **and** an approving review by someone other than the pull request author stands on that exact commit — so a push after the approval means approving again before applying. Working alone, either approve from a second account or pass `require-approval: "false"` ([who may command an apply](ci-cd.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
+
 The database changes **before** the merge, on purpose: by the time the pull request lands, `main` describes a schema the target already has. An `expand-contract` apply needs a second comment to finish: it stops at `awaiting_contract`, and until `/godwit confirm` runs, `godwit/applied` stays `pending` with *expand applied; comment `/godwit confirm` to run the contract phase*, so branch protection holds the pull request. Add the step beside the apply, in the same `issue_comment` job:
 
 ```yaml
   - name: Run the contract phase held by the apply
     if: contains(github.event.comment.body, '/godwit confirm')
-    uses: SamuelMolling/godwit@main
+    uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
     with:
       command: confirm
       server: https://godwit.internal
