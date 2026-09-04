@@ -1,0 +1,34 @@
+{
+  "cluster": "platform",
+  "serviceName": "godwit",
+  "taskDefinition": "godwit",
+  "desiredCount": 2,
+  "launchType": "FARGATE",
+  "platformVersion": "LATEST",
+  "availabilityZoneRebalancing": "ENABLED",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": ["subnet-0aaa1111", "subnet-0bbb2222"],
+      "securityGroups": ["sg-0godwit0000"],
+      "assignPublicIp": "DISABLED"
+    }
+  },
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/godwit/0123456789abcdef",
+      "containerName": "godwit",
+      "containerPort": 8474
+    }
+  ],
+  "healthCheckGracePeriodSeconds": 60,
+  "deploymentConfiguration": {
+    "minimumHealthyPercent": 100,
+    "maximumPercent": 200,
+    "deploymentCircuitBreaker": {
+      "enable": true,
+      "rollback": true
+    }
+  },
+  "propagateTags": "SERVICE",
+  "enableExecuteCommand": false
+}

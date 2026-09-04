@@ -1,0 +1,70 @@
+name: godwit
+
+services:
+  store:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: godwit
+      POSTGRES_DB: godwit_store
+      POSTGRES_PASSWORD: ${STORE_PASSWORD:?set STORE_PASSWORD in .env}
+    volumes:
+      - store-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U godwit -d godwit_store"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # No volume: every database on it is thrown away after the call that made it,
+  # and losing the whole server costs nothing but the role in init/scratch.sh.
+  scratch:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${SCRATCH_SUPERUSER_PASSWORD:?set SCRATCH_SUPERUSER_PASSWORD in .env}
+      SCRATCH_PASSWORD: ${SCRATCH_PASSWORD:?set SCRATCH_PASSWORD in .env}
+    volumes:
+      - ./init/scratch.sh:/docker-entrypoint-initdb.d/scratch.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  godwit:
+    image: ghcr.io/samuelmolling/godwit:main
+    command:
+      - serve
+      - --listen=:8474
+      - --store-dsn=postgres://godwit@store:5432/godwit_store?sslmode=disable
+      - --scratch-template=template0
+      - --drift-interval=5m
+      - --run-timeout=24h
+      - --ui
+      - --ui-origin=http://localhost:8474
+      - --ui-origin=http://localhost:8475
+    env_file:
+      - godwit.env
+    ports:
+      - "8474-8475:8474"
+    deploy:
+      replicas: 2
+    depends_on:
+      store:
+        condition: service_healthy
+      scratch:
+        condition: service_healthy
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  store-data:

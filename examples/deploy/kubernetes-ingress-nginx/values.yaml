@@ -1,0 +1,87 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/samuelmolling/godwit
+  tag: sha-1a2b3c4
+  pullPolicy: IfNotPresent
+
+existingSecret:
+  name: godwit
+  keys:
+    masterKey: GODWIT_MASTER_KEY
+    tokens: GODWIT_TOKENS
+    storeDSN: GODWIT_STORE_DSN
+    scratchDSN: GODWIT_SCRATCH_DSN
+
+serve:
+  port: 8474
+  scratch:
+    enabled: true
+    template: template0
+  driftInterval: 5m
+  logFormat: json
+  logLevel: info
+  ui:
+    enabled: true
+    basicAuth: false
+    scope: operator
+    origins:
+      - https://godwit.example.com
+  limits:
+    storeMaxConns: 20
+    maxConcurrentRuns: 4
+    runTimeout: 24h
+    maxRequestBytes: 33554432
+    maxMigrations: 2000
+    maxFiles: 5000
+    maxFileBytes: 4194304
+    maxConcurrentDiffs: 4
+
+notifications:
+  publicUrl: https://godwit.example.com
+
+service:
+  type: ClusterIP
+  port: 8474
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    # --max-request-bytes is 32 MiB; ingress-nginx defaults to 1m and answers 413 above it.
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    # PlanRun, CreateRun, Diff and Checkpoint build scratch databases and send no bytes while they do.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "900"
+    # WatchRun is a server stream; buffering holds its frames until the run ends.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: godwit.example.com
+      paths:
+        - path: /ui
+          pathType: Prefix
+        - path: /godwit.v1.GodwitService
+          pathType: Prefix
+  tls:
+    - secretName: godwit-tls
+      hosts:
+        - godwit.example.com
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+podAntiAffinity: hard
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

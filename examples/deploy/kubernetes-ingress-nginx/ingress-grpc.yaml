@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: godwit-grpc
+  namespace: godwit
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "900"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - grpc.godwit.example.com
+      secretName: godwit-grpc-tls
+  rules:
+    - host: grpc.godwit.example.com
+      http:
+        paths:
+          - path: /godwit.v1.GodwitService
+            pathType: Prefix
+            backend:
+              service:
+                name: godwit
+                port:
+                  name: http

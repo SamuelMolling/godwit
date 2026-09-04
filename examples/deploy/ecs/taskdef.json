@@ -1,0 +1,64 @@
+{
+  "family": "godwit",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::123456789012:role/godwit-execution",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/godwit-task",
+  "containerDefinitions": [
+    {
+      "name": "godwit",
+      "image": "ghcr.io/samuelmolling/godwit:sha-1a2b3c4",
+      "essential": true,
+      "readonlyRootFilesystem": true,
+      "linuxParameters": {
+        "initProcessEnabled": true
+      },
+      "portMappings": [
+        {
+          "name": "http",
+          "containerPort": 8474,
+          "protocol": "tcp"
+        }
+      ],
+      "command": [
+        "serve",
+        "--listen=:8474",
+        "--store-dsn=postgres://godwit@godwit-store.abcdefghijkl.us-east-1.rds.amazonaws.com:5432/godwit_store?sslmode=require",
+        "--scratch-template=template0",
+        "--drift-interval=5m",
+        "--store-max-conns=20",
+        "--max-concurrent-runs=4",
+        "--max-concurrent-diffs=4",
+        "--run-timeout=24h",
+        "--ui",
+        "--ui-scope=operator",
+        "--ui-origin=https://godwit.example.com"
+      ],
+      "environment": [
+        {"name": "GODWIT_LOG_FORMAT", "value": "json"},
+        {"name": "GODWIT_LOG_LEVEL", "value": "info"},
+        {"name": "GODWIT_PUBLIC_URL", "value": "https://godwit.example.com"}
+      ],
+      "secrets": [
+        {"name": "PGPASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:store_password::"},
+        {"name": "GODWIT_SCRATCH_DSN", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:scratch_dsn::"},
+        {"name": "GODWIT_MASTER_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:master_key::"},
+        {"name": "GODWIT_TOKENS", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:tokens::"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/godwit",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "godwit"
+        }
+      }
+    }
+  ]
+}
