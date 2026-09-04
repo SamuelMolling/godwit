@@ -305,7 +305,7 @@ With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`
           GODWIT_TOKEN: ${{ secrets.GODWIT_TOKEN_PIPELINE }}
 ```
 
-`--allow-none` makes the step a no-op when nothing awaits (a deploy that shipped no migration). Without it the CLI fails with `target orders: no run awaiting contract`.
+`--allow-none` makes the step a no-op when nothing awaits (a deploy that shipped no migration). Without it the CLI fails with `target orders: no run awaiting contract`. The step waits: `run confirm` streams the contract phase it released and exits with the run, so the deploy fails when the swap fails instead of going green on a phase that was only queued. Add `--no-wait` when the pipeline watches the run somewhere else.
 
 ## ArgoCD
 
@@ -313,7 +313,7 @@ With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`
 
 **PreSync** (`presync-job.yaml`): `godwit migrate --target=orders --dir=/migrations --rollout=expand-contract` with the `orders-migrations` ConfigMap mounted at `/migrations`, `GODWIT_SERVER=http://godwit.godwit.svc:8474`, `GODWIT_TOKEN` from Secret `orders-godwit` key `token` (scope `pipeline`). `backoffLimit: 0` (the service retries, the Job must not), `activeDeadlineSeconds: 3600`, `hook-delete-policy: BeforeHookCreation`. Exit 0 on `succeeded` or `awaiting_contract` lets the sync proceed with the schema expanded; exit 1 stops the sync, the run's error is in the Job log and in `godwit run get`; exit 3 means the plan stored on the pull request is stale (or required and missing): the sync stops before any pod changes and the Job log carries the diff. The PreSync run binds to the plan the pull request stored: the ConfigMap holds the same `.up.sql`/`.down.sql` bodies as the repository, and the key is computed from those bodies, the target and the rollout, so it matches as long as the pull request planned with `target: orders` and `rollout: expand-contract`.
 
-**PostSync** (`postsync-confirm.yaml`): `godwit run confirm --latest --allow-none --target=orders`, `activeDeadlineSeconds: 600`. After the new pods are healthy, the contract phase runs. If the sync fails between the hooks, the run stays `awaiting_contract`; the old pods keep working against the expanded schema, and the next successful sync's PostSync confirms it, or an operator reverts it.
+**PostSync** (`postsync-confirm.yaml`): `godwit run confirm --latest --allow-none --target=orders`, `activeDeadlineSeconds: 600`. After the new pods are healthy, the contract phase runs, and the Job waits for it: `run confirm` streams the phase and exits with the run, so a contract phase that fails fails the hook instead of leaving a green Job over a broken swap. If the sync fails between the hooks, the run stays `awaiting_contract`; the old pods keep working against the expanded schema, and the next successful sync's PostSync confirms it, or an operator reverts it.
 
 Replace `orders`, the Secret name and, for a reproducible hook, the image tag (`ghcr.io/samuelmolling/godwit:main` in the examples; `sha-<short commit>` is immutable); the ConfigMap must contain both `.up.sql` and `.down.sql` files (the CLI loads the directory and rejects a version with a missing side). Runs created by these Jobs carry `created_by = <token name>` and an empty `source` unless `--source` is added to the args.
 

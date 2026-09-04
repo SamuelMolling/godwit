@@ -797,9 +797,9 @@ func TestRunResumeAndConfirm(t *testing.T) {
 	if code != 0 || out != "run r1: resumed\n" || stub.resumed != "r1" {
 		t.Fatalf("code = %d, out = %q, resumed = %q", code, out, stub.resumed)
 	}
-	code, out, _ = runCLI("run", "confirm", "r2", "--server", url, "--json")
-	if code != 0 || len(decodeJSON(t, out)) != 0 || stub.confirmed != "r2" {
-		t.Fatalf("code = %d, out = %q, confirmed = %q", code, out, stub.confirmed)
+	code, out, _ = runCLI("run", "confirm", "r2", "--server", url, "--no-wait", "--json")
+	if code != 0 || len(decodeJSON(t, out)) != 0 || stub.confirmed != "r2" || stub.watched != "" {
+		t.Fatalf("code = %d, out = %q, confirmed = %q, watched = %q", code, out, stub.confirmed, stub.watched)
 	}
 
 	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("not resumable"))
@@ -808,6 +808,35 @@ func TestRunResumeAndConfirm(t *testing.T) {
 	}
 	if code, _, errOut := runCLI("run", "confirm", "r1", "--server", url); code != 1 || errOut != "godwit: not resumable\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestRunConfirmWatchesTheContractPhase(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{events: []*godwitv1.Run{
+		run("r2", godwitv1.RunState_RUN_STATE_QUEUED, 1),
+		run("r2", godwitv1.RunState_RUN_STATE_SUCCEEDED, 1),
+	}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("run", "confirm", "r2", "--server", url)
+	want := "run r2: contract confirmed\nrun r2: queued (attempt 1)\nrun r2: succeeded (attempt 1)\n"
+	if code != 0 || out != want || stub.watched != "r2" {
+		t.Fatalf("code = %d, out = %q, stderr = %q, watched = %q", code, out, errOut, stub.watched)
+	}
+
+	failed := run("r2", godwitv1.RunState_RUN_STATE_FAILED, 1)
+	failed.Error = "exec: column does not exist"
+	stub.events = []*godwitv1.Run{failed}
+	code, _, errOut = runCLI("run", "confirm", "r2", "--server", url)
+	if code != 1 || !strings.Contains(errOut, "run r2 failed: exec: column does not exist") {
+		t.Fatalf("a failed contract phase must not exit 0: code = %d, stderr = %q", code, errOut)
+	}
+
+	stub.watched = ""
+	code, out, _ = runCLI("run", "confirm", "r2", "--server", url, "--no-wait")
+	if code != 0 || out != "run r2: contract confirmed\n" || stub.watched != "" {
+		t.Fatalf("code = %d, out = %q, watched = %q", code, out, stub.watched)
 	}
 }
 

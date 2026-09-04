@@ -511,13 +511,13 @@ func newRunResumeCmd() *cobra.Command {
 
 func newRunConfirmCmd() *cobra.Command {
 	flags := &clientFlags{}
-	var latest, allowNone bool
+	var latest, allowNone, noWait bool
 	var target string
 	cmd := &cobra.Command{
 		Use:   "confirm [run-id]",
-		Short: "Release the contract phase of an expand-contract run",
+		Short: "Release the contract phase of an expand-contract run and watch it",
 		Long: "Confirms the run given as argument, or with --latest the newest run on --target\n" +
-			"that is awaiting its contract phase.",
+			"that is awaiting its contract phase, then streams it until it settles.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
 			id := ""
@@ -551,15 +551,23 @@ func newRunConfirmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, fmt.Sprintf("run %s: contract confirmed", id))
+			if noWait {
+				flags.print(cmd, resp.Msg, fmt.Sprintf("run %s: contract confirmed", id))
 
-			return nil
+				return nil
+			}
+			if !flags.json {
+				fmt.Fprintf(cmd.OutOrStdout(), "run %s: contract confirmed\n", id)
+			}
+
+			return flags.watch(cmd, client, id)
 		}),
 	}
 	flags.register(cmd)
 	cmd.Flags().BoolVar(&latest, "latest", false, "confirm the newest run awaiting contract on --target")
 	cmd.Flags().StringVar(&target, "target", "", "target name (with --latest)")
 	cmd.Flags().BoolVar(&allowNone, "allow-none", false, "with --latest, exit 0 when no run is awaiting contract")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return as soon as the contract phase is queued instead of streaming the run")
 	configKeys(cmd, "target")
 
 	return cmd
