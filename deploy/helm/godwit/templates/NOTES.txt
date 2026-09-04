@@ -8,17 +8,34 @@ Inside the cluster the API is
 and through the Ingress at http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
 {{- end }}
 {{- end }}
+{{- if .Values.httpRoute.enabled }}
+{{- range .Values.httpRoute.hostnames }}
+and through the HTTPRoute at {{ . }}
+{{- end }}
+{{- end }}
 
 Check it:
   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "godwit.fullname" . }}
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "godwit.fullname" . }} {{ .Values.service.port }}
   curl -s localhost:{{ .Values.service.port }}/readyz
 
+{{ if and .Values.targets.enabled .Values.targets.list -}}
+{{ len .Values.targets.list }} target(s) are registered by Job {{ include "godwit.fullname" . }}-register-targets:
+{{- range .Values.targets.list }}
+  {{ .name }} ({{ .provider }})
+{{- end }}
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "godwit.fullname" . }}-register-targets --all-containers
+
+Run migrations with one of the tokens from the Secret:
+  export GODWIT_SERVER=http://localhost:{{ .Values.service.port }} GODWIT_TOKEN=...
+  godwit migrate --target {{ (first .Values.targets.list).name }} --rollout expand-contract
+{{- else -}}
 Register a target and run migrations with one of the tokens from the Secret:
   export GODWIT_SERVER=http://localhost:{{ .Values.service.port }} GODWIT_TOKEN=...
   godwit target add orders --provider vault --vault-path database/creds/orders \
     --vault-template 'postgres://{{"{{"}}username{{"}}"}}:{{"{{"}}password{{"}}"}}@db/orders'
   godwit migrate --target orders --rollout expand-contract
+{{- end }}
 {{- if not .Values.serviceMonitor.enabled }}
 
 Metrics are on /metrics; set serviceMonitor.enabled=true to scrape them with the Prometheus Operator.

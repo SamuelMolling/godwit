@@ -1,0 +1,71 @@
+{{- if and .Values.targets.enabled .Values.targets.list }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "godwit.fullname" . }}-register-targets
+  labels:
+    {{- include "godwit.labels" . | nindent 4 }}
+  {{- if or .Values.targets.helmHook .Values.targets.annotations }}
+  annotations:
+    {{- if .Values.targets.helmHook }}
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+    {{- end }}
+    {{- with .Values.targets.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.targets.backoffLimit }}
+  {{- with .Values.targets.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ . }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "godwit.labels" . | nindent 8 }}
+        {{- with .Values.targets.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.targets.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "godwit.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- $init := initial .Values.targets.list }}
+      {{- if $init }}
+      initContainers:
+        {{- range $init }}
+        - {{ include "godwit.registerContainer" (dict "root" $ "target" .) | nindent 10 | trim }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - {{ include "godwit.registerContainer" (dict "root" $ "target" (last .Values.targets.list)) | nindent 10 | trim }}
+      {{- with .Values.targets.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

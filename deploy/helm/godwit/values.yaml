@@ -18,6 +18,10 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Added to every object the chart renders, and to the pod template. Not to the
+# Deployment's selector, which is immutable — setting this on a live release is safe.
+commonLabels: {}
+
 # Secret the service reads its credentials from. Create it before installing:
 #   kubectl create secret generic godwit \
 #     --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
@@ -162,6 +166,28 @@ extraEnvFrom: []
 extraVolumes: []
 extraVolumeMounts: []
 
+# Sidecars and init containers, verbatim. A credential-agent sidecar (Vault Agent,
+# a cloud SQL proxy) belongs here; pair it with extraVolumes/extraVolumeMounts.
+initContainers: []
+extraContainers: []
+
+# Raw manifests rendered alongside the release, each templated with the release
+# context: `{{ include "godwit.fullname" . }}` and `.Release.Namespace` resolve.
+# This is where objects the chart deliberately does not model go — the Secret
+# itself (an ExternalSecret, a SealedSecret, a VaultStaticSecret), a NetworkPolicy,
+# a PrometheusRule, a gateway-specific listener or traffic policy. Entries may be
+# maps or strings; a string keeps `{{ }}` you want evaluated readable.
+extraObjects: []
+# - apiVersion: external-secrets.io/v1
+#   kind: ExternalSecret
+#   metadata:
+#     name: godwit
+#   spec:
+#     secretStoreRef: { name: vault, kind: ClusterSecretStore }
+#     target: { name: godwit }
+#     dataFrom:
+#       - extract: { key: secrets/godwit }
+
 serviceAccount:
   create: true
   name: ""
@@ -206,6 +232,31 @@ ingress:
   # - secretName: godwit-tls
   #   hosts: [godwit.example.com]
 
+# Gateway API route, for a cluster that routes with Gateway API instead of Ingress.
+# It is the upstream kind, so it works with any conformant implementation (Envoy
+# Gateway, kgateway, Istio, Traefik, NGINX Gateway Fabric); nothing here names one.
+# The Gateway itself, its listeners and any implementation-specific policy are the
+# platform's, not the chart's — declare them in extraObjects or outside the release.
+httpRoute:
+  enabled: false
+  # gateway.networking.k8s.io/v1 since Gateway API 1.0; v1beta1 for older CRDs.
+  apiVersion: gateway.networking.k8s.io/v1
+  annotations: {}
+  labels: {}
+  # Required when enabled: the Gateway (or ListenerSet) this route attaches to.
+  parentRefs: []
+  # - name: internal
+  #   namespace: gateway-system
+  #   sectionName: https
+  hostnames: []
+  # - godwit.example.com
+  # Verbatim HTTPRoute rules. A rule with no backendRefs gets the godwit Service,
+  # so the common case is matches only. Empty renders one PathPrefix / rule.
+  rules: []
+  # - matches:
+  #     - path: { type: PathPrefix, value: /ui }
+  #   filters: []
+
 # Prometheus Operator scrape of /metrics (needs the ServiceMonitor CRD).
 serviceMonitor:
   enabled: false
@@ -243,6 +294,16 @@ readinessProbe:
 # expires after this and another replica resumes it from the journal.
 terminationGracePeriodSeconds: 30
 
+priorityClassName: ""
+revisionHistoryLimit: 10
+# Rolling update knobs. maxUnavailable: 0 keeps every replica that holds a run
+# lease alive until its replacement is ready.
+updateStrategy: {}
+# type: RollingUpdate
+# rollingUpdate:
+#   maxUnavailable: 0
+#   maxSurge: 1
+
 nodeSelector: {}
 tolerations: []
 topologySpreadConstraints: []
@@ -250,3 +311,62 @@ topologySpreadConstraints: []
 # "soft" (preferred), "hard" (required) or "" to disable. Ignored when affinity is set.
 podAntiAffinity: soft
 affinity: {}
+
+# Declarative target registration. Each entry of `list` becomes one `godwit target
+# add` in a Job: the entries before the last run as init containers, in order, so a
+# failure names the target that failed. The image is distroless, so there is no
+# shell to loop in — this is what one-target-per-invocation looks like in a pod.
+#
+# RegisterTarget is an upsert that replaces the whole config map rather than
+# patching it (docs/deployment.md#re-registering-replaces-the-whole-row). That is
+# what makes re-running the Job on every upgrade safe *and* what makes this list
+# authoritative: a setting someone added by hand with `godwit target add` is gone
+# on the next sync unless it is written here too. Registering the same target from
+# both this list and another job is the way to lose settings.
+#
+# The Job needs an `admin` token — the only scope RegisterTarget accepts. Keep it
+# in a Secret of its own rather than reusing an entry of GODWIT_TOKENS the humans
+# also hold.
+targets:
+  enabled: false
+  list: []
+  # - name: orders
+  #   provider: vault
+  #   vaultPath: secret/data/orders/db
+  #   vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
+  #   lockTimeout: 5s
+  #   statementTimeout: 15m
+  #   requirePlan: true
+  #   searchPath: app,public
+  #   keepOld: true
+  #   extraArgs: []
+  # - name: billing
+  #   provider: kubernetes
+  #   secretPath: /secrets/billing/dsn
+  # - name: legacy
+  #   provider: static
+  #   # dsn puts the credential in the pod spec; dsnSecret injects it as
+  #   # --dsn=$(GODWIT_TARGET_DSN) from a Secret instead. Prefer dsnSecret.
+  #   dsnSecret:
+  #     name: legacy-dsn
+  #     key: dsn
+  tokenSecret:
+    name: ""
+    key: GODWIT_ADMIN_TOKEN
+  # Where the Job reaches the API; empty is the release's own Service.
+  server: ""
+  # Run the Job as a Helm post-install/post-upgrade hook. Turn it off when the
+  # deployment tool drives the Job itself — an ArgoCD release sets
+  # `argocd.argoproj.io/hook: Sync` and `hook-delete-policy: BeforeHookCreation`
+  # in annotations below, and a reconciled Job wants neither.
+  helmHook: true
+  annotations: {}
+  podAnnotations: {}
+  podLabels: {}
+  # The service may still be rolling out when the Job starts; retries cover that.
+  backoffLimit: 6
+  ttlSecondsAfterFinished: ""
+  resources: {}
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []

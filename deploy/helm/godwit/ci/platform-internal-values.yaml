@@ -1,0 +1,73 @@
+# No ingress of any kind: the API is reached over the Service by in-cluster hook
+# Jobs and by `kubectl port-forward`. A Vault Agent sidecar writes the credential
+# file the `kubernetes` provider reads, so nothing but the Deployment is rendered
+# beyond the Service, the ServiceAccount and the PDB.
+replicaCount: 2
+
+image:
+  tag: sha-1a2b3c4
+  pullPolicy: IfNotPresent
+
+existingSecret:
+  name: godwit
+  keys:
+    masterKey: ""
+
+serve:
+  scratch:
+    enabled: true
+  ui:
+    enabled: false
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+
+initContainers:
+  - name: vault-agent-init
+    image: hashicorp/vault:1.17
+    args: ["agent", "-config=/etc/vault/agent.hcl", "-exit-after-auth"]
+    volumeMounts:
+      - name: vault-agent-config
+        mountPath: /etc/vault
+      - name: target-secrets
+        mountPath: /secrets
+
+extraContainers:
+  - name: vault-agent
+    image: hashicorp/vault:1.17
+    args: ["agent", "-config=/etc/vault/agent.hcl"]
+    volumeMounts:
+      - name: vault-agent-config
+        mountPath: /etc/vault
+      - name: target-secrets
+        mountPath: /secrets
+
+extraVolumes:
+  - name: vault-agent-config
+    configMap:
+      name: godwit-vault-agent
+  - name: target-secrets
+    emptyDir:
+      medium: Memory
+
+extraVolumeMounts:
+  - name: target-secrets
+    mountPath: /secrets
+    readOnly: true
+
+targets:
+  enabled: true
+  tokenSecret:
+    name: godwit-admin
+    key: GODWIT_ADMIN_TOKEN
+  list:
+    - name: orders
+      provider: kubernetes
+      secretPath: /secrets/orders/dsn
+
+ingress:
+  enabled: false
+
+httpRoute:
+  enabled: false

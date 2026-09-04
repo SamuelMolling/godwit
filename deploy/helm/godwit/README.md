@@ -34,7 +34,14 @@ helm upgrade --install godwit deploy/helm/godwit -n godwit --create-namespace \
   --set image.tag=sha-$(git rev-parse --short HEAD)
 ```
 
-The release prints the in-cluster URL and the first commands to run. Every value is documented in [values.yaml](values.yaml); [ci/full-values.yaml](ci/full-values.yaml) is a rendering with every optional block on, used by `make helm-lint`.
+The release prints the in-cluster URL and the first commands to run. Every value is documented in [values.yaml](values.yaml); the files in [ci/](ci/) are complete renderings for four platform shapes, and `make helm-lint` lints and templates every one of them.
+
+| File | Shape |
+|---|---|
+| [ci/full-values.yaml](ci/full-values.yaml) | every optional block on at once, which no real deployment does |
+| [ci/platform-ingress-values.yaml](ci/platform-ingress-values.yaml) | ingress-nginx, a `Secret` created by hand, targets registered by an operator |
+| [ci/platform-gitops-values.yaml](ci/platform-gitops-values.yaml) | Gateway API, a `Secret` produced by External Secrets, targets declared in git, ArgoCD hooks |
+| [ci/platform-internal-values.yaml](ci/platform-internal-values.yaml) | no ingress at all: Service-only access, a Vault Agent sidecar writing the credential file |
 
 ## What gets rendered
 
@@ -46,6 +53,79 @@ The release prints the in-cluster URL and the first commands to run. Every value
 | PodDisruptionBudget | `minAvailable: 1` so a drain never takes both replicas |
 | ServiceMonitor | off by default; scrapes `/metrics` through the Service |
 | Ingress | off by default; the API is HTTP/2 (connect), so use a class that speaks h2c/gRPC to the backend |
+| HTTPRoute | off by default; the Gateway API alternative to the Ingress, for a cluster that routes that way |
+| Job | off by default; one `godwit target add` per entry of `targets.list` |
+| anything in `extraObjects` | raw manifests, templated with the release context |
+
+## Routing
+
+Two mutually exclusive blocks, both upstream-standard, neither naming an implementation. Turn on the one your cluster routes with, or neither.
+
+`ingress.*` renders a `networking.k8s.io/v1` Ingress. `httpRoute.*` renders a Gateway API `HTTPRoute`: set `httpRoute.parentRefs` to the Gateway (or `ListenerSet`) it attaches to and `httpRoute.hostnames`, and the default rule sends everything to the Service. `httpRoute.rules` takes verbatim rules when you want more than that — a rule with no `backendRefs` still gets the godwit Service, so a path split is `matches` alone:
+
+```yaml
+httpRoute:
+  enabled: true
+  parentRefs:
+    - { name: internal, namespace: gateway-system, sectionName: https }
+  hostnames: [godwit.example.com]
+  rules:
+    - matches: [{ path: { type: PathPrefix, value: /ui } }]
+```
+
+The Gateway itself, its listeners, its certificate and any implementation-specific policy (kgateway `ListenerSet`, Istio `VirtualService`, Traefik middleware) are the platform's, not the chart's. Declare them in `extraObjects` if you want them in this release. `httpRoute.apiVersion` drops to `gateway.networking.k8s.io/v1beta1` for a cluster on pre-1.0 CRDs.
+
+Either way the API is connect over HTTP/2: a browser reaching `/ui` is ordinary HTTP, but a CLI needs the gateway to speak h2c to the backend.
+
+## extraObjects
+
+Anything the chart deliberately does not model goes here as a raw manifest, rendered with the release context so `{{ include "godwit.fullname" . }}`, `{{ .Release.Namespace }}` and `{{ include "godwit.selectorLabels" . }}` resolve. Entries may be maps or strings; a string is the readable form when it carries templating.
+
+This is how the Secret gets created on a platform where secrets arrive through an operator — the chart never creates it, and there is no point in the chart knowing about External Secrets, Vault Secrets Operator, SOPS or Sealed Secrets one at a time:
+
+```yaml
+extraObjects:
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: godwit
+    spec:
+      secretStoreRef: { name: vault, kind: ClusterSecretStore }
+      target: { name: godwit }
+      dataFrom:
+        - extract: { key: secrets/godwit }
+```
+
+It is also where a NetworkPolicy belongs. The chart has no `networkPolicy` block on purpose: godwit's egress set is the union of every registered target's database, plus Vault, plus Slack and the webhook, so a chart-authored policy would either be a guess or be `to: []`. The ingress side is expressible in six lines with the selector labels the chart hands you — see [ci/platform-gitops-values.yaml](ci/platform-gitops-values.yaml).
+
+## Declarative target registration
+
+`targets.list` turns a target's `godwit target add` line into a values entry, and the chart renders one Job that runs them:
+
+```yaml
+targets:
+  enabled: true
+  tokenSecret:
+    name: godwit-admin
+    key: GODWIT_ADMIN_TOKEN
+  list:
+    - name: orders
+      provider: vault
+      vaultPath: secret/data/orders/db
+      vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
+      lockTimeout: 5s
+      requirePlan: true
+```
+
+`godwit target add` registers one target per invocation and the image is distroless, so there is no shell to loop in: every entry but the last is an init container and the last is the pod's container. They run in order, and a failure names the target that failed.
+
+`RegisterTarget` is an upsert that replaces the whole config map rather than patching it, which cuts both ways. It is what makes re-running the Job on every sync safe — that is the point of the Job, not a hazard. It is also what makes this list *authoritative*: a setting somebody added by hand with a shorter `target add` is gone at the next sync. Register a target from this list or from somewhere else, never both.
+
+The Job needs an `admin` token, the only scope `RegisterTarget` accepts. Keep it in a Secret of its own rather than reusing an entry of `GODWIT_TOKENS` that humans also hold. A `static` target's DSN goes in `dsnSecret` (injected as `--dsn=$(GODWIT_TARGET_DSN)`) rather than `dsn`, which would put the credential in the pod spec.
+
+By default the Job is a Helm `post-install,post-upgrade` hook. `targets.helmHook: false` drops those annotations for a deployment tool that drives the Job itself; `targets.annotations` adds its own (`argocd.argoproj.io/hook: Sync`, `hook-delete-policy: BeforeHookCreation`). The service may still be rolling out when the Job starts — `targets.backoffLimit` covers that, and the registration does not touch the target database, so a retry costs nothing.
+
+Registration is not adoption. A database that already has a schema still needs `godwit target baseline` or `godwit target reconcile` before its first plan ([deployment](../../../docs/deployment.md#adopting-an-existing-database)); the chart does not do that for you, because getting it wrong writes history.
 
 ## Credential providers
 
@@ -66,6 +146,12 @@ Anything else the process should see (proxies) goes through `extraEnv` / `extraE
 ## Web UI
 
 `serve.ui.enabled` adds `--ui` and `--ui-scope`, serving the operator web UI at `/ui` on the same port. With `GODWIT_TOKENS` set the UI is already behind basic auth: any token secret is a valid password and signs in as that token with its own scope, so pages offer only the actions that scope allows. `serve.ui.basicAuth` adds a shared identity on top — put `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD` in the Secret (`existingSecret.keys.uiUser` / `uiPassword` name the keys) — whose rights are `serve.ui.scope` (default `operator`; `read` makes it a viewer). Without tokens and without that pair, anyone who reaches the port acts as `ui:anonymous` with scope `read` — `serve.ui.scope` belongs to the identity that signed in, and is not handed to a visitor who signed in with nothing.
+
+## Scheduling and the pod
+
+`podSecurityContext` and `securityContext` are passed through verbatim and default to a non-root, read-only, all-capabilities-dropped container that satisfies the restricted Pod Security Standard. `nodeSelector`, `tolerations`, `topologySpreadConstraints`, `affinity` / `podAntiAffinity`, `priorityClassName`, `revisionHistoryLimit` and `updateStrategy` cover placement and rollout; `initContainers` and `extraContainers` take sidecars, which is where a Vault Agent or a cloud SQL proxy goes, paired with `extraVolumes` / `extraVolumeMounts`. `commonLabels` lands on every rendered object and on the pod template, but never on the Deployment's selector, so setting it on a live release does not need a delete.
+
+**There is no HPA and there will not be one.** godwit's replicas are lease holders, not a request-serving pool: a replica claims a run, holds its lease and finishes it from the journal. The concurrency knob is `serve.limits.maxConcurrentRuns` per replica, and CPU is a bad proxy for it — a run spends its life waiting on PostgreSQL. Worse, a scale-down evicts a replica that may be holding a lease, and the run then waits out `--lease-ttl` before another replica resumes it. Size `replicaCount` for availability (two is the floor) and raise the limits for throughput.
 
 ## Upgrading
 

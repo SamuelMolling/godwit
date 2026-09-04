@@ -1,0 +1,137 @@
+# A GitOps platform: Gateway API for routing, an operator for the Secret, targets
+# declared in git, and the chart's own Ingress off. Nothing here patches the chart.
+replicaCount: 2
+
+image:
+  repository: registry.example.com/platform/godwit
+  tag: sha-1a2b3c4
+  pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: registry-pull
+
+commonLabels:
+  app.kubernetes.io/part-of: platform
+
+existingSecret:
+  name: godwit
+  keys:
+    masterKey: ""
+    tokens: GODWIT_TOKENS
+    storeDSN: GODWIT_STORE_DSN
+    scratchDSN: GODWIT_SCRATCH_DSN
+    slackToken: GODWIT_SLACK_TOKEN
+
+serve:
+  scratch:
+    enabled: true
+  driftInterval: 15m
+  ui:
+    enabled: true
+    origins: ["https://godwit.example.internal"]
+
+vault:
+  addr: http://vault.example.internal
+  k8sRole: godwit
+  k8sMount: kubernetes-platform
+
+notifications:
+  publicUrl: https://godwit.example.internal
+  slack:
+    channel: C0123456789
+
+serviceAccount:
+  name: godwit
+  annotations:
+    iam.gke.io/gcp-service-account: godwit@example.iam.gserviceaccount.com
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+
+priorityClassName: platform-critical
+
+ingress:
+  enabled: false
+
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: internal
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - godwit.example.internal
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: godwit.example.internal
+
+targets:
+  enabled: true
+  tokenSecret:
+    name: godwit-admin
+    key: GODWIT_ADMIN_TOKEN
+  helmHook: false
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+  list:
+    - name: orders
+      provider: vault
+      vaultPath: secrets/data/orders
+      vaultTemplate: 'postgres://{{DB_USER}}:{{DB_PASSWORD}}@orders-db:5432/orders'
+      lockTimeout: 5s
+      statementTimeout: 15m
+      requirePlan: true
+    - name: billing
+      provider: vault
+      vaultPath: secrets/data/billing
+      vaultTemplate: '{{DATABASE_URL}}'
+      searchPath: app,public
+      keepOld: false
+    - name: legacy
+      provider: static
+      dsnSecret:
+        name: legacy-dsn
+        key: dsn
+
+extraObjects:
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: godwit
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        name: vault
+        kind: ClusterSecretStore
+      target:
+        name: godwit
+        creationPolicy: Owner
+      dataFrom:
+        - extract:
+            key: secrets/godwit
+  - |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: {{ include "godwit.fullname" . }}-api
+      labels:
+        {{- include "godwit.labels" . | nindent 4 }}
+    spec:
+      podSelector:
+        matchLabels:
+          {{- include "godwit.selectorLabels" . | nindent 6 }}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: gateway-system
+          ports:
+            - port: {{ .Values.serve.port }}

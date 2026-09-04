@@ -1,6 +1,6 @@
 # Deployment
 
-How a database becomes a target, where its credentials come from, and what the service needs to run on Kubernetes under ArgoCD. [Configuration](configuration.md) is the reference for every flag and variable; this page is the order to do things in.
+How a database becomes a target, where its credentials come from, and what the service needs to run on Kubernetes. [Configuration](configuration.md) is the reference for every flag and variable; this page is the order to do things in.
 
 The short version:
 
@@ -75,7 +75,26 @@ Runs, plans, drift events and the target's applied history are untouched — onl
 
 `RegisterTarget` is the only RPC that needs `admin`. Give the admin secret to whatever registers targets and to nothing else; applications and pipelines get `pipeline`, humans get `operator`, pull requests get `read` ([token spec](configuration.md#token-spec)).
 
-In an ArgoCD setup the natural home is a small Job in the shared stack, one `godwit target add` per target, with the admin token from a Secret and `argocd.argoproj.io/hook: Sync` plus `hook-delete-policy: BeforeHookCreation`. It is idempotent by construction: the upsert makes re-running it on every sync the point rather than a hazard.
+Whatever registers them should be a Job rather than a person, and the Helm chart renders one from values so the set of targets is declared rather than typed. `targets.list` is a list of `target add` lines, `targets.tokenSecret` names the Secret holding the admin token, and the chart runs one invocation per entry — every entry but the last as an init container, since `target add` takes one target at a time and the image is distroless. It is idempotent by construction: the upsert makes re-running it on every sync the point rather than a hazard.
+
+```yaml
+targets:
+  enabled: true
+  tokenSecret:
+    name: godwit-admin
+    key: GODWIT_ADMIN_TOKEN
+  list:
+    - name: orders
+      provider: vault
+      vaultPath: secret/data/orders/db
+      vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
+      lockTimeout: 5s
+      requirePlan: true
+```
+
+The Job is a Helm `post-install,post-upgrade` hook by default; `targets.helmHook: false` plus `targets.annotations: {argocd.argoproj.io/hook: Sync, argocd.argoproj.io/hook-delete-policy: BeforeHookCreation}` makes it an ArgoCD hook instead. Because the upsert replaces the whole row, that list has to be the *only* place those targets are registered — the row it writes is the row you get, and a flag somebody added by hand from a laptop is gone at the next sync.
+
+Registering is not adopting: a target whose database already has a schema still needs `baseline` or `reconcile` before its first plan, and the chart does not do it for you.
 
 ### The UI
 
@@ -377,7 +396,9 @@ The response shape (`username`, `password`, plus numeric `ttl` / `rotation_perio
 | reachable at admission, gone at claim | the run exists and takes the rows above |
 | gone at admission | `CreateRun` is refused; no run row exists |
 
-## Deploying the service on ArgoCD
+## Deploying the service on Kubernetes
+
+The chart in [deploy/helm/godwit](../deploy/helm/godwit/README.md) assumes nothing about the platform beyond Kubernetes itself: routing is an Ingress or a Gateway API `HTTPRoute` or neither, the Secret is whatever object your cluster produces it with, and anything else the chart does not model goes in `extraObjects` as a raw manifest rendered with the release. What follows is ArgoCD-shaped because that is the setup the hooks below assume, but nothing before "Migrating on deploy" needs ArgoCD.
 
 ### What it needs before the first pod
 
@@ -391,7 +412,7 @@ The response shape (`username`, `password`, plus numeric `ttl` / `rotation_perio
    ```
 
    Then `serve.scratch.enabled: true`. Left off, scratch databases stay on the store server under the store's own role, submitted DDL runs as the owner of the control plane, and every pod logs `scratch database is not isolated` on every start. That warning is accurate; do not ship staging without `--scratch-dsn` if anyone but you holds a token.
-3. **The Secret.** The chart never creates it, and the Deployment references `masterKey`, `tokens` and `storeDSN` unconditionally — a Secret missing any of the three leaves the pod in `CreateContainerConfigError`.
+3. **The Secret.** The chart never creates it. The Deployment references `tokens` and `storeDSN` unconditionally, and a Secret missing either leaves the pod in `CreateContainerConfigError`. The master key is *not* one of them: `existingSecret.keys.masterKey` is wrapped in a `with`, so leaving it empty simply omits `GODWIT_MASTER_KEY` — which is what a deployment whose targets are all `vault` or `kubernetes` wants, since [only `static` needs a key](#the-three-credential-providers).
 
    ```bash
    kubectl -n godwit create secret generic godwit \
@@ -402,6 +423,21 @@ The response shape (`username`, `password`, plus numeric `ttl` / `rotation_perio
    ```
 
    `GODWIT_TOKENS` is read at start-up only: adding an application's token is a pod roll. Plan for that when you add applications.
+
+   The chart has no opinion about where those values come from. On a platform whose secrets arrive through an operator, put the object that produces them in `extraObjects` and it is rendered with the release — an `ExternalSecret`, a `VaultStaticSecret`, a `SealedSecret`, whatever your cluster runs:
+
+   ```yaml
+   extraObjects:
+     - apiVersion: external-secrets.io/v1
+       kind: ExternalSecret
+       metadata:
+         name: godwit
+       spec:
+         secretStoreRef: { name: vault, kind: ClusterSecretStore }
+         target: { name: godwit }
+         dataFrom:
+           - extract: { key: secrets/godwit }
+   ```
 
 ### The values that matter
 
@@ -441,7 +477,23 @@ serviceMonitor:
 
 Everything not modelled by the chart goes through `serve.extraArgs` — `--lease-ttl`, `--tick-interval`, `--max-attempts`, `--require-plan`, `--plan-ttl` and `--plan-retention` have no values of their own.
 
-`--ui-origin` is not optional once an Ingress publishes `/ui`: it is both the allowlist of origins a form post may come from and the allowlist of hosts the UI answers on at all. The Ingress itself needs a class that speaks h2c or gRPC to the backend — the API is connect over HTTP/2 — and it terminates the TLS the plaintext listener does not.
+`--ui-origin` is not optional once something publishes `/ui`: it is both the allowlist of origins a form post may come from and the allowlist of hosts the UI answers on at all. Whatever publishes it needs to speak h2c or gRPC to the backend — the API is connect over HTTP/2 — and to terminate the TLS the plaintext listener does not.
+
+### Publishing the API
+
+The chart renders either kind of route and neither by default. `ingress.*` is a `networking.k8s.io/v1` Ingress; `httpRoute.*` is a Gateway API `HTTPRoute` for a cluster that routes that way, with `parentRefs` naming the Gateway or `ListenerSet` it attaches to:
+
+```yaml
+httpRoute:
+  enabled: true
+  parentRefs:
+    - { name: internal, namespace: gateway-system, sectionName: https }
+  hostnames: [godwit.staging.internal]
+```
+
+Both are upstream kinds and neither carries an implementation's annotations. The Gateway, its listeners, its certificate and any implementation-specific policy stay outside — in `extraObjects` if you want them in this release, in the platform's own stack otherwise.
+
+Nothing publishes godwit for the PreSync and PostSync hooks: those run in the cluster and reach `http://godwit.<namespace>.svc:8474` over the Service. A route exists for the browser UI and for a CLI on somebody's laptop, and a deployment that wants neither can leave both off.
 
 ### Replicas and the lease
 
@@ -472,7 +524,7 @@ Deploy **one godwit** and register every application's database as a target on i
 
 - **Targets are first class.** One store means `godwit targets`, `/ui`, `cp_audit` and the drift monitor are one view across every database. Per-application instances fragment exactly the things a platform team wants centralised.
 - **The scheduler is already multi-tenant.** Runs are serialised *per target* by a lease row; `--max-concurrent-runs` (4 per replica) is what lets unrelated targets migrate in parallel. Nothing about a second application makes a second deployment necessary.
-- **The expensive pieces are shared ones.** The scratch PostgreSQL and its `max_connections` and disk headroom, the store, the master key, the Vault role and policy, the Ingress, the ServiceMonitor and the alert rules — multiply them per application and you have multiplied the operational surface without reducing any risk.
+- **The expensive pieces are shared ones.** The scratch PostgreSQL and its `max_connections` and disk headroom, the store, the master key, the Vault role and policy, the route that publishes it, the ServiceMonitor and the alert rules — multiply them per application and you have multiplied the operational surface without reducing any risk.
 - **Isolation is per token, not per deployment.** One `pipeline` token per application, named for it, is what makes `cp_runs.created_by` and `cp_audit.actor` mean something, and it rotates independently of every other application's.
 
 So, for an `infra-tools`-style stack:
@@ -483,7 +535,7 @@ So, for an `infra-tools`-style stack:
 | the store and scratch PostgreSQL | the PreSync and PostSync hook Jobs |
 | the `godwit` Secret (master key, tokens, store and scratch DSNs) | the `orders-godwit` Secret holding that application's `pipeline` token |
 | the Vault policy and Kubernetes auth role | the Vault path holding the application database's credential |
-| the Ingress, ServiceMonitor and alert rules | the `godwit.yaml` in the application repository, and its GitHub Action steps |
+| the route, ServiceMonitor and alert rules | the `godwit.yaml` in the application repository, and its GitHub Action steps |
 | the registration Job (`godwit target add` per target, admin token) | — |
 
 Sync the shared stack first — [examples/argocd/application.yaml](../examples/argocd/application.yaml) puts `sync-wave: "-1"` on the godwit Application, because the PreSync hook fails the application's sync when the service is not there yet.
@@ -562,6 +614,8 @@ godwit target status orders    # this one actually reaches Vault and the databas
 
 `target status` failing here is the point of running it: `vault provider not configured` means `VAULT_ADDR` is unset, `status 403` means the policy or the Kubernetes auth role, `no field for x` means the template, and a connection error means the host in the template.
 
+Register the first one by hand — the feedback loop is faster and `target status` is the whole point. Once it answers, move the same line into `targets.list` in the values so the next sync owns it, and remember that the list then replaces the row entirely: whatever you typed here has to be in it.
+
 **5b. Adopt what the database already has.** Skip only if it is genuinely empty; see [adopting an existing database](#adopting-an-existing-database).
 
 ```bash
@@ -582,4 +636,4 @@ godwit run get <run-id>
 
 **7. Then the hooks.** Copy `deploy/argocd/presync-job.yaml` and `postsync-confirm.yaml` into the application's chart, rename `orders`, create the `orders-godwit` Secret with the same `pipeline` token, add the ConfigMap that carries `db/migrations`, and let the next sync do it.
 
-Turn `serve.ui.enabled` on once there is something to look at, with `serve.ui.origins` set to the host the Ingress publishes, and add the [alert rules](operations.md#metrics) — `GodwitRunNeedsAttention` and `GodwitQueuedNotClaimed` are the two that matter on day one.
+Turn `serve.ui.enabled` on once there is something to look at, with `serve.ui.origins` set to the host `ingress` or `httpRoute` publishes, and add the [alert rules](operations.md#metrics) — `GodwitRunNeedsAttention` and `GodwitQueuedNotClaimed` are the two that matter on day one.

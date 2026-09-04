@@ -1,0 +1,39 @@
+{{- if .Values.httpRoute.enabled }}
+{{- $rules := .Values.httpRoute.rules | default (list (dict "matches" (list (dict "path" (dict "type" "PathPrefix" "value" "/"))))) }}
+apiVersion: {{ .Values.httpRoute.apiVersion }}
+kind: HTTPRoute
+metadata:
+  name: {{ include "godwit.fullname" . }}
+  labels:
+    {{- include "godwit.labels" . | nindent 4 }}
+    {{- with .Values.httpRoute.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.httpRoute.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.httpRoute.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.httpRoute.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $rule := $rules }}
+    -
+      {{- with omit $rule "backendRefs" }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      backendRefs:
+        {{- with $rule.backendRefs }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - name: {{ include "godwit.fullname" $ }}
+          port: {{ $.Values.service.port }}
+        {{- end }}
+    {{- end }}
+{{- end }}
