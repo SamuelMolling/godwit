@@ -7,10 +7,16 @@
 </header>
 <div class="body">
 {{with .Diff}}
-  <form class="card blk" method="post" action="/ui/diff">
+  <form class="card blk" id="diff-form" method="post" action="/ui/diff">
     <div class="fields">
       <label>Target<input class="in" name="target" list="diff-targets" value="{{.Target}}" placeholder="orders" required></label>
       <label>Name<input class="in" name="name" value="{{.Name}}" placeholder="add_email_index"></label>
+      <label>Repeatable files<select class="in" name="files">
+        <option value="auto"{{if eq .Rep.Source "auto"}} selected{{end}}>Newest stored snapshot</option>
+        <option value="plan"{{if eq .Rep.Source "plan"}} selected{{end}}>The target's newest stored plan</option>
+        <option value="run"{{if eq .Rep.Source "run"}} selected{{end}}>The run that last succeeded</option>
+        <option value="paste"{{if eq .Rep.Source "paste"}} selected{{end}}>The boxes below</option>
+      </select></label>
     </div>
     <datalist id="diff-targets">{{range $.Targets}}<option value="{{.Name}}">{{end}}</datalist>
     <label class="field">Desired schema<textarea class="in" name="schema" rows="14" spellcheck="false" required placeholder="CREATE TABLE public.users (id bigint PRIMARY KEY, email text NOT NULL);">{{.Schema}}</textarea></label>
@@ -21,7 +27,7 @@
   </form>
   {{if not $.Can.diff}}{{template "scope-note" $}}{{end}}
   <p class="note">Paste the <b>whole</b> desired database as DDL. A Prisma, GORM or Django schema is rendered by that project's own toolchain next to your repository, so it never reaches the service: run <span class="mono">godwit diff --prisma</span> (or <span class="mono">--gorm</span>, <span class="mono">--django</span>, <span class="mono">--exec</span>) from the CLI, which writes the pair for you. This page only takes DDL.</p>
-  <p class="note faint">The name only labels the files below; it must be snake_case, and anything else falls back to <span class="mono">changes</span>.</p>
+  <p class="note faint">The name only labels the files below; it must be snake_case, and anything else falls back to <span class="mono">changes</span>. The repeatable-file choice is used only when {{if .Target}}{{.Target}}{{else}}the target{{end}} records repeatable migrations.</p>
 
   {{with $.Error}}
   <div class="sec">
@@ -32,6 +38,36 @@
   </div>
   {{end}}
 
+  {{with .Rep}}{{if .Recorded}}
+  <div class="sec">
+    <div class="sec-hd"><h2>Repeatable migrations</h2><div class="right">{{len .Recorded}} recorded on {{$.Diff.Target}}</div></div>
+    <p class="note">A repeatable declares views, functions and triggers that a desired schema written by an ORM knows nothing about, so a diff that cannot see the <span class="mono">R__</span> files would propose dropping every one of them. godwit has no view of your repository: this page takes the bodies from a snapshot the control plane already stores, or from the boxes below.</p>
+    {{if .Sent}}
+    <p class="note"><b>Supplied from {{.From}}.</b> That snapshot is the migration directory as it was when {{if eq .Kind "plan"}}the plan was taken{{else if eq .Kind "run"}}the run was created{{else}}you pasted it{{end}} — not necessarily what your repository holds now. <span class="mono">godwit diff --dir</span> from the CLI is the only way to diff against the files on disk.</p>
+    <ul class="tl">
+      {{range .Sent}}<li><i class="ok"></i><div><div class="d"><span class="mono">R__{{.}}</span> supplied</div></div></li>{{end}}
+      {{range .Stale}}<li><i class="warn"></i><div><div class="d"><span class="mono">R__{{.}}</span> differs from what {{$.Diff.Target}} recorded{{if eq $.Diff.Rep.Kind "paste"}}, so the migration below rebuilds it from the body you pasted.{{else}}: this snapshot is not the body that built the object on {{$.Diff.Target}}, so the migration below is written against the older one.{{end}}</div></div></li>{{end}}
+      {{range .Missing}}<li><i class="bad"></i><div><div class="d">{{$.Diff.Target}} records <span class="mono">R__{{.}}</span> and the snapshot has no file for it, so the migration below proposes dropping what it built.</div></div></li>{{end}}
+      {{range .Unknown}}<li><i class="warn"></i><div><div class="d"><span class="mono">R__{{.}}</span> is in the snapshot and {{$.Diff.Target}} has never recorded it.</div></div></li>{{end}}
+    </ul>
+    {{if not (or .Stale .Missing .Unknown)}}<p class="note faint">Every repeatable {{$.Diff.Target}} records matches the snapshot, byte for byte.</p>{{end}}
+    {{else}}
+    <div class="banner drifted">
+      <div class="icw"><svg class="ic"><use href="#i-warn"/></svg></div>
+      <div><b>No repeatable files to send</b><span>{{.From}}. Store one with <span class="mono">godwit plan --target {{$.Diff.Target}} --dir &lt;your migration directory&gt;</span>, or paste the bodies below and pick <b>The boxes below</b>.</span></div>
+    </div>
+    {{end}}
+    {{if or (eq .Kind "paste") (not .Sent) .Stale .Missing .Unknown}}
+    <div class="blk">
+      {{range .Recorded}}
+      <label class="field"><span class="mono">R__{{.}}.up.sql</span><textarea class="in" form="diff-form" name="body.{{.}}" rows="6" spellcheck="false" placeholder="CREATE OR REPLACE VIEW ...">{{index $.Diff.Rep.Bodies .}}</textarea></label>
+      {{end}}
+      <p class="note faint">Paste an <span class="mono">.up.sql</span> body and pick <b>The boxes below</b> to diff against it instead. Only the up side is asked for: a diff builds what a repeatable declares and never runs a down.</p>
+    </div>
+    {{end}}
+  </div>
+  {{end}}{{end}}
+
   {{if .Ran}}
   {{if .Changed}}
   {{with .Drift}}
@@ -39,6 +75,13 @@
     <div class="sec-hd"><h2>Drift</h2><div class="right">Already on the target</div></div>
     <p class="note">The starting point is {{$.Diff.Target}}'s live schema, not its history. No run made these changes, and they are part of what the migration below is written against.</p>
     <pre>{{.}}</pre>
+  </div>
+  {{end}}
+
+  {{with .Objects}}
+  <div class="sec">
+    <div class="sec-hd"><h2>Declared by a repeatable</h2><div class="right">kept, not dropped</div></div>
+    <p class="note">The repeatable files supplied above build these on the desired schema, so the migration neither drops nor recreates them: <span class="mono">{{range $i, $o := .}}{{if $i}}, {{end}}{{$o}}{{end}}</span>.</p>
   </div>
   {{end}}
 

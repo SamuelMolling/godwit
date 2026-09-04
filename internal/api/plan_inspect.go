@@ -23,8 +23,16 @@ func (s *Server) GetPlan(ctx context.Context, req *connect.Request[godwitv1.GetP
 	if err != nil {
 		return nil, rpcErr(err)
 	}
+	out := &godwitv1.GetPlanResponse{Plan: planToProto(p)}
+	if req.Msg.IncludeFiles {
+		files, err := s.store.PlanFiles(ctx, p.ID)
+		if err != nil {
+			return nil, rpcErr(err)
+		}
+		out.Files = filesToProto(files)
+	}
 
-	return connect.NewResponse(&godwitv1.GetPlanResponse{Plan: planToProto(p)}), nil
+	return connect.NewResponse(out), nil
 }
 
 // ListPlans returns a target's stored plans, newest first.
@@ -83,9 +91,7 @@ func (s *Server) explicitPlan(ctx context.Context, m *godwitv1.CreateRunRequest)
 	if err != nil {
 		return rpcErr(err)
 	}
-	for name, body := range files {
-		m.Files = append(m.Files, &godwitv1.MigrationFile{Name: name, Body: body})
-	}
+	m.Files = filesToProto(files)
 
 	return nil
 }

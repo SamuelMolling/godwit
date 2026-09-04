@@ -1,6 +1,6 @@
 # 0006 — What a repeatable declares is part of the desired schema
 
-Shipped in #73.
+Shipped in #73; extended to `/ui/diff` in #77.
 
 ## The open question
 
@@ -37,7 +37,9 @@ failed_precondition: target records repeatable migrations and the request carrie
 migration files: R__order_totals
 ```
 
-`godwit diff` sends `--dir` for exactly this reason. `/ui/diff` has no directory to send and shows the refusal on a target that has repeatables, which is already how that page renders refusals. A target recording no repeatables is completely unaffected — nothing to attribute, nothing to refuse.
+`godwit diff` sends `--dir` for exactly this reason. A target recording no repeatables is completely unaffected — nothing to attribute, nothing to refuse.
+
+`/ui/diff` has no directory to send, and first shipped showing the refusal on exactly the targets most likely to have views and functions. Since #77 it supplies the `R__` pairs from a snapshot the control plane already holds — the file bodies stored with the target's newest plan (`cp_plan_files`), or with the run that last succeeded on it (`cp_run_files`) — or from boxes on the page. This is not the rejected "record what each repeatable created": nothing new is written, the store's own copy of the **files** is read back, and the attribution is still done on the scratch database at diff time from whatever those files build. Because a stored snapshot can be older than the repository, the page names the plan or run it read, the timestamp, and every repeatable whose checksum disagrees with what the target recorded. The refusal is untouched: the page may supply files, it never asks the service to skip the check, and with nothing to supply it still refuses.
 
 One further error falls out of the mechanism and is worth having: a repeatable that no longer builds on the desired schema (the ORM dropped the column its view reads) is `invalid_argument` naming the file and PostgreSQL's error. The migration the diff was about to write would have broken it.
 

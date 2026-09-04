@@ -188,7 +188,7 @@ func (h *Handler) funcs() template.FuncMap {
 		"plural":   plural,
 		"backfill": backfillOf,
 		"label":    func(s godwitv1.RunState) string { return strings.ReplaceAll(state(s), "_", " ") },
-		"short":    func(id string) string { return id[:min(8, len(id))] },
+		"short":    short,
 		"clock": func(ts *timestamppb.Timestamp) string {
 			if ts == nil {
 				return "—"
@@ -213,6 +213,8 @@ func (h *Handler) funcs() template.FuncMap {
 		},
 	}
 }
+
+func short(id string) string { return id[:min(8, len(id))] }
 
 func ago(d time.Duration) string {
 	switch {

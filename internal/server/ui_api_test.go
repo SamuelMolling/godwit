@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +92,49 @@ func TestUIScopeCapsTheSharedIdentity(t *testing.T) {
 
 	if err := Run(ctx, Config{UIScope: "boss", Log: testLog}); err == nil || !strings.Contains(err.Error(), "ui scope: unknown scope") {
 		t.Fatalf("bad ui scope: %v", err)
+	}
+}
+
+func TestUIDiffSuppliesTheRepeatableFilesItStored(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	baseURL := startServiceCfg(t, Config{
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st") + "&search_path=public", MasterKey: testKey, Holder: "r1",
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog, UI: true,
+	})
+	client := newClient(baseURL, "")
+	registerTarget(t, client, newDatabase(t, "tg")+"&search_path=public")
+	runToSuccess(t, client, append(orderedFiles()[:4:4],
+		&godwitv1.MigrationFile{Name: "R__t_totals.up.sql", Body: "CREATE OR REPLACE VIEW t_totals AS SELECT id FROM t;"},
+		&godwitv1.MigrationFile{Name: "R__t_totals.down.sql", Body: "DROP VIEW IF EXISTS t_totals;"}), nil)
+
+	post := func(form url.Values) (int, string) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/ui/diff", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+
+		return resp.StatusCode, string(body)
+	}
+
+	code, body := post(url.Values{"target": {"app"}, "schema": {"CREATE TABLE t (id int, a int);"}})
+	if code != http.StatusOK || strings.Contains(body, "DROP VIEW") || !strings.Contains(body, "No changes") {
+		t.Fatalf("code = %d body = %s", code, body)
+	}
+	if !strings.Contains(body, "Supplied from run ") || !strings.Contains(body, "matches the snapshot, byte for byte") {
+		t.Fatalf("provenance missing: %s", body)
+	}
+
+	code, body = post(url.Values{
+		"target": {"app"}, "schema": {"CREATE TABLE t (id int, a int);"},
+		"files": {"paste"}, "body.t_totals": {"CREATE OR REPLACE VIEW t_totals AS SELECT id, a FROM t;"},
+	})
+	if code != http.StatusOK || !strings.Contains(body, "differs from what app recorded") ||
+		!strings.Contains(body, "rebuilds it from the body you pasted") || !strings.Contains(body, "CREATE VIEW") {
+		t.Fatalf("pasted body: code = %d body = %s", code, body)
 	}
 }
