@@ -96,6 +96,7 @@ That single-server form executes submitted SQL on the store server as the store 
 | [Getting started](docs/getting-started.md) | dev loop, service, first run, CI |
 | [Concepts](docs/concepts.md) | the journal protocol, run states, leases, hazards, directives, validation, rollouts, revert, drift, checkpoints, plans |
 | [Configuration](docs/configuration.md) | every `godwit.yaml` key, `serve` flag, environment variable, the token spec and the CLI reference |
+| [Deployment](docs/deployment.md) | registering a target, the three credential providers, Vault end to end, Helm and ArgoCD, a staging checklist |
 | [Operations](docs/operations.md) | HA, the store, backups, retention, upgrades, metrics and alert rules, notifications, logging, the UI |
 | [Runbook](docs/runbook.md) | per symptom: the SQL to look at and the command to run |
 | [CI/CD](docs/ci-cd.md) | Action inputs and outputs, who may command an apply, ArgoCD hooks, exit codes |

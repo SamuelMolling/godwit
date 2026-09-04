@@ -1,6 +1,6 @@
 # Operations
 
-What to set up and watch once `godwit serve` runs for real. Flags and variables are defined once in [configuration](configuration.md); this page says why you would change them.
+What to set up and watch once `godwit serve` runs for real. Getting it there in the first place — registering targets, wiring the credential providers, the Helm values and the ArgoCD hooks — is [deployment](deployment.md). Flags and variables are defined once in [configuration](configuration.md); this page says why you would change them.
 
 ## High availability
 
