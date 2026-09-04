@@ -184,10 +184,11 @@ func state(s godwitv1.RunState) string {
 
 func (h *Handler) funcs() template.FuncMap {
 	return template.FuncMap{
-		"state":  state,
-		"plural": plural,
-		"label":  func(s godwitv1.RunState) string { return strings.ReplaceAll(state(s), "_", " ") },
-		"short":  func(id string) string { return id[:min(8, len(id))] },
+		"state":    state,
+		"plural":   plural,
+		"backfill": backfillOf,
+		"label":    func(s godwitv1.RunState) string { return strings.ReplaceAll(state(s), "_", " ") },
+		"short":    func(id string) string { return id[:min(8, len(id))] },
 		"clock": func(ts *timestamppb.Timestamp) string {
 			if ts == nil {
 				return "—"
@@ -287,6 +288,55 @@ type planned struct {
 	Note           string
 	Statements     int
 	Hazards        []*godwitv1.PlannedHazard
+}
+
+// backfill is the live view of a batched statement: Done and Batches are counted, Total is an estimate.
+type backfill struct {
+	Migration string
+	Statement int32
+	Phase     string
+	Done      string
+	Total     string
+	Batches   string
+	Percent   int
+}
+
+func backfillOf(r *godwitv1.Run) *backfill {
+	p := r.GetProgress()
+	if r.GetState() != godwitv1.RunState_RUN_STATE_RUNNING || p.GetBatches() == 0 {
+		return nil
+	}
+	b := &backfill{
+		Migration: p.Migration, Statement: p.Statement, Phase: p.Phase,
+		Done: thousands(p.RowsDone), Batches: batchesOf(p.Batches),
+	}
+	if p.RowsTotal > 0 {
+		b.Total = thousands(p.RowsTotal)
+		b.Percent = min(100, int(p.RowsDone*100/p.RowsTotal))
+	}
+
+	return b
+}
+
+func batchesOf(n int32) string {
+	if n == 1 {
+		return "1 batch"
+	}
+
+	return strconv.Itoa(int(n)) + " batches"
+}
+
+func thousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	var out []byte
+	for i := range len(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, s[i])
+	}
+
+	return string(out)
 }
 
 type page struct {
@@ -555,7 +605,7 @@ func timeline(run *godwitv1.Run, entries []*godwitv1.AuditEntry) []step {
 		}
 		steps = append(steps, queued)
 	case godwitv1.RunState_RUN_STATE_RUNNING:
-		steps = append(steps, step{Tone: "run", Text: "Running, attempt " + strconv.Itoa(int(run.Attempts)), When: "—"})
+		steps = append(steps, step{Tone: "run", Text: "Running, attempt " + strconv.Itoa(int(run.Attempts)), Note: statementLine(run.GetProgress()), When: "—"})
 	case godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT:
 		steps = append(steps, step{Tone: "warn", Text: "Expand applied, waiting for contract confirmation", When: "—"})
 	case godwitv1.RunState_RUN_STATE_SUCCEEDED:
@@ -571,6 +621,19 @@ func timeline(run *godwitv1.Run, entries []*godwitv1.AuditEntry) []step {
 	}
 
 	return steps
+}
+
+// statementLine names the newest statement the run reported, which is the one it is on unless it has just finished it.
+func statementLine(p *godwitv1.RunProgress) string {
+	if p == nil {
+		return ""
+	}
+	line := "statement " + strconv.Itoa(int(p.Statement)) + " of " + p.Migration
+	if p.Phase != "" {
+		line += " (" + p.Phase + ")"
+	}
+
+	return line
 }
 
 func stampOf(ts *timestamppb.Timestamp) string {

@@ -167,6 +167,9 @@ func (e *Executor) execBatch(ctx context.Context, prog runProgress, idx int, st 
 		if err != nil {
 			return err
 		}
+		partial := *ev
+		partial.Partial = true
+		e.observe(partial)
 		e.hook(HookAfterBatch, idx)
 		if n < b.Size {
 			break

@@ -298,10 +298,20 @@ func (s *Scheduler) record(run Run) Recorder {
 	}
 }
 
+// progressEvery bounds the writes a fast backfill produces; the end of a statement is always recorded.
+const progressEvery = time.Second
+
 // progress records the newest statement event under the heartbeat, so a backfill that runs for an hour
 // is visible without notifying once per batch.
 func (s *Scheduler) progress(ctx context.Context, runID string) func(engine.StatementEvent) {
+	var last time.Time
+
 	return func(ev engine.StatementEvent) {
+		now := time.Now()
+		if ev.Partial && now.Sub(last) < progressEvery {
+			return
+		}
+		last = now
 		p := RunProgress{
 			Migration: ev.Migration, Statement: ev.Index, Phase: ev.Statement.Phase,
 			RowsDone: ev.RowsDone, RowsTotal: ev.RowsTotal, Batches: ev.Batches,

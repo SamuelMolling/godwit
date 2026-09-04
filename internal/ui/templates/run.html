@@ -19,6 +19,16 @@
 <div class="body">
   <div class="two">
     <div class="stack">
+      {{with backfill .Run}}
+      <div class="blk">
+        <h3>Backfill</h3>
+        <div class="pg">
+          {{if .Total}}<div class="bar"><i style="width:{{.Percent}}%"></i></div>{{end}}
+          <div class="lbl"><b>{{.Done}}</b> rows written{{if .Total}} of ~{{.Total}} estimated <span class="faint">≈{{.Percent}}%</span>{{end}} <span class="chip">{{.Batches}}</span></div>
+        </div>
+        <p class="note"><span class="mono">{{.Migration}}</span> statement {{.Statement}}{{with .Phase}} · {{.}}{{end}}. Rows written and batches committed are counted{{if .Total}}; the total is the planner's estimate for the table, taken once when the backfill started, and the batch only touches rows that still need it — the run can finish either side of it{{end}}. The cursor commits with every batch, so a resume continues from here.</p>
+      </div>
+      {{end}}
       <div class="blk">
         <h3>What happened</h3>
         <ul class="tl">
