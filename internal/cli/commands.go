@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -30,14 +31,17 @@ func (f *targetFlags) register(cmd *cobra.Command, withDSN bool) {
 	configKeys(cmd, "dir")
 	if withDSN {
 		configKeys(cmd, "lock-timeout", "statement-timeout")
-		cmd.Flags().StringVar(&f.dsn, "dsn", "", "target database DSN")
+		cmd.Flags().StringVar(&f.dsn, "dsn", os.Getenv("GODWIT_DSN"),
+			"target database DSN (or GODWIT_DSN, which keeps the password out of the process arguments)")
 		cmd.Flags().DurationVar(&f.lockTimeout, "lock-timeout", d.LockTimeout, "lock_timeout for each statement")
 		cmd.Flags().DurationVar(&f.statementTimeout, "statement-timeout", d.StatementTimeout, "statement_timeout for each statement (0 disables)")
-		_ = cmd.MarkFlagRequired("dsn")
 	}
 }
 
 func (f *targetFlags) executor(ctx context.Context) (*engine.Executor, func(), error) {
+	if f.dsn == "" {
+		return nil, nil, errors.New("--dsn (or GODWIT_DSN) is required")
+	}
 	conn, err := pgx.Connect(ctx, f.dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect: %w", err)

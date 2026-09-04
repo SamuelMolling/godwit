@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,7 +19,7 @@ import (
 func newServeCmd() *cobra.Command {
 	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope, holder string
 	var uiOrigins []string
-	var driftInterval, leaseTTL, tickInterval, runTimeout time.Duration
+	var driftInterval, leaseTTL, tickInterval, runTimeout, shutdownTimeout time.Duration
 	var maxAttempts, maxConcurrentRuns, storeMaxConns int
 	var maxRequestBytes, maxMigrations, maxFiles, maxFileBytes, maxConcurrentDiffs int
 	var skipValidation, requirePlan, withUI bool
@@ -28,7 +31,7 @@ func newServeCmd() *cobra.Command {
 			"Env: GODWIT_MASTER_KEY (64 hex chars; only static targets need it) and GODWIT_MASTER_KEY_PREVIOUS (comma-separated keys kept for decryption),\n" +
 			"GODWIT_KEY_PROVIDER (env, gcpkms or vault-transit) with GODWIT_KMS_KEY for an envelope-encryption key provider,\n" +
 			"GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; a bare secret is an anonymous admin),\n" +
-			"GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --scratch-dsn and --scratch-template),\n" +
+			"GODWIT_STORE_DSN, GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --store-dsn, --scratch-dsn and --scratch-template),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level), GODWIT_HOLDER (default for --holder),\n" +
@@ -36,6 +39,9 @@ func newServeCmd() *cobra.Command {
 			"GODWIT_UI_USER and GODWIT_UI_PASSWORD (a shared /ui identity), GODWIT_UI_SCOPE (what that identity may do)\n" +
 			"and GODWIT_UI_ORIGIN (comma-separated origins /ui is reached at).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if storeDSN == "" {
+				return errors.New("--store-dsn (or GODWIT_STORE_DSN) is required")
+			}
 			log, err := server.NewLogger(cmd.ErrOrStderr(), logFormat, logLevel)
 			if err != nil {
 				return err
@@ -48,7 +54,10 @@ func newServeCmd() *cobra.Command {
 			if raw := os.Getenv("GODWIT_TOKENS"); raw != "" {
 				tokens = strings.Split(raw, ",")
 			}
-			return server.Run(cmd.Context(), server.Config{
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			return server.Run(ctx, server.Config{
 				Listen:          listen,
 				StoreDSN:        storeDSN,
 				ScratchDSN:      scratchDSN,
@@ -65,27 +74,29 @@ func newServeCmd() *cobra.Command {
 					RequestBytes: maxRequestBytes, Migrations: maxMigrations, Files: maxFiles,
 					FileBytes: maxFileBytes, HeavyCalls: maxConcurrentDiffs,
 				},
-				DriftInterval:  driftInterval,
-				WebhookURL:     os.Getenv("GODWIT_WEBHOOK_URL"),
-				SlackToken:     os.Getenv("GODWIT_SLACK_TOKEN"),
-				SlackChannel:   os.Getenv("GODWIT_SLACK_CHANNEL"),
-				SlackMode:      os.Getenv("GODWIT_SLACK_MODE"),
-				PublicURL:      os.Getenv("GODWIT_PUBLIC_URL"),
-				SkipValidation: skipValidation,
-				RequirePlan:    requirePlan,
-				PlanTTL:        planTTL,
-				PlanRetention:  planRetention,
-				UI:             withUI || os.Getenv("GODWIT_UI") == "true",
-				UIUser:         uiUser,
-				UIPassword:     uiPassword,
-				UIScope:        uiScope,
-				UIOrigins:      uiOrigins,
-				Log:            log,
+				DriftInterval:   driftInterval,
+				WebhookURL:      os.Getenv("GODWIT_WEBHOOK_URL"),
+				SlackToken:      os.Getenv("GODWIT_SLACK_TOKEN"),
+				SlackChannel:    os.Getenv("GODWIT_SLACK_CHANNEL"),
+				SlackMode:       os.Getenv("GODWIT_SLACK_MODE"),
+				PublicURL:       os.Getenv("GODWIT_PUBLIC_URL"),
+				SkipValidation:  skipValidation,
+				RequirePlan:     requirePlan,
+				PlanTTL:         planTTL,
+				PlanRetention:   planRetention,
+				UI:              withUI || os.Getenv("GODWIT_UI") == "true",
+				UIUser:          uiUser,
+				UIPassword:      uiPassword,
+				UIScope:         uiScope,
+				UIOrigins:       uiOrigins,
+				ShutdownTimeout: shutdownTimeout,
+				Log:             log,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", ":8474", "address to serve the API on")
-	cmd.Flags().StringVar(&storeDSN, "store-dsn", "", "control-plane database DSN")
+	cmd.Flags().StringVar(&storeDSN, "store-dsn", os.Getenv("GODWIT_STORE_DSN"),
+		"control-plane database DSN (or GODWIT_STORE_DSN, which keeps the password out of the process arguments)")
 	cmd.Flags().StringVar(&scratchDSN, "scratch-dsn", os.Getenv("GODWIT_SCRATCH_DSN"),
 		"DSN validation and diff create their throwaway databases on (or GODWIT_SCRATCH_DSN); unset runs them on the store server with the store credentials")
 	cmd.Flags().StringVar(&scratchTemplate, "scratch-template", envOr("GODWIT_SCRATCH_TEMPLATE", controlplane.DefaultScratchTemplate),
@@ -101,6 +112,8 @@ func newServeCmd() *cobra.Command {
 		"runs this replica executes at once; one slow run never blocks the others")
 	cmd.Flags().DurationVar(&runTimeout, "run-timeout", controlplane.DefaultRunTimeout,
 		"wall clock a single run may take before it is cancelled and recorded as failed")
+	cmd.Flags().DurationVar(&shutdownTimeout, "shutdown-timeout", server.DefaultShutdownTimeout,
+		"on SIGTERM: how long to drain the listener and the runs this replica claimed before exiting anyway; keep it under the platform's kill delay")
 	cmd.Flags().IntVar(&storeMaxConns, "store-max-conns", server.DefaultStoreMaxConns,
 		"connections the API pool opens against the store; wins over pool_max_conns in the DSN")
 	cmd.Flags().IntVar(&maxRequestBytes, "max-request-bytes", api.DefaultRequestBytes, "largest request body the API accepts")
@@ -121,7 +134,6 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&uiScope, "ui-scope", envOr("GODWIT_UI_SCOPE", "operator"), "scope of the --ui-user identity: read, pipeline, operator or admin (or GODWIT_UI_SCOPE)")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),
 		"scheme://host[:port] origins /ui is reached at; a form post from anywhere else and a request for another host are refused (or GODWIT_UI_ORIGIN)")
-	_ = cmd.MarkFlagRequired("store-dsn")
 
 	return cmd
 }

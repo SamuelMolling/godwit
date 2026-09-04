@@ -19,6 +19,7 @@
       "linuxParameters": {
         "initProcessEnabled": true
       },
+      "stopTimeout": 30,
       "portMappings": [
         {
           "name": "http",
@@ -29,7 +30,6 @@
       "command": [
         "serve",
         "--listen=:8474",
-        "--store-dsn=postgres://godwit@godwit-store.abcdefghijkl.us-east-1.rds.amazonaws.com:5432/godwit_store?sslmode=require",
         "--scratch-template=template0",
         "--drift-interval=5m",
         "--store-max-conns=20",
@@ -46,7 +46,7 @@
         {"name": "GODWIT_PUBLIC_URL", "value": "https://godwit.example.com"}
       ],
       "secrets": [
-        {"name": "PGPASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:store_password::"},
+        {"name": "GODWIT_STORE_DSN", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:store_dsn::"},
         {"name": "GODWIT_SCRATCH_DSN", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:scratch_dsn::"},
         {"name": "GODWIT_MASTER_KEY", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:master_key::"},
         {"name": "GODWIT_TOKENS", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:godwit-AbCdEf:tokens::"}

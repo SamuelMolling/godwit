@@ -82,6 +82,8 @@ type Scheduler struct {
 	log       *slog.Logger
 	slots     chan struct{}
 	inflight  sync.WaitGroup
+	stopped   chan struct{}
+	stopOnce  sync.Once
 }
 
 // NewScheduler wires a Scheduler.
@@ -98,15 +100,20 @@ func NewScheduler(store *Store, providers map[string]creds.Provider, eng Engine,
 		cfg:       cfg,
 		log:       log,
 		slots:     make(chan struct{}, cfg.MaxConcurrentRuns),
+		stopped:   make(chan struct{}),
 	}
 }
 
-// Run polls for work until ctx is done, then waits for the runs it started.
+// Run polls for work until ctx is done or Stop is called, then waits for the runs it started.
 func (s *Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-s.stopped:
+			s.inflight.Wait()
+
+			return
 		case <-ctx.Done():
 			s.inflight.Wait()
 
@@ -115,6 +122,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.dispatch(ctx)
 		}
 	}
+}
+
+// Stop tells Run to claim nothing more; Run returns once the runs it already started have finished.
+// Their leases keep beating throughout, so nothing else may take them, and what ends them is the
+// context Run was given.
+func (s *Scheduler) Stop() {
+	s.stopOnce.Do(func() { close(s.stopped) })
 }
 
 // dispatch starts one Tick per free slot, off the ticker's goroutine, so a run that takes an hour

@@ -87,3 +87,17 @@ func TestServeBadUIScope(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 }
+
+func TestServeStoreDSNFromEnv(t *testing.T) {
+	code, _, errOut := runCLI("serve")
+	if code != 1 || !strings.Contains(errOut, "--store-dsn (or GODWIT_STORE_DSN) is required") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+
+	t.Setenv("GODWIT_STORE_DSN", "postgres://bad:bad@127.0.0.1:1/x")
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	code, _, errOut = runCLI("serve", "--listen", "127.0.0.1:0")
+	if code != 1 || strings.Contains(errOut, "is required") {
+		t.Fatalf("env DSN must be accepted: code = %d, stderr = %s", code, errOut)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -47,7 +48,22 @@ func (f *clientFlags) client() (godwitv1connect.GodwitServiceClient, error) {
 
 // dial builds the client for a caller that has already decided the server is set.
 func (f *clientFlags) dial() godwitv1connect.GodwitServiceClient {
-	var transport http.RoundTripper = &http2.Transport{
+	transport := transportFor(f.server)
+	if f.token != "" {
+		transport = bearerTransport{token: f.token, next: transport}
+	}
+
+	return godwitv1connect.NewGodwitServiceClient(&http.Client{Transport: transport}, f.server)
+}
+
+// transportFor picks the transport the server URL's scheme needs. http2.Transport calls DialTLSContext
+// for https:// as well as http://, so an h2c transport there would dial port 443 in cleartext.
+func transportFor(server string) http.RoundTripper {
+	if strings.HasPrefix(strings.ToLower(server), "https://") {
+		return http.DefaultTransport.(*http.Transport).Clone()
+	}
+
+	return &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 			var d net.Dialer
@@ -55,11 +71,6 @@ func (f *clientFlags) dial() godwitv1connect.GodwitServiceClient {
 			return d.DialContext(ctx, network, addr)
 		},
 	}
-	if f.token != "" {
-		transport = bearerTransport{token: f.token, next: transport}
-	}
-
-	return godwitv1connect.NewGodwitServiceClient(&http.Client{Transport: transport}, f.server)
 }
 
 type remoteFunc func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error

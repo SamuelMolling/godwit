@@ -85,15 +85,19 @@ The listener speaks **plaintext h2c and HTTP/1.1**; there is no TLS in the binar
 | a browser, on `/ui` | yes | — |
 | `curl`, connect JSON over HTTP/1.1 | yes | yes |
 | a generated connect client with an ordinary `http.Client` | yes | yes |
-| **the `godwit` CLI** | **no** — see below | yes |
+| the `godwit` CLI | yes | yes |
 
-**The `godwit` CLI cannot speak TLS today.** `internal/cli/client.go` builds an `http2.Transport` whose `DialTLSContext` opens a plain TCP connection, and `x/net/http2` calls that hook for `https://` URLs as well as `http://` ones. So `--server https://godwit.example.com` resolves the host, dials port 443 in cleartext, and fails — and, tested against a plaintext listener on another port, `--server https://host:port` *succeeds*, which is the same bug seen from the other side. Until that changes, the CLI needs a cleartext h2c path to the Service:
+The CLI picks its transport from the scheme: `https://` is dialled over TLS, trusting the system root store, and negotiates HTTP/2 by ALPN where the proxy offers it; `http://` is dialled as cleartext HTTP/2 (h2c), which is what the in-cluster Service speaks. The plain HTTP backend of the Ingress above is enough for both — connect's unary calls and its one server stream (`WatchRun`) work over HTTP/1.1, so no annotation is needed to carry the API.
 
-- an ArgoCD hook Job or a self-hosted runner **in the cluster**, with `GODWIT_SERVER=http://godwit.godwit.svc:8474` — this is the shape [deploy/argocd](../../../deploy/argocd/README.md) already uses, and the one to prefer;
+For a private CA, the CLI has no flag: put the CA in the runner's system trust store (`update-ca-certificates`, or `SSL_CERT_FILE` on Linux).
+
+Reaching the plaintext listener instead is still the simplest thing in-cluster:
+
+- an ArgoCD hook Job or a self-hosted runner **in the cluster**, with `GODWIT_SERVER=http://godwit.godwit.svc:8474` — this is the shape [deploy/argocd](../../../deploy/argocd/README.md) already uses;
 - `kubectl -n godwit port-forward svc/godwit 8474:8474` for a human at a terminal;
 - a private L4 route (a `Service` of type `LoadBalancer` on an internal address, or the ingress controller's `tcp-services` map) reachable only from your own network. Do not put the plaintext port on the public internet: the bearer token would cross it in the clear.
 
-[`ingress-grpc.yaml`](ingress-grpc.yaml) is the HTTP/2 form — `backend-protocol: GRPC` makes nginx `grpc_pass` to the h2c listener — for connect and gRPC clients that do TLS properly. It is the Ingress the CLI will want once its transport does, and it is useless to the CLI today. `grpc_pass` applies to the whole nginx server block, so it cannot share a host with `/ui`: a browser reaching an HTML page through it gets a gRPC response frame. That is why it is a second hostname rather than another path on the first, and why the chart's single `ingress.*` block cannot express both at once. `kubectl apply -f` it, or paste it into `extraObjects` to keep it inside the release.
+[`ingress-grpc.yaml`](ingress-grpc.yaml) is the HTTP/2 form — `backend-protocol: GRPC` makes nginx `grpc_pass` to the h2c listener — for gRPC clients, which unlike connect ones cannot fall back to HTTP/1.1. Nothing here needs it. `grpc_pass` applies to the whole nginx server block, so it cannot share a host with `/ui`: a browser reaching an HTML page through it gets a gRPC response frame. That is why it is a second hostname rather than another path on the first, and why the chart's single `ingress.*` block cannot express both at once. `kubectl apply -f` it, or paste it into `extraObjects` to keep it inside the release.
 
 ## The UI, and `--ui-origin`
 
@@ -108,12 +112,12 @@ Left empty, the UI compares the browser's `Origin` against the request's `Host`.
 Two things follow from the lease being keyed on `cp_leases.holder` (matched whole by `Heartbeat`):
 
 - the holder is `<name>/<16 hex characters>`: the pod name, and a suffix drawn when the process started. Nothing here needs setting — a `Deployment` already gives each pod a unique name — and the suffix is why a pod that restarts under the same name cannot take its own in-flight run back before the lease expires. That wait is the window in which the backend it left in the target, still holding that target's advisory lock, dies.
-- `serve` installs **no signal handler**: `cli.Main` calls `root.Execute()` with a background context, so the `srv.Shutdown` path in `server.Run` never fires. On `SIGTERM` the process exits immediately — as PID 1 in a container, with exit code **2** — and in-flight streams are cut. This is not dangerous (it is exactly the crash the journal is designed for, and the surviving replica takes the run over after 30 seconds), but a rolling update will show container exit code 2 and will cut any `godwit migrate` streaming through the pod being replaced. `terminationGracePeriodSeconds` buys nothing today.
+- `SIGTERM` is handled: the pod stops serving, stops claiming, and waits for the run it already holds until `--shutdown-timeout` (20 s), then exits `0`. The chart's `terminationGracePeriodSeconds: 30` is what makes that budget real and must stay above it. A run that outlives the drain is cut and stays `running` until its lease expires, and the surviving replica takes it over — the same path a `SIGKILL` or a lost node takes.
 
 ## The pipeline
 
-`godwit lint` and `godwit plan` on a pull request need only `read` and a route to the API. From GitHub-hosted runners that means the JSON path over the TLS Ingress, driven with `curl` or a connect client — not the CLI or the [composite action](../../../docs/ci-cd.md), which shell out to the CLI and inherit its transport. From a self-hosted runner in the cluster, or from the ArgoCD PreSync hook, the CLI works unchanged against `http://godwit.godwit.svc:8474`.
+`godwit lint` and `godwit plan` on a pull request need only `read` and a route to the API. A GitHub-hosted runner reaches the TLS Ingress with the CLI or the [composite action](../../../docs/ci-cd.md) — `GODWIT_SERVER=https://godwit.example.com` — as long as the Ingress' certificate chains to a public CA. From a self-hosted runner in the cluster, or from the ArgoCD PreSync hook, the CLI works unchanged against `http://godwit.godwit.svc:8474`.
 
 ## Verified
 
-`helm template godwit deploy/helm/godwit -n godwit -f values.yaml` renders, and every object it produces plus `ingress-grpc.yaml` passes `kubectl apply --dry-run=client`. The flags in the rendered `args` were read back against `internal/cli/serve.go`. The runtime facts above — the health endpoints and their codes, `/metrics` answering unauthenticated, the connect API over HTTP/1.1, `403 unknown host` from a mismatched `--ui-origin`, the `https://` transport bug, and the exit code on `SIGTERM` — were measured on the [Docker Compose](../docker-compose/README.md) stack, which runs the same binary with the same flags. The Ingress itself was not applied to a live ingress-nginx.
+`helm template godwit deploy/helm/godwit -n godwit -f values.yaml` renders, and every object it produces plus `ingress-grpc.yaml` passes `kubectl apply --dry-run=client`. The flags in the rendered `args` were read back against `internal/cli/serve.go`. The runtime facts above — the health endpoints and their codes, `/metrics` answering unauthenticated, the connect API over HTTP/1.1 and `403 unknown host` from a mismatched `--ui-origin` — were measured on the [Docker Compose](../docker-compose/README.md) stack, which runs the same binary with the same flags. The CLI over TLS and the `SIGTERM` drain were measured separately, against a real TLS endpoint and a real store. The Ingress itself was not applied to a live ingress-nginx.

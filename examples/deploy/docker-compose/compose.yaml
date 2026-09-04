@@ -38,7 +38,6 @@ services:
     command:
       - serve
       - --listen=:8474
-      - --store-dsn=postgres://godwit@store:5432/godwit_store?sslmode=disable
       - --scratch-template=template0
       - --drift-interval=5m
       - --run-timeout=24h
@@ -51,6 +50,7 @@ services:
       - "8474-8475:8474"
     deploy:
       replicas: 2
+    stop_grace_period: 30s
     depends_on:
       store:
         condition: service_healthy

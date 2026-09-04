@@ -216,7 +216,7 @@ Request size, file count, page size and concurrency are bounded, and the knobs a
 
 ## Network
 
-- The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it — whatever publishes it, an Ingress class or a Gateway API implementation, has to speak h2c or gRPC to the backend; the CLI accepts `https://` URLs.
+- The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it — an ordinary HTTP backend is enough, because connect carries every RPC over HTTP/1.1 and godwit has no bidirectional stream; an h2c or gRPC backend is only needed by a client that insists on HTTP/2. The CLI accepts `https://` URLs and dials them over TLS, trusting the system root store.
 - `/metrics`, `/healthz` and `/readyz` are unauthenticated. Scope them to the cluster network; `/metrics` label values include target names.
 - The service dials out to: the store, every target, the scratch server, Vault, the webhook URL, `slack.com`. Egress rules need those and nothing else.
 - Replicas do not talk to each other; the store is the only shared state.

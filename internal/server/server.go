@@ -71,7 +71,10 @@ type Config struct {
 	UIScope    string
 	// UIOrigins are the scheme://host[:port] origins /ui is reached at; empty compares the browser's Origin with the request Host.
 	UIOrigins []string
-	Log       *slog.Logger
+	// ShutdownTimeout bounds the whole shutdown once ctx ends: draining the listener and then the runs
+	// this replica claimed. Zero takes the default.
+	ShutdownTimeout time.Duration
+	Log             *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
@@ -80,6 +83,10 @@ type Config struct {
 // and the scratch factory share. Unsized, pgx defaults it to max(4, NumCPU), which is both unpredictable
 // across nodes and small enough that a burst of Diff calls leaves the scheduler waiting on Acquire.
 const DefaultStoreMaxConns = 20
+
+// DefaultShutdownTimeout is the whole shutdown budget. It sits under the 30 seconds Kubernetes,
+// ECS and systemd all default their kill delay to, so the process exits on its own first.
+const DefaultShutdownTimeout = 20 * time.Second
 
 func openPool(ctx context.Context, dsn string, maxConns int) (*pgxpool.Pool, error) {
 	pcfg, err := pgxpool.ParseConfig(dsn)
@@ -158,7 +165,14 @@ func Run(ctx context.Context, cfg Config) error {
 		eng, controlplane.Policies(), cfg.Scheduler, log)
 	sched.Metrics = m
 	sched.Notifier = notifier
-	go sched.Run(ctx)
+	// Runs outlive the signal that ends ctx: shutdown drains them, and only the grace period aborts them.
+	runCtx, abortRuns := context.WithCancel(context.WithoutCancel(ctx))
+	defer abortRuns()
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		sched.Run(runCtx)
+	}()
 
 	drift := controlplane.NewDriftMonitor(store, sched, eng, notifier, cfg.DriftInterval, log)
 	drift.PlanRetention = cfg.PlanRetention
@@ -214,15 +228,36 @@ func Run(ctx context.Context, cfg Config) error {
 		MaxHeaderBytes:    64 << 10,
 		Protocols:         h2cProtocols(),
 	}
+	grace := cmp.Or(cfg.ShutdownTimeout, DefaultShutdownTimeout)
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
-		log.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		log.Info("shutting down", "grace", grace)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
+		awaitRuns(shutdownCtx, sched.Stop, drained, log)
 	}()
 
-	return serve(srv, ln)
+	if err := serve(srv, ln); err != nil {
+		return err
+	}
+	<-stopped
+
+	return nil
+}
+
+// awaitRuns holds the process open for the runs this replica already claimed. Their leases are still
+// beating, so no other replica may take them; abandoning them here would cost a whole lease TTL.
+func awaitRuns(ctx context.Context, stopClaiming func(), drained <-chan struct{}, log *slog.Logger) {
+	stopClaiming()
+	select {
+	case <-drained:
+		log.Info("runs drained")
+	case <-ctx.Done():
+		log.Warn("grace period expired with runs still executing; their leases will requeue them")
+	}
 }
 
 func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func(provider, result string)) (notify.Notifier, func()) {

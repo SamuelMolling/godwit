@@ -37,7 +37,7 @@ ECS injects secrets as **environment variables**, and that is the only place the
 
 | Variable | What |
 |---|---|
-| `PGPASSWORD` | the store password — see below |
+| `GODWIT_STORE_DSN` | the whole store DSN, password included — see below |
 | `GODWIT_SCRATCH_DSN` | the whole scratch DSN, password included |
 | `GODWIT_MASTER_KEY` | 64 hex characters; needed only if any target uses the `static` provider |
 | `GODWIT_TOKENS` | `name:scope:secret` entries, comma-separated |
@@ -46,7 +46,7 @@ One Secrets Manager secret holding a JSON object is the fewest moving parts; eac
 
 ```bash
 aws secretsmanager create-secret --name godwit --secret-string '{
-  "store_password": "...",
+  "store_dsn": "postgres://godwit:<store-password>@godwit-store.abcdefghijkl.us-east-1.rds.amazonaws.com:5432/godwit_store?sslmode=require",
   "scratch_dsn": "postgres://godwit_scratch:...@godwit-scratch.abcdefghijkl.us-east-1.rds.amazonaws.com:5432/postgres?sslmode=require",
   "master_key": "'"$(openssl rand -hex 32)"'",
   "tokens": "ci:pipeline:...,ops:operator:...,register:admin:..."
@@ -70,19 +70,9 @@ SSM Parameter Store is the cheaper alternative: one `SecureString` per value, an
 
 Attach `AmazonECSTaskExecutionRolePolicy` alongside it for the image pull and CloudWatch Logs, and create the `/ecs/godwit` log group first — that policy grants `logs:CreateLogStream` and `logs:PutLogEvents` but not `logs:CreateLogGroup`, so `"awslogs-create-group": "true"` would need a statement of its own. The **task role** needs nothing for a plain deployment; it is where `roles/cloudkms`-style permissions would go if you used a KMS key provider, which on AWS today means neither of the two godwit ships (`gcpkms` and `vault-transit`), so a Secrets Manager `GODWIT_MASTER_KEY` is the AWS answer.
 
-### Why the store password is a separate `PGPASSWORD`
+### Why neither DSN is in `command`
 
-`--store-dsn` is a required **flag** with no environment variable behind it, and ECS does **not** expand `$VARIABLE` in `command` — the array is passed to the binary as argv, with no shell in between. So the Helm chart's trick (`--store-dsn=$(GODWIT_STORE_DSN)`, which Kubernetes expands) has no equivalent here: whatever you write in `command` is what the process gets, and it is visible to anyone who can call `DescribeTaskDefinition`.
-
-The way out is to put a password-less DSN in `command` and the password in the environment:
-
-```
-"--store-dsn=postgres://godwit@godwit-store...rds.amazonaws.com:5432/godwit_store?sslmode=require"
-```
-
-pgx falls back to the libpq environment for anything the DSN leaves out, so `PGPASSWORD` from Secrets Manager completes it. This was verified on the Compose stack: the store migrated with no password in the DSN. `--scratch-dsn` needs no such thing — it reads `GODWIT_SCRATCH_DSN` directly.
-
-`PGPASSWORD` is process-wide, so it is also the fallback password for any *target* DSN that has none. Give every target DSN its own password, or use a credential provider.
+ECS does **not** expand `$VARIABLE` in `command` — the array is passed to the binary as argv, with no shell in between — and whatever is in it is readable by anyone who can call `DescribeTaskDefinition`. So neither DSN goes there: `--store-dsn` falls back to `GODWIT_STORE_DSN` and `--scratch-dsn` to `GODWIT_SCRATCH_DSN`, both delivered by `secrets[]` from Secrets Manager, and `command` names no credential at all.
 
 **`sslmode=verify-full` needs a file the image does not have.** The distroless base carries the public CA bundle, and RDS certificates are signed by a private Amazon CA that is not in it. Either accept `sslmode=require` (encrypted, unauthenticated server), or build a two-line image on top of the published one and point `PGSSLROOTCERT` at the bundle:
 
@@ -122,7 +112,7 @@ Know what you are choosing: ECS replaces a task the target group calls unhealthy
 Two listener attributes matter:
 
 - **`idle_timeout.timeout_seconds`** — 60 by default, 4000 maximum. `WatchRun` sends a frame every 500 ms, so a 24-hour run never goes idle; what does is a silent unary call. `PlanRun`, `CreateRun`, `Diff` and `Checkpoint` build scratch databases and replay the target's whole recorded history before answering a byte, and `--max-concurrent-diffs` can hold a call in a queue for a further 30 seconds. Set it to 900 or so; the ALB answers `504` when it fires.
-- **`deregistration_delay.timeout_seconds`** buys nothing here. `serve` installs no signal handler, so a task being replaced exits the moment it gets `SIGTERM` and its in-flight streams die with it, whatever the ALB is waiting for.
+- **`deregistration_delay.timeout_seconds`** (30 s by default) is worth having now: a task being replaced handles `SIGTERM`, stops its listener and drains, so the delay is what keeps the ALB from sending it a request it will no longer answer.
 
 ## The service
 
@@ -137,9 +127,9 @@ aws ecs create-service --cli-input-json file://service.json
 
 Each task's lease holder is `<name>/<16 hex characters>` — its hostname under `awsvpc`, where every task has its own ENI, plus a suffix drawn at start-up that keeps two tasks apart whatever their hostnames say. Nothing here needs setting; under `network_mode: host` the name is worth setting anyway, see below.
 
-`linuxParameters.initProcessEnabled: true` is worth the line. Without it godwit is PID 1, and Go's runtime cannot die from an unhandled `SIGTERM` as PID 1, so it falls back to `exit(2)` — every scale-in and every deployment leaves a stopped task with exit code 2 in the console. With an init process in front, `SIGTERM` kills it normally and the exit code is 143. Both were measured; neither loses data, because an interrupted run is resumed from the journal.
+`linuxParameters.initProcessEnabled: true` is still worth the line — it reaps zombies and forwards signals — but it is no longer what decides the exit code: godwit handles `SIGTERM` itself and exits `0` as PID 1 or behind an init. Set `stopTimeout` (30 s here) above `--shutdown-timeout` (20 s), or ECS `SIGKILL`s the task before the drain ends; a run cut short either way is resumed from the journal.
 
-That also makes **Fargate Spot** reasonable for this workload: a two-minute `SIGTERM` warning godwit ignores costs one lease TTL, and the surviving task finishes the run.
+That also makes **Fargate Spot** reasonable for this workload: the two-minute `SIGTERM` warning is more than the drain needs, and a run that outlives it costs one lease TTL before the surviving task takes it over.
 
 ## Fargate or EC2
 
@@ -161,6 +151,6 @@ Nothing else in the container definition changes: `readonlyRootFilesystem: true`
 
 ## The pipeline
 
-`godwit lint`, `plan` and `migrate` need a route to the API, and the CLI cannot use a TLS one: its transport dials cleartext even for `https://` URLs ([the detail](../kubernetes-ingress-nginx/README.md#reaching-the-api)). On AWS that means the CLI runs **inside the VPC** — a self-hosted GitHub runner, or CodeBuild with `vpcConfig` — against an internal ALB or the service's own address, over plain HTTP. From GitHub-hosted runners, reach the public ALB with `curl` against the connect JSON API instead, which works over HTTP/1.1 and TLS like any other HTTP call ([api.md](../../../docs/api.md) has one per RPC).
+`godwit lint`, `plan` and `migrate` need a route to the API, and an HTTPS listener on the ALB is one: the CLI dials `--server https://…` over TLS and the ALB's HTTP/1.1 backend carries every RPC ([the detail](../kubernetes-ingress-nginx/README.md#reaching-the-api)). That works from a GitHub-hosted runner against a public ALB, and from a self-hosted runner or CodeBuild with `vpcConfig` against an internal one. A runner inside the VPC can also reach the plaintext listener directly, over plain HTTP.
 
-Whatever the route, the bearer token is the whole authorisation, so do not put the plaintext listener anywhere the token would cross the public internet.
+Whatever the route, the bearer token is the whole authorisation, so do not put the **plaintext** listener anywhere the token would cross the public internet; over the public internet it is the ALB's HTTPS listener or nothing.

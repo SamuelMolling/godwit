@@ -11,7 +11,6 @@ Group=godwit
 EnvironmentFile=/etc/godwit/godwit.env
 ExecStart=/usr/local/bin/godwit serve \
   --listen=127.0.0.1:8474 \
-  --store-dsn=postgres://godwit@store.internal:5432/godwit_store?sslmode=verify-full \
   --scratch-template=template0 \
   --drift-interval=5m \
   --store-max-conns=20 \
@@ -23,7 +22,7 @@ ExecStart=/usr/local/bin/godwit serve \
   --ui-origin=https://godwit.example.com
 Restart=always
 RestartSec=5s
-TimeoutStopSec=15
+TimeoutStopSec=30
 LimitNOFILE=65536
 
 NoNewPrivileges=yes
