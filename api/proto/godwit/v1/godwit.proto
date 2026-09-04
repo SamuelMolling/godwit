@@ -235,6 +235,10 @@ message PlannedMigration {
   repeated string notes = 13;
   // Kept out of this plan by a version target: it is in the directory, it is not in the run.
   bool withheld = 14;
+  // Carries the whole schema the versions below it produce; a target that has any of them records it.
+  bool checkpoint = 15;
+  // The newest version a checkpoint collapses; zero on every other migration.
+  int64 collapses_through = 16;
 }
 
 message PlanRunResponse {
@@ -331,6 +335,27 @@ message DiffResponse {
   // The objects the request's repeatable migrations build; they are part of the desired schema, so up_sql
   // neither drops nor recreates them while an R__ file still declares them.
   repeated string repeatable_objects = 7;
+}
+
+message CheckpointRequest {
+  // The committed migration directory.
+  repeated MigrationFile files = 1;
+  // Collapse every version at or below this one; zero takes the newest versioned migration.
+  int64 at = 2;
+  // Migration name for the checkpoint file, snake_case.
+  string name = 3;
+}
+
+message CheckpointResponse {
+  // The version the checkpoint file is stamped with; always above everything it collapses.
+  int64 version = 1;
+  string name = 2;
+  // The newest version it collapses.
+  int64 through = 3;
+  // What it collapses, oldest first.
+  repeated string covers = 4;
+  // The whole file body, `-- godwit: checkpoint` header included. There is no down file.
+  string body = 5;
 }
 
 message CheckDriftRequest {
@@ -601,4 +626,6 @@ service GodwitService {
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
   // Generates the migration between the target's live schema and a desired DDL, in both directions.
   rpc Diff(DiffRequest) returns (DiffResponse);
+  // Collapses a prefix of the migration directory into one checkpoint file the replay starts from.
+  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse);
 }

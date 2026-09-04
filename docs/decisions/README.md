@@ -17,6 +17,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0007](0007-the-action-authorises-with-permission-and-approval.md) | The Action authorises with repository permission and a review anchored to the commit | #81 |
 | [0008](0008-assertions-in-the-plan.md) | A data condition belongs in the plan, not in a hook | #82 |
 | [0009](0009-scratch-databases-are-not-the-store.md) | The scratch database is a sandbox, not a corner of the store | #83 |
+| [0010](0010-checkpoints-collapse-the-replay.md) | A checkpoint is a file in the directory, and what it collapses can never be reverted | #85 |
 
 ## Open questions
 

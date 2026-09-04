@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -108,6 +111,9 @@ func (s *Store) PlanRevert(ctx context.Context, id string) (RevertPlan, error) {
 	if len(standing) == 0 {
 		return RevertPlan{}, notRevertable(id, reasonNothing)
 	}
+	if err := s.checkpointBar(ctx, run.Target, standing); err != nil {
+		return RevertPlan{}, err
+	}
 	files, err := s.RunFiles(ctx, id)
 	if err != nil {
 		return RevertPlan{}, err
@@ -129,6 +135,40 @@ func (s *Store) PlanRevert(ctx context.Context, id string) (RevertPlan, error) {
 	}
 
 	return RevertPlan{Run: run, Applied: standing, Plans: plans, Newer: newer}, nil
+}
+
+// checkpointBar refuses a revert that would reach at or below a checkpoint the target holds. Below it
+// there is no history left to undo: the versions it collapses were recorded without running, their
+// inverses were written against a state the target never passed through, and the replay rebuilds them
+// from the checkpoint's body, which a revert cannot edit.
+func (s *Store) checkpointBar(ctx context.Context, target string, standing []RunMigration) error {
+	cps, err := s.Checkpoints(ctx, target)
+	if err != nil {
+		return err
+	}
+	for _, m := range standing {
+		cp, ok := engine.NewestCheckpoint(cps)
+		version, versioned := versionOf(m.Migration)
+		switch {
+		case !versioned:
+		case slices.ContainsFunc(cps, func(c engine.Migration) bool { return c.ID() == m.Migration }):
+			return notRevertable(m.Migration, reasonCheckpoint)
+		case ok && version <= cp.Through:
+			return notRevertable(m.Migration, reasonCollapsed, cp.ID(), cp.Through)
+		}
+	}
+
+	return nil
+}
+
+func versionOf(id string) (int64, bool) {
+	name, _, ok := strings.Cut(id, "_")
+	if !ok || len(name) != 14 {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(name, 10, 64)
+
+	return v, err == nil
 }
 
 // filesOf narrows a run's submitted files to the up/down pair of each migration it applied.

@@ -96,6 +96,30 @@ DELETE FROM godwit.runs WHERE state = 'succeeded' AND finished_at < now() - inte
 
 Never delete a `running` or `failed` row from `godwit.runs`: the next attempt reopens it to know where to resume.
 
+## Checkpoints
+
+Reach for one when `godwit plan` has become slow and the log line for a plan shows the replay dominating it. The replay executes every migration the target has applied, on a fresh scratch database, before every plan — so its cost grows with the length of the history, not with the size of the change.
+
+**Signals it is time.** A `godwit plan` on a pull request measured in minutes; a directory past a few hundred versioned files; the service logging `plan stored` long after the request came in. If the history is short and slow, a checkpoint will not help — the replay is executing real work, and the checkpoint's body would execute the same amount.
+
+**How much it buys.** The saving is everything the history did and then undid: tables created and dropped, columns added and renamed, indexes rebuilt, `ALTER`s stacked on one table. A purely additive history collapses into a body of roughly the same size and gains only the per-migration overhead. A history with churn collapses hard — in the repository's own test a 24-migration churning history replays in about a quarter of the time from its checkpoint, executing one migration instead of 24.
+
+**Taking one.**
+
+```
+godwit checkpoint --name squash --dry-run   # read it first
+godwit checkpoint --name squash
+git add db/migrations/*_squash.up.sql && git commit
+```
+
+Then open it as an ordinary pull request: `lint` and `plan` run on it like any migration, and the plan says whether each target will run the checkpoint or record it.
+
+**Before you merge it**, check `godwit targets`: every target's newest applied version must be at or above the checkpoint's `through=`, or the collapsed files must still be in the directory (they are, unless you deleted them). A target parked below the checkpoint with the files gone is refused at plan time, by name, and the way out is to restore the files or `godwit target baseline` it.
+
+**After it is merged**, the migrations it collapsed are frozen: they can no longer be reverted on any target ([concepts](concepts.md#checkpoints)), and `godwit revert` says so instead of running their down files. Keep the files in the repository until every target has passed the checkpoint; they are what carries a target that stopped below it.
+
+**Checkpoint or baseline?** A baseline adopts *one target* whose schema godwit did not build, by writing its history without running anything; it is per target, it does not travel, and the directory it takes still has to contain a file describing that schema. A checkpoint changes *the directory*, for every target, and is generated from the files rather than from a database. Baseline when you are adopting an existing database; checkpoint when the replay of a history godwit itself built has got too long.
+
 ## Upgrades
 
 1. Read the release notes for new store migrations (`internal/controlplane/schema.go`, `storeMigrations`).

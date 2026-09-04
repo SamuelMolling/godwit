@@ -22,8 +22,9 @@ import (
 )
 
 var (
-	diffNow = time.Now
-	nameRe  = regexp.MustCompile(`^[a-z0-9_]+$`)
+	diffNow         = time.Now
+	nameRe          = regexp.MustCompile(`^[a-z0-9_]+$`)
+	errNameRequired = errors.New("--name is required and must be snake_case ([a-z0-9_]+)")
 )
 
 type diffJSON struct {
@@ -57,7 +58,7 @@ func newDiffCmd() *cobra.Command {
 				return err
 			}
 			if !dryRun && !nameRe.MatchString(name) {
-				return errors.New("--name is required and must be snake_case ([a-z0-9_]+)")
+				return errNameRequired
 			}
 			ddl, err := source.Load(cmd.Context())
 			if err != nil {

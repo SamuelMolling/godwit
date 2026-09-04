@@ -330,6 +330,16 @@ func PlansFromFiles(files map[string]string, dir engine.Direction) ([]engine.Pla
 	return buildPlans(migs, dir)
 }
 
+// pairOf names one migration's files; a checkpoint has no inverse, so it contributes no down file.
+func pairOf(id, up, down string) map[string]string {
+	out := map[string]string{id + ".up.sql": up}
+	if down != "" {
+		out[id+".down.sql"] = down
+	}
+
+	return out
+}
+
 // MigrationsFromFiles loads migrations from in-memory files named like on disk.
 func MigrationsFromFiles(files map[string]string) ([]engine.Migration, error) {
 	fsys := fstest.MapFS{}

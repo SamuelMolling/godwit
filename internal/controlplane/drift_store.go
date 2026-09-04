@@ -140,11 +140,11 @@ type HistoryMigration struct {
 // held migration is in neither, which is why a replayed plan never has to reproduce half of one.
 func (s *Store) History(ctx context.Context, target string) ([]HistoryRun, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT a.run_id, a.migration, u.body, d.body, a.expansion
+		SELECT a.run_id, a.migration, u.body, coalesce(d.body, ''), a.expansion
 		FROM cp_run_applied a
 		JOIN cp_runs r ON r.id = a.run_id
 		JOIN cp_run_files u ON u.run_id = a.run_id AND u.name = a.migration || '.up.sql'
-		JOIN cp_run_files d ON d.run_id = a.run_id AND d.name = a.migration || '.down.sql'
+		LEFT JOIN cp_run_files d ON d.run_id = a.run_id AND d.name = a.migration || '.down.sql'
 		WHERE r.target = $1 AND `+standingRow+`
 		ORDER BY r.created_at, a.run_id, a.seq`, target)
 	if err != nil {

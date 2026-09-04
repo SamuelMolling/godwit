@@ -225,6 +225,15 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	if err != nil {
 		return heldWork{}, err
 	}
+	tg, err := s.target(ctx, run.Target)
+	if err != nil {
+		return heldWork{}, err
+	}
+	if run.Reverts == "" {
+		if plans, err = s.shapeCheckpoint(ctx, plans, tg.dsn); err != nil {
+			return heldWork{}, err
+		}
+	}
 	var held heldWork
 	if run.Reverts == "" && run.Phase != PhaseContract {
 		policy, ok := s.policies[run.Rollout]
@@ -236,10 +245,6 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 		held = heldWork{plans: len(contract), statements: HeldStatements(plans, contract)}
 	}
 
-	tg, err := s.target(ctx, run.Target)
-	if err != nil {
-		return heldWork{}, err
-	}
 	opts, err := run.Timeouts.Over(tg.timeouts).Options()
 	if err != nil {
 		return heldWork{}, err
@@ -377,6 +382,25 @@ func (s *Scheduler) retired(ctx context.Context, run Run, migration string, cols
 	}
 
 	return s.store.RetireColumns(ctx, run.Target, run.ID, migration, cols)
+}
+
+// shapeCheckpoint re-decides at apply time what the set's checkpoint does, against the target's own
+// history rather than the one the plan was taken against; the decision is a function of the files and
+// that history, so it is never persisted and never goes stale.
+func (s *Scheduler) shapeCheckpoint(ctx context.Context, plans []engine.Plan, dsn string) ([]engine.Plan, error) {
+	if !slices.ContainsFunc(plans, func(p engine.Plan) bool { return p.Migration.Checkpoint }) {
+		return plans, nil
+	}
+	applied, _, err := s.engine.Applied(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	var newest int64
+	for _, a := range applied {
+		newest = max(newest, a.Version)
+	}
+
+	return engine.ShapeCheckpoint(plans, newest)
 }
 
 func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.Plan, dsn string) ([]engine.Plan, error) {

@@ -159,6 +159,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
 	apiSrv.Inspector = controlplane.NewInspector(sched)
 	apiSrv.Differ = controlplane.NewDiffer(scratch, sched, history, newID)
+	apiSrv.Checkpointer = controlplane.NewCheckpointer(scratch, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	handler := api.Handler(apiSrv, tokens)
 	if cfg.UI {

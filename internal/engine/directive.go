@@ -18,6 +18,9 @@ const DirectiveMarker = "godwit:"
 // DirectiveRevert is the only directive a .down.sql may carry: it asks for the generated inverse.
 const DirectiveRevert = "revert"
 
+// DirectiveCheckpoint marks a migration whose body is the schema every version through= produces.
+const DirectiveCheckpoint = "checkpoint"
+
 // Directive is one `-- godwit:` line, parsed offline: an operation, its positional arguments and its options.
 type Directive struct {
 	Op   string
@@ -77,6 +80,7 @@ const (
 	optDuration
 	optBool
 	optIdent
+	optVersion
 	optAction
 )
 
@@ -115,6 +119,10 @@ var directiveOps = map[string]opSpec{
 	"drop-column":   {args: []argKind{argColumn}},
 	DirectiveAssert: {args: []argKind{argQuery, argCmp, argValue}},
 	DirectiveRevert: {},
+	DirectiveCheckpoint: {
+		opts:     map[string]optKind{"through": optVersion},
+		required: []string{"through"},
+	},
 }
 
 var fkActions = []string{"cascade", "restrict", "set-null", "set-default", "no-action"}
@@ -241,6 +249,12 @@ func checkOpt(kind optKind, v string) error {
 	case optBool:
 		if v != "true" && v != "false" {
 			return fmt.Errorf("%q is not true or false", v)
+		}
+
+		return nil
+	case optVersion:
+		if n, err := strconv.ParseInt(v, 10, 64); err != nil || len(v) != 14 || n <= 0 {
+			return fmt.Errorf("%q is not a 14-digit migration version", v)
 		}
 
 		return nil

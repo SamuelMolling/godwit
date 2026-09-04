@@ -269,10 +269,10 @@ func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {
 	}
 	files := make([]*godwitv1.MigrationFile, 0, 2*len(migs))
 	for _, m := range migs {
-		files = append(files,
-			&godwitv1.MigrationFile{Name: m.UpFile(), Body: m.UpSQL},
-			&godwitv1.MigrationFile{Name: m.DownFile(), Body: m.DownSQL},
-		)
+		files = append(files, &godwitv1.MigrationFile{Name: m.UpFile(), Body: m.UpSQL})
+		if m.DownSQL != "" {
+			files = append(files, &godwitv1.MigrationFile{Name: m.DownFile(), Body: m.DownSQL})
+		}
 	}
 
 	return files, nil

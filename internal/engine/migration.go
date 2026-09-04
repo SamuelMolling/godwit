@@ -26,6 +26,28 @@ type Migration struct {
 	Checksum        string
 	Directives      []Directive
 	RevertDirective bool
+	// Checkpoint marks a migration whose body is the whole schema the versions up to Through produce.
+	Checkpoint bool
+	// Through is the newest version a checkpoint collapses; zero on every other migration.
+	Through int64
+}
+
+// Collapses reports whether cp, a checkpoint, subsumes m.
+func (m Migration) Collapses(cp Migration) bool {
+	return !m.Repeatable && m.Version <= cp.Through
+}
+
+// NewestCheckpoint returns the newest checkpoint among migs, and whether there is one.
+func NewestCheckpoint(migs []Migration) (Migration, bool) {
+	var out Migration
+	found := false
+	for _, m := range migs {
+		if m.Checkpoint && m.Version >= out.Version {
+			out, found = m, true
+		}
+	}
+
+	return out, found
 }
 
 // ID identifies a migration in plans, keys and reports.
@@ -166,6 +188,9 @@ func (m *Migration) loadDirectives() error {
 
 		return derr
 	}
+	if i := slices.IndexFunc(up, func(d Directive) bool { return d.Op == DirectiveCheckpoint }); i >= 0 {
+		return m.loadCheckpoint(up, i)
+	}
 	if m.Repeatable && len(up)+len(down) > 0 {
 		return placement(m, up, down, "directives are not supported in a repeatable migration")
 	}
@@ -182,6 +207,32 @@ func (m *Migration) loadDirectives() error {
 		return placement(m, nil, down, "a .down.sql carries hand-written SQL or the lone `-- "+DirectiveMarker+" "+DirectiveRevert+"` sentinel, not both")
 	}
 	m.Directives = up
+
+	return nil
+}
+
+// loadCheckpoint validates the checkpoint directive at up[i]: it stands alone, on a versioned migration,
+// over a version below its own, and the file has no inverse because the versions it collapses can never
+// be reverted through it.
+func (m *Migration) loadCheckpoint(up []Directive, i int) error {
+	d := up[i]
+	fail := func(format string, args ...any) error {
+		return &DirectiveError{File: m.UpFile(), Line: d.Line, Msg: fmt.Sprintf(format, args...)}
+	}
+	if len(up) > 1 {
+		return fail("a checkpoint carries no other directive")
+	}
+	if m.Repeatable {
+		return fail("a checkpoint must be a versioned migration")
+	}
+	through, _ := strconv.ParseInt(d.Opts["through"], 10, 64) // the grammar guarantees 14 digits
+	if through >= m.Version {
+		return fail("through=%014d must be below the checkpoint's own version %014d", through, m.Version)
+	}
+	if strings.TrimSpace(m.DownSQL) != "" {
+		return fail("a checkpoint has no inverse; delete %s", m.DownFile())
+	}
+	m.Checkpoint, m.Through = true, through
 
 	return nil
 }
@@ -207,13 +258,13 @@ func (l loader) finish() ([]Migration, error) {
 		if out[i].UpSQL == "" {
 			return nil, fmt.Errorf("%s: missing up file", out[i].ID())
 		}
-		if out[i].DownSQL == "" {
-			return nil, fmt.Errorf("%s: missing down file", out[i].ID())
-		}
 		sum := sha256.Sum256([]byte(out[i].UpSQL))
 		out[i].Checksum = hex.EncodeToString(sum[:])
 		if err := out[i].loadDirectives(); err != nil {
 			return nil, err
+		}
+		if out[i].DownSQL == "" && !out[i].Checkpoint {
+			return nil, fmt.Errorf("%s: missing down file", out[i].ID())
 		}
 	}
 	slices.SortFunc(out, CompareMigrations)
