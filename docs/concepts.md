@@ -459,6 +459,8 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 
 **The plan contract** treats a repeatable like any other pending file. Its content is part of the plan key, so editing the file makes an existing plan stop covering the set (`PlanRequired` on a `require_plan` target); its recorded checksum is part of the observation's `history_hash`, so a repeatable re-recorded on the target by something other than a run refuses the bind with `PlanStale{history}`. Scratch validation replays repeatables with the history, in the same order, so already-applied detection and `godwit diff` see the same schema the target has.
 
+**`godwit diff` reads them too.** The desired schema a diff is measured against is the ORM's DDL *plus* every `R__` file in the directory, so what a repeatable declares is never proposed as a drop; a diff whose request carries no directory at all is refused instead ([generating migrations from a schema](#generating-migrations-from-a-schema) has the rules).
+
 **Hazards apply unchanged**: a repeatable is still DDL and goes through the same gate, the same acknowledgement and the same `expand-contract` split. `lint` accepts the filename and reports the same codes, with one exception: `E003` ("migration modified after merge") never fires on an `R__` file — editing it in place is the point.
 
 **Down.** The `.down.sql` is required, like a versioned one, and it is used only when the run whose ledger holds the repeatable is reverted; then it runs and the `godwit.repeatables` row is deleted. godwit does not store previous file bodies, so reverting a run that *re-applied* a repeatable drops the object rather than restoring the body it had before — write the down side as `DROP ... IF EXISTS`, and roll forward by editing the file when you want the previous content back.
@@ -593,9 +595,26 @@ Only what the snapshot sees can be matched: columns of base tables, constraints,
 
 ## Generating migrations from a schema
 
-`Diff{target, schema}` (`godwit diff`) turns a description of the whole database you want into the next migration. The **before** side is the target as the plan machinery observes it (`Observe`: applied versions, schema definition, `search_path`), not its recorded history. The **after** side is `schema`, applied as-is on an empty scratch database on the control-plane PostgreSQL with the target's `search_path`. The two are compared with [pg-schema-diff](https://github.com/stripe/pg-schema-diff) in both directions: live → desired is the `up` SQL, desired → live the `down` SQL. Every statement is classified by the same planner a run uses, so the response carries hazards and recipes, and `godwit diff` writes `<timestamp>_<name>.up.sql` / `.down.sql` in the migration directory. Equal schemas produce empty SQL and nothing is written.
+`Diff{target, schema}` (`godwit diff`) turns a description of the whole database you want into the next migration. The **before** side is the target as the plan machinery observes it (`Observe`: applied versions, schema definition, `search_path`), not its recorded history. The **after** side is `schema`, applied as-is on an empty scratch database on the control-plane PostgreSQL with the target's `search_path`, followed by the `R__` migrations of `files` ([objects a repeatable declares](#objects-a-repeatable-declares)). The two are compared with [pg-schema-diff](https://github.com/stripe/pg-schema-diff) in both directions: live → desired is the `up` SQL, desired → live the `down` SQL. Every statement is classified by the same planner a run uses, so the response carries hazards and recipes, and `godwit diff` writes `<timestamp>_<name>.up.sql` / `.down.sql` in the migration directory. Equal schemas produce empty SQL and nothing is written.
 
 Because the starting point is the live schema, hand changes that are not in the history become part of the generated migration. When validation is on, the response also carries `drift`: the `+`/`-` lines between the history replayed on a scratch database and the live target, so you can tell which part of the `up` captures drift and which part is new ([drift](#drift) explains the format). With `--skip-validation` on the service, `drift` is empty.
+
+### Objects a repeatable declares
+
+An `R__` migration builds objects the ORM schema knows nothing about — a view, a function, a trigger. The desired side is therefore not `schema` alone: `DiffRequest.files` is the migration directory, and every `R__` pair in it is applied on the desired scratch database after the DDL, in the order a run applies them. The object is then on both sides of the comparison and neither direction proposes to touch it, under either base. `repeatable_objects` in the response names what appeared when they ran.
+
+That set comes from the scratch database's own catalog, read before and after the repeatables are applied — not from parsing their bodies and not from `pg_depend` on the target. Parsing sees only what the statements name; `pg_depend` records dependencies, not which file made an object, so it cannot attribute anything on a live target. What appears on a database where nothing else ran is exactly what those files build.
+
+What follows:
+
+| Situation | What the diff does |
+|---|---|
+| A repeatable edited so it builds a different object | the new object is in the desired schema; the old one is in no file any more, and the `up` drops it |
+| A repeatable deleted from the directory | nothing declares its object, and the `up` drops it — deleting the file is how you retire what it built |
+| An object a versioned migration created and a repeatable later took over | the `R__` file declares it, so it is in the desired schema and the diff leaves it alone |
+| A repeatable that no longer builds on the desired schema | `invalid_argument`, `repeatable migration does not build on the desired schema: <file>: <postgres error>` — the migration the diff was about to write would have broken it |
+
+**Without the migration directory the diff refuses.** A request carrying no `files` while `godwit.repeatables` on the target has rows is `failed_precondition`, naming the recorded repeatables: the diff can see those objects but not what declares them, and would propose dropping every one. `godwit diff` sends `--dir` for exactly that reason, and `/ui/diff`, which has no directory to send, shows the refusal on a target that has repeatables. A target that records none is unaffected: there is nothing to attribute and nothing to refuse.
 
 ### Schema sources
 

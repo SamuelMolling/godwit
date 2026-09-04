@@ -35,6 +35,8 @@ type diffJSON struct {
 	Drift      string           `json:"drift,omitempty"`
 	Observed   *planObservation `json:"observed,omitempty"`
 	Files      []string         `json:"files"`
+
+	RepeatableObjects []string `json:"repeatable_objects"`
 }
 
 func newDiffCmd() *cobra.Command {
@@ -61,7 +63,12 @@ func newDiffCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := client.Diff(cmd.Context(), connect.NewRequest(&godwitv1.DiffRequest{Target: target, Schema: ddl}))
+			committed, err := optionalFiles(cmd, dir)
+			if err != nil {
+				return err
+			}
+			res, err := client.Diff(cmd.Context(),
+				connect.NewRequest(&godwitv1.DiffRequest{Target: target, Schema: ddl, Files: committed}))
 			if err != nil {
 				return err
 			}
@@ -234,6 +241,10 @@ func writeDiffReport(w io.Writer, m *godwitv1.DiffResponse, files []string, sche
 
 		return
 	}
+	if len(m.RepeatableObjects) > 0 {
+		fmt.Fprintf(w, "declared by repeatable migrations, so the desired schema keeps them: %s\n",
+			strings.Join(m.RepeatableObjects, ", "))
+	}
 	if m.UpSql == "" {
 		fmt.Fprintf(w, "no changes: %s already matches %s\n", m.Target, schema)
 
@@ -262,6 +273,7 @@ func writeDiffJSON(w io.Writer, m *godwitv1.DiffResponse, files []string) {
 	out := diffJSON{
 		Target: m.Target, Changed: m.UpSql != "", UpSQL: m.UpSql, DownSQL: m.DownSql,
 		Statements: []statementJSON{}, Drift: m.Drift, Files: append([]string{}, files...),
+		RepeatableObjects: append([]string{}, m.RepeatableObjects...),
 	}
 	for _, st := range m.Statements {
 		hazards := make([]hazardJSON, 0, len(st.Hazards))

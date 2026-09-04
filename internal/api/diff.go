@@ -27,28 +27,30 @@ func (s *Server) Diff(ctx context.Context, req *connect.Request[godwitv1.DiffReq
 		return nil, errDiffDisabled
 	}
 	base, files := controlplane.DiffBaseLive, map[string]string{}
+	for _, f := range m.Files {
+		files[f.Name] = f.Body
+	}
 	if m.Base == godwitv1.DiffBase_DIFF_BASE_FILES {
-		if len(m.Files) == 0 {
+		if len(files) == 0 {
 			return nil, invalid("files is required for base DIFF_BASE_FILES")
 		}
 		base = controlplane.DiffBaseFiles
-		for _, f := range m.Files {
-			files[f.Name] = f.Body
-		}
 	}
 	d, err := s.Differ.Diff(ctx, m.Target, m.Schema, base, files)
 	if err != nil {
-		if errors.Is(err, controlplane.ErrDesiredSchema) || errors.Is(err, controlplane.ErrMigrationFiles) {
+		if errors.Is(err, controlplane.ErrDesiredSchema) || errors.Is(err, controlplane.ErrMigrationFiles) ||
+			errors.Is(err, controlplane.ErrRepeatableSchema) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
-		if errors.Is(err, controlplane.ErrValidationDisabled) {
+		if errors.Is(err, controlplane.ErrValidationDisabled) || errors.Is(err, controlplane.ErrRepeatablesUnknown) {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		}
 
 		return nil, rpcErr(err)
 	}
 	out := &godwitv1.DiffResponse{
-		Target: m.Target, UpSql: d.UpSQL, DownSql: d.DownSQL, Observed: observationToProto(d.Observed), Drift: strings.Join(d.Drift, "\n"),
+		Target: m.Target, UpSql: d.UpSQL, DownSql: d.DownSQL, Observed: observationToProto(d.Observed),
+		Drift: strings.Join(d.Drift, "\n"), RepeatableObjects: d.RepeatableObjects,
 	}
 	if d.UpSQL != "" {
 		plan, err := engine.BuildPlan(engine.Migration{Name: "diff", UpSQL: d.UpSQL}, engine.DirectionUp)

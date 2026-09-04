@@ -54,6 +54,8 @@ func TestDiffErrors(t *testing.T) {
 		}), connect.CodeInvalidArgument},
 		{"files do not replay", &stubDiffer{err: fmt.Errorf("%w: boom", controlplane.ErrMigrationFiles)}, diffReq("app", "x"), connect.CodeInvalidArgument},
 		{"validation disabled", &stubDiffer{err: controlplane.ErrValidationDisabled}, diffReq("app", "x"), connect.CodeFailedPrecondition},
+		{"repeatable does not build", &stubDiffer{err: fmt.Errorf("%w: boom", controlplane.ErrRepeatableSchema)}, diffReq("app", "x"), connect.CodeInvalidArgument},
+		{"no migration directory", &stubDiffer{err: fmt.Errorf("%w: R__v", controlplane.ErrRepeatablesUnknown)}, diffReq("app", "x"), connect.CodeFailedPrecondition},
 	} {
 		s.Differ = tc.differ
 		if _, err := s.Diff(ctx, tc.req); connect.CodeOf(err) != tc.code {
@@ -121,4 +123,21 @@ func TestDiffPassesTheCommittedFiles(t *testing.T) {
 	if stub.base != controlplane.DiffBaseFiles || stub.files["20260901120000_t.up.sql"] != "CREATE TABLE t (b int);" {
 		t.Fatalf("files base = %v, files = %v", stub.base, stub.files)
 	}
+
+	stub.out = controlplane.SchemaDiff{RepeatableObjects: []string{"public.t_totals"}}
+	resp, err := s.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: "CREATE TABLE t (b int);",
+		Files: []*godwitv1.MigrationFile{{Name: "R__t_totals.up.sql", Body: totalsUpSQL}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.base != controlplane.DiffBaseLive || stub.files["R__t_totals.up.sql"] != totalsUpSQL {
+		t.Fatalf("live base with files = %v, files = %v", stub.base, stub.files)
+	}
+	if len(resp.Msg.RepeatableObjects) != 1 || resp.Msg.RepeatableObjects[0] != "public.t_totals" {
+		t.Fatalf("repeatable objects = %v", resp.Msg.RepeatableObjects)
+	}
 }
+
+const totalsUpSQL = "CREATE OR REPLACE VIEW t_totals AS SELECT b FROM t;"

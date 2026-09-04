@@ -1999,7 +1999,8 @@ type DiffRequest struct {
 	Schema string `protobuf:"bytes,2,opt,name=schema,proto3" json:"schema,omitempty"`
 	// Defaults to DIFF_BASE_LIVE.
 	Base DiffBase `protobuf:"varint,3,opt,name=base,proto3,enum=godwit.v1.DiffBase" json:"base,omitempty"`
-	// The committed migration directory, required by DIFF_BASE_FILES and ignored otherwise.
+	// The committed migration directory. Required by DIFF_BASE_FILES; under DIFF_BASE_LIVE its R__ pairs are
+	// built on the desired schema, and it is required whenever the target records repeatable migrations.
 	Files         []*MigrationFile `protobuf:"bytes,4,rep,name=files,proto3" json:"files,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2074,9 +2075,12 @@ type DiffResponse struct {
 	Statements []*PlannedStatement `protobuf:"bytes,4,rep,name=statements,proto3" json:"statements,omitempty"`
 	Observed   *PlanObservation    `protobuf:"bytes,5,opt,name=observed,proto3" json:"observed,omitempty"`
 	// Schema changes on the target that no run made, as +/- lines; they are part of up_sql's starting point.
-	Drift         string `protobuf:"bytes,6,opt,name=drift,proto3" json:"drift,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Drift string `protobuf:"bytes,6,opt,name=drift,proto3" json:"drift,omitempty"`
+	// The objects the request's repeatable migrations build; they are part of the desired schema, so up_sql
+	// neither drops nor recreates them while an R__ file still declares them.
+	RepeatableObjects []string `protobuf:"bytes,7,rep,name=repeatable_objects,json=repeatableObjects,proto3" json:"repeatable_objects,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DiffResponse) Reset() {
@@ -2149,6 +2153,13 @@ func (x *DiffResponse) GetDrift() string {
 		return x.Drift
 	}
 	return ""
+}
+
+func (x *DiffResponse) GetRepeatableObjects() []string {
+	if x != nil {
+		return x.RepeatableObjects
+	}
+	return nil
 }
 
 type CheckDriftRequest struct {
@@ -4452,7 +4463,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x16\n" +
 	"\x06schema\x18\x02 \x01(\tR\x06schema\x12'\n" +
 	"\x04base\x18\x03 \x01(\x0e2\x13.godwit.v1.DiffBaseR\x04base\x12.\n" +
-	"\x05files\x18\x04 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\"\xe3\x01\n" +
+	"\x05files\x18\x04 \x03(\v2\x18.godwit.v1.MigrationFileR\x05files\"\x92\x02\n" +
 	"\fDiffResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x15\n" +
 	"\x06up_sql\x18\x02 \x01(\tR\x05upSql\x12\x19\n" +
@@ -4461,7 +4472,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"statements\x18\x04 \x03(\v2\x1b.godwit.v1.PlannedStatementR\n" +
 	"statements\x126\n" +
 	"\bobserved\x18\x05 \x01(\v2\x1a.godwit.v1.PlanObservationR\bobserved\x12\x14\n" +
-	"\x05drift\x18\x06 \x01(\tR\x05drift\"+\n" +
+	"\x05drift\x18\x06 \x01(\tR\x05drift\x12-\n" +
+	"\x12repeatable_objects\x18\a \x03(\tR\x11repeatableObjects\"+\n" +
 	"\x11CheckDriftRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\"B\n" +
 	"\x12CheckDriftResponse\x12\x18\n" +

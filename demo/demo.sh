@@ -350,13 +350,25 @@ docker compose exec -T target-db psql -U app -d legacy \
 
 echo
 echo "==> schema diff: describe the whole database you want, godwit writes the migration from what legacy has now to it"
+echo "==> first without the migration directory: legacy has a repeatable recorded, and a diff that cannot see what declares order_totals refuses instead of proposing to drop it"
 rpc Diff '{
   "target": "legacy",
   "schema": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text, customer_id bigint); CREATE INDEX orders_customer_idx ON orders (customer_id);"
 }' 18475
 echo
-echo "==> upSql adds the column and creates the index CONCURRENTLY, downSql drops both; both calls also drop order_totals, because a repeatable's view is not in the desired schema unless you declare it there"
-rpc Diff '{"target": "legacy", "schema": "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text);"}' 18475
+echo "==> now with the R__ files: the view is built on the desired schema too, so upSql only adds the column and creates the index CONCURRENTLY, downSql drops both, and repeatableObjects names what the diff left alone"
+rpc Diff "{
+  \"target\": \"legacy\",
+  \"schema\": \"CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text, customer_id bigint); CREATE INDEX orders_customer_idx ON orders (customer_id);\",
+  \"files\": $(rep_files ', total * 2 AS doubled')
+}" 18475
+echo
+echo "==> and the schema legacy already has reports no changes, order_totals included"
+rpc Diff "{
+  \"target\": \"legacy\",
+  \"schema\": \"CREATE TABLE orders (id bigint PRIMARY KEY, total numeric, status text, note text);\",
+  \"files\": $(rep_files ', total * 2 AS doubled')
+}" 18475
 echo
 
 echo
