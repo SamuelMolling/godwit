@@ -118,6 +118,9 @@ func newMigrateCmd() *cobra.Command {
 			if req.PlanId != "" && dryRun {
 				return errors.New("--plan cannot be combined with --dry-run")
 			}
+			if err := checkToVersion(cmd, req.ToVersion, req.PlanId, req.Target); err != nil {
+				return err
+			}
 			if req.PlanId != "" && !cmd.Flags().Changed("rollout") {
 				req.Rollout = ""
 			}
@@ -153,6 +156,7 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "text", "dry-run output format: text, markdown or json")
 	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the run (e.g. github.com/org/repo@<sha>:db/migrations)")
 	cmd.Flags().StringVar(&req.PlanId, "plan", "", "bind this stored plan by id; the plan supplies target, rollout and files unless given explicitly")
+	cmd.Flags().Int64Var(&req.ToVersion, "to", 0, "stop at this migration version: pending ones above it are reported as withheld and left for a later run")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
@@ -173,7 +177,7 @@ func bindLine(res *godwitv1.CreateRunResponse) string {
 func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, req *godwitv1.CreateRunRequest, write func(io.Writer, planReport)) error {
 	res, err := client.PlanRun(cmd.Context(), connect.NewRequest(&godwitv1.PlanRunRequest{
 		Target: req.Target, Files: req.Files, AcknowledgeHazards: req.AcknowledgeHazards, SkipValidation: req.SkipValidation,
-		Rollout: req.Rollout, AllowOutOfOrder: req.AllowOutOfOrder,
+		Rollout: req.Rollout, AllowOutOfOrder: req.AllowOutOfOrder, ToVersion: req.ToVersion,
 	}))
 	if err != nil {
 		return err
@@ -231,7 +235,7 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 		}
 		r.items = append(r.items, planItem{
 			Plan: p, applied: pm.Applied, phase: pm.Phase, alreadyApplied: pm.AlreadyApplied, effect: pm.Effect, note: pm.Note,
-			directives: pm.Directives, expanded: pm.Expanded, notes: pm.Notes,
+			directives: pm.Directives, expanded: pm.Expanded, notes: pm.Notes, withheld: pm.Withheld,
 		})
 	}
 

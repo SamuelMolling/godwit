@@ -471,6 +471,51 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 
 **Down.** The `.down.sql` is required, like a versioned one, and it is used only when the run whose ledger holds the repeatable is reverted; then it runs and the `godwit.repeatables` row is deleted. godwit does not store previous file bodies, so reverting a run that *re-applied* a repeatable drops the object rather than restoring the body it had before — write the down side as `DROP ... IF EXISTS`, and roll forward by editing the file when you want the previous content back.
 
+## Version targets
+
+`godwit plan --to <version>` and `godwit migrate --to <version>` stop at a chosen migration: everything at or below that version runs, everything above it is left for a later run. It is how you land a large branch one migration at a time without editing the directory, and how a pipeline applies the expand-side migration today and the contract-side one tomorrow from the same commit.
+
+**The whole directory is still submitted.** The client sends every file and the version target as a separate field; the service is what cuts the set. Filtering client-side and sending fewer files would produce the same run and a plan that *silently* covers less than the directory — the reviewer has no way to tell an intentional stop from a directory that only holds three migrations. So the migrations above the target stay on the plan, marked `withheld`, and appear in the text output, the markdown pull-request comment, `godwit plan show` and the JSON:
+
+```
+plan 3f2a… on app (rollout direct, validated on a scratch database)
+key: 9c1b…
+withheld: 2 migration(s) in the directory this plan does not cover (20260901120100_b, R__v)
+20260901120000_a (up): 1 statement(s) [expand, pending]
+  [0] tx    CREATE TABLE a (id int)
+20260901120100_b (up): 0 statement(s) [withheld]
+R__v (up): 0 statement(s) [withheld]
+```
+
+A withheld migration is not part of the pending set: it is not planned, not validated, not expanded, not hazard-gated and not in the run's files. It is a name on the report and nothing else.
+
+**The plan key already handles it.** The key is a hash of the *pending set*, not of the directory ([plans](#plans)), so a plan taken with `--to 3` gets its own key and a `migrate --to 3` from the same commit binds to it. A `migrate` without the target computes a different key from the same files and simply finds no plan — an implicit run, or `PlanRequired` naming the nearest plan on a `require_plan` target. Nothing about the key changed for this feature.
+
+**Repeatables are held back with the versions they ship with.** An `R__` file states the object the whole directory declares, and it is usually edited in the same commit as the migration that makes it valid. Building it against a history the target has not reached yet either fails validation or installs a view over columns that do not exist. So: a repeatable runs when the version target holds back no pending versioned migration, and is withheld otherwise. A target at or above the newest pending version withholds nothing and is a no-op.
+
+**A directive below the target expands for the truncated point in time.** Expansion runs on a scratch database carrying the target's replayed history plus the submitted files — which are now only the files at or below the target — so a `change-type` at version 2 expands exactly as it would have if versions 3 and 4 had not been written yet, and the expansion is frozen on the run as usual. Under `expand-contract` the rollout split also happens over the truncated set, so the contract phase covers only what is at or below the target.
+
+**The order guard is untouched.** Cutting the tail off a pending set cannot produce a version below the newest *applied* one, so a version target never trips the out-of-order guard and never needs `allow_out_of_order`; deferring the tail and back-filling a hole are different things. Applying the rest later is in order by construction.
+
+**"Applied" here is the ledger's answer**, the same one the order guard asks: every migration a run carried to completion that no revert undid, including one a run that later failed had already landed. So a version a failed run got in is genuinely behind the history and refused, and it genuinely holds nothing back — a repeatable above it still runs.
+
+**Reverting is unaffected.** A run created with a version target records in its ledger exactly the migrations it applied, and `revert` acts on that ledger and on the newest un-reverted run ([revert](#revert)) — so `godwit revert` after `migrate --to 3` undoes migrations 1 to 3 and nothing else, with no `--to` of its own. A `revert --to <version>` walking backwards *across* runs is a different feature with a different unit and a different data-loss story, and is not built.
+
+### What a version target refuses
+
+Every refusal names the version and what the target holds, before anything is stored or run.
+
+| Situation | Refusal |
+|---|---|
+| The submitted set has no migration with that version | `invalid_argument`: `no migration in this set has version <v>`, listing the versions it was given. A version target names a file, never a point between two |
+| The version is below the newest one the target has applied | `failed_precondition`: `version target <v> is behind version <w>, already applied on <t>: a target stops a run short, it never reverts`. This is the Django and Alembic reflex — there `migrate <app> <target>` unapplies — and a silent no-op would read as success. `godwit revert` is the undo |
+| Everything at or below the version is applied while migrations above it are pending | `failed_precondition`, naming the first pending migration. A stated intent that selects nothing is a mistake, not an idempotent re-run. A target with nothing pending anywhere is the idempotent case and runs as usual |
+| `--to` together with `--plan <id>` | `invalid_argument`: the stored plan already fixes the set it covers |
+| `--to` without a target | `--to needs --target`: what it holds back is decided against the versions that target has applied, and the offline `godwit plan` has no target to ask |
+| `--to 0` or a negative value | `--to takes a migration version, the 14 digits its file name starts with` |
+
+There is no `to_version` key in `godwit.yaml`. A standing version target would truncate every run in the repository from then on, invisibly — the one failure mode this design exists to prevent.
+
 ## Rollout policies
 
 | Policy | Behaviour |

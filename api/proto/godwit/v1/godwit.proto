@@ -112,6 +112,8 @@ message CreateRunRequest {
   string source = 9;
   // Bind this stored plan explicitly; files may be omitted (the plan supplies them) and target must match when set.
   string plan_id = 10;
+  // Stop at this version: only migrations at or below it run, the rest are reported as withheld. Zero runs everything.
+  int64 to_version = 11;
 }
 
 message CreateRunResponse {
@@ -133,6 +135,8 @@ message PlanRunRequest {
   bool persist = 7;
   // Free-text provenance stored with the plan, e.g. github.com/org/repo@<sha>:db/migrations.
   string source = 8;
+  // Stop at this version: only migrations at or below it are planned, the rest are reported as withheld. Zero plans everything.
+  int64 to_version = 9;
 }
 
 message PlanObservation {
@@ -217,6 +221,8 @@ message PlannedMigration {
   bool expanded = 12;
   // What the expansion leaves behind or costs, one line each.
   repeated string notes = 13;
+  // Kept out of this plan by a version target: it is in the directory, it is not in the run.
+  bool withheld = 14;
 }
 
 message PlanRunResponse {

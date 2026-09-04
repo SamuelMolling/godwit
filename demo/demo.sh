@@ -482,6 +482,33 @@ docker compose exec -T target-db psql -U app -d tenant -c "SELECT version, name 
 docker compose exec -T godwit-2 /godwit target status tenant --server http://localhost:8474 --token demo-token
 
 echo
+echo "==> version target: two migrations arrive together, --to lands only the first"
+TO_FILES='[
+    {"name": "20260901990001_shipments.up.sql", "body": "CREATE TABLE shipments (id bigint PRIMARY KEY);"},
+    {"name": "20260901990001_shipments.down.sql", "body": "DROP TABLE shipments;"},
+    {"name": "20260901990002_carriers.up.sql", "body": "CREATE TABLE carriers (id bigint PRIMARY KEY);"},
+    {"name": "20260901990002_carriers.down.sql", "body": "DROP TABLE carriers;"}
+  ]'
+echo "==> the plan carries the whole directory: the migration above the target is marked withheld, not dropped from the report"
+rpc PlanRun "{\"target\": \"legacy\", \"toVersion\": 20260901990001, \"files\": $TO_FILES}" 18475 \
+  | tr ',' '\n' | grep -E '"(name|withheld)"'
+TO_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"toVersion\": 20260901990001, \"files\": $TO_FILES}" 18475 | field runId)
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$TO_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT table_name FROM information_schema.tables WHERE table_name IN ('shipments', 'carriers');"
+echo "==> asking for the same version again is refused: it now selects nothing while the migration above it is still pending"
+rpc CreateRun "{\"target\": \"legacy\", \"toVersion\": 20260901990001, \"files\": $TO_FILES}" 18475 || true
+echo "==> without --to the rest lands"
+run_and_wait "$TO_FILES"
+docker compose exec -T target-db psql -U app -d legacy \
+  -c "SELECT table_name FROM information_schema.tables WHERE table_name IN ('shipments', 'carriers');"
+
+echo
 echo "==> every registered target, from the control plane alone: settings, applied count, ready plans, drift, last run"
 docker compose exec -T godwit-2 /godwit targets --server http://localhost:8474 --token demo-token
 
@@ -498,5 +525,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, -- godwit: directives expanded into lock-safe plans, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, -- godwit: directives expanded into lock-safe plans, version targets, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

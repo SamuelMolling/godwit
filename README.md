@@ -46,6 +46,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | Target inventory | `ListTargets` (`godwit targets`) summarises every registered target from the control plane alone — settings, applied count, ready plans, runs waiting for a human, open drift, last run — without opening a connection to any of them, so it answers while a target is down. |
 | Drift detection | Fingerprint after every successful run, periodic monitor, events, accept. |
 | Out-of-order guard and dry run | Older-than-applied versions are refused unless allowed; `PlanRun` shows the admitted plan without queueing. |
+| Version targets | `plan --to <version>` and `migrate --to <version>` stop at a chosen migration and leave the rest pending. The whole directory is still submitted and the migrations above the version stay on the plan marked **withheld**, so the pull-request comment cannot be read as the whole set; repeatables are held back with them. A version the directory does not hold, one behind what the target applied (`--to` never reverts), one that selects nothing while work above it is pending, and `--to` on a stored plan are each refused by name ([concepts](docs/concepts.md#version-targets)). |
 | Plan as contract | `godwit plan --target` stores the admitted plan with an observation of the target; `migrate` binds to it, re-plans when the only changes are explained by other runs, and refuses with the exact diff when the target moved underneath (`require_plan` makes a stored plan mandatory). |
 | Plan inspection and override | `godwit plans` / `godwit plan show <id>` list and show stored plans with their state and the run that applied them; `migrate --plan <id>` binds one explicitly, files optional; `--plan-retention` prunes bound and superseded plans. |
 | Already applied by hand | A validated plan spots pending migrations whose effect is already on the target (as a prefix, DDL only) and the run records them with zero statements instead of executing; DML, non-inspectable effects and out-of-prefix changes are refused with the reason. |
@@ -64,7 +65,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | | |
 |---|---|
 | [Getting started](docs/getting-started.md) | dev loop, service, first run, CI |
-| [Concepts](docs/concepts.md) | journal protocol and crash timeline, run states, leases, hazards, directives, validation, repeatables, rollouts, revert, drift, baseline, migrations from a schema |
+| [Concepts](docs/concepts.md) | journal protocol and crash timeline, run states, leases, hazards, directives, validation, repeatables, version targets, rollouts, revert, drift, baseline, migrations from a schema |
 | [Configuration](docs/configuration.md) | every `godwit.yaml` key, `serve` flag and environment variable, token spec, CLI reference |
 | [Operations](docs/operations.md) | HA, store sizing and privileges, backups, retention, upgrades, metrics and alert rules, notifications, logging |
 | [Runbook](docs/runbook.md) | per symptom: the SQL to look at and the command to run |

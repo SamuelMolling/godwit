@@ -28,6 +28,9 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	if err != nil {
 		return nil, err
 	}
+	if spec, err = s.stopAt(ctx, m.Target, spec, m.ToVersion); err != nil {
+		return nil, err
+	}
 	if m.Persist && s.Inspector == nil {
 		return nil, errPlanDisabled
 	}
@@ -47,11 +50,12 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	if err := checkRollout(spec.rollout, adm.expanded(spec)); err != nil {
 		return nil, err
 	}
-	migs := controlplane.BuildPlanMigrations(spec.rollout, adm.expanded(spec), adm.applied, adm.expansions)
+	migs := withWithheld(controlplane.BuildPlanMigrations(spec.rollout, adm.expanded(spec), adm.applied, adm.expansions), spec, adm.applied)
 	out := &godwitv1.PlanRunResponse{Target: m.Target, Rollout: spec.rollout, Validated: adm.validated, Migrations: migrationsToProto(migs)}
 	if !m.Persist {
 		s.Log.Info("run planned", "target", m.Target, "rollout", spec.rollout, "files", len(spec.files),
-			"acked", m.AcknowledgeHazards, "validated", adm.validated, "allow_out_of_order", m.AllowOutOfOrder)
+			"acked", m.AcknowledgeHazards, "validated", adm.validated, "allow_out_of_order", m.AllowOutOfOrder,
+			"to_version", m.ToVersion, "withheld", len(spec.withheld))
 
 		return connect.NewResponse(out), nil
 	}
@@ -97,10 +101,11 @@ func planMigrations(spec runSpec, adm admission, obs controlplane.Observation) (
 	plans := adm.expanded(spec)
 	migs = controlplane.BuildPlanMigrations(spec.rollout, plans, adm.applied, adm.expansions)
 	if adm.validation == nil {
-		return migs, "", false
+		return withWithheld(migs, spec, adm.applied), "", false
 	}
+	drift = controlplane.Detect(migs, plans, *adm.validation, obs)
 
-	return migs, controlplane.Detect(migs, plans, *adm.validation, obs), true
+	return withWithheld(migs, spec, adm.applied), drift, true
 }
 
 func (s *Server) driftSince(ctx context.Context, target string, obs controlplane.Observation) (string, error) {
@@ -133,7 +138,7 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 		pm := &godwitv1.PlannedMigration{
 			Version: m.Version, Name: m.Name, Repeatable: m.Repeatable, Checksum: m.Checksum, Applied: m.Applied,
 			Phase: m.Phase, AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
-			Directives: m.Directives, Expanded: m.Expanded, Notes: m.Notes,
+			Directives: m.Directives, Expanded: m.Expanded, Notes: m.Notes, Withheld: m.Withheld,
 		}
 		pm.Statements = statementsToProto(m.Statements)
 		out = append(out, pm)
