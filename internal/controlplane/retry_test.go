@@ -38,6 +38,7 @@ func TestTransientAndFailureDetail(t *testing.T) {
 		{"net error", fmt.Errorf("dial: %w", &net.OpError{Op: "dial", Err: errors.New("refused")}), true, ReasonNetwork, "transient: "},
 		{"eof", fmt.Errorf("read: %w", io.EOF), true, ReasonNetwork, "transient: "},
 		{"unexpected eof", io.ErrUnexpectedEOF, true, ReasonNetwork, "transient: "},
+		{"conn closed", fmt.Errorf("exec: %w", pgconn.ErrConnClosed), true, ReasonNetwork, "transient: "},
 		{"deadline", fmt.Errorf("apply: %w", context.DeadlineExceeded), true, ReasonTimeout, "transient: "},
 		{"control plane", errors.New("unknown rollout"), false, "", ""},
 	}

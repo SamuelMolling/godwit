@@ -12,13 +12,6 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
 
-func columnExists(t *testing.T, dsn, table, column string) bool {
-	t.Helper()
-
-	return query[bool](t, dsn,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)`, table, column)
-}
-
 func TestLockTimeoutRetriesThenSucceeds(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, 1)

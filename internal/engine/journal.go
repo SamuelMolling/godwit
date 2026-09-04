@@ -132,6 +132,10 @@ func loadProgress(ctx context.Context, db DB, p Plan, runID string) (runProgress
 	var rowsDone int64
 	var rowsTotal *int64
 	_, err = pgx.ForEachRow(rows, []any{&idx, &state, &hash, &cursor, &rowsDone, &rowsTotal}, func() error {
+		if idx >= len(p.Statements) {
+			return fmt.Errorf("run %s journalled statement %d and the plan now has %d; refusing to resume",
+				runID, idx, len(p.Statements))
+		}
 		if hash != p.Statements[idx].Hash {
 			return fmt.Errorf("statement %d changed since run %s started; refusing to resume", idx, runID)
 		}

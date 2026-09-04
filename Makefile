@@ -1,4 +1,4 @@
-.PHONY: all build test cover e2e lint proto-lint tidy helm-lint release-snapshot
+.PHONY: all build test cover e2e load chaos lint proto-lint tidy helm-lint release-snapshot
 
 all: lint proto-lint cover build
 
@@ -13,6 +13,13 @@ cover:
 
 e2e:
 	go test -tags e2e -count=1 -timeout 15m ./test/e2e/...
+
+# Slow and deliberately outside `all`: see docs/testing.md for the knobs and the numbers.
+load:
+	go test -tags load -count=1 -timeout 120m -v ./test/e2e/...
+
+chaos:
+	go test -tags chaos -count=1 -timeout 60m -v ./test/e2e/...
 
 lint:
 	golangci-lint run
