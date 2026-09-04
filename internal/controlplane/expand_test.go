@@ -158,11 +158,23 @@ func TestExpandBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exp.Contract() != -1 || len(exp.Phase) != 1 || exp.Batches[0].Size != 7 || exp.Batches[0].Pause != time.Millisecond {
-		t.Fatalf("phases %v batches %+v", exp.Phase, exp.Batches[0])
+	if exp.Contract() != -1 || len(exp.Phase) != 6 || exp.Batches[2].Size != 7 || exp.Batches[2].Pause != time.Millisecond {
+		t.Fatalf("phases %v batches %+v", exp.Phase, exp.Batches[2])
 	}
-	if !strings.Contains(exp.UpSQL, "$1::text") {
-		t.Fatalf("text cursor:\n%s", exp.UpSQL)
+	if exp.Asserts[3] == nil || exp.Asserts[3].String() != "= 0" {
+		t.Fatalf("closing assertion %+v", exp.Asserts[3])
+	}
+	for _, want := range []string{
+		"$1::text",
+		"CREATE TRIGGER t_backfill_sync BEFORE INSERT OR UPDATE ON public.t FOR EACH ROW " +
+			"WHEN ((new.b IS NULL) AND (ROW(new.b) IS DISTINCT FROM ROW(new.a * 2)))",
+		"(b IS NULL) AND (ROW(b) IS DISTINCT FROM ROW(a * 2))",
+		"DROP TRIGGER t_backfill_sync ON public.t;",
+		"DROP FUNCTION public.t_backfill_sync();",
+	} {
+		if !strings.Contains(exp.UpSQL, want) {
+			t.Fatalf("expansion misses %q:\n%s", want, exp.UpSQL)
+		}
 	}
 	applyExpansion(t, conn, up, "UPDATE public.t SET b = NULL;\n", exp)
 
@@ -478,14 +490,160 @@ func TestExpandSplicesAroundOrdinarySQL(t *testing.T) {
 
 func TestExpandBackfillRefusals(t *testing.T) {
 	t.Parallel()
-	conn := newScratch(t, `CREATE TABLE public.nokey (a integer)`)
-	for _, tc := range []struct{ up, want string }{
-		{"-- godwit: backfill ghost set='a = 1'\n", "does not exist in the schema"},
-		{"-- godwit: backfill nokey set='a = 1'\n", "has no single-column primary key"},
+	conn := newScratch(t,
+		`CREATE TABLE public.nokey (a integer)`,
+		`CREATE TABLE public.t (k bigint PRIMARY KEY, a integer, b integer, arr integer[], meta json)`,
+		`CREATE TABLE public.other (id bigint)`,
+		`CREATE TABLE public.taken (k bigint PRIMARY KEY, a integer, b integer)`,
+		`CREATE FUNCTION public.noisy(integer) RETURNS integer LANGUAGE sql VOLATILE AS $$ SELECT $1 $$`,
+		`CREATE FUNCTION public.taken_backfill_sync() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN new; END $$`,
+	)
+	for name, tc := range map[string]struct{ up, want string }{
+		"missing table":     {"-- godwit: backfill ghost set='a = 1'\n", "does not exist in the schema"},
+		"no primary key":    {"-- godwit: backfill nokey set='a = 1'\n", "has no single-column primary key"},
+		"missing column":    {"-- godwit: backfill t set='ghost = 1'\n", "does not exist in the schema"},
+		"batch key":         {"-- godwit: backfill t set='k = 1'\n", "assigns the batch key"},
+		"reads own target":  {"-- godwit: backfill t set='b = b + 1'\n", "which it also assigns"},
+		"reads other targe": {"-- godwit: backfill t set='b = a, a = 1'\n", "which it also assigns"},
+		"subquery set":      {"-- godwit: backfill t set='b = (SELECT 1)'\n", "contains a subquery"},
+		"other table set":   {"-- godwit: backfill t set='b = other.id'\n", "only columns of t"},
+		"volatile set":      {"-- godwit: backfill t set='b = noisy(a)'\n", "VOLATILE function"},
+		"subquery where":    {"-- godwit: backfill t set='b = a' where='(SELECT true)'\n", "contains a subquery"},
+		"other table where": {"-- godwit: backfill t set='b = a' where='other.id > 0'\n", "only columns of t"},
+		"volatile where":    {"-- godwit: backfill t set='b = a' where='noisy(a) > 0'\n", "VOLATILE function"},
+		"no equality":       {"-- godwit: backfill t set='meta = ''{}''::json'\n", "no equality operator"},
+		"default":           {"-- godwit: backfill t set='b = DEFAULT'\n", "assigns DEFAULT"},
+		"element":           {"-- godwit: backfill t set='arr[1] = 3'\n", "element or field"},
+		"multi column":      {"-- godwit: backfill t set='(a, b) = (SELECT 1, 2)'\n", "one column at a time"},
+		"name taken":        {"-- godwit: backfill taken set='b = a'\n", "already carries a trigger or a function"},
 	} {
-		if _, err := expandOne(t, conn, tc.up, "SELECT 1;\n"); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("err = %v, want %q", err, tc.want)
+		t.Run(name, func(t *testing.T) {
+			_, err := expandOne(t, conn, tc.up, "SELECT 1;\n")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	d := engine.Directive{Op: "backfill", Args: []string{"t"}, Opts: map[string]string{"set": "b ="}, Line: 1}
+	if _, err := NewExpander().backfill(context.Background(), conn, d); err == nil ||
+		!strings.Contains(err.Error(), "does not parse") {
+		t.Fatalf("bad set = %v", err)
+	}
+}
+
+// TestExpandBackfillKeepsConcurrentWritesInSync writes to the table between two batches — below the
+// cursor, where the loop will never look again, and above it — and asserts the run leaves nothing stale.
+func TestExpandBackfillKeepsConcurrentWritesInSync(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newScratch(t,
+		`CREATE TABLE public.t (k bigserial PRIMARY KEY, a integer NOT NULL, b bigint)`,
+		`INSERT INTO public.t (a) SELECT g FROM generate_series(1, 200) g`)
+	up := "-- godwit: backfill t set='b = a * 2' where='b IS DISTINCT FROM a * 2' batch=20\n"
+	down := "UPDATE public.t SET b = NULL;\n"
+	exp, err := expandOne(t, conn, up, down)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ExpandPlan(engine.Plan{Migration: directiveMigration(t, up, down), Direction: engine.DirectionUp}, exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wrote bool
+	var synced bool
+	var hookErr error
+	write := func() error {
+		var live bool
+		if err := conn.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 't_backfill_sync' AND NOT tgisinternal)`).
+			Scan(&live); err != nil {
+			return err
 		}
+		synced = live
+		if _, err := conn.Exec(ctx, `UPDATE public.t SET a = a + 1000 WHERE k <= 10`); err != nil {
+			return err
+		}
+		_, err := conn.Exec(ctx, `INSERT INTO public.t (a) SELECT g FROM generate_series(1, 5) g`)
+
+		return err
+	}
+	hook := func(point engine.HookPoint, _ int) {
+		if point != engine.HookAfterBatch || wrote {
+			return
+		}
+		wrote = true
+		hookErr = write()
+	}
+	if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithHook(hook)); err != nil {
+		t.Fatal(err)
+	}
+	if hookErr != nil || !wrote || !synced {
+		t.Fatalf("the trigger must be live while the batches run: wrote %v synced %v err %v", wrote, synced, hookErr)
+	}
+	var stale, total, leftover int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE b IS DISTINCT FROM a * 2), count(*),
+		       (SELECT count(*) FROM pg_trigger WHERE tgname = 't_backfill_sync' AND NOT tgisinternal)
+		FROM public.t`).Scan(&stale, &total, &leftover); err != nil {
+		t.Fatal(err)
+	}
+	if stale != 0 || total != 205 || leftover != 0 {
+		t.Fatalf("%d of %d rows stale, %d triggers left behind", stale, total, leftover)
+	}
+}
+
+// TestExpandBackfillFailsRatherThanReportSuccess drops the sync trigger under a running backfill and
+// dirties a row the cursor has passed, which is exactly the shape that used to be reported as succeeded.
+func TestExpandBackfillFailsRatherThanReportSuccess(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newScratch(t,
+		`CREATE TABLE public.t (k bigint PRIMARY KEY, a integer NOT NULL, b bigint)`,
+		`INSERT INTO public.t SELECT g, g, NULL FROM generate_series(1, 100) g`)
+	up := "-- godwit: backfill t set='b = a * 2' batch=10\n"
+	down := "UPDATE public.t SET b = NULL;\n"
+	exp, err := expandOne(t, conn, up, down)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ExpandPlan(engine.Plan{Migration: directiveMigration(t, up, down), Direction: engine.DirectionUp}, exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sabotaged bool
+	hook := func(point engine.HookPoint, _ int) {
+		if point != engine.HookAfterBatch || sabotaged {
+			return
+		}
+		sabotaged = true
+		if _, err := conn.Exec(ctx, `DROP TRIGGER t_backfill_sync ON public.t`); err != nil {
+			t.Error(err)
+		}
+		if _, err := conn.Exec(ctx, `UPDATE public.t SET a = a + 1 WHERE k <= 5`); err != nil {
+			t.Error(err)
+		}
+	}
+	_, err = applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithHook(hook))
+	if !errors.Is(err, engine.ErrAssertFailed) || !strings.Contains(err.Error(), "returned 5, want = 0") {
+		t.Fatalf("a backfill that left rows behind must fail: %v", err)
+	}
+}
+
+func TestExpandBackfillCatalogErrors(t *testing.T) {
+	t.Parallel()
+	conn := newScratch(t, `CREATE TABLE public.t (k bigint PRIMARY KEY, a integer, b integer)`)
+	up := "-- godwit: backfill t set='b = abs(a)' where='b IS DISTINCT FROM abs(a)'\n"
+	for i := 1; i <= 7; i++ {
+		n := 0
+		if _, err := expandOne(t, flakyDB{DB: conn, n: &n, fail: i}, up, "SELECT 1;\n"); err == nil {
+			t.Fatalf("probe %d: expansion must fail", i)
+		}
+	}
+	n := 0
+	if _, err := expandOne(t, flakyDB{DB: conn, n: &n, fail: 5, sub: "SELECT 1, 2, 3"}, up, "SELECT 1;\n"); err == nil ||
+		!strings.Contains(err.Error(), "read public.t set= columns") {
+		t.Fatalf("collect err = %v", err)
 	}
 }
 

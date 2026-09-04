@@ -1,6 +1,6 @@
 # 0002 — `-- godwit:` directives: the migration declares intent, godwit writes the lock-safe SQL
 
-Shipped in #51 (per-statement hold), #52 (batched statements), #53 (grammar and lint), #56 (`change-type`, `backfill`), #57 (the simple operations), #59 (expand once), #69 (dependent objects). Backfill progress became visible in #70.
+Shipped in #51 (per-statement hold), #52 (batched statements), #53 (grammar and lint), #56 (`change-type`, `backfill`), #57 (the simple operations), #59 (expand once), #69 (dependent objects), #89 (`backfill` keeps its rows in sync). Backfill progress became visible in #70.
 
 ## The open question
 
@@ -36,6 +36,24 @@ Nine operations expand today: `change-type`, `backfill`, `add-column`, `add-not-
 - **A batched statement with a journalled cursor** (#52). A backfill is **one** plan statement — the rendered single batch with the cursor as `$1` — plus a `BatchSpec`, not N unrolled statements, because N depends on a row count nobody knows at plan time. `godwit.journal` gained `cursor`, `rows_done`, `rows_total`. Each batch commits the cursor **in its own transaction, with its own rows**, so the journal is exactly true; a kill leaves the last committed batch's cursor and the in-flight batch rolls back with its rows untouched. The `IS DISTINCT FROM` predicate makes re-running a batch a no-op, so an ambiguous cursor is safe either way. No dirty flag, no repair command.
 
 - **Freezing.** The expansion lands on `cp_plans.expansions` *and* on `cp_runs.expansions`, and the scheduler reads from the run. `shape()` carries the expansion hash, so a re-plan whose expansion changed (a column appeared, the primary key moved) fails `SameStatements` and refuses at bind. The **plan key stays a pure function of the files and the pending set** — a catalog-dependent key would make the same pull request produce different keys on different targets.
+
+## `backfill` had to keep its rows in sync too (#89)
+
+The load rig ran a `backfill` while another session wrote to the same table. The run reported **`succeeded`** and left **34 402 rows of 2 000 000 stale** — a row written below the cursor after the cursor passed it is never revisited, and a row appended after the final batch is never seen. With nobody writing, zero. `change-type` never had the problem because its expansion installs a sync trigger before the first batch; a plain `backfill` installed nothing, and had no verification either.
+
+**The decision: `backfill` gets the same guarantee, from the same device.** The expansion is six statements — create the function, create the trigger, the batched `UPDATE`, a generated assertion, drop the trigger, drop the function — and the whole life of the trigger is inside the expand phase.
+
+**One predicate, three uses.** `(<where>) AND (ROW(<columns>) IS DISTINCT FROM ROW(<expressions>))` is what the batches select, what the trigger fires on and what the closing count asks about. The `where=` alone could not be any of them: it is the author's filter, not a statement about whether the row is done — after `set='norm = lower(name)' where='true'` every row still matches it. The distinctness half is what `change-type` gets for free from `age_new IS DISTINCT FROM age::bigint`, and it is what makes the batch idempotent, which is in turn what makes an ambiguous cursor safe on resume.
+
+*Rejected: a second, parallel refusal table for `backfill`.* `set=` and `where=` go through the same gate `using=` already had — no subquery, no other table's column, no `VOLATILE` function — which meant replacing that gate's hand-written walk over six node kinds with a complete one over the parse tree. The old walk missed a `NULL` test, a `CASE` and a `BOOL` expression, so `change-type` gained the refusals it was already supposed to have.
+
+**What a trigger cannot honestly express, and is therefore refused.** A `set=` that reads a column it also assigns (`set='v = v + 1'`) is not idempotent: applying it twice is not applying it once, and the trigger and the batches would both apply it. A `set=` that assigns the batching key moves rows under the cursor. A target column whose type has no equality operator (`json`, `xml`) makes the verification count unaskable. An element or field assignment, a `DEFAULT`, and the multi-column `set='(a, b) = (…)'` are shapes the trigger cannot write out one column at a time. Each is refused by name, with the alternative.
+
+**The verification is a generated `assert` (#82), not a parallel check.** `SELECT count(*) FROM <t> WHERE <pending>` with `= 0`, riding on the assertion machinery: journalled, read-only, fatal without a retry, and skipped on the scratch by the existing probe. It runs *before* the `DROP TRIGGER`, so a row written while it is being checked is still covered. It costs a `count(*)` over the table, which on a very large one needs a `statement_timeout` that allows for it. *Rejected: a `verify=false` escape hatch* — a flag that turns the guarantee off is the wrong default to offer, and adding it is additive if anyone wants it.
+
+**The guard sits in the trigger's `WHEN` clause.** The backfill's own batches fire the trigger for every row they touch. With the guard inside the plpgsql body the 10 000 000-row rig went from a 28.2 s floor to 53.0 s — 1.9× — because every one of those rows entered plpgsql and ran an SPI query. The same predicate as a `WHEN` clause is evaluated by the executor in C and the function is entered only for a row that needs it: 30.0 s, about 6%. Rendering it needs every column reference bound to `NEW`, which is only sound because the refusals above already guarantee that every reference is a column of this row.
+
+**A crash leaves the trigger, deliberately.** The journal resumes at the statement the run stopped on, so a resume neither re-creates the trigger nor skips the rows written while the run was dead — the trigger was still installed, keeping them in sync. *Rejected: dropping it when a run fails.* A run in `needs_attention` is one a human may resume; dropping the trigger under it would reintroduce this exact bug. A run abandoned rather than resumed leaves `<t>_backfill_sync` behind, and the plan's notes name it and the two statements that remove it. A leftover on the scratch is refused at plan time; a leftover on the live target cannot be seen from the scratch, so the `CREATE` fails loudly instead.
 
 ## The two owner decisions that changed the design
 

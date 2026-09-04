@@ -335,13 +335,69 @@ The `UPDATE` is one plan statement with a `BatchSpec`, not N unrolled ones: the 
 cursor with the rows, and resumes from the cursor after a crash. `$1::bigint` is explicit because a key narrower
 than `bigint` would otherwise refuse the `int8` the executor binds.
 
+#### `backfill` keeps its rows in sync while it runs
+
+A batched `UPDATE` on its own is not write-safe. It walks the key space once: a row written **below** the cursor
+after the cursor passed it is never looked at again, and a row appended after the last batch is never seen. The
+run reports `succeeded` and the rows are stale. Measured under a live write workload, that was 34 402 rows of
+2 000 000 ([testing](testing.md#a-backfill-under-a-live-write-workload)).
+
+So `backfill` gets the same guarantee `change-type` has, from the same device.
+`-- godwit: backfill users set='age_new = age::bigint' where='age_new IS NULL' key=id batch=5000` becomes:
+
+```sql
+-- expand
+CREATE FUNCTION public.users_backfill_sync() RETURNS trigger LANGUAGE plpgsql AS $godwit$
+  BEGIN SELECT age::bigint INTO new.age_new FROM (SELECT new.*) AS users; RETURN new; END $godwit$;
+CREATE TRIGGER users_backfill_sync BEFORE INSERT OR UPDATE ON public.users FOR EACH ROW
+  WHEN ((new.age_new IS NULL) AND (ROW(new.age_new) IS DISTINCT FROM ROW(new.age::bigint)))
+  EXECUTE FUNCTION public.users_backfill_sync();
+WITH b AS (SELECT id AS godwit_key FROM public.users
+           WHERE id > $1::bigint AND ((age_new IS NULL) AND (ROW(age_new) IS DISTINCT FROM ROW(age::bigint)))
+           ORDER BY id LIMIT 5000)
+UPDATE public.users AS t SET age_new = age::bigint FROM b WHERE t.id = b.godwit_key RETURNING b.godwit_key;
+SELECT count(*) FROM public.users WHERE (age_new IS NULL) AND (ROW(age_new) IS DISTINCT FROM ROW(age::bigint));
+DROP TRIGGER users_backfill_sync ON public.users;
+DROP FUNCTION public.users_backfill_sync();
+```
+
+**One predicate, three uses.** `(<where>) AND (ROW(<columns>) IS DISTINCT FROM ROW(<expressions>))` is what the
+batches select, what the trigger fires on and what the closing count asks about, so the three cannot disagree
+about what "backfilled" means. The `where=` alone is not enough: it is the author's filter, and after a
+`set='norm = lower(name)' where='true'` every row still matches it. The distinctness half is what makes the
+statement idempotent — a row the trigger already fixed is skipped rather than written twice — which is also what
+makes an ambiguous cursor safe on resume.
+
+**The guard lives in the trigger's `WHEN` clause**, not in the function body. The backfill's own batches fire the
+trigger for every row they touch, and a `WHEN` clause is evaluated by the executor without entering plpgsql. Over
+ten million rows the body form cost 1.9× the run; the `WHEN` clause costs about 6%
+([testing](testing.md#a-batched-backfill-over-10-000-000-rows)).
+
+**The closing `SELECT count(*)` is an [assertion](#assertions) godwit generates**, `= 0`, and it is the same
+mechanism `-- godwit: assert` uses — journalled, read-only, and fatal without a retry. It runs **before** the
+trigger is dropped, so a row written while it is being checked is still covered; a row written after the `DROP
+TRIGGER` is past the migration and is not the backfill's business. This is what turns a silent 34 402 into a
+failed run, and it is a `count(*)` over the table: on a very large one it needs a `statement_timeout` that allows
+for it.
+
+**A crash leaves the trigger, on purpose.** The trigger is created by statement 0 and dropped by statement 4 of
+the same phase, and the journal resumes at the statement it stopped on — so a resume neither re-creates it nor
+skips the rows written while the run was dead: the trigger was still there, keeping them in sync. Dropping it
+when a run fails would reintroduce exactly the bug this fixes, because a run in `needs_attention` is one a human
+may resume. A run that is abandoned rather than resumed leaves `<t>_backfill_sync` behind; the plan's notes name
+it and the two statements that remove it.
+
+**There is no contract phase to drop it in.** A plain `backfill` has one phase, so the trigger's whole life is
+inside it — which is also why it composes with `ConfirmRollout` without a special case: a `backfill` beside a
+`change-type` in one migration has its trigger created and dropped in the expand phase, long before the hold.
+
 The other operations are the cheap half of the same machinery — no trigger, no batches except where a value has
 to be filled in, and only `drop-column` produces a contract statement:
 
 | Op | Expands into | Phase |
 |---|---|---|
 | `add-not-null <t>.<c>` | `ADD CONSTRAINT <c>_not_null CHECK (<c> IS NOT NULL) NOT VALID` → `VALIDATE CONSTRAINT` → `SET NOT NULL` → `DROP CONSTRAINT`. Only the `VALIDATE` reads the rows, and it does so under a lock that lets writes through. | expand |
-| `add-column <t>.<c> <type>` | `ADD COLUMN` nullable, then `ALTER COLUMN <c> SET DEFAULT` when `default=` is given. With `not-null`, a batched backfill of the rows that already exist and then the `add-not-null` block; `not-null` without `default=` is refused. | expand |
+| `add-column <t>.<c> <type>` | `ADD COLUMN` nullable, then `ALTER COLUMN <c> SET DEFAULT` when `default=` is given. With `not-null`, a batched backfill of the rows that already exist and then the `add-not-null` block; `not-null` without `default=` is refused. It needs no sync trigger: the `SET DEFAULT` runs before the batches, so a row written during them already carries the value, and the `VALIDATE CONSTRAINT` at the end fails loudly on anything missed. | expand |
 | `add-index <t> (<cols>)` | `DROP INDEX CONCURRENTLY IF EXISTS` when an **invalid** index of that name is left over from an interrupted build, then `CREATE [UNIQUE] INDEX CONCURRENTLY`. The name is `name=` or `<t>_<cols>_idx`, the same one the H001 recipe prints. | expand |
 | `drop-index <name>` | `DROP INDEX CONCURRENTLY IF EXISTS`, so a retry after an interrupted drop is a no-op. | expand |
 | `add-fk <t>.<c> -> <rt>.<rc>` | `ADD CONSTRAINT <name> FOREIGN KEY … NOT VALID` → `VALIDATE CONSTRAINT`. The name is `name=` or `<t>_<c>_fkey`. | expand |
@@ -469,8 +525,13 @@ Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, n
 | no single-column primary key and no `key=` | nothing to batch on; the message names the option |
 | `key=` that does not exist, is nullable, or has no single-column unique btree index | a cursor over it can skip or repeat rows |
 | `key=` whose type is not integer, `uuid` or text | the cursor cannot be carried between batches |
-| `using=` calling a function `pg_proc` reports as `VOLATILE` | the trigger and the backfill would disagree |
-| `using=` containing a subquery or a column of another table | the trigger form `SELECT expr INTO new.c_new FROM (SELECT new.*) AS t` cannot express it |
+| `using=`, a `backfill`'s `set=` or its `where=` calling a function `pg_proc` reports as `VOLATILE` | the trigger and the batches would disagree |
+| any of the three containing a subquery or a column of another table | the trigger form `SELECT expr INTO new.c FROM (SELECT new.*) AS t` cannot express it, and its `WHEN` clause cannot hold a subquery |
+| `backfill` whose `set=` reads a column the same `set=` assigns (`set='v = v + 1'`) | applying it twice does not mean the same as applying it once, and the trigger and the batches would both apply it |
+| `backfill` whose `set=` assigns the batching key | a row that moves under the cursor is skipped or repeated |
+| `backfill` whose `set=` assigns a column the schema does not have, or one whose type has no equality operator (`json`, `xml`) | the run's guarantee is a count of the rows still matching, and that count is unaskable without `=`; cast it, or use `jsonb` |
+| `backfill` whose `set=` writes into an element or field (`set='tags[1] = …'`), assigns `DEFAULT`, or uses the multi-column form `set='(a, b) = (…)'` | the trigger assigns whole columns, one at a time, from an expression it can also compare against |
+| `backfill` on a table that already carries a trigger or a function named `<t>_backfill_sync` | the expansion would collide; a leftover from an abandoned run is named rather than discovered when the `CREATE` fails |
 | two directives naming the same subject in one migration | ambiguous order |
 | a directive in a migration whose own SQL carries H002, H003 or H008 | the contract block is a suffix, so the destructive statement would run in the expand phase; split them |
 | a directive that splits a statement in two | a directive sits between whole statements |

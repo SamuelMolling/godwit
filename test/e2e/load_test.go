@@ -77,8 +77,8 @@ func TestLoadBackfillAtScale(t *testing.T) {
 	if stale != 0 {
 		t.Fatalf("%d rows left unbackfilled", stale)
 	}
-	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.journal WHERE state = 'done'`); n != 2 {
-		t.Fatalf("done journal rows = %d, want 2 (the table migration and the backfill)", n)
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.journal WHERE state = 'done'`); n != 7 {
+		t.Fatalf("done journal rows = %d, want 7 (the table migration and the backfill's six)", n)
 	}
 	done := query[int64](t, r.appDSN,
 		`SELECT rows_done FROM godwit.journal WHERE state = 'intent' AND cursor IS NOT NULL`)
@@ -129,8 +129,50 @@ func TestLoadBackfillUnderWrites(t *testing.T) {
 	// The updater stays in a reserved band, so every seeded row outside it is untouched once the backfill starts.
 	band := int64(rows / 5)
 	var inserted, dirtied atomic.Int64
+	var installed, outlived atomic.Bool
 	stop := make(chan struct{})
-	var writers sync.WaitGroup
+	settled := make(chan struct{})
+	var writers, watcher sync.WaitGroup
+
+	// The writers are stopped once the cursor is past the middle of the table, so every row they wrote —
+	// the reserved band, which the cursor left behind long before, most of all — landed while the sync
+	// trigger was installed. What is written after the trigger goes is not something a backfill ever
+	// promised to reach, and `outlived` is how the rig tells that case from a real failure.
+	watcher.Add(1)
+	go func() {
+		defer watcher.Done()
+		conn := connectDB(t, r.appDSN)
+		probe := func() (bool, int64) {
+			var live bool
+			var cursor int64
+			if err := conn.QueryRow(context.Background(), `
+				SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'bf_backfill_sync' AND NOT tgisinternal),
+				       coalesce((SELECT max(cursor::bigint) FROM godwit.journal WHERE cursor IS NOT NULL), 0)`).
+				Scan(&live, &cursor); err != nil {
+				return false, int64(rows)
+			}
+			if live {
+				installed.Store(true)
+			}
+
+			return live, cursor
+		}
+		for waiting := true; waiting; {
+			if _, cursor := probe(); cursor > int64(rows)/2 {
+				break
+			}
+			select {
+			case <-settled:
+				waiting = false
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+		close(stop)
+		writers.Wait()
+		live, _ := probe()
+		outlived.Store(installed.Load() && !live)
+	}()
+
 	writers.Add(2)
 	go func() {
 		defer writers.Done()
@@ -165,8 +207,8 @@ func TestLoadBackfillUnderWrites(t *testing.T) {
 	}()
 
 	run, elapsed := watchRun(t, r, r.createRun(backfillMigration(v2, batch, "")))
-	close(stop)
-	writers.Wait()
+	close(settled)
+	watcher.Wait()
 	if run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED {
 		t.Fatalf("run: state %s, error %s", run.State, run.Error)
 	}
@@ -178,20 +220,33 @@ func TestLoadBackfillUnderWrites(t *testing.T) {
 	stale := func(where string, args ...any) int64 {
 		return query[int64](t, r.appDSN, `SELECT count(*) FROM bf WHERE w IS DISTINCT FROM v * 2 AND `+where, args...)
 	}
-	quiet := stale(`id > $1 AND id <= $2`, band, rows)
+	left := stale(`true`)
 	report(t, "backfill/concurrent_writes",
 		"seed_rows", rows, "seconds", elapsed.Seconds(),
 		"inserted_during", inserted.Load(), "updated_during", dirtied.Load(),
 		"final_cursor", cursor, "rows_done", done,
 		"stale_in_written_band", stale(`id <= $1`, band),
-		"stale_appended_after_the_last_batch", stale(`id > $1`, rows),
-		"stale_in_the_quiet_band", quiet,
+		"stale_appended_above_the_seeded_rows", stale(`id > $1`, rows),
+		"stale_in_the_quiet_band", stale(`id > $1 AND id <= $2`, band, rows),
+		"stale_total", left,
 		"total_rows", query[int64](t, r.appDSN, `SELECT count(*) FROM bf`))
-	if quiet != 0 {
-		t.Fatalf("%d rows nobody wrote to were left unbackfilled", quiet)
+	if !installed.Load() {
+		t.Fatal("the backfill never installed its sync trigger")
 	}
-	if done < int64(rows) {
-		t.Fatalf("journalled rows_done = %d, want at least the %d seeded rows", done, rows)
+	if outlived.Load() {
+		t.Fatal("the writers outlived the sync trigger; the scenario measured writes the backfill never covered")
+	}
+	if left != 0 {
+		t.Fatalf("%d rows written while the backfill ran were left unbackfilled", left)
+	}
+	// The batches no longer touch every seeded row: the trigger reaches some of them first and the
+	// pending predicate then skips them. Only the rows a writer touched can go that way.
+	if floor := int64(rows) - dirtied.Load() - inserted.Load(); done < floor {
+		t.Fatalf("journalled rows_done = %d, want at least %d — the batches skipped rows no writer touched", done, floor)
+	}
+	if n := query[int64](t, r.appDSN,
+		`SELECT count(*) FROM pg_trigger WHERE tgname = 'bf_backfill_sync' AND NOT tgisinternal`); n != 0 {
+		t.Fatalf("the run left %d sync trigger(s) on the table", n)
 	}
 }
 
