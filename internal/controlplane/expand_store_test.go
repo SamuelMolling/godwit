@@ -146,6 +146,55 @@ func TestSchedulerPlansErrors(t *testing.T) {
 	}
 }
 
+const dropAgeOld = "-- godwit: drop-column users.age_old\n"
+
+// A change-type with keep-old records the pre-swap column as the target's rollback; the drop-column that
+// finally removes it has to take that record with it, or the store keeps claiming a column that is gone.
+func TestDropColumnClearsTheRetiredColumn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	sched, _ := newScheduler(t, s, Config{Holder: "h"})
+	conn := newScratch(t, usersDDL)
+	bookkeep := func(exp Expansion) {
+		t.Helper()
+		id := uuid.NewString()
+		exps := map[string]Expansion{exp.ID: exp}
+		if err := s.CreateRun(ctx, id, "app", RolloutExpandContract,
+			map[string]string{"a.up.sql": "SELECT 1;"}, Timeouts{}, Provenance{}, "", exps); err != nil {
+			t.Fatal(err)
+		}
+		run, err := s.Run(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sched.retire(ctx, run, testLog)
+	}
+
+	swap, err := expandOne(t, conn, changeAge, revertSentinel)
+	if err != nil || len(swap.Retired) != 1 {
+		t.Fatalf("change-type retired = %+v, err = %v", swap.Retired, err)
+	}
+	applyExpansion(t, conn, changeAge, revertSentinel, swap)
+	bookkeep(swap)
+	if got, err := s.RetiredColumns(ctx, "app"); err != nil || len(got) != 1 {
+		t.Fatalf("after the change-type = %+v, err = %v", got, err)
+	}
+
+	addBack := "ALTER TABLE public.users ADD COLUMN age_old integer;"
+	drop, err := expandOne(t, conn, dropAgeOld, addBack)
+	if err != nil || len(drop.Unretired) != 1 || drop.Unretired[0].String() != "public.users.age_old" {
+		t.Fatalf("drop-column unretired = %+v, err = %v", drop.Unretired, err)
+	}
+	if _, err := conn.Exec(ctx, drop.UpSQL); err != nil {
+		t.Fatal(err)
+	}
+	bookkeep(drop)
+	if got, err := s.RetiredColumns(ctx, "app"); err != nil || len(got) != 0 {
+		t.Fatalf("drop-column left the retired column behind: %+v, err = %v", got, err)
+	}
+}
+
 func TestSchedulerRetireAndProgressWarn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -156,7 +205,10 @@ func TestSchedulerRetireAndProgressWarn(t *testing.T) {
 	broken.retire(ctx, Run{ID: "r1", Target: "app", Reverts: "r0"}, testLog)
 	broken.retire(ctx, Run{
 		ID: "r1", Target: "app",
-		Expansions: map[string]Expansion{"m": {Retired: []RetiredColumn{{Schema: "public", Table: "t", Column: "a_old"}}}},
+		Expansions: map[string]Expansion{"m": {
+			Retired:   []RetiredColumn{{Schema: "public", Table: "t", Column: "a_old"}},
+			Unretired: []RetiredColumn{{Schema: "public", Table: "t", Column: "b_old"}},
+		}},
 	}, testLog)
 
 	runID := uuid.NewString()
@@ -279,8 +331,12 @@ func TestValidateReplaysExpandedHistory(t *testing.T) {
 		"20260101000000_x.up.sql":   "-- godwit: change-type public.t.a bigint\n",
 		"20260101000000_x.down.sql": "-- godwit: revert\n",
 	}
-	exps := map[string]Expansion{"20260101000000_x": {ID: "20260101000000_x", UpSQL: "NOT SQL"}}
+	broken := Expansion{ID: "20260101000000_x", UpSQL: "NOT SQL"}
+	exps := map[string]Expansion{broken.ID: broken}
 	if err := s.CreateRun(ctx, runID, "app", RolloutDirect, files, Timeouts{}, Provenance{}, "", exps); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordApplied(ctx, runID, broken.ID, false, &broken); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Finish(ctx, runID, StateSucceeded, ""); err != nil {
@@ -294,7 +350,11 @@ func TestValidateReplaysExpandedHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := uuid.NewString()
-	if err := s.CreateRun(ctx, bad, "other", RolloutDirect, map[string]string{"nonsense.up.sql": "SELECT 1;"}, Timeouts{}, Provenance{}, "", nil); err != nil {
+	nonsense := map[string]string{"nonsense.up.sql": "SELECT 1;", "nonsense.down.sql": "SELECT 1;"}
+	if err := s.CreateRun(ctx, bad, "other", RolloutDirect, nonsense, Timeouts{}, Provenance{}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordApplied(ctx, bad, "nonsense", false, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Finish(ctx, bad, StateSucceeded, ""); err != nil {

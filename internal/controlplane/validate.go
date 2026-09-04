@@ -103,7 +103,7 @@ func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPa
 }
 
 func (v *Validator) historyOf(ctx context.Context, target string) ([]HistoryRun, *Validator, error) {
-	history, err := v.store.HistoryFiles(ctx, target)
+	history, err := v.store.History(ctx, target)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -121,11 +121,8 @@ func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searc
 	}
 	replayed := map[string]bool{}
 	for i, run := range history {
-		histPlans, err := PlansFromFiles(run.Files, engine.DirectionUp)
+		histPlans, err := historyPlans(run)
 		if err != nil {
-			return nil, fmt.Errorf("history run %d: %w", i, err)
-		}
-		if histPlans, err = ExpandUp(histPlans, run.Expansions); err != nil {
 			return nil, fmt.Errorf("history run %d: %w", i, err)
 		}
 		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans), nil); err != nil {
@@ -137,6 +134,29 @@ func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searc
 	}
 
 	return replayed, nil
+}
+
+// historyPlans rebuilds one run's up plans from its ledger: the migrations it applied, in the order it
+// applied them, each carrying the expansion frozen on its own row.
+func historyPlans(run HistoryRun) ([]engine.Plan, error) {
+	out := make([]engine.Plan, 0, len(run.Migrations))
+	for _, m := range run.Migrations {
+		exps := map[string]Expansion{}
+		if m.Expansion != nil {
+			exps[m.ID] = *m.Expansion
+		}
+		plans, err := PlansFromFiles(
+			map[string]string{m.ID + ".up.sql": m.UpSQL, m.ID + ".down.sql": m.DownSQL}, engine.DirectionUp)
+		if err != nil {
+			return nil, err
+		}
+		if plans, err = ExpandUp(plans, exps); err != nil {
+			return nil, err
+		}
+		out = append(out, plans...)
+	}
+
+	return out, nil
 }
 
 // recordUnexpanded marks a history plan no run ever expanded — a baseline records without running — so the replay records it too.

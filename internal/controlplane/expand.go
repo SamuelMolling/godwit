@@ -50,8 +50,10 @@ type Expansion struct {
 	Batches  []*engine.BatchSpec `json:"batches,omitempty"`
 	Notes    []string            `json:"notes,omitempty"`
 	Retired  []RetiredColumn     `json:"retired,omitempty"`
-	Lines    []string            `json:"lines,omitempty"`
-	Hash     string              `json:"hash"`
+	// Unretired are the columns the expansion removes, so a drop-column clears what a change-type retired.
+	Unretired []RetiredColumn `json:"unretired,omitempty"`
+	Lines     []string        `json:"lines,omitempty"`
+	Hash      string          `json:"hash"`
 }
 
 // Contract is the index of the first contract statement, or -1 when the expansion has one phase.
@@ -78,13 +80,14 @@ type step struct {
 }
 
 type built struct {
-	expand   []step
-	contract []step
-	notes    []string
-	retired  []RetiredColumn
-	down     []string
-	downHeld []string
-	downWhy  string
+	expand    []step
+	contract  []step
+	notes     []string
+	retired   []RetiredColumn
+	unretired []RetiredColumn
+	down      []string
+	downHeld  []string
+	downWhy   string
 }
 
 // Expand renders every directive of m against conn and returns the bodies the plan freezes.
@@ -238,6 +241,7 @@ func spliceExpansion(m engine.Migration, all []built) (Expansion, error) {
 		}
 		exp.Notes = append(exp.Notes, b.notes...)
 		exp.Retired = append(exp.Retired, b.retired...)
+		exp.Unretired = append(exp.Unretired, b.unretired...)
 	}
 	if err := exp.fill(chunks); err != nil {
 		return Expansion{}, fmt.Errorf("%w: %s: %w", ErrDirective, m.ID(), err)
@@ -762,7 +766,8 @@ func dropColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built,
 	}
 
 	return built{
-		contract: []step{{sql: fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", col.rel(), engine.Ident(col.Column))}},
+		contract:  []step{{sql: fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", col.rel(), engine.Ident(col.Column))}},
+		unretired: []RetiredColumn{{Schema: col.Schema, Table: col.Table, Column: col.Column}},
 		notes: []string{fmt.Sprintf("drops %s.%s in the contract phase; deploy the application version that no longer reads it first",
 			col.rel(), engine.Ident(col.Column))},
 		downWhy: "a drop-column has no generated inverse; the rows go with the column",
@@ -1356,6 +1361,18 @@ func substitute(plans []engine.Plan, exps map[string]Expansion, body func(Expans
 	}
 
 	return out, nil
+}
+
+// Unretired lists every column the expansions of one run remove, so the ones a change-type had retired
+// stop being reported as a rollback the target still holds.
+func Unretired(exps map[string]Expansion) []RetiredColumn {
+	var out []RetiredColumn
+	for _, e := range exps {
+		out = append(out, e.Unretired...)
+	}
+	slices.SortFunc(out, func(a, b RetiredColumn) int { return strings.Compare(a.String(), b.String()) })
+
+	return out
 }
 
 // Retired lists every column the expansions of one run leave behind, keyed by migration.

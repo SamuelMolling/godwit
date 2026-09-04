@@ -336,6 +336,19 @@ func (s *Scheduler) retire(ctx context.Context, run Run, log *slog.Logger) {
 			log.Warn("retired columns not recorded", "migration", migration, "error", err)
 		}
 	}
+	s.unretire(ctx, run, exps, log)
+}
+
+// unretire clears the columns a drop-column just removed; a revert has none to clear, since godwit
+// generates no inverse that would put a dropped column back.
+func (s *Scheduler) unretire(ctx context.Context, run Run, exps map[string]Expansion, log *slog.Logger) {
+	cols := Unretired(exps)
+	if run.Reverts != "" || len(cols) == 0 {
+		return
+	}
+	if err := s.store.UnretireColumns(ctx, run.Target, cols); err != nil {
+		log.Warn("dropped columns still recorded as retired", "error", err)
+	}
 }
 
 // expansions are the ones this run is accountable for: its own going up, and the ones it just undid

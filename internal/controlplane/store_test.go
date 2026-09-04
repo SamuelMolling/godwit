@@ -149,6 +149,8 @@ func TestCreateRevert(t *testing.T) {
 	revert := "66666666-0000-0000-0000-000000000003"
 	queueRun(t, s, first, goodFiles())
 	queueRun(t, s, second, goodFiles())
+	ledger(t, s, first, "20260901120000_t")
+	ledger(t, s, second, "20260901120000_t")
 	load := func(id string) Run {
 		t.Helper()
 		r, err := s.Run(ctx, id)
@@ -206,7 +208,7 @@ func TestCreateRevert(t *testing.T) {
 	if r, _ = s.Run(ctx, second); r.State != StateReverted {
 		t.Fatalf("original after revert = %+v", r)
 	}
-	history, err := s.HistoryFiles(ctx, "app")
+	history, err := s.History(ctx, "app")
 	if err != nil || len(history) != 1 {
 		t.Fatalf("history = %v, err = %v", history, err)
 	}
