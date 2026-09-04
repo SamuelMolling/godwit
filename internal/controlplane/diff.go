@@ -310,9 +310,11 @@ func scratchObjects(ctx context.Context, db *sql.DB) ([]string, error) {
 	return slices.DeleteFunc(strings.Split(list, "\n"), func(o string) bool { return o == "" }), nil
 }
 
-func generate(ctx context.Context, from, to *sql.DB, factory tempdb.Factory) (string, error) {
-	plan, err := generatePlan(ctx, diff.DBSchemaSource(from), diff.DBSchemaSource(to),
-		diff.WithTempDbFactory(factory), diff.WithExcludeSchemas("godwit"), diff.WithLogger(quietLog{}))
+func generate(ctx context.Context, from, to *sql.DB, factory tempdb.Factory, extra ...diff.PlanOpt) (string, error) {
+	opts := append([]diff.PlanOpt{
+		diff.WithTempDbFactory(factory), diff.WithExcludeSchemas(JournalSchema), diff.WithLogger(quietLog{}),
+	}, extra...)
+	plan, err := generatePlan(ctx, diff.DBSchemaSource(from), diff.DBSchemaSource(to), opts...)
 	if err != nil {
 		return "", err
 	}

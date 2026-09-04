@@ -252,3 +252,28 @@ func TestRecordCollapsed(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A checkpoint body raises no hazard: every hazard godwit knows is about a table that already holds rows,
+// readers or writers, and a checkpoint only ever runs on a database with none of the three.
+func TestCheckpointPlansWithoutHazards(t *testing.T) {
+	t.Parallel()
+	body := "-- godwit: checkpoint through=20260102000000\n" +
+		"CREATE TABLE a (id int);\nCREATE INDEX a_id_idx ON a (id);\nDROP TABLE b;"
+	migs := loadFiles(t, map[string]string{"20260103000000_squash.up.sql": body})
+	p, err := BuildPlan(migs[0], DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range p.Statements {
+		if len(st.Hazards) > 0 {
+			t.Fatalf("%q raised %+v", st.SQL, st.Hazards)
+		}
+	}
+	plain, err := BuildPlan(Migration{Version: 1, Name: "plain", UpSQL: "CREATE INDEX a_id_idx ON a (id);"}, DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.Statements[0].Hazards) != 1 {
+		t.Fatal("the same statement outside a checkpoint still raises H001")
+	}
+}
