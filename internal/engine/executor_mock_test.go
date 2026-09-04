@@ -52,9 +52,19 @@ func expectLock(mock pgxmock.PgxConnIface) {
 }
 
 func expectBootstrap(mock pgxmock.PgxConnIface) {
+	mock.ExpectBegin()
+	mock.ExpectExec("pg_advisory_xact_lock").WithArgs(bootstrapLock).WillReturnResult(pgxmock.NewResult("SELECT", 1))
 	for _, ddl := range bootstrapDDL {
 		mock.ExpectExec(regexp.QuoteMeta(ddl)).WillReturnResult(pgxmock.NewResult("DDL", 0))
 	}
+	mock.ExpectCommit()
+}
+
+func expectBootstrapFails(mock pgxmock.PgxConnIface) {
+	mock.ExpectBegin()
+	mock.ExpectExec("pg_advisory_xact_lock").WithArgs(bootstrapLock).WillReturnResult(pgxmock.NewResult("SELECT", 1))
+	mock.ExpectExec(regexp.QuoteMeta(bootstrapDDL[0])).WillReturnError(errBoom)
+	mock.ExpectRollback()
 }
 
 func expectNotApplied(mock pgxmock.PgxConnIface) {
@@ -136,7 +146,7 @@ func TestUpErrorPaths(t *testing.T) {
 			name: "bootstrap fails",
 			setup: func(mock pgxmock.PgxConnIface) {
 				expectLock(mock)
-				mock.ExpectExec("CREATE SCHEMA").WillReturnError(errBoom)
+				expectBootstrapFails(mock)
 			},
 			wantErr: "bootstrap godwit schema",
 		},
@@ -516,7 +526,7 @@ func TestStatusErrorPaths(t *testing.T) {
 		{
 			name: "bootstrap fails",
 			setup: func(mock pgxmock.PgxConnIface) {
-				mock.ExpectExec("CREATE SCHEMA").WillReturnError(errBoom)
+				expectBootstrapFails(mock)
 			},
 			wantErr: "bootstrap",
 		},

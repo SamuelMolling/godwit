@@ -24,11 +24,18 @@ ingress:
   enabled: true
   className: nginx
   annotations:
-    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+    # The listener is an ordinary HTTP backend: connect's unary calls and its one server stream both
+    # work over HTTP/1.1, so nothing here needs backend-protocol GRPC — and grpc_pass applies to the
+    # whole nginx server block, so setting it would stop this host serving /ui at all.
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
   hosts:
     - host: godwit.example.com
       paths:
-        - path: /
+        - path: /ui
+          pathType: Prefix
+        - path: /godwit.v1.GodwitService
           pathType: Prefix
   tls:
     - secretName: godwit-tls

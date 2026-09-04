@@ -57,7 +57,7 @@ The new cursor is the highest key the batch returned. A key the database orders 
 Applying a run on a target:
 
 1. `pg_advisory_lock(fnv64a("godwit:" || current_database()))` — a session lock, one executor per database at a time. A second executor blocks here until the first releases.
-2. Bootstrap the `godwit` schema if missing.
+2. Bootstrap the `godwit` schema if missing: one transaction, under `pg_advisory_xact_lock(fnv64a("godwit:bootstrap"))`, because `CREATE ... IF NOT EXISTS` checks for the object before it locks it and two sessions creating the same object both pass that check.
 3. For each plan, in version order (descending for a revert):
    - up and already recorded (`godwit.migrations` for a version, `godwit.repeatables` for a repeatable) with the same checksum → skip; a version recorded with a different checksum → error `version N already applied with different content`; a repeatable recorded with a different checksum → run it again; down and not recorded → skip.
    - Reopen the newest `godwit.runs` row for this migration and direction in state `running` or `failed`, else insert a new one. A versioned run is keyed by `(version, direction)`; a repeatable run by `(repeatable, checksum, direction)`, so editing the file after a crash starts a run of its own instead of resuming one it no longer matches. Read its journal: every row's `sql_hash` must equal the plan's hash for that index, otherwise `statement i changed since run X started; refusing to resume`. `lastDone` is the highest `done` index; `pendingIntent` is an `intent` above it without a `done`.

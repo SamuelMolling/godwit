@@ -55,11 +55,7 @@ spec:
           args:
             - serve
             - --listen=:{{ .Values.serve.port }}
-            - --store-dsn=$(GODWIT_STORE_DSN)
             - --drift-interval={{ .Values.serve.driftInterval }}
-            {{- if .Values.serve.scratch.enabled }}
-            - --scratch-dsn=$(GODWIT_SCRATCH_DSN)
-            {{- end }}
             - --scratch-template={{ .Values.serve.scratch.template }}
             {{- with .Values.serve.limits }}
             - --store-max-conns={{ .storeMaxConns }}
