@@ -63,12 +63,20 @@ type PlanBatch struct {
 	Pause string `json:"pause,omitempty"`
 }
 
+// PlanAssert is the condition an assert statement states about the value its query returns.
+type PlanAssert struct {
+	Op    string `json:"op"`
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
 // PlanStatement is one classified statement of a stored plan.
 type PlanStatement struct {
 	SQL     string       `json:"sql"`
 	NoTx    bool         `json:"no_tx,omitempty"`
 	Phase   string       `json:"phase,omitempty"`
 	Batch   *PlanBatch   `json:"batch,omitempty"`
+	Assert  *PlanAssert  `json:"assert,omitempty"`
 	Hazards []PlanHazard `json:"hazards,omitempty"`
 }
 
@@ -281,6 +289,9 @@ func PlanStatements(sts []engine.Statement) []PlanStatement {
 		ps := PlanStatement{SQL: st.SQL, NoTx: st.NoTx, Phase: st.Phase}
 		if st.Batch != nil {
 			ps.Batch = &PlanBatch{Key: st.Batch.Key, Kind: st.Batch.KeyKind, Size: st.Batch.Size, Pause: pauseText(st.Batch.Pause)}
+		}
+		if st.Assert != nil {
+			ps.Assert = &PlanAssert{Op: st.Assert.Op, Kind: st.Assert.Kind, Value: st.Assert.Value}
 		}
 		for _, h := range st.Hazards {
 			ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})

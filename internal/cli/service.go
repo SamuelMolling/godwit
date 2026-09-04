@@ -228,6 +228,9 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 			if b := ps.Batch; b != nil {
 				st.Batch = &engine.BatchSpec{Key: b.Key, KeyKind: b.Kind, Size: int(b.Size), Pause: parsePause(b.Pause)}
 			}
+			if a := ps.Assert; a != nil {
+				st.Assert = &engine.AssertSpec{Op: a.Op, Kind: a.Kind, Value: a.Value}
+			}
 			for _, h := range ps.Hazards {
 				st.Hazards = append(st.Hazards, engine.Hazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 			}

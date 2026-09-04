@@ -259,6 +259,16 @@ run 62a6f7cc-…: contract confirmed
 
 `awaiting_contract` is exit code 0, not a failure: the expand half is on the database and the swap waits for a human. The full directive list, the expansion rules and everything the expander refuses are in [concepts: directives](concepts.md#directives).
 
+One directive reads instead of writing. `-- godwit: assert` states a condition about the **data** and makes it part of the plan, so the swap above is gated on the backfill having actually worked:
+
+```sql
+-- 20260903170000_customer_id_text.up.sql
+-- godwit: change-type orders.customer_id text using='customer_id::text'
+-- godwit: assert 'SELECT count(*) FROM orders WHERE customer_id_new IS DISTINCT FROM customer_id::text' = 0
+```
+
+The assertion is a statement of the plan like any other — it shows up in `godwit plan` and in the pull-request comment with the condition beside its SQL — and it runs at the end of the expand phase. If it does not hold the run fails there, `awaiting_contract` is never reached, and no swap happens. `godwit run confirm` re-checks it against the data as it is at confirm time, not as it was when the backfill finished. See [concepts: assertions](concepts.md#assertions).
+
 ## 3b. Write the next migration from a schema
 
 When you would rather describe the database you want than the step to get there, keep a `schema.sql` with the whole DDL and let the service write the file:

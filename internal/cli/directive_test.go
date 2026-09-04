@@ -169,3 +169,56 @@ func TestTargetAddKeepOldFlag(t *testing.T) {
 		t.Fatalf("an untouched flag must leave the target's default alone: %v", *got)
 	}
 }
+
+func assertReport() planReport {
+	r := expandedReport()
+	r.items[0].Statements = []engine.Statement{
+		{SQL: "SELECT count(*) FROM orders WHERE total IS NULL", Phase: engine.PhaseExpand, Assert: &engine.AssertSpec{
+			Op: "=", Kind: engine.AssertInt, Value: "0",
+		}},
+	}
+	r.items[0].directives = []string{"-- godwit: assert 'SELECT count(*) FROM orders WHERE total IS NULL' = 0"}
+
+	return r
+}
+
+func TestPlanRendersTheAssertion(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	writePlanText(&b, assertReport())
+	for _, want := range []string{
+		"[0] assert SELECT count(*) FROM orders WHERE total IS NULL   [expand]",
+		"        the result must be = 0",
+	} {
+		if !strings.Contains(b.String(), want) {
+			t.Fatalf("missing %q in:\n%s", want, b.String())
+		}
+	}
+	b.Reset()
+	writePlanMarkdown(&b, assertReport())
+	if !strings.Contains(b.String(), "| assert | `SELECT count(*) FROM orders WHERE total IS NULL` must be `= 0` |") {
+		t.Fatalf("markdown:\n%s", b.String())
+	}
+	b.Reset()
+	writePlanJSON(&b, assertReport())
+	if !strings.Contains(b.String(), `"assert":{"op":"=","kind":"int","value":"0"}`) {
+		t.Fatalf("json:\n%s", b.String())
+	}
+}
+
+func TestPlanReportFromProtoCarriesAssertions(t *testing.T) {
+	t.Parallel()
+	r := planReportFromProto(&godwitv1.PlanRunResponse{
+		Target: "app", Migrations: []*godwitv1.PlannedMigration{{
+			Version: 1, Name: "m", Expanded: true,
+			Statements: []*godwitv1.PlannedStatement{{
+				Sql: "SELECT count(*) FROM t", Phase: "expand",
+				Assert: &godwitv1.PlannedAssert{Op: ">", Kind: "int", Value: "0"},
+			}},
+		}},
+	})
+	st := r.items[0].Statements[0]
+	if st.Assert == nil || st.Assert.Op != ">" || st.Assert.Value != "0" || st.Assert.Kind != "int" {
+		t.Fatalf("statement = %+v", st)
+	}
+}

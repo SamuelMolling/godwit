@@ -52,11 +52,12 @@ type StatementEvent struct {
 
 // Executor applies plans over one database session.
 type Executor struct {
-	db      DB
-	opts    Options
-	hook    func(HookPoint, int)
-	observe func(StatementEvent)
-	newID   func() string
+	db          DB
+	opts        Options
+	hook        func(HookPoint, int)
+	observe     func(StatementEvent)
+	newID       func() string
+	assertProbe bool
 }
 
 // Option customizes an Executor.
@@ -75,6 +76,12 @@ func WithObserver(fn func(StatementEvent)) Option {
 // WithIDGenerator overrides run ID generation.
 func WithIDGenerator(fn func() string) Option {
 	return func(e *Executor) { e.newID = fn }
+}
+
+// WithAssertProbe runs assertions without enforcing them, for the scratch database that mirrors the
+// target's schema but holds none of its rows.
+func WithAssertProbe() Option {
+	return func(e *Executor) { e.assertProbe = true }
 }
 
 // New builds an Executor over db.
@@ -173,7 +180,12 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	if p.Held() {
 		last = p.HoldFrom
 	}
-	for i := prog.lastDone + 1; i < last; i++ {
+	for i := range last {
+		// An assertion is re-evaluated whenever the executor walks past it: a condition that held before
+		// the crash, or before the confirm, is not a condition that holds now.
+		if i <= prog.lastDone && p.Statements[i].Assert == nil {
+			continue
+		}
 		if err := e.execStatement(ctx, prog, res.Migration, i, p.Statements[i]); err != nil {
 			err = fmt.Errorf("statement %d of %s (%s): %w", i, res.Migration, p.Direction, err)
 			markFailed(ctx, e.db, prog.runID, err)
@@ -260,6 +272,8 @@ func (e *Executor) execStatement(ctx context.Context, prog runProgress, migratio
 	ev := StatementEvent{Migration: migration, Index: idx, Statement: st}
 	var err error
 	switch {
+	case st.Assert != nil:
+		err = e.execAssert(ctx, prog, idx, st)
 	case st.Batch != nil:
 		err = e.execBatch(ctx, prog, idx, st, &ev)
 	case st.NoTx:

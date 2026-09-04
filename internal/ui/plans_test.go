@@ -187,3 +187,13 @@ func TestBatchLine(t *testing.T) {
 		t.Fatalf("batchLine = %q", got)
 	}
 }
+
+func TestAssertLine(t *testing.T) {
+	t.Parallel()
+	if got := assertLine(nil); got != "" {
+		t.Fatalf("assertLine(nil) = %q", got)
+	}
+	if got := assertLine(&godwitv1.PlannedAssert{Op: "=", Kind: "int", Value: "0"}); got != "assert = 0" {
+		t.Fatalf("assertLine = %q", got)
+	}
+}

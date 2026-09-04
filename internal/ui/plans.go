@@ -38,6 +38,7 @@ type planStmt struct {
 	SQL     string
 	NoTx    bool
 	Batch   string
+	Assert  string
 	Hazards []*godwitv1.PlannedHazard
 }
 
@@ -118,6 +119,14 @@ func batchLine(b *godwitv1.PlannedBatch) string {
 	return line
 }
 
+func assertLine(a *godwitv1.PlannedAssert) string {
+	if a == nil {
+		return ""
+	}
+
+	return "assert " + a.Op + " " + a.Value
+}
+
 func phasesOf(m *godwitv1.PlannedMigration) []planPhase {
 	var out []planPhase
 	for _, st := range m.Statements {
@@ -129,7 +138,9 @@ func phasesOf(m *godwitv1.PlannedMigration) []planPhase {
 			out = append(out, planPhase{Name: name})
 		}
 		last := &out[len(out)-1]
-		last.Stmts = append(last.Stmts, planStmt{SQL: st.Sql, NoTx: st.NoTx, Batch: batchLine(st.Batch), Hazards: st.Hazards})
+		last.Stmts = append(last.Stmts, planStmt{
+			SQL: st.Sql, NoTx: st.NoTx, Batch: batchLine(st.Batch), Assert: assertLine(st.Assert), Hazards: st.Hazards,
+		})
 	}
 
 	return out

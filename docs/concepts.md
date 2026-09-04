@@ -184,7 +184,7 @@ $ godwit lint --dir db/migrations
 
 ### Directives
 
-Why the expansion runs where it does, and what it refuses: [decision 0002](decisions/0002-directives-godwit-executes.md).
+Why the expansion runs where it does, and what it refuses: [decision 0002](decisions/0002-directives-godwit-executes.md). Why a data condition is a directive and not a hook: [decision 0008](decisions/0008-assertions-in-the-plan.md).
 
 A hazard recipe hands over the safe SQL as text. A **directive** is the other direction: the migration says what it
 wants and lets godwit produce the lock-safe statements. It is a SQL line comment, so the file stays a plain `.sql`
@@ -200,6 +200,7 @@ that any other tool can read (the syntax precedent is Atlas's `-- atlas:txmode n
 -- godwit: add-fk orders.user_id -> users.id on-delete=cascade
 -- godwit: add-check users users_age_check 'age > 0'
 -- godwit: drop-column users.age_old
+-- godwit: assert 'SELECT count(*) FROM orders WHERE total IS NULL' = 0
 ```
 
 **Grammar.** A line whose first non-space text is `-- godwit:`, then the operation, its positional arguments, then
@@ -220,12 +221,15 @@ where its statements are spliced, so directives compose with ordinary SQL in the
 | `add-fk` | `<t>.<c> -> <rt>.<rc>` | `name=` `on-delete=` | |
 | `add-check` | `<t> <name> '<expr>'` | | |
 | `drop-column` | `<t>.<c>` | | |
+| `assert` | `'<select>' <cmp> <value>` | | |
 | `revert` | | | |
 
 `rename-column`, `rename-table` and `drop-table` have no directive: a safe rename needs the application to read
 either name during the transition, which pgroll buys with versioned views over the physical table. godwit's unit is
 a versioned SQL file and it will not start owning the application's view of the schema; `add-column` + `backfill` +
 `drop-column` expresses the same change in three reviewable migrations behind the expand/contract gate.
+
+`assert` is the one directive that reads rather than writes; it has a section of [its own](#assertions).
 
 `batch=`, `key=` and `pause=` are the knobs of a [batched statement](#batched-statements): the cursor column, the
 rows per batch and the sleep between them.
@@ -268,6 +272,32 @@ build:` instead, because `add-index ... unique` builds the concurrent index but 
 that follows it stays yours. A recipe whose statement the grammar cannot express — a multi-column foreign key, an
 index with an ordering or an operator class, a `DROP INDEX` naming several indexes, an `ADD COLUMN` carrying more
 than `NOT NULL` — prints no directive line rather than a lossy one.
+
+### Assertions
+
+`-- godwit: assert '<select>' <cmp> <value>` states a condition about the **data** and makes it part of the plan.
+
+```sql
+-- godwit: assert 'SELECT count(*) FROM orders WHERE total IS NULL' = 0
+-- godwit: assert 'SELECT count(*) FROM users' > 0
+-- godwit: assert 'SELECT bool_and(email LIKE ''%@%'') FROM users' = true
+```
+
+The query is single-quoted, `''` is a literal quote inside it, and the comparison is `=`, `<>`, `!=`, `<`, `<=`, `>` or `>=` against an integer, or `=`/`<>` against `true`/`false`. There are no options and no flags: this is a condition, not a predicate language.
+
+**It is a statement.** The assertion occupies the position in the file where it is written, gets a plan index, a hash and a journal row, and is rendered in `godwit plan`, in the pull-request comment and in the UI as a statement whose mode is `assert`, with its condition beside its SQL. Nothing runs outside what the pull request showed — which is the reason godwit has no SQL hooks.
+
+**Where it runs.** Where you wrote it. Ahead of the migration's own SQL it is a **precondition** — the shape that guards a `DROP TABLE legacy` with `assert 'SELECT count(*) FROM legacy' = 0`, which is allowed precisely because an assertion generates no contract block of its own. After a `change-type` or a `backfill` it is the last statement of the **expand** phase, so a bad backfill can never become the irreversible swap: the generated contract block is always a suffix, so an assertion is always ahead of it. A run whose assertion does not hold fails before `awaiting_contract`, and there is then nothing to confirm. (Under `expand-contract` a hand-written destructive statement still moves its whole migration into the contract phase, assertion included — so the precondition above is checked when the human confirms, which is where it belongs.)
+
+**A resume re-checks it.** The executor walks past an assertion again even when the journal says it is done — including the walk `ConfirmRollout` makes over the expand phase before it applies the contract statements. A condition that held an hour ago is not a condition that holds now, and re-running a `SELECT` costs nothing. The consequence is worth stating: an assertion whose subject the same migration changes must be written to stay true after the change, or placed after it.
+
+**What it refuses.** Offline, through libpg_query, exactly like every other directive value: anything that is not a single `SELECT` (`UPDATE`, `DELETE`, `CREATE`, a `DO` block), a `SELECT INTO`, a locking clause (`FOR UPDATE` takes row locks), a data-modifying CTE, and a query returning more than one column or a bare `*`. At run time the query executes in a **read-only transaction**, which is what stops a `VOLATILE` function that writes — volatility lives in the catalog and the offline check cannot see it. The value must be a single row of `smallint`/`integer`/`bigint` (for an integer comparison) or `boolean`; `sum()` returns `numeric`, so cast it. No rows, more than one row, or `NULL` fails the assertion by name.
+
+**On the scratch database it is probed, not enforced.** Validation replays the target's history on a scratch database, which carries the schema and none of the rows, so `count(*)` there says nothing. The assertion is still executed: a table or column the query names but the schema does not have, and a column whose type the comparison cannot read, are refused at plan time — in the pull request. The row count and the value are checked on the target and only there.
+
+**Failure.** The run ends `failed`, never `needs_attention`: the condition is deterministic, so a retry would fail identically, and the scheduler does not retry it. The error names the query, the value it got and the value it wanted — `assertion failed: SELECT count(*) FROM orders WHERE total IS NULL returned 3, want = 0` — and rides on the run row, so the pull-request comment, `godwit run get`, the UI and the Slack/webhook notification all carry it. Nothing after the assertion ran, and the migration is not recorded.
+
+**What it does not interact with.** A migration carrying an assertion is never marked `already_applied`: a `SELECT` is DML, so `Plan.Opaque()` already stops the prefix walk, and marking it applied would skip the check. `-- godwit: revert` generates no inverse for an assertion (there is nothing to undo) and refuses outright when the assertion is the migration's only directive, rather than leaving an empty down body. A migration withheld by `--to` does not run its assertion, because it does not run. An assertion may not appear in an `R__` repeatable or in a `.down.sql`: that is `E004`, the placement rule every directive shares.
 
 ### The expansion
 
@@ -452,6 +482,9 @@ Every refusal is `invalid_argument` from `PlanRun`, before anything is stored, n
 | `add-fk` pointing at a column with no single-column unique index | PostgreSQL cannot point a foreign key at it |
 | `add-fk` or `add-check` whose constraint name the table already carries | pass `name=` to choose another |
 | `-- godwit: revert` with `keep-old=false`, or against a `backfill`, a `drop-index` or a `drop-column` | there is no lossless inverse; write the `.down.sql` by hand |
+| `-- godwit: revert` on a migration whose only directives are assertions | an assertion has nothing to undo, and an empty down body is not one |
+| an `assert` whose query is not a single read-only `SELECT` of one column | `E004`, offline: it would write, lock rows, or return something the comparison cannot read |
+| an `assert` naming a table or column the migration's starting schema does not have | the scratch replay executes it, so a typo is refused in the pull request |
 | `skip_validation` with a directive migration still to apply | no scratch, no catalog, no expansion; one the target already holds passes, it is never expanded again |
 | a directive in a repeatable, or in a `.down.sql` beyond the sentinel | `E004`, above |
 

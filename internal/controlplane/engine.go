@@ -81,6 +81,8 @@ func (e PGEngine) observer(req ApplyRequest) func(engine.StatementEvent) {
 		}
 		kind := "tx"
 		switch {
+		case ev.Statement.Assert != nil:
+			kind = "assert"
 		case ev.Statement.Batch != nil:
 			kind = "batch"
 		case ev.Statement.NoTx:

@@ -62,6 +62,9 @@ const (
 	argArrow
 	argName
 	argExpr
+	argQuery
+	argCmp
+	argValue
 )
 
 type optKind int
@@ -110,6 +113,7 @@ var directiveOps = map[string]opSpec{
 	"add-fk":        {args: []argKind{argColumn, argArrow, argColumn}, opts: map[string]optKind{"name": optIdent, "on-delete": optAction}},
 	"add-check":     {args: []argKind{argTable, argName, argExpr}},
 	"drop-column":   {args: []argKind{argColumn}},
+	DirectiveAssert: {args: []argKind{argQuery, argCmp, argValue}},
 	DirectiveRevert: {},
 }
 
@@ -145,6 +149,11 @@ func ValidateDirective(d Directive) error {
 	for _, name := range spec.required {
 		if _, ok := d.Opts[name]; !ok {
 			return fmt.Errorf("%s requires %s=", d.Op, name)
+		}
+	}
+	if d.Op == DirectiveAssert {
+		if _, _, err := ParseAssert(d); err != nil {
+			return err
 		}
 	}
 
@@ -194,6 +203,12 @@ func checkArg(kind argKind, v string) error {
 		}
 
 		return nil
+	case argQuery:
+		return checkAssertQuery(v)
+	case argCmp:
+		return checkAssertOp(v)
+	case argValue:
+		return checkAssertValue(v)
 	default:
 		return checkParses("SELECT "+v, "not an expression")
 	}

@@ -187,6 +187,16 @@ message PlannedBatch {
   string pause = 4;
 }
 
+// PlannedAssert is the condition an `-- godwit: assert` statement states about the value its query returns.
+message PlannedAssert {
+  // Comparison: "=", "<>", "!=", "<", "<=", ">" or ">=".
+  string op = 1;
+  // "int" or "bool": how the returned value is read.
+  string kind = 2;
+  // The value the comparison is against, as written.
+  string value = 3;
+}
+
 message PlannedStatement {
   string sql = 1;
   // Runs outside a transaction (CREATE INDEX CONCURRENTLY, VACUUM, ...).
@@ -196,6 +206,8 @@ message PlannedStatement {
   string phase = 4;
   // Set when the statement is a batched backfill rather than a single execution.
   PlannedBatch batch = 5;
+  // Set when the statement is a data condition the run checks instead of SQL it applies.
+  PlannedAssert assert = 6;
 }
 
 message PlannedMigration {

@@ -94,7 +94,7 @@ func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPa
 		if p, err = expander.expandPlan(ctx, conn, p, map[string]Expansion{}, replayed); err != nil {
 			return err
 		}
-		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithAssertProbe()); err != nil {
 			return fmt.Errorf("%w: %w", ErrValidationFailed, err)
 		}
 	}
@@ -125,7 +125,7 @@ func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searc
 		if err != nil {
 			return nil, fmt.Errorf("history run %d: %w", i, err)
 		}
-		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans), nil); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans), nil, engine.WithAssertProbe()); err != nil {
 			return nil, fmt.Errorf("replay history run %d: %w", i, err)
 		}
 		for _, p := range histPlans {
@@ -222,7 +222,7 @@ func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []en
 			return Validation{}, err
 		}
 		val.Plans[i] = p
-		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil); err != nil {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithAssertProbe()); err != nil {
 			return Validation{}, fmt.Errorf("%w: %w", ErrValidationFailed, err)
 		}
 		next, nextFP, err := snapshotScratch(ctx, conn)
@@ -282,6 +282,7 @@ func ExpandPlan(p engine.Plan, exp Expansion) (engine.Plan, error) {
 		}
 		// godwit generated these; the hazard gate speaks about what the author wrote.
 		st.Hazards = nil
+		st.Assert = exp.assertAt(i)
 		if b := exp.Batches[i]; b != nil {
 			st.Batch, st.Verifier = b, engine.VerifierBatch
 		}

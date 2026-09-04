@@ -428,6 +428,38 @@ done
 echo "state: $STATE"
 
 echo
+echo "==> assert: a data condition that is part of the plan, not a hook running SQL nobody reviewed"
+BAD_FILES='[
+    {"name": "20260901191500_guard.up.sql", "body": "-- godwit: assert '"'"'SELECT count(*) FROM orders'"'"' = 0\nTRUNCATE orders;\n"},
+    {"name": "20260901191500_guard.down.sql", "body": "SELECT 1;\n"}
+  ]'
+echo "==> the plan carries it as a statement with its condition, before the TRUNCATE it guards"
+rpc PlanRun "{\"target\": \"legacy\", \"persist\": true, \"files\": $BAD_FILES}" 18475 \
+  | tr ',' '\n' | grep -E '"(sql|op|value)"' | head -10
+BAD_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $BAD_FILES}" 18475 | field runId)
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$BAD_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_FAILED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+rpc GetRun "{\"runId\": \"$BAD_ID\"}" 18475 | tr ',' '\n' | grep '"error"'
+docker compose exec -T target-db psql -U app -d legacy -c "SELECT count(*) AS orders_still_here FROM orders;"
+echo "==> the TRUNCATE never ran: the assertion is the statement before it"
+
+GOOD_FILES='[
+    {"name": "20260901191600_checked.up.sql", "body": "-- godwit: assert '"'"'SELECT count(*) FROM orders WHERE quantity IS NULL'"'"' = 0\nCREATE INDEX CONCURRENTLY orders_quantity_idx ON orders (quantity);\n"},
+    {"name": "20260901191600_checked.down.sql", "body": "DROP INDEX CONCURRENTLY orders_quantity_idx;\n"}
+  ]'
+GOOD_ID=$(rpc CreateRun "{\"target\": \"legacy\", \"files\": $GOOD_FILES}" 18475 | field runId)
+for _ in $(seq 1 60); do
+  STATE=$(rpc GetRun "{\"runId\": \"$GOOD_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE  (the condition held, so the index was built)"
+
+echo
 echo "==> drop-column is the one that lands in the contract phase: the rollback column goes only after a human confirms"
 DC_FILES='[
     {"name": "20260901192000_drop_old.up.sql", "body": "-- godwit: drop-column public.orders.quantity_old\n"},
@@ -525,5 +557,5 @@ echo "==> what Prometheus would see on replica 2"
 curl -s localhost:18475/metrics | grep -E '^godwit_(runs|run_resumes_total|hazards_total|drift_checks_total)'
 
 echo
-echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, -- godwit: directives expanded into lock-safe plans, version targets, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
+echo "✅ paid-tier features, free: crash recovery, hazard gate, pre-apply validation, drift detection, expand/contract rollouts, -- godwit: directives expanded into lock-safe plans, data assertions carried by the plan, version targets, revert, Vault credentials, lock and statement timeouts, per-target search_path, baselining, target status, migrations generated from a desired schema, named tokens and an audit log, Prometheus metrics."
 echo "   (restore the dead replica with: docker compose up -d godwit-1)"

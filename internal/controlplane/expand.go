@@ -42,14 +42,15 @@ func (c RetiredColumn) String() string {
 // Expansion is the SQL godwit generates for one migration's directives, frozen into the plan so the run
 // applies what the pull request showed.
 type Expansion struct {
-	ID       string              `json:"id"`
-	UpSQL    string              `json:"up_sql"`
-	DownSQL  string              `json:"down_sql"`
-	DownHeld string              `json:"down_held_sql,omitempty"`
-	Phase    []string            `json:"phase"`
-	Batches  []*engine.BatchSpec `json:"batches,omitempty"`
-	Notes    []string            `json:"notes,omitempty"`
-	Retired  []RetiredColumn     `json:"retired,omitempty"`
+	ID       string               `json:"id"`
+	UpSQL    string               `json:"up_sql"`
+	DownSQL  string               `json:"down_sql"`
+	DownHeld string               `json:"down_held_sql,omitempty"`
+	Phase    []string             `json:"phase"`
+	Batches  []*engine.BatchSpec  `json:"batches,omitempty"`
+	Asserts  []*engine.AssertSpec `json:"asserts,omitempty"`
+	Notes    []string             `json:"notes,omitempty"`
+	Retired  []RetiredColumn      `json:"retired,omitempty"`
 	// Unretired are the columns the expansion removes, so a drop-column clears what a change-type retired.
 	Unretired []RetiredColumn `json:"unretired,omitempty"`
 	Lines     []string        `json:"lines,omitempty"`
@@ -59,6 +60,15 @@ type Expansion struct {
 // Contract is the index of the first contract statement, or -1 when the expansion has one phase.
 func (e Expansion) Contract() int {
 	return slices.Index(e.Phase, engine.PhaseContract)
+}
+
+// assertAt is the condition frozen for statement i, or nil; expansions frozen before assertions existed carry none.
+func (e Expansion) assertAt(i int) *engine.AssertSpec {
+	if i >= len(e.Asserts) {
+		return nil
+	}
+
+	return e.Asserts[i]
 }
 
 // Expander turns directives into statements using a catalog that already holds the target's history.
@@ -75,8 +85,9 @@ func NewExpander() *Expander {
 }
 
 type step struct {
-	sql   string
-	batch *engine.BatchSpec
+	sql    string
+	batch  *engine.BatchSpec
+	assert *engine.AssertSpec
 }
 
 type built struct {
@@ -141,6 +152,8 @@ func (x *Expander) one(ctx context.Context, conn engine.DB, d engine.Directive) 
 		return addCheck(ctx, conn, d)
 	case "drop-column":
 		return dropColumn(ctx, conn, d)
+	case engine.DirectiveAssert:
+		return assertion(d)
 	default:
 		return built{}, refuse(d, "%s has no expansion", d.Op)
 	}
@@ -155,6 +168,9 @@ var contractHazardCodes = []string{"H002", "H003", "H008"}
 // checkDestructive refuses a directive migration whose own SQL is destructive: the generated contract block
 // is a suffix of the plan, so a destructive statement before it would run in the expand phase.
 func checkDestructive(m engine.Migration) error {
+	if !slices.ContainsFunc(m.Directives, func(d engine.Directive) bool { return d.Op != engine.DirectiveAssert }) {
+		return nil
+	}
 	p, err := engine.BuildPlan(m, engine.DirectionUp)
 	if err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrDirective, m.ID(), err)
@@ -229,9 +245,9 @@ func spliceExpansion(m engine.Migration, all []built) (Expansion, error) {
 			continue
 		}
 		flush()
-		chunks = append(chunks, chunk{sql: "-- godwit expanded: " + m.Directives[i].Op + " " + strings.Join(m.Directives[i].Args, " ")})
+		chunks = append(chunks, chunk{sql: expandedHeader(m.Directives[i])})
 		for _, s := range all[i].expand {
-			chunks = append(chunks, chunk{sql: s.sql + ";", phase: engine.PhaseExpand, batch: s.batch, one: true})
+			chunks = append(chunks, chunk{sql: s.sql + ";", phase: engine.PhaseExpand, batch: s.batch, assert: s.assert, one: true})
 		}
 	}
 	flush()
@@ -250,11 +266,23 @@ func spliceExpansion(m engine.Migration, all []built) (Expansion, error) {
 	return exp, nil
 }
 
+// expandedHeader names the directive above the statements it produced; an assert's query is quoted back
+// so the comparison stays readable beside the SQL godwit runs.
+func expandedHeader(d engine.Directive) string {
+	args := d.Args
+	if d.Op == engine.DirectiveAssert {
+		args = []string{quoteLiteral(d.Args[0]), d.Args[1], d.Args[2]}
+	}
+
+	return "-- godwit expanded: " + d.Op + " " + strings.Join(args, " ")
+}
+
 type chunk struct {
-	sql   string
-	phase string
-	batch *engine.BatchSpec
-	one   bool
+	sql    string
+	phase  string
+	batch  *engine.BatchSpec
+	assert *engine.AssertSpec
+	one    bool
 }
 
 func (e *Expansion) fill(chunks []chunk) error {
@@ -264,6 +292,7 @@ func (e *Expansion) fill(chunks []chunk) error {
 		if c.one {
 			e.Phase = append(e.Phase, c.phase)
 			e.Batches = append(e.Batches, c.batch)
+			e.Asserts = append(e.Asserts, c.assert)
 
 			continue
 		}
@@ -274,6 +303,7 @@ func (e *Expansion) fill(chunks []chunk) error {
 		for range n {
 			e.Phase = append(e.Phase, "")
 			e.Batches = append(e.Batches, nil)
+			e.Asserts = append(e.Asserts, nil)
 		}
 	}
 	e.UpSQL = strings.Join(bodies, "\n")
@@ -298,6 +328,9 @@ func revertBody(m engine.Migration, all []built) (string, error) {
 		}
 		out = append(out, b.down...)
 	}
+	if len(out) == 0 && len(m.Directives) > 0 {
+		return "", refuse(m.Directives[0], "an assertion has no inverse; drop the -- godwit: revert sentinel or write the .down.sql by hand")
+	}
 
 	return strings.Join(out, "\n"), nil
 }
@@ -311,8 +344,16 @@ func heldBody(all []built) string {
 	return strings.Join(out, "\n")
 }
 
+// expansionHash covers the conditions as well as the SQL: an edited comparison changes nothing in the
+// bodies, and a re-plan whose expansion changed must still fail SameStatements.
 func expansionHash(e Expansion) string {
-	h := sha256.Sum256([]byte(e.UpSQL + "\x00" + e.DownSQL + "\x00" + e.DownHeld))
+	body := e.UpSQL + "\x00" + e.DownSQL + "\x00" + e.DownHeld
+	for i, a := range e.Asserts {
+		if a != nil {
+			body += fmt.Sprintf("\x00assert %d %s %s %s", i, a.Kind, a.Op, a.Value)
+		}
+	}
+	h := sha256.Sum256([]byte(body))
 
 	return hex.EncodeToString(h[:])
 }
@@ -772,6 +813,17 @@ func dropColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built,
 			col.rel(), engine.Ident(col.Column))},
 		downWhy: "a drop-column has no generated inverse; the rows go with the column",
 	}, nil
+}
+
+// assertion needs no catalog: the query is checked offline by the grammar and executed on the scratch
+// with the rest of the expanded plan, which is where a name the target does not have is refused.
+func assertion(d engine.Directive) (built, error) {
+	query, spec, err := engine.ParseAssert(d)
+	if err != nil {
+		return built{}, refuse(d, "%s", err)
+	}
+
+	return built{expand: []step{{sql: strings.TrimRight(strings.TrimSpace(query), ";"), assert: &spec}}}, nil
 }
 
 func (c columnFacts) constraintFree(ctx context.Context, conn engine.DB, d engine.Directive, name string) error {
