@@ -39,8 +39,21 @@ func TestAccessLogUnary(t *testing.T) {
 		t.Fatal("want error")
 	}
 	if out := buf.String(); !strings.Contains(out, `"level":"WARN"`) || !strings.Contains(out, `"code":"not_found"`) ||
-		!strings.Contains(out, `"error":"not_found: no such run"`) || strings.Contains(out, "actor") {
+		!strings.Contains(out, `"error":"not_found: no such run"`) || strings.Contains(out, "actor") ||
+		strings.Contains(out, `"detail"`) {
 		t.Fatalf("error line = %s", out)
+	}
+
+	buf.Reset()
+	redactedCall := a.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
+		return nil, connect.NewError(connect.CodeInternal, &redacted{msg: "hidden", cause: errors.New("host=db.internal user=app")})
+	})
+	if _, err := redactedCall(context.Background(), req); err == nil {
+		t.Fatal("want error")
+	}
+	if out := buf.String(); !strings.Contains(out, `"error":"internal: hidden"`) ||
+		!strings.Contains(out, `"detail":"host=db.internal user=app"`) {
+		t.Fatalf("what the caller may not see must still reach the log: %s", out)
 	}
 }
 

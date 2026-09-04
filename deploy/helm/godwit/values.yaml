@@ -73,12 +73,30 @@ serve:
     # the UI is open to anyone who reaches the port and the service logs a warning.
     basicAuth: false
     # --ui-scope: what the shared identity may do — read, pipeline, operator or admin.
+    # An anonymous visitor on a UI with no tokens and no basicAuth is always read, whatever this says.
     scope: operator
     # --ui-origin: the scheme://host[:port] origins a browser reaches /ui at, e.g.
     # ["https://godwit.example.com"]. Set this whenever an Ingress publishes /ui: it is the
     # allowlist of hosts the UI answers on and of origins a form post may come from. Empty
     # compares the browser's Origin with the request Host, which needs the proxy to preserve it.
     origins: []
+  # Admission limits. Every request above one of them is refused with invalid_argument naming it.
+  limits:
+    # --store-max-conns: pool size against the store; wins over pool_max_conns in the DSN.
+    storeMaxConns: 20
+    # --max-concurrent-runs: runs this replica executes at once, each on its own goroutine.
+    maxConcurrentRuns: 4
+    # --run-timeout: wall clock one run may take before it is cancelled and finished as failed.
+    runTimeout: 24h
+    # --max-request-bytes: largest request body the API decodes (32 MiB).
+    maxRequestBytes: 33554432
+    # --max-files: migration files one request may carry.
+    maxFiles: 2000
+    # --max-file-bytes: largest single migration body, and the largest desired schema Diff accepts (4 MiB).
+    maxFileBytes: 4194304
+    # --max-concurrent-diffs: Diff, PlanRun, CreateRun, RevertRun and Checkpoint calls admitted at once;
+    # each builds scratch databases, so size the scratch server's max_connections and disk for it.
+    maxConcurrentDiffs: 4
   # Appended verbatim after the flags above.
   extraArgs: []
 

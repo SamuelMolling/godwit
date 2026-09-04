@@ -25,7 +25,7 @@ CREATE ROLE godwit_scratch LOGIN PASSWORD 'secret'
 
 Then `--set serve.scratch.enabled=true`. The pods refuse to start when that role is a superuser or owns the store database.
 
-`GODWIT_MASTER_KEY` encrypts the DSNs of `static` targets; losing it means re-registering those targets. `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; `name:secret` and a bare secret are admin); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
+`GODWIT_MASTER_KEY` encrypts the DSNs of `static` targets; losing it means re-registering those targets. `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; a bare secret is admin, and a two-field `name:secret` entry is refused at start-up); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
 
 ## Install
 
@@ -59,9 +59,13 @@ The release prints the in-cluster URL and the first commands to run. Every value
 
 Anything else the process should see (proxies) goes through `extraEnv` / `extraEnvFrom`.
 
+## Admission limits
+
+`serve.limits` sets the pool size, the request and file sizes, the migration file count, the concurrent runs and the concurrent scratch-database calls, and the per-run wall clock. The defaults hold roughly an order of magnitude more than a real migration directory; [operations](../../../docs/operations.md#admission-limits) says which one to raise for which refusal, and `serve.limits.maxConcurrentDiffs` is the one to size the scratch server’s `max_connections` and disk against.
+
 ## Web UI
 
-`serve.ui.enabled` adds `--ui` and `--ui-scope`, serving the operator web UI at `/ui` on the same port. With `GODWIT_TOKENS` set the UI is already behind basic auth: any token secret is a valid password and signs in as that token with its own scope, so pages offer only the actions that scope allows. `serve.ui.basicAuth` adds a shared identity on top — put `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD` in the Secret (`existingSecret.keys.uiUser` / `uiPassword` name the keys) — whose rights are `serve.ui.scope` (default `operator`; `read` makes it a viewer). Without tokens and without that pair, anyone who reaches the port acts with `serve.ui.scope`.
+`serve.ui.enabled` adds `--ui` and `--ui-scope`, serving the operator web UI at `/ui` on the same port. With `GODWIT_TOKENS` set the UI is already behind basic auth: any token secret is a valid password and signs in as that token with its own scope, so pages offer only the actions that scope allows. `serve.ui.basicAuth` adds a shared identity on top — put `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD` in the Secret (`existingSecret.keys.uiUser` / `uiPassword` name the keys) — whose rights are `serve.ui.scope` (default `operator`; `read` makes it a viewer). Without tokens and without that pair, anyone who reaches the port acts as `ui:anonymous` with scope `read` — `serve.ui.scope` belongs to the identity that signed in, and is not handed to a visitor who signed in with nothing.
 
 ## Upgrading
 

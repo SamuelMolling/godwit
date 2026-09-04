@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -73,24 +74,14 @@ type Token struct {
 	Secret string
 }
 
-// ParseTokens reads token specs of the form "name:scope:secret"; "name:secret" is admin and a bare "secret" is an anonymous admin.
+// ParseTokens reads token specs of the form "name:scope:secret"; a bare "secret" is an anonymous admin.
 func ParseTokens(specs []string) ([]Token, error) {
 	seen := map[string]string{}
 	out := make([]Token, 0, len(specs))
 	for i, spec := range specs {
-		parts := strings.SplitN(strings.TrimSpace(spec), ":", 3)
-		t := Token{Name: AnonymousActor, Scope: ScopeAdmin, Secret: parts[len(parts)-1]}
-		if len(parts) > 1 {
-			t.Name = parts[0]
-		}
-		if len(parts) == 3 {
-			t.Scope = Scope(parts[1])
-		}
-		if t.Name == "" || t.Secret == "" {
-			return nil, fmt.Errorf("token #%d: want name:scope:secret, name:secret or a bare secret", i+1)
-		}
-		if _, err := ParseScope(string(t.Scope)); err != nil {
-			return nil, fmt.Errorf("token #%d (%s): %w", i+1, t.Name, err)
+		t, err := parseToken(strings.TrimSpace(spec))
+		if err != nil {
+			return nil, fmt.Errorf("token #%d: %w", i+1, err)
 		}
 		if other, dup := seen[t.Secret]; dup {
 			return nil, fmt.Errorf("token #%d (%s): secret already used by %s", i+1, t.Name, other)
@@ -100,6 +91,32 @@ func ParseTokens(specs []string) ([]Token, error) {
 	}
 
 	return out, nil
+}
+
+var errTokenForm = errors.New("want name:scope:secret or a bare secret")
+
+func parseToken(spec string) (Token, error) {
+	parts := strings.SplitN(spec, ":", 3)
+	if len(parts) == 2 {
+		return Token{}, fmt.Errorf("%q has two fields; that form used to read the second one as the secret and grant admin: %w",
+			parts[0]+":…", errTokenForm)
+	}
+	if len(parts) == 1 {
+		if parts[0] == "" {
+			return Token{}, errTokenForm
+		}
+
+		return Token{Name: AnonymousActor, Scope: ScopeAdmin, Secret: parts[0]}, nil
+	}
+	t := Token{Name: parts[0], Scope: Scope(parts[1]), Secret: parts[2]}
+	if t.Name == "" || t.Secret == "" {
+		return Token{}, errTokenForm
+	}
+	if _, err := ParseScope(string(t.Scope)); err != nil {
+		return Token{}, fmt.Errorf("(%s): %w", t.Name, err)
+	}
+
+	return t, nil
 }
 
 // Principal is the identity behind a call: the token name and its scope.
@@ -112,13 +129,12 @@ type principalKey struct{}
 
 var anonymousAdmin = Principal{Name: AnonymousActor, Scope: ScopeAdmin}
 
-// Caller returns the principal behind the call; outside an authenticated request it is an anonymous admin.
+// Caller returns the principal behind the call; a context that never passed the auth interceptor
+// carries no scope, so Authorize refuses every procedure.
 func Caller(ctx context.Context) Principal {
-	if p, ok := ctx.Value(principalKey{}).(Principal); ok {
-		return p
-	}
+	p, _ := ctx.Value(principalKey{}).(Principal)
 
-	return anonymousAdmin
+	return p
 }
 
 // WithPrincipal returns ctx carrying p as the caller, the way the auth interceptor does for a bearer token.
@@ -128,12 +144,14 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 
 // Actor returns the name of the token behind the call, or anonymous outside an authenticated request.
 func Actor(ctx context.Context) string {
-	return Caller(ctx).Name
+	return cmp.Or(Caller(ctx).Name, AnonymousActor)
 }
 
-// auth checks bearer tokens against the allow-set, names the caller and enforces the per-procedure scope; an empty set disables auth.
+// auth checks bearer tokens against the allow-set, names the caller and enforces the per-procedure scope;
+// an empty set disables auth and every call runs as open, which newAuth sets explicitly.
 type auth struct {
 	principals map[string]Principal
+	open       Principal
 }
 
 func newAuth(tokens []Token) *auth {
@@ -142,7 +160,7 @@ func newAuth(tokens []Token) *auth {
 		principals[t.Secret] = Principal{Name: t.Name, Scope: t.Scope}
 	}
 
-	return &auth{principals: principals}
+	return &auth{principals: principals, open: anonymousAdmin}
 }
 
 var errUnauthenticated = connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token"))
@@ -150,7 +168,7 @@ var errUnauthenticated = connect.NewError(connect.CodeUnauthenticated, errors.Ne
 // actor resolves the Authorization header to a principal; ok is false when the call must be refused.
 func (a *auth) actor(header string) (Principal, bool) {
 	if len(a.principals) == 0 {
-		return anonymousAdmin, true
+		return a.open, true
 	}
 	secret, ok := strings.CutPrefix(header, "Bearer ")
 	if !ok {

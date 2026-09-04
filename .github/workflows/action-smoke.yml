@@ -122,7 +122,7 @@ jobs:
       - name: Start the service and register a target
         shell: bash
         env:
-          GODWIT_TOKENS: ci-read:read:smoke-read,ci-pipe:pipeline:smoke-pipe,ops:smoke-admin
+          GODWIT_TOKENS: ci-read:read:smoke-read,ci-pipe:pipeline:smoke-pipe,ops:admin:smoke-admin
           POSTGRES_ID: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail

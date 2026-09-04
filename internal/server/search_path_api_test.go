@@ -143,8 +143,13 @@ func TestAPIRevertRefusesUnreachableTarget(t *testing.T) {
 
 	registerWithSearchPath(t, client, "postgres://nobody@127.0.0.1:1/x", "app,public")
 	_, err = client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: created.Msg.RunId, AcknowledgeHazards: []string{"H002"}}))
-	if connect.CodeOf(err) != connect.CodeInternal || !strings.Contains(err.Error(), "connect target") {
+	if connect.CodeOf(err) != connect.CodeInternal || !strings.Contains(err.Error(), "cannot reach the database") {
 		t.Fatalf("err = %v", err)
+	}
+	for _, leak := range []string{"nobody", "127.0.0.1", "connect target"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("the connection error leaked %q to a read-scope caller: %v", leak, err)
+		}
 	}
 }
 

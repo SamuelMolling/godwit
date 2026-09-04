@@ -8,6 +8,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// MaxPageSize is the ceiling every listing clamps its caller's limit to, so one call cannot
+// materialise a whole table into a single response.
+const MaxPageSize = 1000
+
+const defaultPageSize = 100
+
+func pageSize(limit int) int {
+	if limit <= 0 {
+		return defaultPageSize
+	}
+
+	return min(limit, MaxPageSize)
+}
+
 // Audit actions.
 const (
 	AuditTargetRegister = "target.register"
@@ -46,11 +60,10 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	return nil
 }
 
-// ListAudit returns the newest entries first, optionally filtered by target and run; limit caps the page (100 when zero).
+// ListAudit returns the newest entries first, optionally filtered by target and run; limit caps the page
+// (100 when zero, MaxPageSize at most).
 func (s *Store) ListAudit(ctx context.Context, target, runID string, limit int) ([]AuditEntry, error) {
-	if limit <= 0 {
-		limit = 100
-	}
+	limit = pageSize(limit)
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, at, actor, action, coalesce(run_id::text, ''), target, detail FROM cp_audit
 		WHERE ($1 = '' OR target = $1) AND ($2 = '' OR run_id = NULLIF($2, '')::uuid)

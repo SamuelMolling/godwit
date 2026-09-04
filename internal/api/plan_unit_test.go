@@ -84,7 +84,7 @@ func expectSnapshot(mock pgxmock.PgxPoolIface, fingerprint string) {
 
 func plannedMigrations(t *testing.T) []controlplane.PlanMigration {
 	t.Helper()
-	spec, err := upSpec("app", "", planFiles())
+	spec, err := (&Server{}).upSpec("app", "", planFiles())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestPlanRunDetectsWithValidation(t *testing.T) {
 
 func TestPlanMigrationsDetects(t *testing.T) {
 	t.Parallel()
-	spec, err := upSpec("app", "", []*godwitv1.MigrationFile{
+	spec, err := (&Server{}).upSpec("app", "", []*godwitv1.MigrationFile{
 		{Name: "20260901120000_t.up.sql", Body: "CREATE TABLE b (id int);"},
 		{Name: "20260901120000_t.down.sql", Body: "DROP TABLE b;"},
 	})

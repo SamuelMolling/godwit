@@ -15,7 +15,7 @@ func TestAuditEndToEnd(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	storeDSN := newDatabase(t, "st")
-	baseURL := startService(t, storeDSN, "r1", []string{"ci:ci-secret", "samuel:ops-secret", "legacy-secret"})
+	baseURL := startService(t, storeDSN, "r1", []string{"ci:admin:ci-secret", "samuel:admin:ops-secret", "legacy-secret"})
 	ci, samuel, legacy := newClient(baseURL, "ci-secret"), newClient(baseURL, "ops-secret"), newClient(baseURL, "legacy-secret")
 
 	registerTarget(t, samuel, newDatabase(t, "tg"))
@@ -106,8 +106,12 @@ func TestAuditEndToEnd(t *testing.T) {
 func TestRunRejectsBadTokenSpec(t *testing.T) {
 	t.Parallel()
 
-	err := Run(context.Background(), Config{Tokens: []string{"ci:"}, Log: testLog})
-	if err == nil || !strings.Contains(err.Error(), "token #1: want name:scope:secret, name:secret or a bare secret") {
+	err := Run(context.Background(), Config{Tokens: []string{"ci:read:"}, Log: testLog})
+	if err == nil || !strings.Contains(err.Error(), "token #1: want name:scope:secret or a bare secret") {
 		t.Fatalf("bad token spec: %v", err)
+	}
+	err = Run(context.Background(), Config{Tokens: []string{"deploy:pipeline"}, Log: testLog})
+	if err == nil || !strings.Contains(err.Error(), "two fields") {
+		t.Fatalf("two-field token spec: %v", err)
 	}
 }

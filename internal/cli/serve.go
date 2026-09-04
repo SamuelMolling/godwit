@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/server"
 )
@@ -16,15 +17,16 @@ import (
 func newServeCmd() *cobra.Command {
 	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope string
 	var uiOrigins []string
-	var driftInterval, leaseTTL, tickInterval time.Duration
-	var maxAttempts int
+	var driftInterval, leaseTTL, tickInterval, runTimeout time.Duration
+	var maxAttempts, maxConcurrentRuns, storeMaxConns int
+	var maxRequestBytes, maxFiles, maxFileBytes, maxConcurrentDiffs int
 	var skipValidation, requirePlan, withUI bool
 	var planTTL, planRetention time.Duration
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
-			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; name:secret and a bare secret are admin),\n" +
+			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; a bare secret is an anonymous admin),\n" +
 			"GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --scratch-dsn and --scratch-template),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
@@ -55,23 +57,31 @@ func newServeCmd() *cobra.Command {
 				MasterKey:       key,
 				Tokens:          tokens,
 				Holder:          hostname,
-				Scheduler:       controlplane.Config{TTL: leaseTTL, Interval: tickInterval, MaxAttempts: maxAttempts},
-				DriftInterval:   driftInterval,
-				WebhookURL:      os.Getenv("GODWIT_WEBHOOK_URL"),
-				SlackToken:      os.Getenv("GODWIT_SLACK_TOKEN"),
-				SlackChannel:    os.Getenv("GODWIT_SLACK_CHANNEL"),
-				SlackMode:       os.Getenv("GODWIT_SLACK_MODE"),
-				PublicURL:       os.Getenv("GODWIT_PUBLIC_URL"),
-				SkipValidation:  skipValidation,
-				RequirePlan:     requirePlan,
-				PlanTTL:         planTTL,
-				PlanRetention:   planRetention,
-				UI:              withUI || os.Getenv("GODWIT_UI") == "true",
-				UIUser:          uiUser,
-				UIPassword:      uiPassword,
-				UIScope:         uiScope,
-				UIOrigins:       uiOrigins,
-				Log:             log,
+				Scheduler: controlplane.Config{
+					TTL: leaseTTL, Interval: tickInterval, MaxAttempts: maxAttempts,
+					MaxConcurrentRuns: maxConcurrentRuns, RunTimeout: runTimeout,
+				},
+				StoreMaxConns: storeMaxConns,
+				Limits: api.Limits{
+					RequestBytes: maxRequestBytes, Files: maxFiles,
+					FileBytes: maxFileBytes, HeavyCalls: maxConcurrentDiffs,
+				},
+				DriftInterval:  driftInterval,
+				WebhookURL:     os.Getenv("GODWIT_WEBHOOK_URL"),
+				SlackToken:     os.Getenv("GODWIT_SLACK_TOKEN"),
+				SlackChannel:   os.Getenv("GODWIT_SLACK_CHANNEL"),
+				SlackMode:      os.Getenv("GODWIT_SLACK_MODE"),
+				PublicURL:      os.Getenv("GODWIT_PUBLIC_URL"),
+				SkipValidation: skipValidation,
+				RequirePlan:    requirePlan,
+				PlanTTL:        planTTL,
+				PlanRetention:  planRetention,
+				UI:             withUI || os.Getenv("GODWIT_UI") == "true",
+				UIUser:         uiUser,
+				UIPassword:     uiPassword,
+				UIScope:        uiScope,
+				UIOrigins:      uiOrigins,
+				Log:            log,
 			})
 		},
 	}
@@ -85,6 +95,17 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "how long a claimed run stays leased without a heartbeat")
 	cmd.Flags().DurationVar(&tickInterval, "tick-interval", 2*time.Second, "how often the scheduler looks for runnable runs")
 	cmd.Flags().IntVar(&maxAttempts, "max-attempts", 5, "claims a run may take before it parks as needs_attention")
+	cmd.Flags().IntVar(&maxConcurrentRuns, "max-concurrent-runs", controlplane.DefaultMaxConcurrentRuns,
+		"runs this replica executes at once; one slow run never blocks the others")
+	cmd.Flags().DurationVar(&runTimeout, "run-timeout", controlplane.DefaultRunTimeout,
+		"wall clock a single run may take before it is cancelled and recorded as failed")
+	cmd.Flags().IntVar(&storeMaxConns, "store-max-conns", server.DefaultStoreMaxConns,
+		"connections the API pool opens against the store; wins over pool_max_conns in the DSN")
+	cmd.Flags().IntVar(&maxRequestBytes, "max-request-bytes", api.DefaultRequestBytes, "largest request body the API accepts")
+	cmd.Flags().IntVar(&maxFiles, "max-files", api.DefaultFiles, "migration files one request may carry")
+	cmd.Flags().IntVar(&maxFileBytes, "max-file-bytes", api.DefaultFileBytes, "largest migration body or desired schema the API accepts")
+	cmd.Flags().IntVar(&maxConcurrentDiffs, "max-concurrent-diffs", api.DefaultHeavyCalls,
+		"Diff, PlanRun, CreateRun and RevertRun calls admitted at once; each builds scratch databases on the store server")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "disable scratch-database validation at run admission")
 	cmd.Flags().BoolVar(&requirePlan, "require-plan", false, "refuse runs without a stored plan on every target")
 	cmd.Flags().DurationVar(&planTTL, "plan-ttl", 720*time.Hour, "how long a stored plan stays bindable")

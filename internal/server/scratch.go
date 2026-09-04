@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -9,15 +10,22 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
+
+// scratchConns sizes the pool that creates and drops scratch databases. Only the admitted calls reach it,
+// each holding one connection at a time per database it makes, so the concurrency gate is the demand.
+func scratchConns(heavyCalls int) int {
+	return max(4, 2*cmp.Or(heavyCalls, api.DefaultHeavyCalls))
+}
 
 // newScratch resolves where scratch databases live and refuses a configured scratch connection that can act
 // outside them; without a scratch DSN they stay on the store server and every finding is only a warning.
 func newScratch(ctx context.Context, cfg Config, store *pgxpool.Pool, log *slog.Logger) (*controlplane.Scratch, func(), error) {
 	pool, closePool := store, func() {}
 	if cfg.ScratchDSN != "" {
-		p, err := pgxpool.New(ctx, cfg.ScratchDSN)
+		p, err := openPool(ctx, cfg.ScratchDSN, scratchConns(cfg.Limits.HeavyCalls))
 		if err != nil {
 			return nil, nil, fmt.Errorf("scratch dsn: %w", err)
 		}

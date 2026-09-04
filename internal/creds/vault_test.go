@@ -38,6 +38,9 @@ func fakeVault(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /v1/database/creds/app", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"username":"v-user","password":"v-pass","ttl":3600}}`))
 	})
+	mux.HandleFunc("GET /v1/database/creds/marked", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"username":"{{password}}","password":"v-pass"}}`))
+	})
 	mux.HandleFunc("GET /v1/broken", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":`))
 	})
@@ -77,6 +80,45 @@ func TestVaultKubernetesLoginAndTemplate(t *testing.T) {
 	}
 }
 
+// The error crosses the API, lands in cp_runs.error and is posted to Slack, so it must name only the
+// template's own keys. It used to return the partially rendered template from the first unresolved
+// marker to the end, which put every field substituted after it — the password included — in the message.
+func TestVaultTemplateErrorCarriesNoSecret(t *testing.T) {
+	t.Parallel()
+
+	srv := fakeVault(t)
+	p := creds.Vault{Address: srv.URL, Token: "root", Client: srv.Client()}
+	_, err := p.DSN(context.Background(), map[string]string{
+		"path":     "database/creds/app",
+		"template": "postgres://{{missing}}:{{password}}@db/{{alsomissing}}",
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing, alsomissing") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "v-pass") || strings.Contains(err.Error(), "v-user") {
+		t.Fatalf("the error carried a substituted secret: %v", err)
+	}
+
+	_, err = p.DSN(context.Background(), map[string]string{"path": "database/creds/app", "template": "postgres://{{username"})
+	if err == nil || !strings.Contains(err.Error(), "unclosed") {
+		t.Fatalf("an unclosed marker must be refused, not silently kept: %v", err)
+	}
+}
+
+// A field whose value contains a marker is substituted once and never rescanned.
+func TestVaultRenderDoesNotRescan(t *testing.T) {
+	t.Parallel()
+
+	srv := fakeVault(t)
+	p := creds.Vault{Address: srv.URL, Token: "root", Client: srv.Client()}
+	got, err := p.DSN(context.Background(), map[string]string{
+		"path": "database/creds/marked", "template": "postgres://{{username}}@db/app",
+	})
+	if err != nil || got != "postgres://{{password}}@db/app" {
+		t.Fatalf("got %q, err = %v", got, err)
+	}
+}
+
 func TestVaultErrors(t *testing.T) {
 	t.Parallel()
 
@@ -101,12 +143,12 @@ func TestVaultErrors(t *testing.T) {
 		{"read denied", creds.Vault{Address: srv.URL, Token: "bad"}, map[string]string{"path": "secret/data/app"}, "permission denied"},
 		{"read not found", creds.Vault{Address: srv.URL, Token: "root"}, map[string]string{"path": "nope"}, "status 404"},
 		{"bad json", creds.Vault{Address: srv.URL, Token: "root"}, map[string]string{"path": "broken"}, "read vault secret"},
-		{"missing field", creds.Vault{Address: srv.URL, Token: "root"}, map[string]string{"path": "database/creds/app"}, "no field for {{dsn}}"},
+		{"missing field", creds.Vault{Address: srv.URL, Token: "root"}, map[string]string{"path": "database/creds/app"}, "no field for dsn"},
 		{
 			"template leftover",
 			creds.Vault{Address: srv.URL, Token: "root"},
 			map[string]string{"path": "database/creds/app", "template": "{{username}}:{{ttl}}"},
-			"no field for {{ttl}}",
+			"no field for ttl",
 		},
 	}
 	for _, tc := range cases {

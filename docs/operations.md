@@ -12,6 +12,8 @@ Every replica runs the same four loops: API, scheduler, drift monitor, validator
 - **Transient failures** (`SQLSTATE 40001`, `40P01`, `55P03`, `57014`, `53300`, `57P01`–`57P03`, class `08`, connection resets, deadline exceeded): the run goes back to `queued` with `not_before = now + backoff` (`--tick-interval` doubled per attempt, capped at 5 minutes, ±20% jitter) and `retries + 1`; nobody is paged, `godwit_run_retries_total` counts it, the run's `error` starts with `transient:`. Any other SQL error finishes the run as `failed` at once with `sql:` in front.
 - **Store outage**: `/readyz` fails (it pings the store), the scheduler logs and retries on the next tick, in-flight statements finish or fail on their own timeouts. No run is lost: the journal is in the target, the run row in the store.
 
+Each replica executes up to `--max-concurrent-runs` (4) runs at once, each on its own goroutine: the scheduler's ticker claims work and hands it off, so a run that takes an hour occupies one slot and the replica keeps claiming for every other target. A run that outlives `--run-timeout` (24h) is cancelled and finished as `failed` — raise it above the longest backfill you expect to run in one go, and remember that `statement_timeout: "0"` on a run means *no statement limit*, so this is the only wall clock such a run has.
+
 Defaults that matter: `replicaCount: 2`, a PodDisruptionBudget with `minAvailable: 1`, soft pod anti-affinity, `terminationGracePeriodSeconds: 30`, graceful HTTP shutdown of 5s. A rolling update kills a replica with a run in flight; the run stays `running` until its lease expires (30s by default), then another replica takes it, and `godwit_run_resumes_total{source="reconciler"}` goes up by one. Set `--lease-ttl` above your longest expected GC pause and below how long you tolerate a stalled run; `--max-attempts` (5) bounds how many attempts a run gets, whether they ended in a lost lease or a transient failure, before it is finished as `needs_attention` (`transient: gave up after N attempts`).
 
 ## The store
@@ -37,7 +39,7 @@ Privileges for the store role: owner of the store database, and that is all it n
 
 The scratch role wants `LOGIN CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS` and `CONNECT` on the database its DSN names. Validation creates `godwit_validate_<id>` there, replays the target's history from `cp_run_files` plus the new files, and drops it `WITH (FORCE)`; `Diff` creates up to five `godwit_diff_<id>` databases per call the same way. Without `CREATEDB` every `CreateRun` fails with `replay history ...` / `create scratch database` and the only way forward is `--skip-validation`, which is not the fix. `serve` refuses to start when the scratch role is a superuser, owns the store database, is a member of `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, or holds `CREATEROLE` or `REPLICATION`; the message names each finding.
 
-Connections: one pool per replica for the store (pgx defaults), a second small pool for the scratch server when `--scratch-dsn` is set, one single connection per claimed run, drift check, status inspection or baseline against the target, opened for the operation and closed after it, plus one connection to the scratch database per validation. Size `max_connections` on the **scratch** server for `replicas × (pool + validations and diffs in flight)` and give it its own disk — a submitted schema decides how much it uses; the store now sees only the replica pools.
+Connections: one pool per replica for the store, `--store-max-conns` wide (20 by default, and it wins over `pool_max_conns` in the DSN), a second pool for the scratch server when `--scratch-dsn` is set, sized `max(4, 2 × --max-concurrent-diffs)` from the concurrency gate that is its only source of demand, one single connection per claimed run, drift check, status inspection or baseline against the target, opened for the operation and closed after it, plus one connection to the scratch database per validation. Size `max_connections` on the **scratch** server for `replicas × (its pool + validations and diffs in flight)` and give it its own disk — a submitted schema decides how much it uses; the store sees only the replica pools. The store pool used to be unsized, which left it at pgx's `max(4, NumCPU)` — different on every node size, and small enough that a burst of `Diff` calls left the scheduler waiting in `Acquire`.
 
 Sizing: the store is small. `cp_run_files` keeps the full text of every file for every run; a repository with 500 migrations of 2 KB sent on every run costs 1 MB per run. Prune it with the retention queries below rather than sending fewer files (the service needs the whole history for validation).
 
@@ -149,6 +151,22 @@ The rail and every target list come from `ListTargets`, so a registered target t
 Both pages read `Run.progress`, which the executor reports after every committed batch and the scheduler saves at most once a second. Rows written and batches committed are counted; the total is `pg_class.reltuples` for the table taken once when the backfill started, so it is shown as `~n` and the percentage as `≈`, and a run can finish either side of it — the batch only touches rows that still need it. The 3s htmx poll the page already runs is what moves the numbers; a run that is not running shows no backfill block, because `cp_runs.progress` is cleared by every transition that starts or ends an attempt and a settled run therefore carries none.
 
 `/ui/targets/{name}` takes its *pending* set from the target's newest **ready** plan, because the service holds no migration directory of its own; `godwit target status <name> --dir ./migrations` is the comparison against the files on disk, and it is also what flags a checksum mismatch.
+
+## Admission limits
+
+Set in [configuration](configuration.md#admission-limits); this is when to move them.
+
+| Symptom | Raise |
+|---|---|
+| `invalid_argument: migration file <name> is N bytes, limit 4194304` | `--max-file-bytes`, and check whether the file is a schema dump that belongs in a `schema_source` instead |
+| `invalid_argument: too many migration files: N, limit 2000` | `--max-files`; a directory past a thousand migrations is the only legitimate cause |
+| `invalid_argument: schema is N bytes, limit 4194304` | `--max-file-bytes`; it bounds the desired schema `Diff` accepts as well |
+| the client reports the message as too large before the service answers | `--max-request-bytes`, above the sum of what one run sends |
+| `resource_exhausted: too many concurrent validation requests` on pull-request plans | `--max-concurrent-diffs`, and size the scratch server's `max_connections` and disk for it: each admitted call builds four to five databases there |
+| a queued run waits while unrelated targets migrate | `--max-concurrent-runs`, and `--store-max-conns` with it |
+| a long backfill is finished as `failed` with `context deadline exceeded` | `--run-timeout`, above the backfill's real duration |
+
+`ListAudit` and `ListPlans` clamp `limit` to 1000 with no flag; page through with `--limit` and the newest-first order instead of asking for the whole table.
 
 ## Metrics
 

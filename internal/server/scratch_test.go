@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
@@ -102,5 +103,16 @@ func TestScratchDSNErrors(t *testing.T) {
 	if _, _, err := newScratch(ctx, Config{ScratchDSN: "postgres://x:x@127.0.0.1:1/x"}, pool, log); err == nil ||
 		!strings.Contains(err.Error(), "inspect scratch role") {
 		t.Fatalf("unreachable dsn: %v", err)
+	}
+}
+
+// The scratch pool's only source of demand is the concurrency gate in front of the calls that use it.
+func TestScratchConnsFollowsTheGate(t *testing.T) {
+	t.Parallel()
+
+	for heavy, want := range map[int]int{0: 2 * api.DefaultHeavyCalls, 1: 4, 4: 8, 16: 32} {
+		if got := scratchConns(heavy); got != want {
+			t.Fatalf("scratchConns(%d) = %d, want %d", heavy, got, want)
+		}
 	}
 }

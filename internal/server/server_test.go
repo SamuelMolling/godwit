@@ -100,6 +100,10 @@ func startServiceOpts(t *testing.T, storeDSN, holder string, tokens []string, ke
 
 func startServiceCfg(t *testing.T, cfg Config) string {
 	t.Helper()
+	// One shared container serves every parallel service here; the production default would exhaust it.
+	if cfg.StoreMaxConns == 0 {
+		cfg.StoreMaxConns = 8
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 

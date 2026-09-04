@@ -66,3 +66,14 @@ func TestListAuditRowError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A read token used to be able to pass int32 max and materialise a whole table into one response.
+func TestPageSizeClamps(t *testing.T) {
+	t.Parallel()
+
+	for limit, want := range map[int]int{0: defaultPageSize, -1: defaultPageSize, 1: 1, MaxPageSize: MaxPageSize, 2147483647: MaxPageSize} {
+		if got := pageSize(limit); got != want {
+			t.Fatalf("pageSize(%d) = %d, want %d", limit, got, want)
+		}
+	}
+}

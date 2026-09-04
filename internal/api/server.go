@@ -76,6 +76,8 @@ type Server struct {
 	RequirePlan bool
 	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
 	PlanTTL time.Duration
+	// Limits are the admission bounds; a zero field takes its default. Set them before Handler.
+	Limits Limits
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -102,13 +104,20 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 	}
 }
 
-// Handler mounts the connect service with bearer-token auth plus the unauthenticated
+// limits are the admission bounds in force, whatever the caller left zero.
+func (s *Server) limits() Limits {
+	return s.Limits.withDefaults()
+}
+
+// Handler mounts the connect service with bearer-token auth, admission limits, plus the unauthenticated
 // /metrics, /healthz and /readyz endpoints; serve it with h2c enabled.
 func Handler(s *Server, tokens []Token) http.Handler {
 	mux := http.NewServeMux()
 	a := newAuth(tokens)
+	l := s.limits()
 	path, h := godwitv1connect.NewGodwitServiceHandler(s,
-		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log, actor: a.actor}, a))
+		connect.WithReadMaxBytes(l.RequestBytes),
+		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log, actor: a.actor}, a, newGate(l)))
 	mux.Handle(path, h)
 	mux.Handle("/metrics", s.Metrics.Handler())
 	mux.HandleFunc("GET /healthz", healthz)
@@ -126,7 +135,7 @@ func rpcErr(err error) *connect.Error {
 		errors.Is(err, engine.ErrAlreadyMigrated), errors.Is(err, controlplane.ErrAppliedContent):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
-		return connect.NewError(connect.CodeInternal, err)
+		return connect.NewError(connect.CodeInternal, safe(err))
 	}
 }
 
@@ -224,7 +233,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 			return nil, err
 		}
 	}
-	spec, err := upSpec(m.Target, m.Rollout, m.Files)
+	spec, err := s.upSpec(m.Target, m.Rollout, m.Files)
 	if err != nil {
 		return nil, err
 	}
@@ -294,12 +303,15 @@ type runSpec struct {
 	withheld []engine.Plan
 }
 
-func upSpec(target, rollout string, in []*godwitv1.MigrationFile) (runSpec, error) {
+func (s *Server) upSpec(target, rollout string, in []*godwitv1.MigrationFile) (runSpec, error) {
 	if target == "" {
 		return runSpec{}, invalid("target is required")
 	}
 	if len(in) == 0 {
 		return runSpec{}, invalid("at least one migration file is required")
+	}
+	if err := s.limits().checkFiles(in); err != nil {
+		return runSpec{}, err
 	}
 	if rollout == "" {
 		rollout = controlplane.RolloutDirect
