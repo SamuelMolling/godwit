@@ -308,10 +308,14 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 			return heldWork{}, err
 		}
 	}
+	applied, err := s.store.Applied(ctx, run.Target)
+	if err != nil {
+		return heldWork{}, err
+	}
 
 	return held, s.engine.Apply(ctx, ApplyRequest{
 		RunID: run.ID, Target: run.Target, DSN: tg.dsn, Plans: plans, Opts: opts,
-		Progress: s.progress(ctx, run.ID), Record: s.record(run),
+		Progress: s.progress(ctx, run.ID), Record: s.record(run, plans, applied),
 	})
 }
 
@@ -339,14 +343,20 @@ func (s *Scheduler) plans(ctx context.Context, run Run) ([]engine.Plan, error) {
 }
 
 // record keeps the ledger of what the run actually applied, statement by statement, so a later revert
-// acts on that and not on the directory the run submitted.
-func (s *Scheduler) record(run Run) Recorder {
+// acts on that and not on the directory the run submitted. A migration the run skipped because the
+// target's own journal already recorded it is adopted instead: the target is what says a migration is
+// applied, and a ledger that cannot see an out-of-band apply leaves it pending forever.
+func (s *Scheduler) record(run Run, plans []engine.Plan, applied AppliedSet) Recorder {
 	return func(ctx context.Context, res engine.Result) error {
-		if res.Skipped {
-			return nil
-		}
 		if run.Reverts != "" {
+			if res.Skipped {
+				return nil
+			}
+
 			return s.store.MarkReverted(ctx, run.Reverts, run.ID, res.Migration)
+		}
+		if res.Skipped {
+			return s.adopt(ctx, run, plans, applied, res)
 		}
 		var exp *Expansion
 		if e, ok := run.Expansions[res.Migration]; ok {
@@ -355,6 +365,24 @@ func (s *Scheduler) record(run Run) Recorder {
 
 		return s.store.RecordApplied(ctx, run.ID, res.Migration, res.Held, exp)
 	}
+}
+
+// adopt records a skip the ledger does not already account for; a re-run of the same directory adopts
+// nothing, so a run's ledger never claims a migration another standing row already holds.
+func (s *Scheduler) adopt(ctx context.Context, run Run, plans []engine.Plan, applied AppliedSet, res engine.Result) error {
+	i := slices.IndexFunc(plans, func(p engine.Plan) bool { return p.Migration.ID() == res.Migration })
+	if !res.Recorded || i < 0 || applied.Has(plans[i].Migration) {
+		return nil
+	}
+	adopted, err := s.store.AdoptApplied(ctx, run.ID, res.Migration)
+	if err != nil {
+		return err
+	}
+	if adopted {
+		s.log.Info("migration adopted from the target's journal", "run", run.ID, "target", run.Target, "migration", res.Migration)
+	}
+
+	return nil
 }
 
 // progressEvery bounds the writes a fast backfill produces; the end of a statement is always recorded.

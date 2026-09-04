@@ -21,6 +21,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0011](0011-token-spec-is-three-fields.md) | A token spec is three fields or one, never two | #84 |
 | [0012](0012-the-key-is-optional-and-comes-from-a-provider.md) | The key is optional, comes from a provider, and the ciphertext says which | #93 |
 | [0013](0013-the-fleet-view-is-keyed-by-content.md) | The fleet view is keyed by content, and answers rather than refuses | #95 |
+| [0014](0014-the-target-journal-is-authoritative.md) | The target's journal is authoritative; the ledger is the control plane's copy of it | #96 |
 
 ## Open questions
 

@@ -43,6 +43,11 @@ type Baseliner interface {
 	Baseline(ctx context.Context, runID, target string, migs []engine.Migration, p controlplane.Provenance) error
 }
 
+// Reconciler repairs the ledger from a target's own journal (implemented by the control plane).
+type Reconciler interface {
+	Reconcile(ctx context.Context, runID, target string, migs []engine.Migration, p controlplane.Provenance) (controlplane.Divergence, error)
+}
+
 // Inspector reports a target's applied versions, last run and drift baseline, and observes its live history and schema
 // (implemented by the control plane).
 type Inspector interface {
@@ -66,6 +71,8 @@ type Server struct {
 	Notifier notify.Notifier
 	// Baseliner serves BaselineTarget; nil leaves it unimplemented.
 	Baseliner Baseliner
+	// Reconciler serves ReconcileTarget; nil leaves it unimplemented.
+	Reconciler Reconciler
 	// Inspector serves GetTargetStatus and stored plans; nil leaves both unimplemented and every run implicit.
 	Inspector Inspector
 	// Differ serves Diff; nil leaves it unimplemented.
@@ -133,7 +140,8 @@ func rpcErr(err error) *connect.Error {
 		return connect.NewError(connect.CodeNotFound, err)
 	case errors.Is(err, controlplane.ErrNotResumable), errors.Is(err, controlplane.ErrNotAwaitingContract),
 		errors.Is(err, controlplane.ErrNotRevertable), errors.Is(err, controlplane.ErrBaselineRun),
-		errors.Is(err, engine.ErrAlreadyMigrated), errors.Is(err, controlplane.ErrAppliedContent):
+		errors.Is(err, engine.ErrAlreadyMigrated), errors.Is(err, controlplane.ErrAppliedContent),
+		errors.Is(err, engine.ErrHistoryConflict), errors.Is(err, controlplane.ErrDiverged):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, safe(err))
@@ -415,9 +423,6 @@ func (s *Server) revertPlan(ctx context.Context, m *godwitv1.RevertRunRequest) (
 	}
 	if err != nil {
 		return controlplane.RevertPlan{}, rpcErr(err)
-	}
-	if rp.Run.Kind == controlplane.KindBaseline {
-		return controlplane.RevertPlan{}, rpcErr(fmt.Errorf("run %q: %w", id, controlplane.ErrBaselineRun))
 	}
 	if m.Target != "" && m.Target != rp.Run.Target {
 		return controlplane.RevertPlan{}, invalid(fmt.Sprintf("run %s is on target %s, not %s", id, rp.Run.Target, m.Target))
@@ -714,7 +719,8 @@ func appliedToProto(applied []controlplane.RunMigration) []*godwitv1.RunMigratio
 	out := make([]*godwitv1.RunMigration, 0, len(applied))
 	for _, m := range applied {
 		out = append(out, &godwitv1.RunMigration{
-			Migration: m.Migration, AppliedAt: timestamppb.New(m.AppliedAt), RevertedBy: m.RevertedBy, Held: m.Held,
+			Migration: m.Migration, AppliedAt: timestamppb.New(m.AppliedAt), RevertedBy: m.RevertedBy,
+			Held: m.Held, Adopted: m.Adopted,
 		})
 	}
 
@@ -966,6 +972,50 @@ func (s *Server) BaselineTarget(ctx context.Context, req *connect.Request[godwit
 	}, notify.RunSucceeded, detail)
 
 	return connect.NewResponse(&godwitv1.BaselineTargetResponse{RunId: id}), nil
+}
+
+var errReconcileDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("reconciling is not enabled"))
+
+// ReconcileTarget writes into the ledger every migration the target's own journal records and the
+// ledger does not. It reads the target and never writes to it.
+func (s *Server) ReconcileTarget(ctx context.Context, req *connect.Request[godwitv1.ReconcileTargetRequest]) (*connect.Response[godwitv1.ReconcileTargetResponse], error) {
+	if s.Reconciler == nil {
+		return nil, errReconcileDisabled
+	}
+	m := req.Msg
+	if m.Target == "" {
+		return nil, invalid("target is required")
+	}
+	files := map[string]string{}
+	for _, f := range m.Files {
+		files[f.Name] = f.Body
+	}
+	migs, err := controlplane.MigrationsFromFiles(files)
+	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	id := s.newID()
+	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
+	d, err := s.Reconciler.Reconcile(ctx, id, m.Target, migs, p)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+	out := &godwitv1.ReconcileTargetResponse{Adopted: d.Adopt}
+	if len(d.Adopt) == 0 {
+		s.Log.Info("target already reconciled", "target", m.Target)
+
+		return connect.NewResponse(out), nil
+	}
+	out.RunId = id
+	detail := fmt.Sprintf("reconcile: %d migration(s) adopted from the target's journal", len(d.Adopt))
+	s.Log.Info("target reconciled", "run", id, "target", m.Target, "adopted", d.Adopt)
+	s.audit(ctx, controlplane.AuditTargetReconcile, id, m.Target, fmt.Sprintf("adopted=%s", strings.Join(d.Adopt, ",")))
+	s.emit(ctx, controlplane.Run{
+		ID: id, Target: m.Target, State: controlplane.StateSucceeded,
+		Rollout: controlplane.RolloutDirect, Phase: controlplane.PhaseExpand, Kind: controlplane.KindReconcile, Provenance: p,
+	}, notify.RunSucceeded, detail)
+
+	return connect.NewResponse(out), nil
 }
 
 // ListAudit returns the newest audit entries, optionally filtered by target and run.

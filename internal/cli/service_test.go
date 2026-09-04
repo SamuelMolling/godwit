@@ -26,6 +26,8 @@ type stubService struct {
 	auth         string
 	registered   *godwitv1.RegisterTargetRequest
 	baselined    *godwitv1.BaselineTargetRequest
+	reconciled   *godwitv1.ReconcileTargetRequest
+	adopted      []string
 	statused     *godwitv1.GetTargetStatusRequest
 	status       *godwitv1.GetTargetStatusResponse
 	summaries    []*godwitv1.TargetSummary
@@ -103,6 +105,18 @@ func (s *stubService) BaselineTarget(_ context.Context, req *connect.Request[god
 	}
 
 	return connect.NewResponse(&godwitv1.BaselineTargetResponse{RunId: "b1"}), nil
+}
+
+func (s *stubService) ReconcileTarget(_ context.Context, req *connect.Request[godwitv1.ReconcileTargetRequest]) (*connect.Response[godwitv1.ReconcileTargetResponse], error) {
+	s.reconciled = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+	if len(s.adopted) == 0 {
+		return connect.NewResponse(&godwitv1.ReconcileTargetResponse{}), nil
+	}
+
+	return connect.NewResponse(&godwitv1.ReconcileTargetResponse{RunId: "c1", Adopted: s.adopted}), nil
 }
 
 func (s *stubService) GetTargetStatus(_ context.Context, req *connect.Request[godwitv1.GetTargetStatusRequest]) (*connect.Response[godwitv1.GetTargetStatusResponse], error) {
@@ -330,6 +344,35 @@ func TestTargetBaseline(t *testing.T) {
 	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target already has applied migrations"))
 	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "1"); code != 1 ||
 		errOut != "godwit: target already has applied migrations\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestTargetReconcile(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{adopted: []string{"20260901120000_users"}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("target", "reconcile", "app", "--server", url, "--dir", goodMigs(t))
+	if code != 0 || out != "target app: adopted 1 migration(s) from its journal (run c1): 20260901120000_users\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+	if r := stub.reconciled; r.Target != "app" || len(r.Files) != 2 {
+		t.Fatalf("request = %v", stub.reconciled)
+	}
+
+	stub.adopted = nil
+	code, out, _ = runCLI("target", "reconcile", "app", "--server", url, "--dir", goodMigs(t))
+	if code != 0 || out != "target app: already reconciled, nothing to adopt\n" {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+	if code, _, errOut := runCLI("target", "reconcile", "app", "--server", url, "--dir", "/nope"); code != 1 ||
+		!strings.Contains(errOut, "read migration dir") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target and ledger disagree"))
+	if code, _, errOut := runCLI("target", "reconcile", "app", "--server", url, "--dir", goodMigs(t)); code != 1 ||
+		errOut != "godwit: target and ledger disagree\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
@@ -730,7 +773,7 @@ func TestRunGet(t *testing.T) {
 	created := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	stub := &stubService{applied: []*godwitv1.RunMigration{{
 		Migration: "20260901120000_t", AppliedAt: timestamppb.New(created.Add(30 * time.Second)), Held: true, RevertedBy: "r2",
-	}, {Migration: "20260901120001_u"}}, run: &godwitv1.Run{
+	}, {Migration: "20260901120001_u", Adopted: true}}, run: &godwitv1.Run{
 		Id: "r1", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1,
 		Rollout: "expand-contract", Phase: "contract", Reverts: "r0", Kind: "migrate", LockTimeout: "2s", StatementTimeout: "1m",
 		CreatedBy: "ci", Source: "github.com/org/repo@abc:db", PlanId: "p1", CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Minute)),
@@ -743,7 +786,8 @@ func TestRunGet(t *testing.T) {
 	}
 	want := "run r1: succeeded (attempt 1)\n  target: app\n  kind: migrate\n  rollout: expand-contract\n  phase: contract\n  reverts: r0\n" +
 		"  lock_timeout: 2s\n  statement_timeout: 1m\n  created_by: ci\n  source: github.com/org/repo@abc:db\n  plan: p1\n  created: 2026-09-01T12:00:00Z\n  finished: 2026-09-01T12:01:00Z\n" +
-		"  applied:\n    20260901120000_t at 2026-09-01T12:00:30Z (contract held) (reverted by r2)\n    20260901120001_u at \n"
+		"  applied:\n    20260901120000_t at 2026-09-01T12:00:30Z (contract held) (reverted by r2)\n" +
+		"    20260901120001_u at  (adopted from the target's journal)\n"
 	if out != want || stub.got != "r1" {
 		t.Fatalf("out = %q, got = %q", out, stub.got)
 	}

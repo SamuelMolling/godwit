@@ -63,6 +63,13 @@ func expectIdle(mock pgxmock.PgxPoolIface) {
 	mock.ExpectQuery("state = 'awaiting_contract'").WithArgs("app").WillReturnError(pgx.ErrNoRows)
 }
 
+// expectPlanning is the idle check plus the reconcile gate, which reads the ledger the observed journal
+// is compared against; versions are what the ledger stands on.
+func expectPlanning(mock pgxmock.PgxPoolIface, versions ...int64) {
+	expectIdle(mock)
+	expectAppliedVersions(mock, versions...)
+}
+
 func expectNoBound(mock pgxmock.PgxPoolIface) {
 	expectIdle(mock)
 	mock.ExpectQuery("AND files_hash = \\$3 AND state = 'bound'").WithArgs("app", controlplane.RolloutDirect, pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
@@ -141,20 +148,26 @@ func TestPlanRunPersistErrors(t *testing.T) {
 
 	s.Inspector = stubInspector{obs: controlplane.Observation{Applied: []engine.Applied{{Version: 20260901120000, Name: "t", Checksum: "other"}}}}
 	expectIdle(mock)
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnError(errors.New("ledger down"))
+	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("reconcile gate error: %v", err)
+	}
+
+	expectPlanning(mock, 20260901120000)
 	expectApplied(mock, 20260901120000)
 	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "20260901120000_t applied with different content") {
 		t.Fatalf("content mismatch: %v", err)
 	}
 
 	s.Inspector = stubInspector{obs: controlplane.Observation{Fingerprint: "f2", Definition: "table b\n"}}
-	expectIdle(mock)
+	expectPlanning(mock)
 	expectApplied(mock)
 	mock.ExpectQuery("FROM cp_snapshots").WithArgs("app").WillReturnError(errors.New("snapshot down"))
 	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("drift error: %v", err)
 	}
 
-	expectIdle(mock)
+	expectPlanning(mock)
 	expectApplied(mock)
 	expectSnapshot(mock, "f1")
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
@@ -292,7 +305,7 @@ func TestPlanRunDetectsWithValidation(t *testing.T) {
 		{Name: "20260901120000_t.down.sql", Body: "DROP TABLE b;"},
 	}
 
-	expectIdle(mock)
+	expectPlanning(mock)
 	expectApplied(mock)
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
 	_, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files, Persist: true}))

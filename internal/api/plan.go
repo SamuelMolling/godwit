@@ -42,6 +42,9 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 		if obs, err = s.Inspector.Observe(ctx, m.Target); err != nil {
 			return nil, rpcErr(err)
 		}
+		if err := s.checkReconciled(ctx, m.Target, obs); err != nil {
+			return nil, err
+		}
 	}
 	adm, err := s.admit(ctx, m.Target, spec.plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder, obs.SearchPath)
 	if err != nil {
@@ -213,8 +216,12 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{Plan: controlplane.Plan{Target: m.Target}, Reason: controlplane.StaleContent, Hint: err.Error()})
 	}
 	plan, err := s.lookup(ctx, m, spec, pending)
-	if err != nil || plan.ID == "" {
+	if err != nil {
 		return b, err
+	}
+	// A stored plan accounts for the target's history itself: what it cannot explain is refused as stale below.
+	if plan.ID == "" {
+		return b, s.checkReconciled(ctx, m.Target, obs)
 	}
 	b.planID, b.expansions = plan.ID, plan.Expansions
 	b.acked = union(plan.Acked, m.AcknowledgeHazards)
@@ -258,6 +265,28 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 	b.planID, b.superseded, b.adm, b.expansions = next.ID, plan.ID, &adm, adm.expansions
 
 	return b, nil
+}
+
+var errUnreconciled = errors.New("target records migrations the ledger does not")
+
+// checkReconciled refuses to plan against a target whose own journal is ahead of the control plane's
+// ledger. The journal is what says a migration is applied; the ledger is the control plane's copy of it,
+// and it is what the order guard and the scratch replay read. Planning over a ledger that cannot see an
+// out-of-band apply plans against a history the target does not have.
+func (s *Server) checkReconciled(ctx context.Context, target string, obs controlplane.Observation) error {
+	applied, err := s.store.Applied(ctx, target)
+	if err != nil {
+		return rpcErr(err)
+	}
+	missing := controlplane.Unreconciled(obs, applied)
+	if len(missing) == 0 {
+		return nil
+	}
+	refusal := fmt.Errorf("%w: %s records %s; run `godwit target reconcile %s --dir <migrations>` to adopt what it already has",
+		errUnreconciled, target, strings.Join(missing, ", "), target)
+	s.Log.Warn("run refused by the reconcile gate", "target", target, "missing", missing)
+
+	return connect.NewError(connect.CodeFailedPrecondition, refusal)
 }
 
 func (s *Server) observedSearchPath(ctx context.Context, target string) (string, error) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -54,6 +55,9 @@ var (
 	ErrBaselineRun         = errors.New("baseline runs cannot be reverted")
 )
 
+// Run kinds that adopt what the target already holds instead of applying anything.
+var adoptionKinds = []string{KindBaseline, KindReconcile}
+
 // Reasons a run cannot be reverted, appended to ErrNotRevertable.
 const (
 	reasonState      = "its state is %q; a revertable run is succeeded, awaiting_contract, failed or needs_attention"
@@ -67,8 +71,9 @@ const (
 
 // Run kinds.
 const (
-	KindMigrate  = "migrate"
-	KindBaseline = "baseline"
+	KindMigrate   = "migrate"
+	KindBaseline  = "baseline"
+	KindReconcile = "reconcile"
 )
 
 // Run is one migration run tracked by the control plane.
@@ -354,27 +359,41 @@ func (s *Store) AwaitingContract(ctx context.Context, target string) (Run, bool,
 	return r, true, nil
 }
 
-// CreateBaseline records an already-succeeded baseline run holding the files that describe the target's current schema.
-func (s *Store) CreateBaseline(ctx context.Context, id, target string, files map[string]string, p Provenance) error {
+// CreateAdoption records an already-succeeded run of kind that carries migs' files and one adopted
+// ledger row per migration: what the target already held, put on the control plane's books.
+func (s *Store) CreateAdoption(ctx context.Context, id, target, kind string, migs []engine.Migration, p Provenance) error {
+	files := adoptionFiles(migs)
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
 	for name, body := range files {
 		names = append(names, name)
 		bodies = append(bodies, body)
 	}
+	ids := make([]string, 0, len(migs))
+	for _, m := range migs {
+		ids = append(ids, m.ID())
+	}
 	if _, err := s.pool.Exec(ctx, `
 		WITH r AS (INSERT INTO cp_runs (id, target, state, kind, finished_at, created_by, source)
-			VALUES ($1, $2, 'succeeded', 'baseline', now(), $5, $6)),
+			VALUES ($1, $2, 'succeeded', $3, now(), $6, $7)),
 		f AS (INSERT INTO cp_run_files (run_id, name, body)
-			SELECT $1, n, b FROM unnest($3::text[], $4::text[]) AS f (n, b))
-		INSERT INTO cp_run_applied (run_id, migration, seq)
-		SELECT $1, left(n, length(n) - 7), row_number() OVER (ORDER BY n)
-		FROM unnest($3::text[]) AS u (n) WHERE n LIKE '%.up.sql'`,
-		id, target, names, bodies, p.CreatedBy, p.Source); err != nil {
-		return fmt.Errorf("create baseline: %w", err)
+			SELECT $1, n, b FROM unnest($4::text[], $5::text[]) AS f (n, b))
+		INSERT INTO cp_run_applied (run_id, migration, seq, adopted)
+		SELECT $1, m, ord, true FROM unnest($8::text[]) WITH ORDINALITY AS u (m, ord)`,
+		id, target, kind, names, bodies, p.CreatedBy, p.Source, ids); err != nil {
+		return fmt.Errorf("create %s run: %w", kind, err)
 	}
 
 	return nil
+}
+
+func adoptionFiles(migs []engine.Migration) map[string]string {
+	files := make(map[string]string, 2*len(migs))
+	for _, m := range migs {
+		maps.Copy(files, pairOf(m.ID(), m.UpSQL, m.DownSQL))
+	}
+
+	return files
 }
 
 // CreateRevert queues a run that undoes what another run applied; force allows a run that is not the
@@ -406,7 +425,7 @@ var revertableStates = []string{StateSucceeded, StateAwaitingContract, StateFail
 
 // checkRevertable reports why orig cannot be reverted right now, or nil.
 func (s *Store) checkRevertable(ctx context.Context, orig Run, force bool) error {
-	if orig.Kind == KindBaseline {
+	if slices.Contains(adoptionKinds, orig.Kind) {
 		return fmt.Errorf("run %q: %w", orig.ID, ErrBaselineRun)
 	}
 	if orig.Reverts != "" {
@@ -692,7 +711,7 @@ func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 			RETURNING id),
 		undone AS (
 			UPDATE cp_run_applied SET reverted_by = $1
-			WHERE run_id IN (SELECT id FROM orig) AND reverted_by IS NULL)
+			WHERE run_id IN (SELECT id FROM orig) AND reverted_by IS NULL AND NOT adopted)
 		UPDATE cp_runs SET state = $2, error = NULLIF($3, ''), finished_at = now(), progress = NULL, updated_at = now()
 		WHERE id = $1`, id, state, errText)
 	if err != nil {

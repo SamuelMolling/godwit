@@ -11,6 +11,8 @@ What godwit stores where, what it promises across a crash, and the vocabulary th
 
 The journal is the truth about what happened on a target. The store is the truth about who asked for what, who is executing it, and what the schema looked like last time. The store's own schema is applied with the same executor at `serve` start-up, so the store database also carries a `godwit` schema tracking the control-plane migrations.
 
+**When the two disagree about what a target has applied, the target's journal is the fact** ([decision 0014](decisions/0014-the-target-journal-is-authoritative.md)). It is written in the same transaction as the DDL and it survives losing the store; `cp_run_applied` is the control plane's copy of it, kept so the applied set, the out-of-order guard, the scratch replay and `godwit targets` can be answered without connecting to any target, and carrying what the journal has no room for: which run applied a migration, when, under whose token, with which frozen expansion, undone by which revert. Bringing the copy back into agreement is [adoption](#adopting-an-existing-database).
+
 ## Migrations, plans, statements
 
 A migration is a version (14-digit timestamp), a name and an up/down SQL pair. The checksum recorded on the target is `sha256` of the up file.
@@ -126,9 +128,11 @@ A genuine SQL failure goes straight to `failed`. A transient one (classes `08`, 
 
 A pipeline re-run does not queue a second run: `CreateRun` with the same files, target and rollout as a bound plan re-attaches to that plan's run (`reattached` in the response, `run.reattach` in the audit). A `queued`, `running` or `awaiting_contract` run is simply followed; a `succeeded` one is followed too if the target still has everything it applied; a `failed` or `needs_attention` one is resumed when the only history the plan did not know is the run's own progress; a `reverted` one releases the plan and a fresh run is created. An explicit `--plan <id>` skips re-attaching.
 
-`kind` is `migrate` or `baseline`; `phase` is `expand` or `contract`; `reverts` links a revert run to the run it undoes, and `cp_run_applied.reverted_by` links each undone migration to it.
+`kind` is `migrate`, `baseline` or `reconcile`; `phase` is `expand` or `contract`; `reverts` links a revert run to the run it undoes, and `cp_run_applied.reverted_by` links each undone migration to it.
 
 **A run's state is not a verdict on its migrations.** A run that applies three migrations and fails on the fourth leaves the three standing: they are in the target's `godwit.migrations`, in its journal, and in `cp_run_applied`. So the applied set, the applied count, the out-of-order guard and the scratch replay are all scoped to the ledger row, never to `cp_runs.state`: a migration counts when its row is not `held` and not `reverted_by`. `held` is the other half — the run applied that migration's expand statements but its contract phase never ran, so the target records nothing for it yet, and it counts as applied only once the contract phase lands (a revert still undoes it, from the `down_held_sql` frozen on the row). The one thing `state` still decides is whether the run itself can be resumed, confirmed or reverted.
+
+**A ledger row also records how it got there.** `adopted` marks a migration the run *found* already recorded on the target rather than one it applied — every row a `baseline` or `reconcile` writes, and the row a `migrate` writes when it walks past a migration the target's journal already holds. Adopted rows are standing rows everywhere the applied set matters, and they are out of `revert`'s scope, because a revert undoes what its run applied.
 
 ## Leases
 
@@ -690,9 +694,34 @@ After every successful run (and after a baseline) the scheduler stores a **snaps
 
 The monitor fingerprints every snapshotted target every `--drift-interval` (5m). A different fingerprint opens a `cp_drift_events` row with the diff (`- expected` / `+ live` lines), notifies, and logs `schema drift detected`; a matching one resolves any open event and notifies `resolved`. A partial unique index keeps one open event per target and diff, so replicas ticking together record once. `CheckDrift` runs the same comparison on demand; `AcceptBaseline` snapshots the live schema as the new baseline and resolves the open events.
 
-## Baseline
+## Adopting an existing database
 
-`BaselineTarget{target, files, version}` adopts a database that already has a schema: every migration with `version <= N` is inserted into the target's `godwit.migrations` with its checksum, without running it, in one transaction under the advisory lock. The store records a `succeeded` run of kind `baseline` holding those files, so scratch validation of later runs replays them, and a drift snapshot is taken. Refused with `failed_precondition` when the target already has any applied version. The usual first file is a schema dump named like `20260101000000_baseline.up.sql` with an empty-effect down side.
+Two ways in, depending on what the database already carries. Both write a `succeeded` run holding the files they put on the books, so scratch validation of later runs replays them, and both take a drift snapshot.
+
+**`BaselineTarget{target, files, version}` — the schema is there, godwit never journalled it.** Every migration with `version <= N` is inserted into the target's `godwit.migrations` with its checksum, without running it, in one transaction under the advisory lock; then a `baseline` run records them in the ledger. The usual first file is a schema dump named like `20260101000000_baseline.up.sql` with an empty-effect down side. `version` is required and explicit: defaulting to the whole directory would silently swallow pending migrations. Both halves are idempotent — a version the target already records is left alone, and one the ledger already stands on is not recorded twice — so a baseline over a partly-adopted target completes the adoption. Refused with `failed_precondition` when there is nothing left to record on either side, and when a file's checksum differs from the one the target recorded for that version (`recorded on the target under different content`).
+
+**`ReconcileTarget{target, files}` — the target has a `godwit` journal this service did not write.** Another instance migrated it, the store was rebuilt, or the store was restored from a backup older than the target. Reconciling reads `godwit.migrations` and `godwit.repeatables`, compares them with the ledger, and writes a `reconcile` run holding the ledger rows the journal has and the store does not. **It never writes to the target.** No `version`: the target says what it holds.
+
+It refuses, naming what it means, on the three disagreements it will not decide alone:
+
+| What it found | Why it refuses |
+|---|---|
+| recorded under different content than the directory carries | drift between the repository and the target; one of the two is wrong and only a person can say which |
+| recorded on the target and absent from the directory | the replay could never rebuild a migration whose SQL the store does not hold |
+| standing in the ledger and absent from the target | the target has lost history the control plane saw applied — a restore from backup, or a hand-emptied journal |
+
+**The refusal that sends you here.** Before planning against a target with no stored plan to explain its history, godwit compares the observation it takes with the ledger:
+
+```
+target records migrations the ledger does not: app records 20260101000000_orders, 20260101000001_total;
+run `godwit target reconcile app --dir <migrations>` to adopt what it already has
+```
+
+Reverts are not gated: a revert acts on the ledger's own rows and is well defined whatever else the target holds. A target with a stored plan is not gated either — a history change the plan cannot attribute to a run is already `PlanStale{history}`, which reports it better.
+
+**A run repairs what it walks past.** When the executor skips a migration because the target's journal already records it under the same checksum, the scheduler writes an adopted ledger row, unless a standing row already accounts for it. So a `migrate` over a database whose journal is ahead brings the ledger level, and a second `migrate` over the same directory adopts nothing.
+
+Neither a `baseline` nor a `reconcile` run can be reverted (`failed_precondition`): reverting would run down files against a schema godwit never built.
 
 ## Checkpoints
 
@@ -938,4 +967,4 @@ production because staging never saw it.
 
 ## Actors and provenance
 
-Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`, `plan.create`, `plan.supersede`) after it succeeds; reads are not audited (`Diff` creates and drops a scratch database on the scratch server but writes nothing in the store). `PlanRun{persist}` is the one `read`-scope call that writes: the plan and its `plan.create` row.
+Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `target.reconcile`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`, `plan.create`, `plan.supersede`) after it succeeds; reads are not audited (`Diff` creates and drops a scratch database on the scratch server but writes nothing in the store). `PlanRun{persist}` is the one `read`-scope call that writes: the plan and its `plan.create` row.

@@ -16,7 +16,7 @@ import (
 var noExpansion *Expansion
 
 func appliedRows() *pgxmock.Rows {
-	return pgxmock.NewRows([]string{"migration", "applied_at", "coalesce", "held", "expansion"})
+	return pgxmock.NewRows([]string{"migration", "applied_at", "coalesce", "held", "adopted", "expansion"})
 }
 
 func expectNoCheckpoints(mock pgxmock.PgxPoolIface) {
@@ -42,7 +42,7 @@ func TestLedgerStoreErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
-		appliedRows().AddRow("m", time.Now(), "", false, noExpansion).RowError(0, errBoom))
+		appliedRows().AddRow("m", time.Now(), "", false, false, noExpansion).RowError(0, errBoom))
 	if _, err := s.AppliedMigrations(ctx, "r1"); err == nil || !strings.Contains(err.Error(), "read applied migrations") {
 		t.Fatalf("err = %v", err)
 	}
@@ -78,7 +78,7 @@ func TestPlanRevertErrors(t *testing.T) {
 
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
-		appliedRows().AddRow("m", time.Now(), "r9", false, noExpansion))
+		appliedRows().AddRow("m", time.Now(), "r9", false, false, noExpansion))
 	if _, err := s.PlanRevert(ctx, "r1"); !errors.Is(err, ErrNotRevertable) ||
 		!strings.Contains(err.Error(), "applied no migration that still stands") {
 		t.Fatalf("already reverted = %v", err)
@@ -86,7 +86,7 @@ func TestPlanRevertErrors(t *testing.T) {
 
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
-		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, noExpansion))
+		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, false, noExpansion))
 	expectNoCheckpoints(mock)
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnError(errBoom)
 	if _, err := s.PlanRevert(ctx, "r1"); err == nil || !strings.Contains(err.Error(), "list run files") {
@@ -95,7 +95,7 @@ func TestPlanRevertErrors(t *testing.T) {
 
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
-		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, noExpansion))
+		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, false, noExpansion))
 	expectNoCheckpoints(mock)
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnRows(
 		pgxmock.NewRows([]string{"name", "body"}).AddRow("20260101000000_a.up.sql", "SELECT 1;"))
@@ -106,7 +106,7 @@ func TestPlanRevertErrors(t *testing.T) {
 
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
-		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, noExpansion))
+		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, false, noExpansion))
 	expectNoCheckpoints(mock)
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnRows(
 		pgxmock.NewRows([]string{"name", "body"}).

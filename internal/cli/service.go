@@ -23,7 +23,7 @@ func newTargetCmd() *cobra.Command {
 		Use:   "target",
 		Short: "Manage targets on the service",
 	}
-	cmd.AddCommand(newTargetAddCmd(), newTargetBaselineCmd(), newTargetStatusCmd())
+	cmd.AddCommand(newTargetAddCmd(), newTargetBaselineCmd(), newTargetReconcileCmd(), newTargetStatusCmd())
 
 	return cmd
 }
@@ -59,6 +59,46 @@ func newTargetBaselineCmd() *cobra.Command {
 	configKeys(cmd, "dir")
 
 	return cmd
+}
+
+func newTargetReconcileCmd() *cobra.Command {
+	flags := &clientFlags{}
+	req := &godwitv1.ReconcileTargetRequest{}
+	var dir string
+	cmd := &cobra.Command{
+		Use:   "reconcile <name>",
+		Short: "Adopt into the ledger what the target's own journal already records",
+		Args:  cobra.ExactArgs(1),
+		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
+			req.Target = args[0]
+			files, err := migrationFiles(dir)
+			if err != nil {
+				return err
+			}
+			req.Files = files
+			resp, err := client.ReconcileTarget(cmd.Context(), connect.NewRequest(req))
+			if err != nil {
+				return err
+			}
+			flags.print(cmd, resp.Msg, reconcileLine(req.Target, resp.Msg))
+
+			return nil
+		}),
+	}
+	flags.register(cmd)
+	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
+	configKeys(cmd, "dir")
+
+	return cmd
+}
+
+func reconcileLine(target string, resp *godwitv1.ReconcileTargetResponse) string {
+	if len(resp.Adopted) == 0 {
+		return fmt.Sprintf("target %s: already reconciled, nothing to adopt", target)
+	}
+
+	return fmt.Sprintf("target %s: adopted %d migration(s) from its journal (run %s): %s",
+		target, len(resp.Adopted), resp.RunId, strings.Join(resp.Adopted, ", "))
 }
 
 func newTargetAddCmd() *cobra.Command {
@@ -464,6 +504,9 @@ func appliedText(applied []*godwitv1.RunMigration) string {
 		fmt.Fprintf(&b, "\n    %s at %s", m.Migration, stamp(m.AppliedAt))
 		if m.Held {
 			b.WriteString(" (contract held)")
+		}
+		if m.Adopted {
+			b.WriteString(" (adopted from the target's journal)")
 		}
 		if m.RevertedBy != "" {
 			b.WriteString(" (reverted by " + m.RevertedBy + ")")

@@ -24,6 +24,8 @@ type RunMigration struct {
 	RevertedBy string
 	// Held marks a migration whose contract phase never ran: applied, but not recorded on the target.
 	Held bool
+	// Adopted marks a migration the run found already recorded on the target instead of applying it.
+	Adopted bool
 	// Expansion is what godwit generated for the migration's directives, or nil when it had none.
 	Expansion *Expansion
 }
@@ -45,6 +47,20 @@ func (s *Store) RecordApplied(ctx context.Context, runID, migration string, held
 	return nil
 }
 
+// AdoptApplied records a migration the run found the target already holding, so the ledger catches up
+// with the journal instead of leaving it invisible. It reports whether it wrote a row.
+func (s *Store) AdoptApplied(ctx context.Context, runID, migration string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO cp_run_applied (run_id, migration, seq, adopted)
+		VALUES ($1, $2, (SELECT coalesce(max(seq), 0) + 1 FROM cp_run_applied WHERE run_id = $1), true)
+		ON CONFLICT (run_id, migration) DO NOTHING`, runID, migration)
+	if err != nil {
+		return false, fmt.Errorf("adopt applied %s: %w", migration, err)
+	}
+
+	return tag.RowsAffected() > 0, nil
+}
+
 // MarkReverted records that revertID undid one migration of run origID.
 func (s *Store) MarkReverted(ctx context.Context, origID, revertID, migration string) error {
 	if _, err := s.pool.Exec(ctx,
@@ -59,14 +75,14 @@ func (s *Store) MarkReverted(ctx context.Context, origID, revertID, migration st
 // AppliedMigrations lists a run's ledger in the order the run applied it.
 func (s *Store) AppliedMigrations(ctx context.Context, runID string) ([]RunMigration, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT migration, applied_at, coalesce(reverted_by::text, ''), held, expansion
+		SELECT migration, applied_at, coalesce(reverted_by::text, ''), held, adopted, expansion
 		FROM cp_run_applied WHERE run_id = $1 ORDER BY seq`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list applied migrations: %w", err)
 	}
 	var out []RunMigration
 	var m RunMigration
-	if _, err := pgx.ForEachRow(rows, []any{&m.Migration, &m.AppliedAt, &m.RevertedBy, &m.Held, &m.Expansion}, func() error {
+	if _, err := pgx.ForEachRow(rows, []any{&m.Migration, &m.AppliedAt, &m.RevertedBy, &m.Held, &m.Adopted, &m.Expansion}, func() error {
 		out = append(out, m)
 
 		return nil
@@ -98,13 +114,17 @@ func (s *Store) PlanRevert(ctx context.Context, id string) (RevertPlan, error) {
 	if err != nil {
 		return RevertPlan{}, err
 	}
+	if slices.Contains(adoptionKinds, run.Kind) {
+		return RevertPlan{}, fmt.Errorf("run %q: %w", id, ErrBaselineRun)
+	}
 	applied, err := s.AppliedMigrations(ctx, id)
 	if err != nil {
 		return RevertPlan{}, err
 	}
+	// An adopted row is what the run found, not what it applied, and a revert undoes what it applied.
 	standing := make([]RunMigration, 0, len(applied))
 	for _, m := range applied {
-		if m.RevertedBy == "" {
+		if m.RevertedBy == "" && !m.Adopted {
 			standing = append(standing, m)
 		}
 	}

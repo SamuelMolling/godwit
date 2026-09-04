@@ -184,6 +184,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Log = log
 	apiSrv.Notifier = notifier
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
+	apiSrv.Reconciler = controlplane.NewReconciler(sched)
 	apiSrv.Inspector = controlplane.NewInspector(sched)
 	apiSrv.Differ = controlplane.NewDiffer(scratch, sched, history, newID)
 	apiSrv.Checkpointer = controlplane.NewCheckpointer(scratch, newID)

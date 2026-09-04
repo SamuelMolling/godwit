@@ -24,18 +24,19 @@ func pageSize(limit int) int {
 
 // Audit actions.
 const (
-	AuditTargetRegister = "target.register"
-	AuditTargetBaseline = "target.baseline"
-	AuditRunCreate      = "run.create"
-	AuditRunRevert      = "run.revert"
-	AuditRunResume      = "run.resume"
-	AuditRunPark        = "run.park"
-	AuditRunConfirm     = "run.confirm"
-	AuditDriftAccept    = "drift.accept"
-	AuditPlanCreate     = "plan.create"
-	AuditPlanSupersede  = "plan.supersede"
-	AuditRunReattach    = "run.reattach"
-	AuditCheckpoint     = "checkpoint.generate"
+	AuditTargetRegister  = "target.register"
+	AuditTargetBaseline  = "target.baseline"
+	AuditTargetReconcile = "target.reconcile"
+	AuditRunCreate       = "run.create"
+	AuditRunRevert       = "run.revert"
+	AuditRunResume       = "run.resume"
+	AuditRunPark         = "run.park"
+	AuditRunConfirm      = "run.confirm"
+	AuditDriftAccept     = "drift.accept"
+	AuditPlanCreate      = "plan.create"
+	AuditPlanSupersede   = "plan.supersede"
+	AuditRunReattach     = "run.reattach"
+	AuditCheckpoint      = "checkpoint.generate"
 )
 
 // AuditEntry is one recorded mutation: who did what to which target or run.

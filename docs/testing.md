@@ -5,7 +5,7 @@ Four suites, three gates and one thing that is not a gate.
 | Suite | Command | In CI | What it is |
 |---|---|---|---|
 | unit + in-process integration | `make cover` (inside `make all`) | yes | 100% of statements, testcontainers for anything that talks to PostgreSQL. A gate. |
-| end to end | `make e2e` | no | The built binary, two replicas, a real target: crash recovery, hazards, expand/contract, revert, drift, baseline. Minutes. |
+| end to end | `make e2e` | no | The built binary, two replicas, a real target: crash recovery, hazards, expand/contract, revert, drift, baseline, adoption. Minutes. |
 | load | `make load` | no | How godwit behaves at sizes a laptop test never reaches: a backfill over tens of millions of rows, a target with a thousand migrations, many targets at once. Prints measurements. Tens of minutes. |
 | chaos | `make chaos` | no | Adversarial failure at points the crash rig does not reach: mid-batch, between the intent and the statement, between the statement and the journal, inside `finalize`, inside a revert, with the store or the target severed at the network, and with someone else's index or advisory lock already in the way. Minutes. |
 

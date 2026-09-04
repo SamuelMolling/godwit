@@ -400,6 +400,18 @@ message BaselineTargetResponse {
   string run_id = 1;
 }
 
+message ReconcileTargetRequest {
+  string target = 1;
+  repeated MigrationFile files = 2;
+}
+
+message ReconcileTargetResponse {
+  // Empty when the ledger already agreed with the target and nothing had to be recorded.
+  string run_id = 1;
+  // Migration ids the ledger adopted from the target's own journal.
+  repeated string adopted = 2;
+}
+
 message ListTargetsRequest {}
 
 // TargetSummary is what the control plane knows about a target without connecting to it.
@@ -580,6 +592,8 @@ message RunMigration {
   string reverted_by = 3;
   // Its contract phase never ran: applied but not recorded on the target.
   bool held = 4;
+  // The run found it already recorded on the target instead of applying it, so a revert leaves it alone.
+  bool adopted = 5;
 }
 
 message ListRunsRequest {
@@ -677,6 +691,8 @@ service GodwitService {
   rpc ListDriftEvents(ListDriftEventsRequest) returns (ListDriftEventsResponse);
   rpc AcceptBaseline(AcceptBaselineRequest) returns (AcceptBaselineResponse);
   rpc BaselineTarget(BaselineTargetRequest) returns (BaselineTargetResponse);
+  // Repairs the ledger from the target's own journal, without writing to the target.
+  rpc ReconcileTarget(ReconcileTargetRequest) returns (ReconcileTargetResponse);
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
   // Summarises every registered target from the control plane alone, without opening a connection to any of them.
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
