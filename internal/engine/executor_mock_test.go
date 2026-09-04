@@ -16,7 +16,16 @@ var (
 	journalCols = []string{"stmt_idx", "state", "sql_hash", "cursor", "rows_done", "rows_total"}
 	errBoom     = errors.New("boom")
 	cicHash     = hashSQL("CREATE INDEX CONCURRENTLY i ON tt (v)")
+	cicDef      = "CREATE INDEX i ON public.tt USING btree (v)"
 )
+
+func expectIndexRow(mock pgxmock.PgxConnIface) *pgxmock.ExpectedQuery {
+	return mock.ExpectQuery("SELECT i.indisvalid").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg())
+}
+
+func indexRow(valid, onTable bool, def string) *pgxmock.Rows {
+	return pgxmock.NewRows([]string{"indisvalid", "on_table", "indexdef"}).AddRow(valid, onTable, def)
+}
 
 func newMockExec(t *testing.T, opts ...Option) (pgxmock.PgxConnIface, *Executor) {
 	t.Helper()
@@ -29,10 +38,17 @@ func newMockExec(t *testing.T, opts ...Option) (pgxmock.PgxConnIface, *Executor)
 	return mock, New(mock, Options{}, opts...)
 }
 
-func expectLock(mock pgxmock.PgxConnIface) {
+func expectSession(mock pgxmock.PgxConnIface) {
 	mock.ExpectQuery("SELECT current_database").
 		WillReturnRows(pgxmock.NewRows([]string{"current_database"}).AddRow("db"))
-	mock.ExpectExec("SELECT pg_advisory_lock").WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
+	mock.ExpectExec("SET application_name").WillReturnResult(pgxmock.NewResult("SET", 0))
+}
+
+func expectLock(mock pgxmock.PgxConnIface) {
+	expectSession(mock)
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL statement_timeout").WillReturnResult(pgxmock.NewResult("SELECT", 1))
+	mock.ExpectCommit()
 }
 
 func expectBootstrap(mock pgxmock.PgxConnIface) {
@@ -95,13 +111,26 @@ func TestUpErrorPaths(t *testing.T) {
 			wantErr: "resolve database name",
 		},
 		{
-			name: "advisory lock fails",
+			name: "advisory lock cannot start",
 			setup: func(mock pgxmock.PgxConnIface) {
-				mock.ExpectQuery("SELECT current_database").
-					WillReturnRows(pgxmock.NewRows([]string{"current_database"}).AddRow("db"))
-				mock.ExpectExec("SELECT pg_advisory_lock").WithArgs(pgxmock.AnyArg()).WillReturnError(errBoom)
+				expectSession(mock)
+				mock.ExpectBegin().WillReturnError(errBoom)
+				mock.ExpectQuery("FROM pg_locks").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
-			wantErr: "acquire advisory lock",
+			wantErr: "acquire advisory lock on db: boom",
+		},
+		{
+			name: "advisory lock times out and the holder is named",
+			setup: func(mock pgxmock.PgxConnIface) {
+				expectSession(mock)
+				mock.ExpectBegin()
+				mock.ExpectExec("SET LOCAL statement_timeout").WillReturnError(errBoom)
+				mock.ExpectRollback()
+				mock.ExpectQuery("FROM pg_locks").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
+					WillReturnRows(pgxmock.NewRows([]string{"pid", "application_name", "state", "since"}).
+						AddRow(int32(42), AppName, "idle", 900.0))
+			},
+			wantErr: `acquire advisory lock on db (held by pid 42, application_name "godwit", idle for 900s)`,
 		},
 		{
 			name: "bootstrap fails",
@@ -408,7 +437,7 @@ func TestNoTxErrorPaths(t *testing.T) {
 			name: "reconcile inspect fails",
 			setup: func(mock pgxmock.PgxConnIface) {
 				preludeResumeIntent(mock)
-				mock.ExpectQuery("SELECT i.indisvalid").WithArgs(pgxmock.AnyArg()).WillReturnError(errBoom)
+				expectIndexRow(mock).WillReturnError(errBoom)
 				expectMarkFailed(mock)
 			},
 			wantErr: "inspect index",
@@ -417,8 +446,7 @@ func TestNoTxErrorPaths(t *testing.T) {
 			name: "reconcile drop invalid fails",
 			setup: func(mock pgxmock.PgxConnIface) {
 				preludeResumeIntent(mock)
-				mock.ExpectQuery("SELECT i.indisvalid").WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"indisvalid"}).AddRow(false))
+				expectIndexRow(mock).WillReturnRows(indexRow(false, true, cicDef))
 				mock.ExpectExec("DROP INDEX").WillReturnError(errBoom)
 				expectMarkFailed(mock)
 			},
@@ -428,12 +456,38 @@ func TestNoTxErrorPaths(t *testing.T) {
 			name: "reconcile done but record fails",
 			setup: func(mock pgxmock.PgxConnIface) {
 				preludeResumeIntent(mock)
-				mock.ExpectQuery("SELECT i.indisvalid").WithArgs(pgxmock.AnyArg()).
-					WillReturnRows(pgxmock.NewRows([]string{"indisvalid"}).AddRow(true))
+				expectIndexRow(mock).WillReturnRows(indexRow(true, true, cicDef))
 				mock.ExpectExec("INSERT INTO godwit.journal").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
 				expectMarkFailed(mock)
 			},
 			wantErr: "journal done for statement 0",
+		},
+		{
+			name: "reconcile refuses an index of the same name over other columns",
+			setup: func(mock pgxmock.PgxConnIface) {
+				preludeResumeIntent(mock)
+				expectIndexRow(mock).WillReturnRows(indexRow(true, true, "CREATE INDEX i ON public.tt USING btree (id)"))
+				expectMarkFailed(mock)
+			},
+			wantErr: `index "i" already exists as "CREATE INDEX i ON public.tt USING btree (id)"`,
+		},
+		{
+			name: "reconcile refuses an index of the same name on another table",
+			setup: func(mock pgxmock.PgxConnIface) {
+				preludeResumeIntent(mock)
+				expectIndexRow(mock).WillReturnRows(indexRow(true, false, "CREATE INDEX i ON public.other USING btree (v)"))
+				expectMarkFailed(mock)
+			},
+			wantErr: "is not what this statement builds",
+		},
+		{
+			name: "reconcile cannot parse what the catalog reports",
+			setup: func(mock pgxmock.PgxConnIface) {
+				preludeResumeIntent(mock)
+				expectIndexRow(mock).WillReturnRows(indexRow(true, true, "NOT SQL"))
+				expectMarkFailed(mock)
+			},
+			wantErr: "parse index statement",
 		},
 	}
 	for _, tc := range cases {
@@ -519,10 +573,70 @@ func TestReconcileCreateIndexAbsent(t *testing.T) {
 	t.Parallel()
 
 	mock, _ := newMockExec(t)
-	mock.ExpectQuery("SELECT i.indisvalid").WithArgs(pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
-	done, err := reconcile(context.Background(), mock, Statement{Verifier: VerifierCreateIndexConcurrently, IndexName: "i"})
+	expectIndexRow(mock).WillReturnError(pgx.ErrNoRows)
+	done, err := reconcile(context.Background(), mock, Statement{
+		Verifier: VerifierCreateIndexConcurrently, IndexName: "i", SQL: "CREATE INDEX CONCURRENTLY i ON tt (v)",
+	})
 	if err != nil || done {
 		t.Fatalf("done = %v, err = %v", done, err)
+	}
+}
+
+func TestReconcileCreateIndexNeedsAnIndexStatement(t *testing.T) {
+	t.Parallel()
+
+	mock, _ := newMockExec(t)
+	_, err := reconcile(context.Background(), mock, Statement{
+		Verifier: VerifierCreateIndexConcurrently, IndexName: "i", SQL: "SELECT 1",
+	})
+	wantErr(t, err, "not a single CREATE INDEX statement")
+}
+
+func TestIndexShapeIgnoresWhatDoesNotIdentifyTheIndex(t *testing.T) {
+	t.Parallel()
+
+	cases := [][2]string{
+		{"CREATE INDEX CONCURRENTLY IF NOT EXISTS i ON tt (v)", "CREATE INDEX other ON public.tt USING btree (v)"},
+		{"CREATE UNIQUE INDEX CONCURRENTLY i ON s.tt (a, b DESC)", "CREATE UNIQUE INDEX i ON s.tt USING btree (a, b DESC)"},
+		{"CREATE INDEX CONCURRENTLY i ON tt (v) WHERE d IS NULL", "CREATE INDEX i ON public.tt USING btree (v) WHERE (d IS NULL)"},
+		{"CREATE INDEX CONCURRENTLY i ON tt (lower(email))", "CREATE INDEX i ON public.tt USING btree (lower(email))"},
+	}
+	for _, tc := range cases {
+		_, planned, err := indexShape(tc[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, live, err := indexShape(tc[1])
+		if err != nil || planned != live {
+			t.Fatalf("%q\n  planned %q\n  live    %q\n  err %v", tc[0], planned, live, err)
+		}
+	}
+
+	differ := [][2]string{
+		{"CREATE INDEX CONCURRENTLY i ON tt (v)", "CREATE INDEX i ON public.tt USING btree (id)"},
+		{"CREATE INDEX CONCURRENTLY i ON tt (v)", "CREATE UNIQUE INDEX i ON public.tt USING btree (v)"},
+		{"CREATE INDEX CONCURRENTLY i ON tt (v)", "CREATE INDEX i ON public.tt USING hash (v)"},
+		{"CREATE INDEX CONCURRENTLY i ON tt (v)", "CREATE INDEX i ON public.tt USING btree (v) WHERE (d IS NULL)"},
+		{"CREATE INDEX CONCURRENTLY i ON tt (v)", "CREATE INDEX i ON public.tt USING btree (v) INCLUDE (w)"},
+	}
+	for _, tc := range differ {
+		_, planned, err := indexShape(tc[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, live, err := indexShape(tc[1])
+		if err != nil || planned == live {
+			t.Fatalf("%q and %q compared equal as %q (err %v)", tc[0], tc[1], planned, err)
+		}
+	}
+}
+
+func TestIndexShapeQualifiesTheTable(t *testing.T) {
+	t.Parallel()
+
+	table, _, err := indexShape("CREATE INDEX CONCURRENTLY i ON s.tt (v)")
+	if err != nil || table != `"s"."tt"` {
+		t.Fatalf("table = %q, err = %v", table, err)
 	}
 }
 

@@ -14,11 +14,21 @@ import (
 type Options struct {
 	LockTimeout      time.Duration
 	StatementTimeout time.Duration
+	// LockWait bounds the wait for godwit's own advisory lock on the target; zero takes DefaultLockWait.
+	LockWait time.Duration
 }
+
+// DefaultLockWait bounds how long a run waits for another session's advisory lock on the target: long
+// enough to ride out a peer executor's statement, short enough to hand the run slot back and let the
+// scheduler retry with backoff rather than park a replica on a lock nobody is going to release.
+const DefaultLockWait = 30 * time.Second
 
 func (o Options) withDefaults() Options {
 	if o.LockTimeout <= 0 {
 		o.LockTimeout = 5 * time.Second
+	}
+	if o.LockWait <= 0 {
+		o.LockWait = DefaultLockWait
 	}
 
 	return o
@@ -128,7 +138,7 @@ func (e *Executor) Down(ctx context.Context, p Plan) (Result, error) {
 
 func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	res := Result{Migration: p.Migration.ID()}
-	release, err := acquireLock(ctx, e.db)
+	release, err := acquireLock(ctx, e.db, e.opts.LockWait)
 	if err != nil {
 		return res, err
 	}

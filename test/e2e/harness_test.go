@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"net/url"
 	"os"
@@ -117,6 +118,28 @@ func timed(fn func()) time.Duration {
 	fn()
 
 	return time.Since(start)
+}
+
+// holdAdvisoryLock takes the target's own advisory lock from a session that looks exactly like an
+// executor's, which is what a black-holed replica leaves behind.
+func holdAdvisoryLock(t *testing.T, dsn, dbname string) func() {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fnv.New64a()
+	h.Write([]byte("godwit:" + dbname))
+	if _, err := conn.Exec(ctx, fmt.Sprintf(
+		"SET application_name = 'godwit'; SELECT pg_advisory_lock(%d)", int64(h.Sum64()))); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { _ = conn.Close(ctx) }) }
+	t.Cleanup(release)
+
+	return release
 }
 
 func holdLock(t *testing.T, dsn, sql string) func() {

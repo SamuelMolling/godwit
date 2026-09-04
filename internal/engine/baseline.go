@@ -35,7 +35,7 @@ func RecordCollapsed(ctx context.Context, db DB, migs []Migration) error {
 
 // MarkApplied records migs as applied without executing them; the target must have no applied versions.
 func (e *Executor) MarkApplied(ctx context.Context, migs []Migration) error {
-	release, err := acquireLock(ctx, e.db)
+	release, err := acquireLock(ctx, e.db, e.opts.LockWait)
 	if err != nil {
 		return err
 	}

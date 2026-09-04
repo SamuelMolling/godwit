@@ -116,6 +116,21 @@ WHERE r.state = 'running';
 
 Two replicas never execute the same run: the lease is exclusive per target in the store, and the engine takes `pg_advisory_lock` in the target for the duration of every attempt, so a zombie attempt still holding the lock blocks the newcomer instead of racing it.
 
+## The target's advisory lock is held by a session that is gone
+
+**Symptom.** Every attempt fails with `transient: acquire advisory lock on <db> (held by pid N, application_name "godwit", idle for 900s): ... canceling statement due to statement timeout (SQLSTATE 57014)`, 30s apart, on a target nothing else is migrating.
+
+**Meaning.** A replica whose network was cut, rather than killed, left a backend behind: PostgreSQL has not noticed its client is gone, and that backend still holds the target's session advisory lock. Every executor session sets `application_name = 'godwit'` and asks for TCP keepalives (`tcp_keepalives_idle = 30`, `interval = 10`, `count = 3`), so an unreachable peer is detected in about a minute and the lock is released without anyone intervening. The run rides that out on its own: the lock wait is bounded at 30s per attempt rather than the run timeout, and the attempt retries with backoff.
+
+```sql
+-- in the target, the session holding godwit's advisory lock
+SELECT a.pid, a.application_name, a.state, now() - a.state_change AS idle_for, a.client_addr
+FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1;
+```
+
+**Action.** Wait one minute. godwit never terminates the holder itself: a peer executor between two statements, or one pausing between backfill batches, is indistinguishable from an orphan, and killing that one mid-migration costs more than a lock wait. If the session survives past the keepalive window — a proxy or NAT that answers keepalives for a dead client — confirm from `client_addr` that no replica is on the other end and terminate it by hand with `pg_terminate_backend(pid)`; the run's next attempt takes the lock.
+
 ## Validation refused the run
 
 **Symptom.** `godwit migrate` exits 1 with `migration failed validation: ...` (InvalidArgument) or `replay history run <i>: ...` (Internal); `godwit_validation_failures_total` rises; log line `run refused by validation`.

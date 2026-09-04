@@ -262,6 +262,56 @@ func TestCrashResumeConcurrentIndex(t *testing.T) {
 	}
 }
 
+func TestResumeRefusesAnIndexItDidNotBuild(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	connect := newTestDB(t)
+
+	setup := connect()
+	if _, err := setup.Exec(ctx, "CREATE TABLE big (id bigserial PRIMARY KEY, v int)"); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Migration{
+		Version: 1, Name: "idx", Checksum: "c",
+		UpSQL:   "CREATE INDEX CONCURRENTLY big_v_idx ON big (v);",
+		DownSQL: "DROP INDEX CONCURRENTLY big_v_idx;",
+	}
+	crashed := connect()
+	if _, err := New(crashed, Options{}, crashOn(crashed, HookAfterIntent, 0)).Up(ctx, buildPlanT(t, m, DirectionUp)); err == nil {
+		t.Fatal("crash run must fail")
+	}
+	// Somebody else's index, of the name the plan reserved, over a different column.
+	if _, err := setup.Exec(ctx, "CREATE INDEX big_v_idx ON big (id)"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := New(connect(), Options{}).Up(ctx, buildPlanT(t, m, DirectionUp))
+	wantErr(t, err, `index "big_v_idx" already exists as`)
+	wantErr(t, err, "is not what this statement builds")
+	var applied int
+	if err := setup.QueryRow(ctx, `SELECT count(*) FROM godwit.migrations WHERE version = 1`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied != 0 {
+		t.Fatal("the migration must not be recorded on an index it did not build")
+	}
+
+	if _, err := setup.Exec(ctx, "DROP INDEX big_v_idx"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(connect(), Options{}).Up(ctx, buildPlanT(t, m, DirectionUp)); err != nil {
+		t.Fatalf("resume once the name is free: %v", err)
+	}
+	var def string
+	if err := setup.QueryRow(ctx, `SELECT pg_get_indexdef('big_v_idx'::regclass)`).Scan(&def); err != nil {
+		t.Fatal(err)
+	}
+	if def != "CREATE INDEX big_v_idx ON public.big USING btree (v)" {
+		t.Fatalf("index def = %q", def)
+	}
+}
+
 func TestInvalidIndexRepair(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -347,9 +397,16 @@ func TestLockBlocksSecondExecutor(t *testing.T) {
 	connect := newTestDB(t)
 
 	holder := connect()
-	release, err := acquireLock(ctx, holder)
+	release, err := acquireLock(ctx, holder, DefaultLockWait)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var app string
+	if err := holder.QueryRow(ctx, `SELECT current_setting('application_name')`).Scan(&app); err != nil {
+		t.Fatal(err)
+	}
+	if app != AppName {
+		t.Fatalf("application_name = %q, want %q", app, AppName)
 	}
 
 	m := Migration{
@@ -361,6 +418,11 @@ func TestLockBlocksSecondExecutor(t *testing.T) {
 	if _, err := New(connect(), Options{}).Up(blockedCtx, buildPlanT(t, m, DirectionUp)); err == nil {
 		t.Fatal("second executor must block until timeout")
 	}
+
+	_, err = New(connect(), Options{LockWait: 300 * time.Millisecond}).Up(ctx, buildPlanT(t, m, DirectionUp))
+	wantErr(t, err, "acquire advisory lock")
+	wantErr(t, err, "SQLSTATE 57014")
+	wantErr(t, err, `application_name "`+AppName+`"`)
 
 	release()
 	if _, err := New(connect(), Options{}).Up(ctx, buildPlanT(t, m, DirectionUp)); err != nil {
