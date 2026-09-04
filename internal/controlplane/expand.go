@@ -278,7 +278,7 @@ func expandedHeader(d engine.Directive) string {
 		args = []string{quoteLiteral(d.Args[0]), d.Args[1], d.Args[2]}
 	}
 
-	return "-- godwit expanded: " + d.Op + " " + strings.Join(args, " ")
+	return engine.ExpandedMarker + d.Op + " " + strings.Join(args, " ")
 }
 
 type chunk struct {

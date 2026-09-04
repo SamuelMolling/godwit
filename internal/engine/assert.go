@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -242,16 +241,10 @@ func (e *Executor) checkAssert(st Statement, res assertResult) error {
 	return nil
 }
 
-// assertQuery drops the `-- godwit expanded:` header the splicer leaves above a body's first statement,
-// so a failure names the query rather than the comment.
 func assertQuery(sql string) string {
-	for {
-		line, rest, ok := strings.Cut(sql, "\n")
-		if !ok || !strings.HasPrefix(strings.TrimSpace(line), "--") {
-			return strings.TrimSpace(sql)
-		}
-		sql = rest
-	}
+	_, body := SplitExpanded(sql)
+
+	return body
 }
 
 func (e *Executor) readAssert(ctx context.Context, st Statement) (assertResult, error) {

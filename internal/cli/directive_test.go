@@ -93,6 +93,40 @@ func TestPlanMarkdownRendersTheExpansion(t *testing.T) {
 	}
 }
 
+func TestRenderersShowTheStatementUnderTheExpandedMarker(t *testing.T) {
+	t.Parallel()
+	marked := engine.ExpandedMarker + "change-type users.age bigint"
+	r := expandedReport()
+	r.items[0].Statements[0].SQL = marked + "\nALTER TABLE public.users ADD COLUMN age_new bigint"
+	r.items[0].Statements[3].Assert = &engine.AssertSpec{Op: "=", Kind: "num", Value: "0"}
+	r.items[0].Statements[3].SQL = engine.ExpandedMarker + "assert 'SELECT 1' = 0\nSELECT 1"
+
+	var b strings.Builder
+	writePlanText(&b, r)
+	out := b.String()
+	for _, want := range []string{
+		"  " + marked + "\n  [0] tx    ALTER TABLE public.users ADD COLUMN age_new bigint",
+		"  " + engine.ExpandedMarker + "assert 'SELECT 1' = 0\n  [3] assert SELECT 1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	b.Reset()
+	writePlanMarkdown(&b, r)
+	if md := b.String(); !strings.Contains(md, "| `ALTER TABLE public.users ADD COLUMN age_new bigint` |") ||
+		strings.Contains(md, "| `"+engine.ExpandedMarker) {
+		t.Fatalf("the cell must carry the statement, not the marker:\n%s", md)
+	}
+
+	b.Reset()
+	writePlanJSON(&b, r)
+	if !strings.Contains(b.String(), `-- godwit expanded: change-type users.age bigint\nALTER TABLE`) {
+		t.Fatalf("json must keep both lines:\n%s", b.String())
+	}
+}
+
 func TestPlanJSONRendersTheExpansion(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder

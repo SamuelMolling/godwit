@@ -89,6 +89,25 @@ type Statement struct {
 	Drops []Drop
 }
 
+// ExpandedMarker prefixes the comment the directive expander leaves above the first statement it generated.
+const ExpandedMarker = "-- godwit expanded: "
+
+// SplitExpanded separates the comment lines the expander leaves above a generated statement from the SQL
+// under them: marker is the ExpandedMarker line when the statement carries one, body the statement itself.
+func SplitExpanded(sql string) (marker, body string) {
+	for {
+		line, rest, ok := strings.Cut(sql, "\n")
+		trimmed := strings.TrimSpace(line)
+		if !ok || !strings.HasPrefix(trimmed, "--") {
+			return marker, strings.TrimSpace(sql)
+		}
+		if strings.HasPrefix(trimmed, ExpandedMarker) {
+			marker = trimmed
+		}
+		sql = rest
+	}
+}
+
 // Plan is the executable form of one migration direction; HoldFrom is the index of the first
 // statement left for the contract phase, and zero runs the plan whole.
 type Plan struct {
