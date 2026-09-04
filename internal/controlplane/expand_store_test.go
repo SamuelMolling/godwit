@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -76,6 +77,61 @@ func TestRunExpansionsAndProgress(t *testing.T) {
 	if err != nil || !ok || held.ID != runID {
 		t.Fatalf("held = %+v %t %v", held, ok, err)
 	}
+}
+
+// Progress describes work in flight, so every transition that starts or ends an attempt drops it; a
+// settled run carrying the last statement it happened to report is a leftover, not a record.
+func TestProgressClearedOnEveryTransition(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	if err := s.CreateRun(ctx, id, "app", RolloutDirect, map[string]string{"a.up.sql": "SELECT 1;"}, Timeouts{}, Provenance{}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	report := func() {
+		t.Helper()
+		if err := s.SaveProgress(ctx, id, RunProgress{Migration: "m", Statement: 3}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleared := func(what string, run Run, err error) {
+		t.Helper()
+		stored, storeErr := s.Run(ctx, id)
+		if err != nil || storeErr != nil || run.Progress != nil || stored.Progress != nil {
+			t.Fatalf("%s: returned %+v, stored %+v, err = %v / %v", what, run.Progress, stored.Progress, err, storeErr)
+		}
+	}
+	claim := func() Run {
+		t.Helper()
+		run, ok, err := s.Claim(ctx, "h", time.Minute)
+		if !ok {
+			t.Fatalf("claim: ok = %t, err = %v", ok, err)
+		}
+		cleared("claim", run, err)
+
+		return run
+	}
+
+	report()
+	claim()
+	report()
+	cleared("retry", Run{}, s.Retry(ctx, id, "boom", 0))
+	claim()
+	report()
+	cleared("finish", Run{}, s.Finish(ctx, id, StateFailed, "boom"))
+	report()
+	resumed, err := s.Resume(ctx, id)
+	cleared("resume", resumed, err)
+	claim()
+	report()
+	cleared("park", Run{}, s.Finish(ctx, id, StateAwaitingContract, ""))
+	report()
+	confirmed, err := s.Confirm(ctx, id)
+	cleared("confirm", confirmed, err)
 }
 
 func TestExpansionStoreErrors(t *testing.T) {

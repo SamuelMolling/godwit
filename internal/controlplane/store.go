@@ -284,7 +284,8 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 	return nil
 }
 
-// SaveProgress records what the newest statement of a running run reported.
+// SaveProgress records what the newest statement of a running run reported. Every transition that starts
+// or ends an attempt clears it, so a progress row always describes work in flight and never a leftover.
 func (s *Store) SaveProgress(ctx context.Context, id string, p RunProgress) error {
 	if _, err := s.pool.Exec(ctx, `UPDATE cp_runs SET progress = $2 WHERE id = $1`, id, jsonOf(p)); err != nil {
 		return fmt.Errorf("save run progress: %w", err)
@@ -551,14 +552,17 @@ func (s *Store) RunFiles(ctx context.Context, id string) (map[string]string, err
 	return files, nil
 }
 
-// standingRow matches a ledger row of a succeeded run that no revert has undone.
-const standingRow = `r.state = 'succeeded' AND a.reverted_by IS NULL`
+// standingRow matches a ledger row the target records: a migration applied to completion that no revert
+// undid. The run's own state is not part of it — a run that failed half way leaves what it did apply
+// standing, and a held row is on the target's disk but not in its history until the contract phase lands.
+const standingRow = `NOT a.held AND a.reverted_by IS NULL`
 
 // versionedMigration matches a ledger migration id that carries a version; repeatables are named R__<name>.
 const versionedMigration = `a.migration ~ '^[0-9]{14}_'`
 
-// Applied returns what a target's succeeded runs actually applied and no revert undid: their versions
-// ascending, and the content last recorded under each repeatable name.
+// Applied returns what a target's runs actually applied and no revert undid, whether or not the run
+// that applied it went on to succeed: their versions ascending, and the content last recorded under
+// each repeatable name.
 func (s *Store) Applied(ctx context.Context, target string) (AppliedSet, error) {
 	versions, err := s.appliedVersions(ctx, target)
 	if err != nil {
@@ -646,7 +650,7 @@ func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Ru
 			SELECT id, $1, now() + $2 FROM candidate
 			ON CONFLICT (run_id) DO UPDATE SET holder = EXCLUDED.holder, expires_at = EXCLUDED.expires_at
 		)
-		UPDATE cp_runs SET state = 'running', attempts = attempts + 1, not_before = NULL, updated_at = now()
+		UPDATE cp_runs SET state = 'running', attempts = attempts + 1, not_before = NULL, progress = NULL, updated_at = now()
 		WHERE id IN (SELECT id FROM candidate)
 		RETURNING `+runColumns, holder, ttl))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -674,14 +678,20 @@ func (s *Store) Heartbeat(ctx context.Context, runID, holder string, ttl time.Du
 	return nil
 }
 
-// Finish records a terminal state and releases the lease; a succeeded revert marks its original reverted.
+// Finish records a terminal state and releases the lease; a succeeded revert marks its original reverted
+// and withdraws every ledger row of it the revert had nothing left to undo, so the run and its rows say
+// the same thing.
 func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 	tag, err := s.pool.Exec(ctx, `
 		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1),
 		orig AS (
 			UPDATE cp_runs SET state = 'reverted', updated_at = now()
-			WHERE $2 = 'succeeded' AND id = (SELECT reverts FROM cp_runs WHERE id = $1))
-		UPDATE cp_runs SET state = $2, error = NULLIF($3, ''), finished_at = now(), updated_at = now()
+			WHERE $2 = 'succeeded' AND id = (SELECT reverts FROM cp_runs WHERE id = $1)
+			RETURNING id),
+		undone AS (
+			UPDATE cp_run_applied SET reverted_by = $1
+			WHERE run_id IN (SELECT id FROM orig) AND reverted_by IS NULL)
+		UPDATE cp_runs SET state = $2, error = NULLIF($3, ''), finished_at = now(), progress = NULL, updated_at = now()
 		WHERE id = $1`, id, state, errText)
 	if err != nil {
 		return fmt.Errorf("finish run: %w", err)
@@ -697,7 +707,8 @@ func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 func (s *Store) Retry(ctx context.Context, id, errText string, wait time.Duration) error {
 	tag, err := s.pool.Exec(ctx, `
 		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1)
-		UPDATE cp_runs SET state = 'queued', error = $2, not_before = now() + $3, retries = retries + 1, updated_at = now()
+		UPDATE cp_runs SET state = 'queued', error = $2, not_before = now() + $3, retries = retries + 1,
+			progress = NULL, updated_at = now()
 		WHERE id = $1 AND state = 'running'`, id, errText, wait)
 	if err != nil {
 		return fmt.Errorf("retry run: %w", err)
@@ -713,7 +724,8 @@ func (s *Store) Retry(ctx context.Context, id, errText string, wait time.Duratio
 func (s *Store) Resume(ctx context.Context, id string) (Run, error) {
 	run, err := scanRun(s.pool.QueryRow(ctx, `
 		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1)
-		UPDATE cp_runs SET state = 'queued', attempts = 0, error = NULL, finished_at = NULL, not_before = NULL, updated_at = now()
+		UPDATE cp_runs SET state = 'queued', attempts = 0, error = NULL, finished_at = NULL, not_before = NULL,
+			progress = NULL, updated_at = now()
 		WHERE id = $1 AND state IN ('failed', 'needs_attention')
 		RETURNING `+runColumns, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -761,7 +773,8 @@ func (s *Store) RunStats(ctx context.Context) ([]metrics.RunStat, error) {
 // Confirm requeues an awaiting_contract run for its contract phase and returns it.
 func (s *Store) Confirm(ctx context.Context, id string) (Run, error) {
 	run, err := scanRun(s.pool.QueryRow(ctx, `
-		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, not_before = NULL, updated_at = now()
+		UPDATE cp_runs SET state = 'queued', phase = 'contract', attempts = 0, finished_at = NULL, not_before = NULL,
+			progress = NULL, updated_at = now()
 		WHERE id = $1 AND state = 'awaiting_contract'
 		RETURNING `+runColumns, id))
 	if errors.Is(err, pgx.ErrNoRows) {

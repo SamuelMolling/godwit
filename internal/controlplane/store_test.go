@@ -212,6 +212,10 @@ func TestCreateRevert(t *testing.T) {
 	if err != nil || len(history) != 1 {
 		t.Fatalf("history = %v, err = %v", history, err)
 	}
+	undone, err := s.AppliedMigrations(ctx, second)
+	if err != nil || undone[0].RevertedBy != revert {
+		t.Fatalf("a succeeded revert withdraws every row it had nothing left to undo: %+v, err = %v", undone, err)
+	}
 
 	if err := s.CreateRevert(ctx, "66666666-0000-0000-0000-000000000005", load(first), false, Timeouts{}, Provenance{}); err != nil {
 		t.Fatalf("first is the latest again: %v", err)
@@ -473,11 +477,17 @@ func TestAppliedVersions(t *testing.T) {
 	}
 
 	got, err := s.Applied(ctx, "app")
-	if err != nil || !slices.Equal(got.Versions, []int64{20260901120001, 20260901120003}) {
-		t.Fatalf("applied = %v, err = %v", got, err)
+	if err != nil || !slices.Equal(got.Versions, []int64{20260901120001, 20260901120002, 20260901120003}) {
+		t.Fatalf("a failed run's applied migrations stand: %v, err = %v", got, err)
 	}
 	if want := checksum("CREATE OR REPLACE VIEW v AS SELECT 1;"); got.Repeatables["v"] != want {
 		t.Fatalf("repeatables = %v", got.Repeatables)
+	}
+	if err := s.RecordApplied(ctx, second, "20260901120002_b", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Applied(ctx, "app"); err != nil || slices.Contains(got.Versions, int64(20260901120002)) {
+		t.Fatalf("a held migration is not in the target's history: %v, err = %v", got, err)
 	}
 }
 

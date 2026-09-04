@@ -131,7 +131,7 @@ call GetRun '{"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c"}'
 
 `GetRun` also returns `applied`: the ledger of what the run actually put into the target's history, in the order it applied them, each with `migration`, `appliedAt`, `held` (its contract phase never ran) and `revertedBy` (the revert that undid it). It is what `RevertRun` is scoped to.
 
-`Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan), `progress` (`migration`, `statement`, `phase`, `rowsDone`, `rowsTotal`, `batches`: what the statement being executed last reported, written under the heartbeat so a long backfill is visible while it runs).
+`Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan), `progress` (`migration`, `statement`, `phase`, `rowsDone`, `rowsTotal`, `batches`: what the statement being executed last reported, written under the heartbeat so a long backfill is visible while it runs, and cleared by every transition that starts or ends an attempt — a run that is not running has none).
 
 ### ListRuns — read
 
@@ -254,7 +254,7 @@ call ListTargets '{}'
 
 Every registered target by name, with its settings and what the control plane knows about it. No connection is opened
 to any target, so it answers while a target is unreachable; `GetTargetStatus` is the one that reads the target's own
-journal. `appliedCount` counts the distinct versions the target's succeeded runs carried, `attentionRuns` the runs in
+journal. `appliedCount` counts the distinct versions the target's runs applied to completion and no revert undid, `attentionRuns` the runs in
 `needs_attention` or `awaiting_contract`, and `readyPlans` the stored plans still bindable (`ready` and younger than
 `--plan-ttl`). `requirePlan` is true when the target was registered with it **or** the service runs with
 `--require-plan`. The CLI renders it as `godwit targets`.

@@ -128,6 +128,8 @@ A pipeline re-run does not queue a second run: `CreateRun` with the same files, 
 
 `kind` is `migrate` or `baseline`; `phase` is `expand` or `contract`; `reverts` links a revert run to the run it undoes, and `cp_run_applied.reverted_by` links each undone migration to it.
 
+**A run's state is not a verdict on its migrations.** A run that applies three migrations and fails on the fourth leaves the three standing: they are in the target's `godwit.migrations`, in its journal, and in `cp_run_applied`. So the applied set, the applied count, the out-of-order guard and the scratch replay are all scoped to the ledger row, never to `cp_runs.state`: a migration counts when its row is not `held` and not `reverted_by`. `held` is the other half — the run applied that migration's expand statements but its contract phase never ran, so the target records nothing for it yet, and it counts as applied only once the contract phase lands (a revert still undoes it, from the `down_held_sql` frozen on the row). The one thing `state` still decides is whether the run itself can be resumed, confirmed or reverted.
+
 ## Leases
 
 Runs are executed by whichever replica claims them. Every replica ticks every `--tick-interval` (2s):
@@ -146,8 +148,8 @@ One target executes one run at a time: the claim query hands out one lease per t
 
 1. **Target exists** — `not_found` otherwise.
 2. **Hazard gate** — every hazard code in the plans must be in `acknowledge_hazards`; otherwise `failed_precondition` listing them.
-3. **Out-of-order guard** — a pending version below the newest version in the target's history (the migrations `succeeded` runs applied, migrate and baseline, that no revert undid) is refused with `failed_precondition` unless `allow_out_of_order`; allowed ones are logged. Reverts skip this check, and repeatables carry no version so they are never out of order.
-4. **Scratch validation** — a database `godwit_validate_<id>` is created on the store server, every succeeded run of the target is replayed in order — the migrations that run applied and no revert undid, in the order it applied them, each with the expansion frozen on its own `cp_run_applied` row, never the whole directory the run submitted — then the new plans one at a time, snapshotting the schema after the history and after each plan; the database is dropped `WITH (FORCE)`. A failure in the new plans is `invalid_argument: migration failed validation: ...`; a failure in the history replay is `internal: replay history run i: ...`. Skipped with `skip_validation` or `serve --skip-validation`. The snapshots feed [already-applied detection](#already-applied-migrations) when the plan is persisted.
+3. **Out-of-order guard** — a pending version below the newest version in the target's history (the migrations any run applied to completion, migrate and baseline, that no revert undid — the state of the run that applied them does not come into it) is refused with `failed_precondition` unless `allow_out_of_order`; allowed ones are logged. Reverts skip this check, and repeatables carry no version so they are never out of order.
+4. **Scratch validation** — a database `godwit_validate_<id>` is created on the store server, every run of the target is replayed in order — the migrations that run applied to completion and no revert undid, in the order it applied them, each with the expansion frozen on its own `cp_run_applied` row, never the whole directory the run submitted — then the new plans one at a time, snapshotting the schema after the history and after each plan; the database is dropped `WITH (FORCE)`. A failure in the new plans is `invalid_argument: migration failed validation: ...`; a failure in the history replay is `internal: replay history run i: ...`. Skipped with `skip_validation` or `serve --skip-validation`. The snapshots feed [already-applied detection](#already-applied-migrations) when the plan is persisted.
 
 ### Hazards
 
@@ -362,7 +364,9 @@ for the right reason; there is no special case for it.
 
 **Progress.** The scheduler writes the newest statement event to `cp_runs.progress` under the heartbeat, so
 `godwit runs`, `godwit run get` and the UI show `backfill 320000/~1240000 rows (batch 64)` while it runs. A run
-that backfills for an hour notifies once, not once per batch.
+that backfills for an hour notifies once, not once per batch. Every transition that starts or ends an attempt —
+claim, finish, retry, resume, confirm — clears the column, so a progress value always describes work in flight;
+a run that is not running has none, and what it did is in the ledger and the journal.
 
 **Revert.** `-- godwit: revert` asks for the generated inverse, and godwit stores two: the pre-swap one for a run
 parked at `awaiting_contract` (`DROP TRIGGER IF EXISTS`, `DROP FUNCTION IF EXISTS`, `DROP CONSTRAINT IF EXISTS`,

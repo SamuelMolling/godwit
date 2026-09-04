@@ -120,13 +120,13 @@ Two replicas never execute the same run: the lease is exclusive per target in th
 
 **Symptom.** `godwit migrate` exits 1 with `migration failed validation: ...` (InvalidArgument) or `replay history run <i>: ...` (Internal); `godwit_validation_failures_total` rises; log line `run refused by validation`.
 
-**Meaning.** Before queueing, the service creates `godwit_validate_<run>` on the store server, replays the files of every succeeded run for the target (from `cp_run_files`, in order) and then the new files. `migration failed validation` means the new SQL errors on a schema that looks like the target; `replay history` means the recorded history itself does not replay (a migration that depended on data, an extension missing on the store server, a run applied with `--skip-validation` that a later file contradicts).
+**Meaning.** Before queueing, the service creates `godwit_validate_<run>` on the store server, replays what every run of the target applied and no revert undid (the standing `cp_run_applied` rows, in the order they were applied, with bodies from their run's `cp_run_files`) and then the new files. `migration failed validation` means the new SQL errors on a schema that looks like the target; `replay history` means the recorded history itself does not replay (a migration that depended on data, an extension missing on the store server, a run applied with `--skip-validation` that a later file contradicts).
 
 ```sql
 -- the history that is replayed
-SELECT r.id, r.created_at, count(f.*) AS files
-FROM cp_runs r JOIN cp_run_files f ON f.run_id = r.id
-WHERE r.target = :'target' AND r.state = 'succeeded' AND r.kind = 'migrate'
+SELECT r.id, r.state, r.created_at, string_agg(a.migration, ', ' ORDER BY a.seq) AS applied
+FROM cp_runs r JOIN cp_run_applied a ON a.run_id = r.id
+WHERE r.target = :'target' AND NOT a.held AND a.reverted_by IS NULL
 GROUP BY r.id ORDER BY r.created_at;
 ```
 

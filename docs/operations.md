@@ -60,16 +60,19 @@ Restore the store together with the target when you roll back a target by PITR: 
 
 ## Retention
 
-There is no retention command; run these from cron or a scheduled Job. Keep at least one `succeeded` run per target, because validation replays `cp_run_files` of every succeeded run to rebuild the target's history.
+There is no retention command; run these from cron or a scheduled Job. Never delete a run that still has standing `cp_run_applied` rows: validation replays those rows, reading their bodies out of that run's `cp_run_files`, to rebuild the target's history.
 
 Store:
 
 ```sql
--- runs older than 90 days that are settled, and their files, leases and audit rows
+-- runs older than 90 days that are settled and hold nothing the target still has
 WITH old AS (
-  SELECT id FROM cp_runs
+  SELECT id FROM cp_runs r
   WHERE finished_at < now() - interval '90 days'
     AND state IN ('failed', 'reverted', 'needs_attention')
+    AND NOT EXISTS (
+      SELECT 1 FROM cp_run_applied a
+      WHERE a.run_id = r.id AND a.reverted_by IS NULL)
 )
 DELETE FROM cp_run_files WHERE run_id IN (SELECT id FROM old);
 -- repeat for cp_leases, cp_notifications (key = run_id::text), then cp_runs itself
@@ -81,7 +84,7 @@ DELETE FROM cp_drift_events WHERE resolved_at < now() - interval '180 days';
 DELETE FROM cp_audit WHERE at < now() - interval '365 days';
 ```
 
-Do not delete `succeeded` runs with `kind = 'migrate'` unless the target has been baselined since: [`BaselineTarget`](concepts.md#baseline) records the baseline run as the new history root, after which older runs are no longer replayed.
+The `NOT EXISTS` is the load-bearing part: a `failed` run that applied three migrations before it stopped still owns their history, so deleting its files takes the replay's bodies with it. Do not delete runs with `kind = 'migrate'` that still have standing rows unless the target has been baselined since: [`BaselineTarget`](concepts.md#baseline) records the baseline run as the new history root, after which older runs are no longer replayed.
 
 Target (`godwit` schema):
 
@@ -120,7 +123,7 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 
 The rail and every target list come from `ListTargets`, so a registered target that was never migrated appears from the moment it is registered. The plan list asks `ListPlans` once per target. A plan that retention has swept renders as *pruned* rather than a `404`: the run keeps the record of what it applied.
 
-Both pages read `Run.progress`, which the executor reports after every committed batch and the scheduler saves at most once a second. Rows written and batches committed are counted; the total is `pg_class.reltuples` for the table taken once when the backfill started, so it is shown as `~n` and the percentage as `≈`, and a run can finish either side of it — the batch only touches rows that still need it. The 3s htmx poll the page already runs is what moves the numbers; a run that is not running shows no backfill block, because the progress it carries is the last statement it reported, not something still moving.
+Both pages read `Run.progress`, which the executor reports after every committed batch and the scheduler saves at most once a second. Rows written and batches committed are counted; the total is `pg_class.reltuples` for the table taken once when the backfill started, so it is shown as `~n` and the percentage as `≈`, and a run can finish either side of it — the batch only touches rows that still need it. The 3s htmx poll the page already runs is what moves the numbers; a run that is not running shows no backfill block, because `cp_runs.progress` is cleared by every transition that starts or ends an attempt and a settled run therefore carries none.
 
 `/ui/targets/{name}` takes its *pending* set from the target's newest **ready** plan, because the service holds no migration directory of its own; `godwit target status <name> --dir ./migrations` is the comparison against the files on disk, and it is also what flags a checksum mismatch.
 

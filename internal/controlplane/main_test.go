@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -22,6 +23,7 @@ func TestMain(m *testing.M) {
 		tcpostgres.WithUsername("godwit"),
 		tcpostgres.WithPassword("godwit"),
 		tcpostgres.BasicWaitStrategies(),
+		testcontainers.WithCmdArgs("-c", "max_connections=300"),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "postgres container required for controlplane tests:", err)
