@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"encoding/hex"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +9,7 @@ import (
 
 	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/server"
 )
 
@@ -26,7 +25,9 @@ func newServeCmd() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
-			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; a bare secret is an anonymous admin),\n" +
+			"Env: GODWIT_MASTER_KEY (64 hex chars; only static targets need it) and GODWIT_MASTER_KEY_PREVIOUS (comma-separated keys kept for decryption),\n" +
+			"GODWIT_KEY_PROVIDER (env, gcpkms or vault-transit) with GODWIT_KMS_KEY for an envelope-encryption key provider,\n" +
+			"GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; a bare secret is an anonymous admin),\n" +
 			"GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --scratch-dsn and --scratch-template),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
@@ -39,9 +40,9 @@ func newServeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			key, err := hex.DecodeString(os.Getenv("GODWIT_MASTER_KEY"))
-			if err != nil || len(key) != 32 {
-				return fmt.Errorf("GODWIT_MASTER_KEY must be 64 hex chars (32 bytes)")
+			keys, err := creds.KeyringFromEnv()
+			if err != nil {
+				return err
 			}
 			var tokens []string
 			if raw := os.Getenv("GODWIT_TOKENS"); raw != "" {
@@ -54,7 +55,7 @@ func newServeCmd() *cobra.Command {
 				StoreDSN:        storeDSN,
 				ScratchDSN:      scratchDSN,
 				ScratchTemplate: scratchTemplate,
-				MasterKey:       key,
+				Keys:            keys,
 				Tokens:          tokens,
 				Holder:          hostname,
 				Scheduler: controlplane.Config{

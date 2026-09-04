@@ -73,11 +73,38 @@ spec:
             - {{ . | quote }}
             {{- end }}
           env:
+            {{- if eq .Values.serve.keyProvider.name "env" }}
+            {{- with .Values.existingSecret.keys.masterKey }}
             - name: GODWIT_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.masterKey }}
+                  name: {{ $.Values.existingSecret.name }}
+                  key: {{ . }}
+            {{- end }}
+            {{- with .Values.existingSecret.keys.masterKeyPrevious }}
+            - name: GODWIT_MASTER_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.existingSecret.name }}
+                  key: {{ . }}
+            {{- end }}
+            {{- else }}
+            {{- if not .Values.serve.keyProvider.key }}
+            {{- fail "serve.keyProvider.key is required for gcpkms and vault-transit" }}
+            {{- end }}
+            - name: GODWIT_KEY_PROVIDER
+              value: {{ .Values.serve.keyProvider.name | quote }}
+            - name: GODWIT_KMS_KEY
+              value: {{ .Values.serve.keyProvider.key | quote }}
+            {{- with .Values.serve.keyProvider.endpoint }}
+            - name: GODWIT_KMS_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serve.keyProvider.transitMount }}
+            - name: GODWIT_VAULT_TRANSIT_MOUNT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             - name: GODWIT_TOKENS
               valueFrom:
                 secretKeyRef:

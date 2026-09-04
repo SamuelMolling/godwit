@@ -49,7 +49,7 @@ rollout: expand-contract
 
 | Provider | `cp_targets.config` holds | The credential lives in |
 |---|---|---|
-| `static` | `dsn`: base64(nonce ‖ AES-256-GCM ciphertext) under `GODWIT_MASTER_KEY` | the store, encrypted |
+| `static` | `dsn`: `godwit1:<key provider>:<key id>:<payload>`, sealed by the configured [key provider](security.md#the-key-and-where-it-comes-from) | the store, sealed |
 | `kubernetes` | `path`: an absolute file path inside the godwit pod | a Kubernetes Secret you mount |
 | `vault` | `path` (under `/v1/`) and, optionally, `template` | Vault |
 
@@ -68,7 +68,7 @@ $ godwit target add orders --provider vault --vault-path ...          # no --loc
 $ godwit targets     # LOCK none
 ```
 
-Runs, plans, drift events and the target's applied history are untouched — only `provider` and `config` are replaced. Keep the full `target add` line in the repository that owns the target (an ArgoCD Job, a Terraform `null_resource`, a make target) and re-run *that*, rather than typing a shorter version of it. This is also why [master-key rotation](security.md#rotation) says to re-register each static target with its `--lock-timeout`.
+Runs, plans, drift events and the target's applied history are untouched — only `provider` and `config` are replaced. Keep the full `target add` line in the repository that owns the target (an ArgoCD Job, a Terraform `null_resource`, a make target) and re-run *that*, rather than typing a shorter version of it. Re-registration is also how you move a `static` target between key providers by hand, though [key rotation](security.md#rotation) does not need it.
 
 ### Who runs it
 
@@ -90,11 +90,11 @@ The provider is resolved on **every operation that touches the database**: a run
 |---|---|---|---|
 | Operator supplies | the DSN, once, on `target add` | a mounted Secret + `--secret-path` | a Vault path + a template + auth on the service |
 | godwit stores | the encrypted DSN | the file path | the Vault path |
-| Service needs | `GODWIT_MASTER_KEY` | the volume mounted in the pod | `VAULT_ADDR` + a token or Kubernetes auth |
+| Service needs | a [key provider](security.md#the-key-and-where-it-comes-from): `GODWIT_MASTER_KEY`, or `GODWIT_KEY_PROVIDER` with `GODWIT_KMS_KEY` | the volume mounted in the pod | `VAULT_ADDR` + a token or Kubernetes auth |
 | Rotating the credential | re-register the target | `kubectl apply` the Secret; picked up on the next read, no restart | rotate in Vault; picked up on the next read, no restart |
-| Blast radius of a store dump | every DSN, if the key leaks with it | nothing | nothing |
+| Blast radius of a store dump | every DSN, if the key leaks with it (`env`); with a KMS key provider, a live KMS call as well | nothing | nothing |
 
-`GODWIT_MASTER_KEY` is required whichever provider you use: `serve` refuses to start without 64 hex characters, even on a deployment where every target is `vault`. Generate one (`openssl rand -hex 32`) and keep it even if nothing is encrypted under it yet.
+**Only `static` needs a key.** A deployment whose targets are all `kubernetes` or `vault` starts with no `GODWIT_MASTER_KEY` and no KMS at all — they store a path, not a secret. Set a key when you register your first `static` target, or you get `invalid_argument: static provider needs a key`.
 
 ### `static`
 
@@ -102,15 +102,15 @@ The provider is resolved on **every operation that touches the database**: a run
 godwit target add orders --provider static --dsn 'postgres://godwit:secret@orders-db:5432/orders'
 ```
 
-The DSN is encrypted with AES-256-GCM in the handler and the ciphertext goes into `cp_targets.config`. It is the simplest provider and the only one where a store backup plus the key is every target credential — [security](security.md#master-key) treats the pair as a vault.
+The DSN is sealed in the handler and the sealed value goes into `cp_targets.config`, prefixed by a header naming the key provider and key that opens it. It is the simplest provider and the only one where a store backup can be a target credential — [security](security.md#the-key-and-where-it-comes-from) says what each key provider costs there, and why `gcpkms` or `vault-transit` is the better answer than a key in an environment variable.
 
-There is no re-encryption command, because the ciphertext does not name the key it was sealed with. Rotation is re-registration: roll the replicas onto the new key, then `godwit target add` every static target again. Until you do, that target is refused with
+Rotating the key needs no re-registration: with a KMS provider the KMS rotates on its own, and with `env` you add the new key, keep the old one in `GODWIT_MASTER_KEY_PREVIOUS`, and every replica re-seals what it finds at start-up ([rotation](security.md#rotation)). A target sealed under a key that is *gone* is refused with
 
 ```
-godwit: decrypt: cipher: message authentication failed
+godwit: static target: this value is sealed under key a1b2c3d4; put that key in GODWIT_MASTER_KEY or GODWIT_MASTER_KEY_PREVIOUS
 ```
 
-— at `CreateRun`, not at claim time: admission observes the target before it queues anything, so **no run row is created** and there is nothing to resume. `--skip-validation` does not change that; the observation happens either way. A run already queued when the key changed fails at claim instead, permanently (a decrypt error is not in the transient set), and `godwit run resume` picks it up once the target is re-registered.
+— at `CreateRun`, not at claim time: admission observes the target before it queues anything, so **no run row is created** and there is nothing to resume. `--skip-validation` does not change that; the observation happens either way. A run already queued when the key changed fails at claim instead, permanently (a decrypt error is not in the transient set), and `godwit run resume` picks it up once the key is back or the target re-registered.
 
 ### `kubernetes`
 

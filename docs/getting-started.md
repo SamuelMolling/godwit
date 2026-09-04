@@ -113,7 +113,7 @@ The service needs a PostgreSQL database of its own (the *store*) and two secrets
 ```bash
 psql -U postgres -c "CREATE ROLE godwit LOGIN PASSWORD 'godwit' CREATEDB" \
                  -c "CREATE DATABASE godwit_store OWNER godwit"
-export GODWIT_MASTER_KEY=$(openssl rand -hex 32)          # encrypts static target DSNs at rest
+export GODWIT_MASTER_KEY=$(openssl rand -hex 32)          # seals static target DSNs at rest; only static targets need it
 export GODWIT_TOKENS='admin:admin:s3cret-admin,ci:pipeline:s3cret-ci,oncall:operator:s3cret-ops'
 godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store --listen :8474
 ```
@@ -140,7 +140,7 @@ godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store \
              --scratch-dsn postgres://godwit_scratch:scratch@scratch-host/postgres --listen :8474
 ```
 
-Register a target. The DSN is encrypted with the master key and never printed again:
+Register a target. The DSN is sealed with the master key and never printed again:
 
 ```bash
 export GODWIT_SERVER=http://localhost:8474

@@ -8,6 +8,7 @@ existingSecret:
   name: godwit-credentials
   keys:
     masterKey: master-key
+    masterKeyPrevious: master-key-previous
     tokens: tokens
     storeDSN: store-dsn
     scratchDSN: scratch-dsn
@@ -16,6 +17,9 @@ existingSecret:
     uiPassword: ui-password
 serve:
   port: 9000
+  keyProvider:
+    name: env
+    key: ""
   driftInterval: 1m
   skipValidation: true
   scratch:

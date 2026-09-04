@@ -121,7 +121,14 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `GODWIT_MASTER_KEY` | yes | 64 hex characters (32 bytes); AES-256-GCM key for DSNs of `static` targets |
+| `GODWIT_MASTER_KEY` | for `static` targets | 64 hex characters (32 bytes); AES-256-GCM key sealing the DSNs of `static` targets. Unset, `serve` starts anyway and only `static` targets are unusable ([security](security.md#the-key-and-where-it-comes-from)) |
+| `GODWIT_MASTER_KEY_PREVIOUS` | no | comma-separated keys in the same form, accepted for decryption only; how an `env` key rotation rolls without downtime |
+| `GODWIT_KEY_PROVIDER` | no | where the key lives: `env` (default), `gcpkms` or `vault-transit`. The KMS providers seal a per-value data key, so the DSN never leaves the process |
+| `GODWIT_KMS_KEY` | with a KMS provider | the Cloud KMS `projects/…/cryptoKeys/…` resource name, or the Vault Transit key name |
+| `GODWIT_KMS_ENDPOINT` | no | Cloud KMS base URL; defaults to `https://cloudkms.googleapis.com` |
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | no | a fixed access token for `gcpkms`; unset, the token comes from the GCE metadata server (Workload Identity) |
+| `GCE_METADATA_HOST` | no | where that metadata server is; defaults to `metadata.google.internal` |
+| `GODWIT_VAULT_TRANSIT_MOUNT` | no | Transit mount for `vault-transit`; defaults to `transit` |
 | `GODWIT_TOKENS` | no | comma-separated bearer token specs ([below](#token-spec)); unset means every caller is `anonymous` with scope `admin`, and `serve` logs `no tokens configured` at warn level |
 | `GODWIT_SCRATCH_DSN` | no | default for `--scratch-dsn` |
 | `GODWIT_SCRATCH_TEMPLATE` | no | default for `--scratch-template` |

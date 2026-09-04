@@ -12,6 +12,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
 type stubCheckpointer struct {
@@ -37,7 +38,7 @@ func checkpointServer(t *testing.T, gen CheckpointGenerator) *Server {
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectExec("INSERT INTO cp_audit").WithArgs(anyArgs(5)...).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1)).Maybe()
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	s.Checkpointer = gen
 
 	return s

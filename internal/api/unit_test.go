@@ -18,6 +18,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
@@ -248,7 +249,7 @@ func TestSleepCtxCancelled(t *testing.T) {
 func TestDriftDisabled(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(nil, nil, nil, nil)
+	s := NewServer(nil, nil, nil, creds.Keyring{})
 	ctx := context.Background()
 	if _, err := s.CheckDrift(ctx, connect.NewRequest(&godwitv1.CheckDriftRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("err = %v", err)
@@ -272,10 +273,10 @@ func TestCheckHazards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewServer(nil, nil, nil, nil).checkHazards([]engine.Plan{p}, nil); err == nil || !strings.Contains(err.Error(), "H002") {
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, nil); err == nil || !strings.Contains(err.Error(), "H002") {
 		t.Fatalf("err = %v", err)
 	}
-	if err := NewServer(nil, nil, nil, nil).checkHazards([]engine.Plan{p}, []string{"H002"}); err != nil {
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, []string{"H002"}); err != nil {
 		t.Fatalf("acked: %v", err)
 	}
 }
@@ -341,7 +342,7 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
 			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", "", 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
 
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	s.watchInterval = time.Hour
 	srv := httptest.NewServer(Handler(s, nil))
 	t.Cleanup(srv.Close)
@@ -376,7 +377,7 @@ func TestParkRunNotifiesWithoutLookup(t *testing.T) {
 	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").WillReturnError(errors.New("gone"))
 
 	rec := &recordingNotifier{}
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	s.Notifier = rec
 	if _, err := s.ParkRun(context.Background(), connect.NewRequest(&godwitv1.ParkRunRequest{RunId: "r1", Reason: "why"})); err != nil {
 		t.Fatal(err)
@@ -408,7 +409,7 @@ func TestCheckOrder(t *testing.T) {
 
 		return p
 	}
-	s := NewServer(nil, nil, nil, nil)
+	s := NewServer(nil, nil, nil, creds.Keyring{})
 
 	if err := s.checkOrder("app", []engine.Plan{plan(2)}, nil, false); err != nil {
 		t.Fatalf("empty history: %v", err)
@@ -433,7 +434,7 @@ func TestAdmitStoreError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("ghost").WillReturnError(pgx.ErrNoRows)
 	if _, err := s.admit(context.Background(), "ghost", nil, nil, false, false, ""); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown target: %v", err)
@@ -463,7 +464,7 @@ func TestPlanRunUnit(t *testing.T) {
 		{Name: "00000000000002_d.up.sql", Body: "ALTER TABLE t DROP COLUMN id;"},
 		{Name: "00000000000002_d.down.sql", Body: "SELECT 1;"},
 	}
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
 	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Files: files})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("no target: %v", err)
@@ -551,7 +552,7 @@ func TestCreateRunInternalErrors(t *testing.T) {
 	expectTarget(mock)
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
 	expectNoRepeatables(mock)
-	s := NewServer(controlplane.NewStore(mock), nil, failingValidator{err: errors.New("scratch down")}, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, failingValidator{err: errors.New("scratch down")}, creds.Keyring{})
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("validator error: %v", err)
 	}
@@ -562,7 +563,7 @@ func TestCreateRunInternalErrors(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "", AnonymousActor, "", "", pgxmock.AnyArg()).WillReturnError(errors.New("insert down"))
 	mock.ExpectRollback()
-	s = NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s = NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("store error: %v", err)
 	}
@@ -573,4 +574,16 @@ func TestCreateRunInternalErrors(t *testing.T) {
 
 func expectNoRepeatables(mock pgxmock.PgxPoolIface) {
 	mock.ExpectQuery("SELECT DISTINCT ON \\(a.migration\\)").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"migration", "body"}))
+}
+
+func TestRegisterStaticTargetWithoutAKey(t *testing.T) {
+	t.Parallel()
+
+	s := NewServer(nil, nil, nil, creds.Keyring{})
+	_, err := s.RegisterTarget(context.Background(), connect.NewRequest(&godwitv1.RegisterTargetRequest{
+		Name: "app", Provider: "static", Dsn: "postgres://x",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "GODWIT_MASTER_KEY") {
+		t.Fatalf("err = %v", err)
+	}
 }

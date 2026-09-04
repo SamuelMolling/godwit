@@ -18,7 +18,7 @@ func diffTarget(t *testing.T, skipValidation bool) (godwitv1connect.GodwitServic
 	t.Helper()
 	ctx := context.Background()
 	client := newClient(startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st") + "&search_path=public", MasterKey: testKey, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st") + "&search_path=public", Keys: testKeys, Holder: "r1",
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog, SkipValidation: skipValidation,
 	}), "")
 	targetDSN := newDatabase(t, "tg") + "&search_path=public"

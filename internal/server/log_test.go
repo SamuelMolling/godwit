@@ -81,7 +81,7 @@ func TestServiceLogs(t *testing.T) {
 		done <- Run(ctx, Config{
 			Listen:    "127.0.0.1:0",
 			StoreDSN:  newDatabase(t, "st"),
-			MasterKey: testKey,
+			Keys:      testKeys,
 			Tokens:    []string{"tok"},
 			Holder:    "replica-log",
 			Scheduler: controlplane.Config{Interval: 50 * time.Millisecond},

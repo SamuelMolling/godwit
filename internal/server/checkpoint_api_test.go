@@ -31,7 +31,7 @@ func checkpointFiles() []*godwitv1.MigrationFile {
 func checkpointService(t *testing.T) (godwitv1connect.GodwitServiceClient, string) {
 	t.Helper()
 	client := newClient(startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st") + "&search_path=public", MasterKey: testKey, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st") + "&search_path=public", Keys: testKeys, Holder: "r1",
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog,
 	}), "")
 	targetDSN := newDatabase(t, "tg") + "&search_path=public"

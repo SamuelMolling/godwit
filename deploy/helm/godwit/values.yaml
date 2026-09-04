@@ -31,7 +31,14 @@ fullnameOverride: ""
 existingSecret:
   name: godwit
   keys:
+    # Only `static` targets need a key: they are the only ones whose secret godwit stores.
+    # Leave masterKey empty for a deployment whose targets all use the kubernetes or vault
+    # credential provider, or when serve.keyProvider.name is gcpkms or vault-transit.
     masterKey: GODWIT_MASTER_KEY
+    # Keys accepted for decryption only, comma-separated. Set it during an `env` key rotation:
+    # the new key goes in masterKey, the old one here, and every replica reseals what it finds
+    # at start-up. Drop it on the next roll. See docs/security.md#rotation.
+    masterKeyPrevious: ""
     tokens: GODWIT_TOKENS
     storeDSN: GODWIT_STORE_DSN
     scratchDSN: GODWIT_SCRATCH_DSN
@@ -43,6 +50,22 @@ existingSecret:
 serve:
   # --listen: the API, /metrics, /healthz and /readyz share this port.
   port: 8474
+  # Where the key that seals `static` target DSNs lives (docs/security.md).
+  #   env           reads existingSecret.keys.masterKey. A store dump plus that key is every
+  #                 static DSN, which is why the two below exist.
+  #   gcpkms        wraps a per-value data key with a Cloud KMS CryptoKey; `key` is the
+  #                 projects/…/cryptoKeys/… resource name and the pod's service account needs
+  #                 roles/cloudkms.cryptoKeyEncrypterDecrypter on it (Workload Identity via
+  #                 serviceAccount.annotations). Rotating the KMS key needs nothing here.
+  #   vault-transit wraps it with a Vault Transit key; `key` is the key name, `transitMount`
+  #                 the mount, and the auth is the same vault: block below.
+  keyProvider:
+    name: env
+    key: ""
+    # Cloud KMS base URL; empty is https://cloudkms.googleapis.com.
+    endpoint: ""
+    # Vault Transit mount; empty is `transit`.
+    transitMount: ""
   # --drift-interval: how often targets are fingerprinted for schema drift.
   driftInterval: 5m
   # --skip-validation: disable the scratch-database validation at run admission.

@@ -20,17 +20,50 @@ Tokens are never logged; the access log carries `actor` (the name) and `scope`.
 
 The identity behind a call fails closed. A context that never passed the auth interceptor carries **no scope**, so every procedure is denied — it used to default to an anonymous `admin`, which meant any future path reaching a handler around the interceptor would have run as admin. The open-service principal (no `GODWIT_TOKENS`) is now built explicitly where the tokens are parsed, not inherited from a missing value.
 
-## Master key
+## The key, and where it comes from
 
-`GODWIT_MASTER_KEY` is 32 bytes as 64 hex characters. `static` targets store their DSN in `cp_targets.config` as base64(nonce ‖ AES-256-GCM ciphertext) under that key. The key is read at start-up, held in memory, never written. Without it the service cannot connect to any static target, so back it up separately from the store (a store dump plus its key is every target credential).
+Only `static` targets hold a secret of godwit's own: their DSN sits in `cp_targets.config`, sealed. `kubernetes` and `vault` targets store a *path*, so a deployment that uses only those needs no key at all and **`serve` starts without one** ([decision 0012](decisions/0012-the-key-is-optional-and-comes-from-a-provider.md)).
+
+Where the key lives is a choice, made with `GODWIT_KEY_PROVIDER`:
+
+| Provider | Key material | Needs | How it seals |
+|---|---|---|---|
+| `env` (default) | `GODWIT_MASTER_KEY`, 32 bytes as 64 hex characters, plus any number of decrypt-only keys in `GODWIT_MASTER_KEY_PREVIOUS` | nothing | AES-256-GCM directly under the key |
+| `gcpkms` | a Cloud KMS CryptoKey named by `GODWIT_KMS_KEY` | Workload Identity (or `GOOGLE_OAUTH_ACCESS_TOKEN`) with `roles/cloudkms.cryptoKeyEncrypterDecrypter` | envelope: a fresh 32-byte data key per value, wrapped by KMS |
+| `vault-transit` | a Transit key named by `GODWIT_KMS_KEY` under `GODWIT_VAULT_TRANSIT_MOUNT` (default `transit`) | the `VAULT_ADDR` and auth the `vault` credential provider already uses | envelope: `transit/datakey/plaintext`, unwrapped with `transit/decrypt` |
+
+Under both KMS providers **the DSN never leaves the process**: the KMS is asked to wrap and to unwrap 32 bytes, and the DSN's own ciphertext is opened locally. So a KMS outage costs runs on `static` targets rather than the whole service, and a store dump on its own is no longer every target credential — opening one needs a live call the KMS logs, rate-limits and can revoke. That is the reason to prefer a KMS provider: with `env`, a store dump plus the key is still every credential.
+
+Whatever seals it, the DSN exists only in the replica's memory for the duration of the operation.
+
+### The ciphertext names its key
+
+A sealed value is `godwit1:<provider>:<base64url key id>:<base64 payload>`, and the header is bound into the payload as AEAD additional data — rewrite the header and the value stops opening. The key id is the CryptoKey resource name for `gcpkms`, the Transit key name for `vault-transit`, and for `env` the first four bytes of the key's SHA-256, which names the key without revealing it.
+
+Values written before this format have no header. They are read as `env` with an unknown key id, and every configured `env` key is tried; GCM authentication decides which one it was.
 
 ### Rotation
 
-There is no re-encryption command. The ciphertext does not identify the key, so rotation is re-registration:
+**With a KMS provider, godwit needs nothing.** Rotate the Cloud KMS key or the Transit key on its own schedule: the ciphertext carries the key version, the KMS reads it back, and no godwit row changes.
 
-1. Start the replicas with the new key (`kubectl create secret ... --dry-run | kubectl apply`, roll).
-2. `godwit target add <name> --provider static --dsn <dsn> --lock-timeout ...` for every static target; `RegisterTarget` replaces the row in place, runs and history are untouched.
-3. Until step 2 is done for a target, `CreateRun` on it is **refused outright** with `decrypt: cipher: message authentication failed` — admission observes the target before it queues anything, with or without `--skip-validation` — so no run row exists and there is nothing to resume. A run already queued when the key changed fails at claim instead, with the same error in `cp_runs.error` (`failed`, not transient, resumable with `godwit run resume` once the target is re-registered).
+**With `env`:**
+
+1. Put the new key in `GODWIT_MASTER_KEY`, move the old one into `GODWIT_MASTER_KEY_PREVIOUS`, roll the replicas. Nothing breaks at any point: values under the old key still open.
+2. Every replica, at start-up, re-seals each `static` target whose header names anything other than the key in force, logging `static target resealed` with the target and the new key. One roll is enough; the pass is idempotent and concurrent replicas write the same thing.
+3. Drop `GODWIT_MASTER_KEY_PREVIOUS` on the next roll.
+
+The same pass migrates a deployment upgrading into this format: headerless values are re-sealed under the key in force on the first start. There is no `godwit targets reencrypt` command and, after the above, nothing for one to do — [decision 0012](decisions/0012-the-key-is-optional-and-comes-from-a-provider.md) argues that.
+
+A target godwit cannot open is **not** a start-up failure. It logs `static target is sealed under another key and was left alone`, the service serves every other target, and the run that needs it is refused naming the key it wants.
+
+### What a missing key does
+
+| Situation | What happens |
+|---|---|
+| No key, no `static` targets | `serve` starts and runs normally |
+| No key, `static` targets in the store | `serve` starts, warns `static targets are sealed and no key is configured` naming them; runs on them are refused |
+| No key, registering a `static` target | `invalid_argument: static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY` |
+| Key present, the target's key gone | `CreateRun` is **refused outright** — admission observes the target before it queues anything, with or without `--skip-validation` — so no run row exists and there is nothing to resume. A run already queued when the key changed fails at claim instead, with the same error in `cp_runs.error` (`failed`, not transient, resumable with `godwit run resume` once the key is back or the target re-registered) |
 
 Targets using the `kubernetes` or `vault` providers store no secret and need nothing.
 

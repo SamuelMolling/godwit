@@ -14,6 +14,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
@@ -42,7 +43,7 @@ func planServer(t *testing.T, obs controlplane.Observation, validator Validator)
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, validator, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, validator, creds.Keyring{})
 	s.Inspector = stubInspector{obs: obs}
 
 	return s, mock
@@ -352,7 +353,7 @@ func TestAuditTruncatesDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
 	mock.ExpectExec("INSERT INTO cp_audit").WithArgs(AnonymousActor, "x", "", "app", strings.Repeat("é", auditDetailLimit)+"…").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
@@ -365,7 +366,7 @@ func TestAuditTruncatesDetail(t *testing.T) {
 func TestObservedSearchPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := NewServer(nil, nil, nil, nil)
+	s := NewServer(nil, nil, nil, creds.Keyring{})
 	if path, err := s.observedSearchPath(ctx, "app"); path != "" || err != nil {
 		t.Fatalf("no inspector: %q, %v", path, err)
 	}
