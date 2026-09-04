@@ -170,7 +170,7 @@ func TestVaultFromEnv(t *testing.T) {
 	t.Setenv("VAULT_K8S_MOUNT", "k8s")
 	t.Setenv("VAULT_K8S_JWT", "/jwt")
 
-	p, ok := creds.Registry(key)["vault"].(creds.Vault)
+	p, ok := creds.Registry(creds.Keyring{})["vault"].(creds.Vault)
 	if !ok || p.Address != "http://vault:8200" || p.Token != "tok" || p.Role != "role" || p.Mount != "k8s" || p.JWTPath != "/jwt" {
 		t.Fatalf("vault = %+v", p)
 	}

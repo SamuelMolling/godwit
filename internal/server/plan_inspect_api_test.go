@@ -183,7 +183,7 @@ func TestSweep_KeepsReady(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	client := newClient(startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1",
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog,
 		DriftInterval: 50 * time.Millisecond, PlanRetention: time.Millisecond,
 	}), "")

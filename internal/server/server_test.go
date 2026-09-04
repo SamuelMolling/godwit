@@ -23,12 +23,14 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
 var (
-	testDSN string
-	testLog = slog.New(slog.NewTextHandler(io.Discard, nil))
-	testKey = bytes.Repeat([]byte("k"), 32)
+	testDSN  string
+	testLog  = slog.New(slog.NewTextHandler(io.Discard, nil))
+	testKey  = bytes.Repeat([]byte("k"), 32)
+	testKeys = creds.NewKeyring(creds.NewEnv(testKey))
 )
 
 func TestMain(m *testing.M) {
@@ -75,22 +77,22 @@ func newDatabase(t *testing.T, prefix string) string {
 func startService(t *testing.T, storeDSN, holder string, tokens []string) string {
 	t.Helper()
 
-	return startServiceOpts(t, storeDSN, holder, tokens, testKey)
+	return startServiceOpts(t, storeDSN, holder, tokens, testKeys)
 }
 
-func startServiceWithKey(t *testing.T, storeDSN string, key []byte) string {
+func startServiceWithKey(t *testing.T, storeDSN string, keys creds.Keyring) string {
 	t.Helper()
 
-	return startServiceOpts(t, storeDSN, "r1", nil, key)
+	return startServiceOpts(t, storeDSN, "r1", nil, keys)
 }
 
-func startServiceOpts(t *testing.T, storeDSN, holder string, tokens []string, key []byte) string {
+func startServiceOpts(t *testing.T, storeDSN, holder string, tokens []string, keys creds.Keyring) string {
 	t.Helper()
 
 	return startServiceCfg(t, Config{
 		Listen:    "127.0.0.1:0",
 		StoreDSN:  storeDSN,
-		MasterKey: key,
+		Keys:      keys,
 		Tokens:    tokens,
 		Holder:    holder,
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond},
@@ -251,7 +253,7 @@ func TestServiceFailover(t *testing.T) {
 	ready := make(chan net.Addr, 1)
 	go func() {
 		_ = Run(replicaCtx, Config{
-			Listen: "127.0.0.1:0", StoreDSN: storeDSN, MasterKey: testKey,
+			Listen: "127.0.0.1:0", StoreDSN: storeDSN, Keys: testKeys,
 			Holder:    "replica-1",
 			Scheduler: controlplane.Config{Interval: 50 * time.Millisecond, TTL: 2 * time.Second},
 			Log:       testLog,

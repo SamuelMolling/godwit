@@ -13,6 +13,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
 func TestAPIValidationAndErrors(t *testing.T) {
@@ -255,7 +256,7 @@ func TestAPIRegisterTargetEncryptFailure(t *testing.T) {
 	ctx := context.Background()
 
 	storeDSN := newDatabase(t, "st")
-	baseURL := startServiceWithKey(t, storeDSN, []byte("short"))
+	baseURL := startServiceWithKey(t, storeDSN, creds.NewKeyring(creds.NewEnv([]byte("short"))))
 	client := newClient(baseURL, "")
 	_, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
 		Name: "app", Provider: "static", Dsn: "postgres://x",
@@ -321,7 +322,7 @@ func TestUIBehindBasicAuth(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	baseURL := startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Tokens: []string{"tok"}, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Tokens: []string{"tok"}, Holder: "r1",
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog,
 		UI: true, UIUser: "sam", UIPassword: "pw",
 	})
@@ -371,7 +372,7 @@ func TestUIWithoutBasicAuth(t *testing.T) {
 	t.Parallel()
 	logs := &lockedBuffer{}
 	baseURL := startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1",
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: slog.New(slog.NewTextHandler(logs, nil)), UI: true,
 	})
 	resp, err := http.Get(baseURL + "/ui/")

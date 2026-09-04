@@ -60,7 +60,7 @@ Request and response fields are listed as JSON. Fields not mentioned do not exis
 
 ### RegisterTarget — admin
 
-Creates or replaces a target. `provider` is `static` (`dsn` encrypted with the master key), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan. `searchPath` is the `search_path` every session godwit opens on the target runs under ([concepts](concepts.md#search_path)): a comma-separated list of unquoted schema names, `invalid_argument` on anything else, on `$user` and on `godwit`.
+Creates or replaces a target. `provider` is `static` (`dsn` sealed by the configured [key provider](security.md#the-key-and-where-it-comes-from), and refused with `invalid_argument` when none is), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan. `searchPath` is the `search_path` every session godwit opens on the target runs under ([concepts](concepts.md#search_path)): a comma-separated list of unquoted schema names, `invalid_argument` on anything else, on `$user` and on `godwit`.
 
 ```bash
 call RegisterTarget '{"name":"app","provider":"static","dsn":"postgres://app:app@db/app","lockTimeout":"5s","requirePlan":true,"searchPath":"app,public"}'

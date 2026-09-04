@@ -25,7 +25,7 @@ CREATE ROLE godwit_scratch LOGIN PASSWORD 'secret'
 
 Then `--set serve.scratch.enabled=true`. The pods refuse to start when that role is a superuser or owns the store database.
 
-`GODWIT_MASTER_KEY` encrypts the DSNs of `static` targets; losing it means re-registering those targets. `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; a bare secret is admin, and a two-field `name:secret` entry is refused at start-up); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
+`GODWIT_MASTER_KEY` seals the DSNs of `static` targets and nothing else, so a deployment whose targets all use the `kubernetes` or `vault` credential provider can leave `existingSecret.keys.masterKey` empty and the pods start without it. Rotating it needs no re-registration: put the new key in the Secret, the old one under `existingSecret.keys.masterKeyPrevious`, roll, and every replica reseals what it finds at start-up. `serve.keyProvider.name: gcpkms` or `vault-transit` moves the key into a KMS instead, wrapping a per-value data key so the DSN never leaves the process ([security](../../../docs/security.md#the-key-and-where-it-comes-from)). `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; a bare secret is admin, and a two-field `name:secret` entry is refused at start-up); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
 
 ## Install
 
@@ -51,7 +51,7 @@ The release prints the in-cluster URL and the first commands to run. Every value
 
 - `vault`: set `vault.addr`; with `vault.k8sRole` the service logs in with the Kubernetes auth method using its own ServiceAccount token, otherwise point `vault.tokenSecret` at a Secret holding `VAULT_TOKEN`.
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
-- `static`: nothing to configure; the DSN is encrypted with the master key.
+- `static`: nothing to configure beyond a key provider; the DSN is sealed with it.
 
 ## Notifications
 

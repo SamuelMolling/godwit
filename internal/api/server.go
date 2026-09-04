@@ -82,14 +82,15 @@ type Server struct {
 	store         *controlplane.Store
 	drift         DriftOps
 	validator     Validator
-	masterKey     []byte
+	keys          creds.Keyring
 	watchInterval time.Duration
 	newID         func() string
 	ready         func(context.Context) error
 }
 
-// NewServer wires a Server; drift and validator are optional (nil disables).
-func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, masterKey []byte) *Server {
+// NewServer wires a Server; drift and validator are optional (nil disables). An unconfigured keyring
+// refuses to register a static target and opens none.
+func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, keys creds.Keyring) *Server {
 	return &Server{
 		Metrics:       metrics.New(),
 		Log:           slog.New(slog.DiscardHandler),
@@ -97,7 +98,7 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, m
 		store:         store,
 		drift:         drift,
 		validator:     validator,
-		masterKey:     masterKey,
+		keys:          keys,
 		watchInterval: 500 * time.Millisecond,
 		newID:         uuid.NewString,
 		ready:         store.Ping,
@@ -166,7 +167,10 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 		if m.Dsn == "" {
 			return nil, invalid("static provider requires dsn")
 		}
-		enc, err := creds.Encrypt(s.masterKey, m.Dsn)
+		if !s.keys.Configured() {
+			return nil, invalid("static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY")
+		}
+		enc, err := s.keys.Seal(ctx, m.Dsn)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}

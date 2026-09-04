@@ -10,6 +10,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
 // TestRevertRunWithoutInspector plans a revert on a server that cannot reach its targets: no schema to
@@ -22,7 +23,7 @@ func TestRevertRunWithoutInspector(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
 	mock.ExpectQuery("FROM cp_runs WHERE id").WithArgs("r1").WillReturnRows(runRow())
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(

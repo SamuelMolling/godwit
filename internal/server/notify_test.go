@@ -101,7 +101,7 @@ func TestNotificationsEndToEnd(t *testing.T) {
 
 	storeDSN := newDatabase(t, "st")
 	baseURL := startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: storeDSN, MasterKey: testKey, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: storeDSN, Keys: testKeys, Holder: "r1",
 		Scheduler:  controlplane.Config{Interval: 50 * time.Millisecond},
 		WebhookURL: hookSrv.URL, SlackToken: "xoxb-test", SlackChannel: "#ops", SlackURL: slackSrv.URL,
 		PublicURL: "https://godwit.example.com", Notifier: rec, Log: testLog, Tokens: []string{"ci:admin:ci-secret"},

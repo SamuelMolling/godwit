@@ -333,7 +333,7 @@ func TestCreateRun_RequirePlanRefuses(t *testing.T) {
 func TestCreateRun_ServerWideRequirePlanAndTTL(t *testing.T) {
 	t.Parallel()
 	client := newClient(startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Holder: "r1",
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1",
 		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog,
 		RequirePlan: true, PlanTTL: time.Nanosecond,
 	}), "")

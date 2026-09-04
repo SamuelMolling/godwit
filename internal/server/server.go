@@ -33,7 +33,9 @@ type Config struct {
 	ScratchDSN string
 	// ScratchTemplate is the database scratch databases are cloned from; empty means template0.
 	ScratchTemplate string
-	MasterKey       []byte
+	// Keys seals and opens the DSNs of static targets; the zero value holds no key, and a deployment
+	// whose targets all use vault or kubernetes runs with it.
+	Keys creds.Keyring
 	// Tokens are bearer token specs, "name:scope:secret"; a bare secret is an admin token named anonymous.
 	Tokens        []string
 	Holder        string
@@ -134,6 +136,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	log.Info("store migrated", "applied", applied)
 	store := controlplane.NewStore(pool)
+	settleKeys(ctx, store, cfg.Keys, log)
 
 	scratch, closeScratch, err := newScratch(ctx, cfg, pool, log)
 	if err != nil {
@@ -149,7 +152,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	cfg.Scheduler.Holder = cfg.Holder
 	eng := controlplane.PGEngine{Metrics: m, Log: log}
-	sched := controlplane.NewScheduler(store, creds.Registry(cfg.MasterKey),
+	sched := controlplane.NewScheduler(store, creds.Registry(cfg.Keys),
 		eng, controlplane.Policies(), cfg.Scheduler, log)
 	sched.Metrics = m
 	sched.Notifier = notifier
@@ -176,7 +179,7 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.OnReady(ln.Addr())
 	}
 
-	apiSrv := api.NewServer(store, drift, validator, cfg.MasterKey)
+	apiSrv := api.NewServer(store, drift, validator, cfg.Keys)
 	apiSrv.Metrics = m
 	apiSrv.Log = log
 	apiSrv.Notifier = notifier

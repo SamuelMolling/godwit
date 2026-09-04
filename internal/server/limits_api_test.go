@@ -18,7 +18,7 @@ func TestAPIRefusesOversizedRequests(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	baseURL := startServiceCfg(t, Config{
-		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), MasterKey: testKey, Holder: "r1", Log: testLog,
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1", Log: testLog,
 		Limits: api.Limits{RequestBytes: 4096, Files: 4, FileBytes: 512},
 	})
 	client := newClient(baseURL, "")

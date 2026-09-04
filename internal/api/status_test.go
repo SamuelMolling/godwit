@@ -13,6 +13,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
@@ -58,7 +59,7 @@ func TestGetTargetStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	now := time.Now()
 	finished := now.Add(time.Minute)
 	s.Inspector = stubInspector{status: controlplane.TargetStatus{
@@ -148,7 +149,7 @@ func TestListTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
 	expectTargetRows(mock)
 	res, err := s.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{}))
@@ -214,7 +215,7 @@ func TestGetRunLedgerError(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mock.Close)
-	s := NewServer(controlplane.NewStore(mock), nil, nil, nil)
+	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
 	mock.ExpectQuery("FROM cp_runs WHERE id").WithArgs("r1").WillReturnRows(runRow())
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnError(errors.New("ledger down"))

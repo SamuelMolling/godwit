@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -16,34 +15,30 @@ var (
 	newAEAD              = cipher.NewGCM
 )
 
-// Encrypt seals plaintext with AES-256-GCM under key (32 bytes).
-func Encrypt(key []byte, plaintext string) (string, error) {
+const dataKeyBytes = 32
+
+func sealGCM(key, aad []byte, plaintext string) ([]byte, error) {
 	gcm, err := newGCM(key)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(randReader, nonce); err != nil {
-		return "", fmt.Errorf("nonce: %w", err)
+		return nil, fmt.Errorf("nonce: %w", err)
 	}
 
-	return base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plaintext), nil)), nil
+	return gcm.Seal(nonce, nonce, []byte(plaintext), aad), nil
 }
 
-// Decrypt opens a value produced by Encrypt.
-func Decrypt(key []byte, encoded string) (string, error) {
+func openGCM(key, aad, raw []byte) (string, error) {
 	gcm, err := newGCM(key)
 	if err != nil {
 		return "", err
-	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", fmt.Errorf("decode: %w", err)
 	}
 	if len(raw) < gcm.NonceSize() {
 		return "", errors.New("ciphertext too short")
 	}
-	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], aad)
 	if err != nil {
 		return "", fmt.Errorf("decrypt: %w", err)
 	}
@@ -62,4 +57,13 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 	}
 
 	return gcm, nil
+}
+
+func randomDataKey() ([]byte, error) {
+	key := make([]byte, dataKeyBytes)
+	if _, err := io.ReadFull(randReader, key); err != nil {
+		return nil, fmt.Errorf("data key: %w", err)
+	}
+
+	return key, nil
 }
