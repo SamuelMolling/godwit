@@ -221,7 +221,7 @@ type Run struct {
 	NotBefore *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
 	// Transient failures the scheduler retried on its own.
 	Retries int32 `protobuf:"varint,18,opt,name=retries,proto3" json:"retries,omitempty"`
-	// What the newest statement reported; set while a run is executing a long statement.
+	// What the newest statement reported; set only while a run is executing, cleared when the attempt starts or ends.
 	Progress      *RunProgress `protobuf:"bytes,19,opt,name=progress,proto3" json:"progress,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2659,7 +2659,7 @@ type TargetSummary struct {
 	UnresolvedDrift bool `protobuf:"varint,9,opt,name=unresolved_drift,json=unresolvedDrift,proto3" json:"unresolved_drift,omitempty"`
 	// Stored plans still bindable on the target.
 	ReadyPlans int32 `protobuf:"varint,10,opt,name=ready_plans,json=readyPlans,proto3" json:"ready_plans,omitempty"`
-	// Distinct versions carried by the target's succeeded runs.
+	// Distinct versions the target's runs applied to completion and no revert undid, whatever state those runs ended in.
 	AppliedCount int32 `protobuf:"varint,11,opt,name=applied_count,json=appliedCount,proto3" json:"applied_count,omitempty"`
 	// Runs waiting for a human: needs_attention or awaiting_contract.
 	AttentionRuns int32 `protobuf:"varint,12,opt,name=attention_runs,json=attentionRuns,proto3" json:"attention_runs,omitempty"`

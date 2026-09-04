@@ -52,7 +52,7 @@ message Run {
   google.protobuf.Timestamp not_before = 17;
   // Transient failures the scheduler retried on its own.
   int32 retries = 18;
-  // What the newest statement reported; set while a run is executing a long statement.
+  // What the newest statement reported; set only while a run is executing, cleared when the attempt starts or ends.
   RunProgress progress = 19;
 }
 
@@ -369,7 +369,7 @@ message TargetSummary {
   bool unresolved_drift = 9;
   // Stored plans still bindable on the target.
   int32 ready_plans = 10;
-  // Distinct versions carried by the target's succeeded runs.
+  // Distinct versions the target's runs applied to completion and no revert undid, whatever state those runs ended in.
   int32 applied_count = 11;
   // Runs waiting for a human: needs_attention or awaiting_contract.
   int32 attention_runs = 12;
