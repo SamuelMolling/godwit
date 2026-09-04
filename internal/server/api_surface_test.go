@@ -332,6 +332,7 @@ func TestUIBehindBasicAuth(t *testing.T) {
 	web := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	call := func(method, path, auth string) (int, http.Header, string) {
 		req, _ := http.NewRequestWithContext(ctx, method, baseURL+path, nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		if auth != "" {
 			req.SetBasicAuth("sam", auth)
 		}

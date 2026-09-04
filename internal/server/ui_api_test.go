@@ -31,6 +31,7 @@ func TestUISignsInWithNamedTokens(t *testing.T) {
 	web := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	call := func(method, path, secret string) (int, http.Header, string) {
 		req, _ := http.NewRequestWithContext(ctx, method, baseURL+path, nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		if secret != "" {
 			req.SetBasicAuth("whoever", secret)
 		}
@@ -64,6 +65,20 @@ func TestUISignsInWithNamedTokens(t *testing.T) {
 	if err != nil || len(audit.Msg.Entries) != 1 || audit.Msg.Entries[0].Actor != "ui:sam" {
 		t.Fatalf("audit = %+v, err = %v", audit, err)
 	}
+
+	cross, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/ui/drift/app/accept", nil)
+	cross.Header.Set("Sec-Fetch-Site", "cross-site")
+	cross.SetBasicAuth("whoever", "s-op")
+	resp, err := web.Do(cross)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	crossBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(crossBody), "cross-site request refused") ||
+		resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("cross-site post: code = %d headers = %v body = %s", resp.StatusCode, resp.Header, crossBody)
+	}
 }
 
 func TestUIScopeCapsTheSharedIdentity(t *testing.T) {
@@ -78,6 +93,7 @@ func TestUIScopeCapsTheSharedIdentity(t *testing.T) {
 	registerTarget(t, newClient(baseURL, "s-admin"), newDatabase(t, "tg"))
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/ui/drift/app/check", nil)
+	req.Header.Set("Origin", baseURL)
 	req.SetBasicAuth("sam", "pw")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -92,6 +108,10 @@ func TestUIScopeCapsTheSharedIdentity(t *testing.T) {
 
 	if err := Run(ctx, Config{UIScope: "boss", Log: testLog}); err == nil || !strings.Contains(err.Error(), "ui scope: unknown scope") {
 		t.Fatalf("bad ui scope: %v", err)
+	}
+	if err := Run(ctx, Config{UIOrigins: []string{"godwit.example.com"}, Log: testLog}); err == nil ||
+		!strings.Contains(err.Error(), `ui origin "godwit.example.com"`) {
+		t.Fatalf("bad ui origin: %v", err)
 	}
 }
 
@@ -111,6 +131,7 @@ func TestUIDiffSuppliesTheRepeatableFilesItStored(t *testing.T) {
 	post := func(form url.Values) (int, string) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/ui/diff", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", baseURL)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)

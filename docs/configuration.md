@@ -89,10 +89,11 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--ui-user` | `GODWIT_UI_USER` | basic auth user for a shared `/ui` identity; needs `--ui-password` |
 | `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for that shared identity |
 | `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared identity (and the anonymous one, when the UI is open) may do: `read`, `pipeline`, `operator` or `admin` |
+| `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
-A bad log format or level, an unknown `--ui-scope`, or a UI user without a password (or the reverse), fails `serve` before anything else starts.
+A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts.
 
-`/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth` and audits as `ui:anonymous`. Pages offer only the actions the scope allows and a request beyond it is refused with `403`; see [security](security.md#web-ui).
+`/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth` and audits as `ui:anonymous`. Pages offer only the actions the scope allows and a request beyond it is refused with `403`. Every form post must also come from the UI's own origin, so a `POST /ui/…` from a script — with no `Origin` and no `Sec-Fetch-Site` — is refused with `403 cross-site request refused`; see [security](security.md#cross-site-requests).
 
 ### Environment
 
@@ -111,6 +112,7 @@ A bad log format or level, an unknown `--ui-scope`, or a UI user without a passw
 | `GODWIT_UI_USER` | no | default for `--ui-user` |
 | `GODWIT_UI_PASSWORD` | no | default for `--ui-password` |
 | `GODWIT_UI_SCOPE` | no | default for `--ui-scope` |
+| `GODWIT_UI_ORIGIN` | no | comma-separated default for `--ui-origin` |
 | `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
 | `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
 | `VAULT_K8S_ROLE` | without `VAULT_TOKEN` | role for `POST auth/<mount>/login` |

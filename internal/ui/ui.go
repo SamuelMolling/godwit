@@ -28,14 +28,19 @@ import (
 //go:embed templates/*.html
 var files embed.FS
 
+//go:embed app.js
+var script []byte
+
 // Config names the replica and how /ui authenticates: a basic-auth password matching one of Tokens
 // resolves to that token's name and scope, and User with Password is the shared identity, which carries Scope.
+// Origins, when set, are the only origins a form post may come from and the only hosts the UI answers on.
 type Config struct {
 	Replica  string
 	Tokens   []api.Token
 	User     string
 	Password string
 	Scope    api.Scope
+	Origins  []Origin
 }
 
 // Handler renders the UI by calling svc in-process with a ui:<user> principal.
@@ -59,6 +64,11 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 		w.Header().Set("Content-Type", "image/svg+xml")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		_, _ = w.Write(assets.Mark)
+	})
+	h.mux.HandleFunc("GET /ui/app.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(script)
 	})
 	h.mux.HandleFunc("GET /ui/runs/{id}", h.run)
 	h.mux.HandleFunc("POST /ui/runs/{id}/{action}", h.runAction)
@@ -110,6 +120,17 @@ func (h *Handler) principal(r *http.Request) (api.Principal, bool) {
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	harden(w.Header())
+	if !h.knownHost(r.Host) {
+		http.Error(w, "unknown host", http.StatusForbidden)
+
+		return
+	}
+	if !safeMethod(r.Method) && !h.sameOrigin(r) {
+		http.Error(w, "cross-site request refused", http.StatusForbidden)
+
+		return
+	}
 	p, ok := h.principal(r)
 	if !ok {
 		w.Header().Set("WWW-Authenticate", `Basic realm="godwit"`)

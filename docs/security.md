@@ -83,6 +83,30 @@ The one button `read` may press is **Generate migration** on `/ui/diff`, and tha
 
 Basic auth sends the password on every request, so the TLS termination below is not optional when the UI is on.
 
+### Cross-site requests
+
+Basic credentials are replayed by the browser on a cross-origin form post, and the UI's actions are plain form posts, so without a check a page anywhere on the web could make a signed-in operator accept a drift baseline, revert a run with `force` and `allow-data-loss`, or run `POST /ui/diff` — which executes the pasted DDL in the control-plane cluster. Every request to `/ui` that is not a `GET` or a `HEAD` must therefore prove it came from the UI's own origin, before authentication and before the handler:
+
+| The request carries | Verdict |
+|---|---|
+| `Sec-Fetch-Site: same-origin` | allowed — the browser sets this header itself and a page cannot forge it |
+| any other `Sec-Fetch-Site` (`cross-site`, `same-site`, `none`) | `403 cross-site request refused` |
+| no `Sec-Fetch-Site`, and an `Origin` the UI answers on | allowed — the fallback for a browser without fetch metadata |
+| no `Sec-Fetch-Site` and an `Origin` from anywhere else | `403` |
+| neither header | `403` — no browser posts a form without at least one of them |
+
+That last row means a scripted `curl -X POST http://…/ui/…` is refused; the API, not the UI, is the programmatic surface. A script that genuinely wants a UI route can send `Origin` matching the host it is posting to, which a hostile page cannot do.
+
+**`--ui-origin`.** With no origins configured the `Origin` fallback is compared with the request's own `Host`, which is right for a direct listener and for a proxy that passes `Host` through, and wrong for one that rewrites it. `--ui-origin https://godwit.example.com` (repeatable, or `GODWIT_UI_ORIGIN` comma-separated) names the origins a browser reaches `/ui` at; it is then the allowlist of accepted `Origin` values **and** of hosts the UI answers on at all — a request for any other `Host` is refused whatever its method, which is what stops DNS rebinding from reaching a listener on a private address. A malformed value fails `serve` at start-up. If a proxy in front rewrites `Host`, either configure it to preserve the browser's, or list the origin it rewrites to as well.
+
+**No CSRF token.** A synchroniser token needs somewhere to keep per-session state, and basic auth has no session: keying one to a per-process secret would break the UI behind a load balancer the moment a form rendered by one replica is posted to another, and deriving it from the master key would make the credential-encryption key a web secret. The origin check is complete against the only vector that exists here — there is no cookie to leak, an attacker's page cannot set `Origin` or `Sec-Fetch-Site`, and a request carrying neither is refused rather than admitted.
+
+### Response headers
+
+Every `/ui` response carries `X-Frame-Options: DENY` and `frame-ancestors 'none'` (an origin check does not stop clickjacking: framing the run page and tricking an operator into pressing *Revert* is a same-origin post), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` so run ids, plan ids and target names do not leave in the `Referer` to the font and script CDNs, and `Cache-Control: no-store` on pages (`/ui/mark.svg` and `/ui/app.js` set their own).
+
+The `Content-Security-Policy` is `default-src 'none'` with `script-src 'self' https://cdnjs.cloudflare.com`, `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`, `font-src https://fonts.gstatic.com`, `img-src 'self'`, `connect-src 'self'` (htmx's three-second poll), `form-action 'self'` and `base-uri 'none'`. The pages carry no inline script — the copy button moved to `/ui/app.js`, served from the same `embed.FS` as the templates — so `script-src` needs no `'unsafe-inline'`. `style-src` still does: the backfill bar's width is an inline `style` attribute computed per run, which no nonce or hash can cover. htmx and the fonts are still loaded from a CDN without `integrity`; pinning or vendoring them is open.
+
 ## Network
 
 - The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it (the Helm Ingress needs an h2c- or gRPC-capable class, or a service mesh); the CLI accepts `https://` URLs.
