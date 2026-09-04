@@ -155,6 +155,9 @@ func newUI(s godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 func do(h http.Handler, method, target string, form url.Values, hdr ...string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if !safeMethod(method) {
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+	}
 	for i := 0; i+1 < len(hdr); i += 2 {
 		req.Header.Set(hdr[i], hdr[i+1])
 	}

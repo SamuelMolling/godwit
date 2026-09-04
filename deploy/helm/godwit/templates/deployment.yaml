@@ -51,6 +51,9 @@ spec:
             {{- if .Values.serve.ui.enabled }}
             - --ui
             - --ui-scope={{ .Values.serve.ui.scope }}
+            {{- range .Values.serve.ui.origins }}
+            - --ui-origin={{ . }}
+            {{- end }}
             {{- end }}
             {{- range .Values.serve.extraArgs }}
             - {{ . | quote }}

@@ -23,6 +23,7 @@ serve:
     enabled: true
     basicAuth: true
     scope: read
+    origins: ["https://godwit.example.com"]
   extraArgs: ["--drift-interval=2m"]
 vault:
   addr: https://vault.example.com

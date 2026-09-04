@@ -55,7 +55,9 @@ type Config struct {
 	UIUser     string
 	UIPassword string
 	UIScope    string
-	Log        *slog.Logger
+	// UIOrigins are the scheme://host[:port] origins /ui is reached at; empty compares the browser's Origin with the request Host.
+	UIOrigins []string
+	Log       *slog.Logger
 	// OnReady receives the bound address once the listener is up.
 	OnReady func(addr net.Addr)
 }
@@ -81,6 +83,10 @@ func Run(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("ui scope: %w", err)
 		}
 		uiScope = s
+	}
+	origins, err := ui.ParseOrigins(cfg.UIOrigins)
+	if err != nil {
+		return err
 	}
 	tokens, err := api.ParseTokens(cfg.Tokens)
 	if err != nil {
@@ -151,7 +157,8 @@ func Run(ctx context.Context, cfg Config) error {
 		mux := http.NewServeMux()
 		mux.Handle("/", handler)
 		mux.Handle("/ui/", ui.New(apiSrv, ui.Config{
-			Replica: cfg.Holder, Tokens: tokens, User: cfg.UIUser, Password: cfg.UIPassword, Scope: uiScope,
+			Replica: cfg.Holder, Tokens: tokens, User: cfg.UIUser, Password: cfg.UIPassword,
+			Scope: uiScope, Origins: origins,
 		}))
 		handler = mux
 	}

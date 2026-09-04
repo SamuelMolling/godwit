@@ -58,6 +58,11 @@ serve:
     basicAuth: false
     # --ui-scope: what the shared identity may do — read, pipeline, operator or admin.
     scope: operator
+    # --ui-origin: the scheme://host[:port] origins a browser reaches /ui at, e.g.
+    # ["https://godwit.example.com"]. Set this whenever an Ingress publishes /ui: it is the
+    # allowlist of hosts the UI answers on and of origins a form post may come from. Empty
+    # compares the browser's Origin with the request Host, which needs the proxy to preserve it.
+    origins: []
   # Appended verbatim after the flags above.
   extraArgs: []
 
