@@ -52,23 +52,15 @@ systemctl enable --now godwit
 
 The service account owns nothing and logs in nowhere. It never needs write access to a directory: godwit keeps its state in the store and writes no files.
 
-## Why the store password is in the environment file
+## Why both DSNs are in the environment file
 
-`/proc/<pid>/cmdline` is world-readable on Linux; `/proc/<pid>/environ` is not. A DSN with a password in `ExecStart=` is therefore readable by every local user, and by anything that runs `ps`. The unit puts a password-less DSN on the command line
+`/proc/<pid>/cmdline` is world-readable on Linux; `/proc/<pid>/environ` is not. A DSN with a password in `ExecStart=` is therefore readable by every local user, and by anything that runs `ps`. So neither DSN is there: `--store-dsn` falls back to `GODWIT_STORE_DSN` and `--scratch-dsn` to `GODWIT_SCRATCH_DSN`, both in `/etc/godwit/godwit.env`, which systemd reads as root and hands to the process.
 
-```
---store-dsn=postgres://godwit@store.internal:5432/godwit_store?sslmode=verify-full
-```
-
-and the password in `PGPASSWORD` in the environment file, which systemd reads as root and hands to the process. pgx completes the DSN from the libpq environment for any field it leaves out — verified against a real store. `--scratch-dsn` needs no trick: `GODWIT_SCRATCH_DSN` is read directly, so the whole DSN lives in the same file.
-
-`PGPASSWORD` is process-wide, so it is also the fallback password for any *target* DSN that has none. Give every target DSN its own password, or use the `vault` or `kubernetes` credential provider.
-
-`ProtectProc=invisible` in the unit hides *other* processes from godwit; it does not hide godwit's command line from them. Keeping the secret off the command line is what does that.
+`ProtectProc=invisible` in the unit hides *other* processes from godwit; it does not hide godwit's command line from them. Keeping the secrets off the command line is what does that.
 
 ## Restarts, stops and logs
 
-`Restart=always` with `RestartSec=5s` covers a crash and a reboot. Stopping is clean without any special handling: `serve` installs **no signal handler** — `cli.Main` runs `root.Execute()` with a background context, so the `srv.Shutdown` path in `server.Run` never fires — and under systemd the process is simply killed by `SIGTERM`, which systemd records as a clean stop. In a container the same code exits with status 2 instead, because Go cannot die from an unhandled signal as PID 1; on a VM you will not see that. Either way there is nothing to clean up: an interrupted run is resumed from its journal in the target database by whichever replica claims it next.
+`Restart=always` with `RestartSec=5s` covers a crash and a reboot. `systemctl stop` sends `SIGTERM`, which godwit handles: the listener stops, the machine stops claiming, the run it already holds is given until `--shutdown-timeout` (20 s) to finish, and the process exits `0`. `TimeoutStopSec=30` in the unit is the systemd side of that budget and must stay above it, or systemd `SIGKILL`s the process mid-drain. A run cut short either way is resumed from its journal in the target database by whichever replica claims it next.
 
 There is **no watchdog integration** — godwit does not call `sd_notify`, so `WatchdogSec` would kill a healthy service. A process that is up but wedged is caught from outside instead:
 
@@ -101,7 +93,7 @@ location /ui/ {
 
 ## What a second machine buys you
 
-The lease, and only the lease. Both machines run the identical unit, point `--store-dsn` at the **same** store, and need no coordination beyond it: each runs its own scheduler, each claims runs from the store, and one lease per target keeps them from colliding. A machine that dies mid-run loses its lease after `--lease-ttl` (30 s) and the other one claims the run and resumes it from the last committed statement in the target's journal. With one machine, the run waits for it to come back.
+The lease, and only the lease. Both machines run the identical unit, point `GODWIT_STORE_DSN` at the **same** store, and need no coordination beyond it: each runs its own scheduler, each claims runs from the store, and one lease per target keeps them from colliding. A machine that dies mid-run loses its lease after `--lease-ttl` (30 s) and the other one claims the run and resumes it from the last committed statement in the target's journal. With one machine, the run waits for it to come back.
 
 Two things follow:
 
@@ -112,4 +104,4 @@ Two things follow:
 
 ## The pipeline
 
-The CLI cannot use a TLS endpoint — its transport dials cleartext even for `https://` URLs ([the detail](../kubernetes-ingress-nginx/README.md#reaching-the-api)) — so a pipeline that runs `godwit` reaches the plaintext port over a private network: a runner on the machine itself, a runner on the same VPC or VPN, or an SSH tunnel. From anywhere else, drive the connect JSON API with `curl` over the TLS proxy ([api.md](../../../docs/api.md) has a call per RPC). The bearer token is the whole authorisation, so the plaintext port must never be the one crossing a public network.
+Point the CLI at the TLS proxy: `--server https://godwit.example.com` is dialled over TLS against the system root store, and the `proxy_pass` above carries every RPC over HTTP/1.1 ([the detail](../kubernetes-ingress-nginx/README.md#reaching-the-api)). Publish the same `location /` as the UI block for that. Reaching the loopback listener directly means a runner on the machine itself, a runner on the same VPC or VPN, or an SSH tunnel. The bearer token is the whole authorisation, so the plaintext port must never be the one crossing a public network.

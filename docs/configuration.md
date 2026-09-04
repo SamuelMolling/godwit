@@ -62,8 +62,10 @@ schema_source:
 
 | Variable | Flag | Meaning |
 |---|---|---|
-| `GODWIT_SERVER` | `--server` | service base URL (`http://` or `https://`); the client speaks HTTP/2 over cleartext (h2c) or TLS |
+| `GODWIT_SERVER` | `--server` | service base URL. `http://` is dialled as cleartext HTTP/2 (h2c); `https://` is dialled over TLS against the system root store, negotiating HTTP/2 and falling back to HTTP/1.1, which carries every RPC |
 | `GODWIT_TOKEN` | `--token` | bearer token sent as `Authorization: Bearer <secret>` |
+| `GODWIT_DSN` | `--dsn` | target DSN for the local commands (`plan`, `apply`, `status`, `down`), so the password need not be a process argument |
+| `GODWIT_TARGET_DSN` | `target add --dsn` | DSN of a `static` target being registered, for the same reason |
 
 Every service command also accepts `--json` (print the raw protojson response instead of the human line).
 
@@ -74,7 +76,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | Flag | Default | Meaning |
 |---|---|---|
 | `--listen` | `:8474` | address for the API, `/metrics`, `/healthz` and `/readyz` |
-| `--store-dsn` | required | control-plane PostgreSQL DSN |
+| `--store-dsn` | `GODWIT_STORE_DSN`, required | control-plane PostgreSQL DSN. Prefer the environment variable: an argument is visible in `docker inspect`, `DescribeTaskDefinition`, `kubectl get pod -o yaml` and `/proc/<pid>/cmdline` |
 | `--scratch-dsn` | `GODWIT_SCRATCH_DSN` | PostgreSQL validation and diff create their throwaway databases on. Unset runs them on the store server with the store's own credentials, which is what submitted DDL then executes as; `serve` warns on every start and [security](security.md#the-scratch-database) says why that is bad. Set, the role is inspected at start-up and `serve` refuses to run when it is a superuser, owns the store database, is a member of `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, or holds `CREATEROLE` or `REPLICATION` |
 | `--scratch-template` | `GODWIT_SCRATCH_TEMPLATE` or `template0` | database scratch databases are cloned from. `template0` carries nothing an operator installed into `template1`; name a prepared template to give validation the extensions a migration needs |
 | `--drift-interval` | `5m` | how often every snapshotted target is fingerprinted |
@@ -84,6 +86,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--max-attempts` | `5` | attempts a run may take (lost leases and transient failures alike) before it is finished as `needs_attention` |
 | `--max-concurrent-runs` | `4` | runs this replica executes at once; a slow run holds one slot, never the ticker |
 | `--run-timeout` | `24h` | wall clock one run may take; past it the run is cancelled and finished as `failed` |
+| `--shutdown-timeout` | `20s` | budget for the whole shutdown after `SIGINT` or `SIGTERM`: draining the listener, then the runs this replica already claimed. A run that does not finish inside it is cut and left to its lease. Keep it under the platform's kill delay |
 | `--store-max-conns` | `20` | size of the pool against the store; wins over `pool_max_conns` in `--store-dsn` |
 | `--max-request-bytes` | `33554432` (32 MiB) | largest request body the API decodes; over it the transport refuses before any handler runs |
 | `--max-migrations` | `2000` | migrations one `CreateRun`, `PlanRun`, `RevertRun`, `Diff` or `Checkpoint` may carry; the `.up.sql` half is what names one |

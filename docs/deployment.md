@@ -477,7 +477,7 @@ serviceMonitor:
 
 Everything not modelled by the chart goes through `serve.extraArgs` — `--lease-ttl`, `--tick-interval`, `--max-attempts`, `--require-plan`, `--plan-ttl` and `--plan-retention` have no values of their own.
 
-`--ui-origin` is not optional once something publishes `/ui`: it is both the allowlist of origins a form post may come from and the allowlist of hosts the UI answers on at all. Whatever publishes it needs to speak h2c or gRPC to the backend — the API is connect over HTTP/2 — and to terminate the TLS the plaintext listener does not.
+`--ui-origin` is not optional once something publishes `/ui`: it is both the allowlist of origins a form post may come from and the allowlist of hosts the UI answers on at all. Whatever publishes it terminates the TLS the plaintext listener does not; an ordinary HTTP backend carries the whole API, because connect's unary calls and its one server stream (`WatchRun`) both work over HTTP/1.1. An h2c or gRPC backend is only needed by a client that insists on HTTP/2, and a gRPC backend cannot share a hostname with `/ui`.
 
 ### Publishing the API
 
@@ -499,7 +499,7 @@ Nothing publishes godwit for the PreSync and PostSync hooks: those run in the cl
 
 Two replicas is a floor, not a preference. The crash-safety story is a leased scheduler: a replica that dies mid-run loses its lease after `--lease-ttl` (30s) and *another replica* claims the run and resumes it from the journal in the target. With one replica there is no other replica, and the run waits for the pod to come back.
 
-The chart's defaults line up with that: `podDisruptionBudget.minAvailable: 1` so a node drain never takes both, soft pod anti-affinity so they are not on one node, `terminationGracePeriodSeconds: 30`. A rolling update on a replica holding a run is normal operation — the run stays `running` until its lease expires, the other replica takes it, and `godwit_run_resumes_total{source="reconciler"}` counts it.
+The chart's defaults line up with that: `podDisruptionBudget.minAvailable: 1` so a node drain never takes both, soft pod anti-affinity so they are not on one node, `terminationGracePeriodSeconds: 30` against a `--shutdown-timeout` of 20s. A rolling update on a replica holding a run is normal operation: on `SIGTERM` the replica stops serving, stops claiming, and keeps the run it holds — its lease still beating — until the run finishes or the shutdown timeout ends it. A run that outlives the timeout stays `running` until its lease expires, the other replica takes it, and `godwit_run_resumes_total{source="reconciler"}` counts it.
 
 ### Migrating on deploy: the PreSync and PostSync hooks
 

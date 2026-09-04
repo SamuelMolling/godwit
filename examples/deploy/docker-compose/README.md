@@ -23,7 +23,7 @@ Two files, both `0600`, both outside git:
 | File | Read by | Holds |
 |---|---|---|
 | `.env` | Compose itself, for `${...}` in `compose.yaml` | the three PostgreSQL passwords |
-| `godwit.env` | the `godwit` containers, via `env_file` | `PGPASSWORD`, `GODWIT_SCRATCH_DSN`, `GODWIT_MASTER_KEY`, `GODWIT_TOKENS` and the log settings |
+| `godwit.env` | the `godwit` containers, via `env_file` | `GODWIT_STORE_DSN`, `GODWIT_SCRATCH_DSN`, `GODWIT_MASTER_KEY`, `GODWIT_TOKENS` and the log settings |
 
 ```bash
 cp env.example .env
@@ -40,17 +40,9 @@ openssl rand -hex 16   # one per token secret
 
 `GODWIT_TOKENS` entries are `name:scope:secret` — three fields, always; a two-field entry is refused at start-up. Scopes are `read`, `pipeline`, `operator`, `admin`, cumulative in that order ([token spec](../../../docs/configuration.md#token-spec)).
 
-### Why the store password is `PGPASSWORD` and not part of the DSN
+### Why both DSNs are in the env file and not in `command`
 
-`--store-dsn` has no environment variable of its own — it is a required flag, and Compose would put whatever you interpolate into it on the container's command line, where `docker inspect` and `docker ps --no-trunc` show it to anyone who can reach the daemon. So the DSN in `compose.yaml` carries a user and no password:
-
-```
---store-dsn=postgres://godwit@store:5432/godwit_store?sslmode=disable
-```
-
-and the password arrives as `PGPASSWORD` in `godwit.env`. pgx falls back to the libpq environment for any field the DSN leaves out, so this reaches the store and nothing else appears in `docker inspect`. `--scratch-dsn` needs no such trick: it reads `GODWIT_SCRATCH_DSN` directly, so that one is a whole DSN in the env file.
-
-One consequence to know: `PGPASSWORD` is process-wide, so it is also the fallback password for any *target* DSN that has none. Every target DSN should carry its own password (or come from the `vault` or `kubernetes` provider), which is true anyway.
+`command` becomes the container's argv, which `docker inspect` and `docker ps --no-trunc` show to anyone who can reach the daemon. Both DSNs therefore live in `godwit.env`: `--store-dsn` falls back to `GODWIT_STORE_DSN` and `--scratch-dsn` to `GODWIT_SCRATCH_DSN`, so `compose.yaml` names no credential at all and every `change-me` is in one `0600` file.
 
 ## Run it
 
@@ -94,16 +86,16 @@ Scale down to one for a single-host toy and the crash-safety story goes with it 
 
 There is **no Compose healthcheck on `godwit`**, and there cannot be a useful one: the image is distroless, with no shell and no `curl`, so `CMD-SHELL` tests cannot run and `["CMD", "/godwit", "version"]` would prove only that the binary starts. Check it from outside instead — `/healthz` always answers `200 ok`, and `/readyz` answers `200` only when the store responds to a ping inside two seconds, so `/readyz` is the one worth polling.
 
-`restart: unless-stopped` covers a crash and a host reboot. `serve` installs no signal handler, so `docker compose stop` ends it immediately, with exit code **2** — that is Go dying from an unhandled `SIGTERM` as PID 1, not an error of godwit's, and in-flight streams are cut. Nothing is left dirty: an interrupted run is resumed from the journal by whichever replica claims it next.
+`restart: unless-stopped` covers a crash and a host reboot. `docker compose stop` sends `SIGTERM`, which godwit handles: the listener stops, the replica stops claiming, the run it already holds is given until `--shutdown-timeout` (20 s) to finish, and the process exits **0**. Compose's own default is a 10-second wait before `SIGKILL`, which is why the service sets `stop_grace_period: 30s`. A run cut short either way is resumed from the journal by whichever replica claims it next.
 
 `read_only: true` and `no-new-privileges` are safe because godwit writes nothing to its filesystem. Logs are JSON on stderr with rotation set on the json-file driver; set `GODWIT_LOG_FORMAT=text` in `godwit.env` while you are reading them by eye.
 
 ## The pipeline
 
-The CLI here runs on the host against `http://localhost:8474`. A pipeline elsewhere needs a route to that port and, over anything public, TLS — which the binary does not do, and which the CLI cannot use through a proxy either ([why](../kubernetes-ingress-nginx/README.md#reaching-the-api)). For a single host that means a runner on the host, or a private network between the runner and it.
+The CLI here runs on the host against `http://localhost:8474`. A pipeline elsewhere needs a route to that port and, over anything public, TLS — which the binary does not do, so put a proxy in front and point the CLI at `--server https://…`, which it dials over TLS ([the detail](../kubernetes-ingress-nginx/README.md#reaching-the-api)). Reaching the plaintext port directly means a runner on the host or a private network between the runner and it.
 
 ## Verified
 
-This stack was run: `docker compose up -d` on the image built from the working tree, both replicas healthy, then `godwit target add` (static provider, master key), `godwit plan` (scratch validation on the `scratch` service), `godwit migrate` and `godwit targets` against a throwaway target — `run … succeeded (attempt 1)`, one applied migration, drift `clean`. `PGPASSWORD` reaching the store with a password-less DSN, the scratch role passing the privilege check with no `not isolated` warning, `read_only: true`, the port range under `deploy.replicas: 2`, and exit code 2 on `SIGTERM` were all observed in that run.
+This stack was run: `docker compose up -d` on the image built from the working tree, both replicas healthy, then `godwit target add` (static provider, master key), `godwit plan` (scratch validation on the `scratch` service), `godwit migrate` and `godwit targets` against a throwaway target — `run … succeeded (attempt 1)`, one applied migration, drift `clean`. The scratch role passing the privilege check with no `not isolated` warning, `read_only: true` and the port range under `deploy.replicas: 2` were all observed in that run. The store DSN came from `PGPASSWORD` and a password-less `--store-dsn` then, and `SIGTERM` gave exit code 2; both were changed afterwards — `GODWIT_STORE_DSN` and the signal handler were verified as a real process against a real store, outside this stack.
 
 Only the image reference differs from what was tested: `compose.yaml` names `ghcr.io/samuelmolling/godwit:main`, and the verification used a local build, because the published `main` tag was behind the working tree. Pin `sha-<short commit>` rather than `main` for anything you leave running.
