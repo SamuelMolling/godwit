@@ -37,7 +37,8 @@ type Config struct {
 	// whose targets all use vault or kubernetes runs with it.
 	Keys creds.Keyring
 	// Tokens are bearer token specs, "name:scope:secret"; a bare secret is an admin token named anonymous.
-	Tokens        []string
+	Tokens []string
+	// Holder is this replica's identity in leases, log lines and the UI; empty takes controlplane.NewHolder.
 	Holder        string
 	Scheduler     controlplane.Config
 	DriftInterval time.Duration
@@ -126,6 +127,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer pool.Close()
 
+	cfg.Holder = cmp.Or(cfg.Holder, controlplane.NewHolder(""))
 	log := cfg.Log.With("replica", cfg.Holder, "build", version.Version)
 	if len(tokens) == 0 {
 		log.Warn("no tokens configured; every caller is anonymous with scope admin")

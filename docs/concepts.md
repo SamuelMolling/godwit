@@ -139,10 +139,12 @@ A pipeline re-run does not queue a second run: `CreateRun` with the same files, 
 Runs are executed by whichever replica claims them. Every replica ticks every `--tick-interval` (2s):
 
 - `Claim`: pick one `queued` or `running` run whose lease is missing or expired, at most one per target, `FOR UPDATE SKIP LOCKED`. Set it `running`, `attempts + 1`, write `cp_leases(run_id, holder, expires_at = now + ttl)`.
-- Heartbeat every `ttl / 3` while executing. A heartbeat that fails (store unreachable, lease taken by another holder) logs `heartbeat lost`, counts `godwit_heartbeat_failures_total` and stops renewing; the attempt itself keeps running.
+- Heartbeat every `ttl / 4` while executing; a beat that fails is retried every `ttl / 10`. Past a fifth of the lease of failing beats, and at once on a lease taken by another holder, the replica logs `heartbeat lost`, counts `godwit_heartbeat_failures_total`, cancels the run it can no longer prove it owns and writes nothing more about it.
 - On finish, delete the lease and set the final state.
 
-A replica that dies stops heartbeating; after `--lease-ttl` (30s) another replica claims the same run, `attempts` becomes 2, and the executor resumes from the journal. If `attempts` exceeds `--max-attempts` (5) at claim time the run is finished as `needs_attention` without executing; a run held back by `not_before` is not claimed until the store's clock passes it. `holder` is the replica's hostname.
+A replica that dies stops heartbeating; after `--lease-ttl` (30s) another replica claims the same run, `attempts` becomes 2, and the executor resumes from the journal. If `attempts` exceeds `--max-attempts` (5) at claim time the run is finished as `needs_attention` without executing; a run held back by `not_before` is not claimed until the store's clock passes it.
+
+`holder` identifies the **process**, not the machine: `<name>/<16 hex characters>`, where the name is `--holder` (or `GODWIT_HOLDER`, or the hostname) and the suffix is drawn once at start-up. Everything that keeps two replicas off one run compares it whole, so the suffix is what makes the lease exclusive when two replicas share a hostname — ECS `host` networking, a cloned VM image, two processes on one box. A restarted replica comes back with a new identity and therefore cannot reclaim its own in-flight run before the lease expires, which is deliberate: the backend it left in the target still holds that target's advisory lock, and the TTL is what gives it time to die.
 
 One target executes one run at a time: the claim query hands out one lease per target, and the advisory lock on the target itself serialises executors that end up overlapping (a stalled replica whose lease expired and its successor), so the second one waits rather than interleaving statements.
 

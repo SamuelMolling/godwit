@@ -135,7 +135,7 @@ aws ecs create-service --cli-input-json file://service.json
 
 `minimumHealthyPercent: 100` with `maximumPercent: 200` starts the replacements before stopping the old tasks, so the lease always has a taker; the deployment circuit breaker rolls back a task definition that cannot pass `/readyz`. `availabilityZoneRebalancing` needs a 2024-or-later CLI; drop it on an older one and Fargate still spreads the two tasks across the subnets' AZs.
 
-Each task's lease holder name is its hostname, and `Heartbeat` matches on `(run_id, holder)` alone — two replicas answering to one name can extend each other's leases. Under `awsvpc` every task has its own ENI and its own hostname, so this is free. It stops being free under `network_mode: host` on EC2; see below.
+Each task's lease holder is `<name>/<16 hex characters>` — its hostname under `awsvpc`, where every task has its own ENI, plus a suffix drawn at start-up that keeps two tasks apart whatever their hostnames say. Nothing here needs setting; under `network_mode: host` the name is worth setting anyway, see below.
 
 `linuxParameters.initProcessEnabled: true` is worth the line. Without it godwit is PID 1, and Go's runtime cannot die from an unhandled `SIGTERM` as PID 1, so it falls back to `exit(2)` — every scale-in and every deployment leaves a stopped task with exit code 2 in the console. With an init process in front, `SIGTERM` kills it normally and the exit code is 143. Both were measured; neither loses data, because an interrupted run is resumed from the journal.
 
@@ -155,7 +155,7 @@ The task definition here is Fargate. What changes on EC2:
 | `linuxParameters` | only `initProcessEnabled` | also `tmpfs`, `devices`, `sharedMemorySize`, `maxSwap`, `swappiness` |
 | placement | automatic across the subnets' AZs | add `placementStrategy` spread on `attribute:ecs.availability-zone` and then `instanceId` |
 
-**`host` network mode is the one trap.** It gives the container the instance's hostname, so two godwit tasks on one instance share a lease holder name and can heartbeat each other's leases. Use `awsvpc`, or `bridge` with a dynamic host port; if you must use `host`, put one task per instance.
+**`host` network mode gives every container the instance's hostname**, so two godwit tasks on one instance report the same name. The lease is safe regardless — the holder carries a suffix drawn per process — but `cp_leases.holder` and the logs then name a machine rather than a task. Pass `--holder` (or `GODWIT_HOLDER`) something that distinguishes them, `ECS_TASK_ID` or the port, if you want to read those columns.
 
 Nothing else in the container definition changes: `readonlyRootFilesystem: true` holds on both (godwit writes nothing to its filesystem), and there is no ECS **container** health check on either, because `healthCheck.command` runs inside the container and distroless has no shell. `["CMD", "/godwit", "version"]` would run, but it proves only that the binary starts — the listener is what you want checked, and the target group checks it.
 

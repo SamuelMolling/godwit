@@ -6,7 +6,7 @@ What to set up and watch once `godwit serve` runs for real. Getting it there in 
 
 Every replica runs the same four loops: API, scheduler, drift monitor, validator. Nothing is elected.
 
-- **Runs** are serialised per target by a lease row in `cp_leases` (one lease per target at a time, `FOR UPDATE SKIP LOCKED` on claim). Any replica claims a `queued` run, or a `running` one whose lease expired; a claim increments `attempts`. Heartbeats renew the lease every `lease-ttl/4`; a beat that fails is retried every `lease-ttl/10` until a fifth of the lease is left, and then the replica cancels the run it can no longer prove it owns rather than run past its lease. A replica that dies mid-run loses its lease after `--lease-ttl`; the next claim resumes from the journal in the target ([concepts: leases](concepts.md#leases)).
+- **Runs** are serialised per target by a lease row in `cp_leases` (one lease per target at a time, `FOR UPDATE SKIP LOCKED` on claim). Any replica claims a `queued` run, or a `running` one whose lease expired; a claim increments `attempts`. Heartbeats renew the lease every `lease-ttl/4`; a beat that fails is retried every `lease-ttl/10` until a fifth of the lease is left, and then the replica cancels the run it can no longer prove it owns rather than run past its lease. A replica that dies mid-run loses its lease after `--lease-ttl`; the next claim resumes from the journal in the target ([concepts: leases](concepts.md#leases)). The holder is the process's identity (`<name>/<16 hex characters>`, drawn at start-up), not its hostname, so replicas that share a machine hold separate leases and a restarted one cannot reclaim its own run before the TTL.
 - **Drift** is checked by every replica on its own `--drift-interval`; the partial unique index `cp_drift_events_open_idx` keeps duplicate open events out, so two replicas detecting the same diff produce one row.
 - **Notifications** are per replica and in-memory (queue of 256 per provider); Slack thread ids live in `cp_notifications`, so any replica continues a thread.
 - **Transient failures** (classes `08` connection, `53` insufficient resources — a full disk and an exhausted memory budget included — and `57` operator intervention, plus `40001`, `40P01`, `55P03`, `58000`, `58030`, connection resets, deadline exceeded): the run goes back to `queued` with `not_before = now + backoff` (`--tick-interval` doubled per attempt, capped at 5 minutes, ±20% jitter) and `retries + 1`; nobody is paged, `godwit_run_retries_total` counts it, the run's `error` starts with `transient:`. `57P04` (database dropped), `58P01` and `58P02` (a missing or duplicated file) are the exceptions inside those classes and are permanent, like any other SQL error: the run finishes as `failed` at once with `sql:` in front.
@@ -279,7 +279,7 @@ Delivery is asynchronous: one worker per provider with a queue of 256 events; a 
 
 ## Logging
 
-`--log-format json` (default) or `text`, `--log-level`. Every line carries `replica` (hostname) and `build`. What to grep for:
+`--log-format json` (default) or `text`, `--log-level`. Every line carries `replica` (this process's lease identity, `<name>/<16 hex characters>` — the same string as `cp_leases.holder`, so a log line and a lease row can be matched) and `build`. What to grep for:
 
 | Event | Level | Keys |
 |---|---|---|

@@ -122,8 +122,8 @@ godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store --liste
 ```
 
 ```
-{"time":"...","level":"INFO","msg":"store migrated","replica":"host","build":"dev","applied":16}
-{"time":"...","level":"INFO","msg":"listening","replica":"host","build":"dev","addr":"[::]:8474","validation":true}
+{"time":"...","level":"INFO","msg":"store migrated","replica":"host/9f4c1ba73e02d581","build":"dev","applied":16}
+{"time":"...","level":"INFO","msg":"listening","replica":"host/9f4c1ba73e02d581","build":"dev","addr":"[::]:8474","validation":true}
 ```
 
 `serve` migrates the store schema, starts the leased scheduler, the drift monitor and the scratch-database validator, then listens for gRPC and JSON on one port (plus `/metrics`, `/healthz`, `/readyz`).

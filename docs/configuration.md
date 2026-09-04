@@ -78,7 +78,8 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--scratch-dsn` | `GODWIT_SCRATCH_DSN` | PostgreSQL validation and diff create their throwaway databases on. Unset runs them on the store server with the store's own credentials, which is what submitted DDL then executes as; `serve` warns on every start and [security](security.md#the-scratch-database) says why that is bad. Set, the role is inspected at start-up and `serve` refuses to run when it is a superuser, owns the store database, is a member of `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, or holds `CREATEROLE` or `REPLICATION` |
 | `--scratch-template` | `GODWIT_SCRATCH_TEMPLATE` or `template0` | database scratch databases are cloned from. `template0` carries nothing an operator installed into `template1`; name a prepared template to give validation the extensions a migration needs |
 | `--drift-interval` | `5m` | how often every snapshotted target is fingerprinted |
-| `--lease-ttl` | `30s` | how long a claimed run stays leased without a heartbeat; heartbeats run every third of it |
+| `--holder` | `GODWIT_HOLDER`, or the hostname | name this replica goes by in `cp_leases.holder`, every log line's `replica` and the UI. godwit appends `/<16 hex characters>` drawn once per start, whatever the name: the identity is compared whole wherever two replicas must be kept off one run, so replicas that share a hostname still hold separate leases. There is no way to pin the whole identity, and that is the point |
+| `--lease-ttl` | `30s` | how long a claimed run stays leased without a heartbeat; beats go out every quarter of it and a failed beat retries every tenth, and past a fifth of the lease the replica gives the run up |
 | `--tick-interval` | `2s` | how often the scheduler looks for runnable runs |
 | `--max-attempts` | `5` | attempts a run may take (lost leases and transient failures alike) before it is finished as `needs_attention` |
 | `--max-concurrent-runs` | `4` | runs this replica executes at once; a slow run holds one slot, never the ticker |
@@ -137,6 +138,7 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_SLACK_CHANNEL` | with the token | channel id or name for the root messages; `serve` refuses to start with a token and no channel |
 | `GODWIT_SLACK_MODE` | no | `thread` (default; root message plus threaded replies) or `edit` (one message rewritten) |
 | `GODWIT_PUBLIC_URL` | no | base URL for the "Open run" button in Slack messages (`<url>/ui/runs/<id>`) |
+| `GODWIT_HOLDER` | no | default for `--holder` |
 | `GODWIT_LOG_FORMAT` | no | default for `--log-format` |
 | `GODWIT_LOG_LEVEL` | no | default for `--log-level` |
 | `GODWIT_UI` | no | `true` enables the web UI like `--ui` |
