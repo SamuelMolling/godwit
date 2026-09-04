@@ -105,9 +105,9 @@ Left empty, the UI compares the browser's `Origin` against the request's `Host`.
 
 `replicaCount: 2` is the floor, not a preference: the crash-safety story is that a replica which dies mid-run loses its lease after `--lease-ttl` and *another replica* claims the run and resumes it from the journal in the target. The values here also set `podAntiAffinity: hard` so a single node loss cannot take both, and keep the chart's `podDisruptionBudget.minAvailable: 1`. On a cluster with fewer schedulable nodes than replicas, `hard` leaves a pod `Pending`; the chart's default `soft` is the one to keep there.
 
-Two things follow from the lease being keyed on the replica's hostname (`cp_leases.holder`, matched by `Heartbeat`):
+Two things follow from the lease being keyed on `cp_leases.holder` (matched whole by `Heartbeat`):
 
-- every replica must have a **distinct** hostname. Pods do; a `Deployment` gives each pod a unique name. It is worth knowing because it stops being true on other platforms.
+- the holder is `<name>/<16 hex characters>`: the pod name, and a suffix drawn when the process started. Nothing here needs setting — a `Deployment` already gives each pod a unique name — and the suffix is why a pod that restarts under the same name cannot take its own in-flight run back before the lease expires. That wait is the window in which the backend it left in the target, still holding that target's advisory lock, dies.
 - `serve` installs **no signal handler**: `cli.Main` calls `root.Execute()` with a background context, so the `srv.Shutdown` path in `server.Run` never fires. On `SIGTERM` the process exits immediately — as PID 1 in a container, with exit code **2** — and in-flight streams are cut. This is not dangerous (it is exactly the crash the journal is designed for, and the surviving replica takes the run over after 30 seconds), but a rolling update will show container exit code 2 and will cut any `godwit migrate` streaming through the pod being replaced. `terminationGracePeriodSeconds` buys nothing today.
 
 ## The pipeline

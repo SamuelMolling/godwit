@@ -14,7 +14,7 @@ import (
 )
 
 func newServeCmd() *cobra.Command {
-	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope string
+	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope, holder string
 	var uiOrigins []string
 	var driftInterval, leaseTTL, tickInterval, runTimeout time.Duration
 	var maxAttempts, maxConcurrentRuns, storeMaxConns int
@@ -31,7 +31,7 @@ func newServeCmd() *cobra.Command {
 			"GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --scratch-dsn and --scratch-template),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
-			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level),\n" +
+			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level), GODWIT_HOLDER (default for --holder),\n" +
 			"GODWIT_UI=true (web UI at /ui), any bearer token's secret signs in to /ui as that token,\n" +
 			"GODWIT_UI_USER and GODWIT_UI_PASSWORD (a shared /ui identity), GODWIT_UI_SCOPE (what that identity may do)\n" +
 			"and GODWIT_UI_ORIGIN (comma-separated origins /ui is reached at).",
@@ -48,8 +48,6 @@ func newServeCmd() *cobra.Command {
 			if raw := os.Getenv("GODWIT_TOKENS"); raw != "" {
 				tokens = strings.Split(raw, ",")
 			}
-			hostname, _ := os.Hostname()
-
 			return server.Run(cmd.Context(), server.Config{
 				Listen:          listen,
 				StoreDSN:        storeDSN,
@@ -57,7 +55,7 @@ func newServeCmd() *cobra.Command {
 				ScratchTemplate: scratchTemplate,
 				Keys:            keys,
 				Tokens:          tokens,
-				Holder:          hostname,
+				Holder:          controlplane.NewHolder(holder),
 				Scheduler: controlplane.Config{
 					TTL: leaseTTL, Interval: tickInterval, MaxAttempts: maxAttempts,
 					MaxConcurrentRuns: maxConcurrentRuns, RunTimeout: runTimeout,
@@ -92,6 +90,9 @@ func newServeCmd() *cobra.Command {
 		"DSN validation and diff create their throwaway databases on (or GODWIT_SCRATCH_DSN); unset runs them on the store server with the store credentials")
 	cmd.Flags().StringVar(&scratchTemplate, "scratch-template", envOr("GODWIT_SCRATCH_TEMPLATE", controlplane.DefaultScratchTemplate),
 		"database scratch databases are cloned from (or GODWIT_SCRATCH_TEMPLATE); name a prepared template to give them extensions")
+	cmd.Flags().StringVar(&holder, "holder", os.Getenv("GODWIT_HOLDER"),
+		"name this replica goes by in leases, logs and the UI (or GODWIT_HOLDER); empty takes the hostname. "+
+			"godwit appends a suffix drawn per start either way, so two replicas never share a lease identity")
 	cmd.Flags().DurationVar(&driftInterval, "drift-interval", 5*time.Minute, "how often to check targets for schema drift")
 	cmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "how long a claimed run stays leased without a heartbeat")
 	cmd.Flags().DurationVar(&tickInterval, "tick-interval", 2*time.Second, "how often the scheduler looks for runnable runs")

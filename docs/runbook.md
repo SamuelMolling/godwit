@@ -110,11 +110,13 @@ FROM cp_runs r LEFT JOIN cp_leases l ON l.run_id = r.id
 WHERE r.state = 'running';
 ```
 
-**Meaning.** Until `expires_at`, the dead replica still owns the run; after it, any replica claims it on its next tick (2s default) and resumes from the journal. `godwit_run_resumes_total{source="reconciler"}` counts this. In the target, a `no-tx` statement interrupted between `intent` and `done` is verified before being re-run (index validity, existence), so a half-built `CREATE INDEX CONCURRENTLY` is dropped and recreated, a finished one is journaled as done.
+`holder` is `<name>/<16 hex characters>` — the name from `--holder` or the hostname, the suffix drawn when that process started. Match it whole. Two rows with the same name and different suffixes are two processes on one machine, or one process before and after a restart; the suffix is what tells them apart, and matching on the name alone is what this format exists to stop an operator (and godwit) doing.
+
+**Meaning.** Until `expires_at`, the dead replica still owns the run; after it, any replica claims it on its next tick (2s default) and resumes from the journal. A replica that restarted comes back with a new identity and waits out the TTL like anyone else: its old backend in the target still holds that target's advisory lock, and the TTL is the window in which that dies. `godwit_run_resumes_total{source="reconciler"}` counts this. In the target, a `no-tx` statement interrupted between `intent` and `done` is verified before being re-run (index validity, existence), so a half-built `CREATE INDEX CONCURRENTLY` is dropped and recreated, a finished one is journaled as done.
 
 **Action.** None, unless the lease never expires (clock skew between store and replicas: `expires_at` is computed with the store's `now()`; heartbeats use it too) or the run flips to `needs_attention` after `--max-attempts` claims, in which case see [needs_attention](#run-in-needs_attention).
 
-Two replicas never execute the same run: the lease is exclusive per target in the store, and the engine takes `pg_advisory_lock` in the target for the duration of every attempt, so a zombie attempt still holding the lock blocks the newcomer instead of racing it.
+Two replicas never execute the same run: the lease is exclusive per target in the store and keyed on an identity no two processes share, and the engine takes `pg_advisory_lock` in the target for the duration of every attempt, so a zombie attempt still holding the lock blocks the newcomer instead of racing it.
 
 ## The target's advisory lock is held by a session that is gone
 

@@ -18,6 +18,8 @@ import (
 
 // Config tunes a Scheduler.
 type Config struct {
+	// Holder is this replica's lease identity and must be unique per process: everything that keeps two
+	// replicas off one run compares it whole. Empty takes NewHolder("").
 	Holder      string
 	TTL         time.Duration
 	Interval    time.Duration
@@ -40,6 +42,9 @@ const (
 )
 
 func (c Config) withDefaults() Config {
+	if c.Holder == "" {
+		c.Holder = NewHolder("")
+	}
 	if c.TTL <= 0 {
 		c.TTL = 30 * time.Second
 	}

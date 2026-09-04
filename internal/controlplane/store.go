@@ -684,7 +684,8 @@ func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Ru
 	return run, true, nil
 }
 
-// Heartbeat extends the holder's lease; ErrLeaseLost means another holder took it.
+// Heartbeat extends the holder's lease; ErrLeaseLost means another holder took it. holder is matched
+// whole, so it has to identify the process rather than the machine it runs on (NewHolder).
 func (s *Store) Heartbeat(ctx context.Context, runID, holder string, ttl time.Duration) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE cp_leases SET expires_at = now() + $3 WHERE run_id = $1 AND holder = $2`,
@@ -699,7 +700,9 @@ func (s *Store) Heartbeat(ctx context.Context, runID, holder string, ttl time.Du
 	return nil
 }
 
-// Finish records a terminal state and releases the lease; a succeeded revert marks its original reverted
+// Finish records a terminal state and releases the lease by run id rather than by holder, because an
+// operator parking a run holds none; the executing replica's guard is that it gives the run up the
+// moment its own lease is gone. A succeeded revert marks its original reverted
 // and withdraws every ledger row of it the revert had nothing left to undo, so the run and its rows say
 // the same thing.
 func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
