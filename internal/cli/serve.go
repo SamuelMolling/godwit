@@ -19,7 +19,7 @@ func newServeCmd() *cobra.Command {
 	var uiOrigins []string
 	var driftInterval, leaseTTL, tickInterval, runTimeout time.Duration
 	var maxAttempts, maxConcurrentRuns, storeMaxConns int
-	var maxRequestBytes, maxFiles, maxFileBytes, maxConcurrentDiffs int
+	var maxRequestBytes, maxMigrations, maxFiles, maxFileBytes, maxConcurrentDiffs int
 	var skipValidation, requirePlan, withUI bool
 	var planTTL, planRetention time.Duration
 	cmd := &cobra.Command{
@@ -63,7 +63,7 @@ func newServeCmd() *cobra.Command {
 				},
 				StoreMaxConns: storeMaxConns,
 				Limits: api.Limits{
-					RequestBytes: maxRequestBytes, Files: maxFiles,
+					RequestBytes: maxRequestBytes, Migrations: maxMigrations, Files: maxFiles,
 					FileBytes: maxFileBytes, HeavyCalls: maxConcurrentDiffs,
 				},
 				DriftInterval:  driftInterval,
@@ -102,6 +102,7 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&storeMaxConns, "store-max-conns", server.DefaultStoreMaxConns,
 		"connections the API pool opens against the store; wins over pool_max_conns in the DSN")
 	cmd.Flags().IntVar(&maxRequestBytes, "max-request-bytes", api.DefaultRequestBytes, "largest request body the API accepts")
+	cmd.Flags().IntVar(&maxMigrations, "max-migrations", api.DefaultMigrations, "migrations one request may carry")
 	cmd.Flags().IntVar(&maxFiles, "max-files", api.DefaultFiles, "migration files one request may carry")
 	cmd.Flags().IntVar(&maxFileBytes, "max-file-bytes", api.DefaultFileBytes, "largest migration body or desired schema the API accepts")
 	cmd.Flags().IntVar(&maxConcurrentDiffs, "max-concurrent-diffs", api.DefaultHeavyCalls,

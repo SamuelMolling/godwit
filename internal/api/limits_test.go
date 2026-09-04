@@ -17,30 +17,44 @@ func TestLimitsDefaults(t *testing.T) {
 	t.Parallel()
 
 	l := Limits{}.withDefaults()
-	if l.RequestBytes != DefaultRequestBytes || l.Files != DefaultFiles || l.FileBytes != DefaultFileBytes ||
-		l.HeavyCalls != DefaultHeavyCalls || l.HeavyWait != DefaultHeavyWait {
+	if l.RequestBytes != DefaultRequestBytes || l.Migrations != DefaultMigrations || l.Files != DefaultFiles ||
+		l.FileBytes != DefaultFileBytes || l.HeavyCalls != DefaultHeavyCalls || l.HeavyWait != DefaultHeavyWait {
 		t.Fatalf("defaults = %+v", l)
 	}
-	set := Limits{RequestBytes: 1, Files: 2, FileBytes: 3, HeavyCalls: 4, HeavyWait: time.Second}
+	if DefaultFiles < 2*DefaultMigrations {
+		t.Fatalf("the file limit must clear two files per migration at the migration limit: %d < %d",
+			DefaultFiles, 2*DefaultMigrations)
+	}
+	set := Limits{RequestBytes: 1, Migrations: 9, Files: 2, FileBytes: 3, HeavyCalls: 4, HeavyWait: time.Second}
 	if got := set.withDefaults(); got != set {
 		t.Fatalf("explicit limits = %+v, want %+v", got, set)
 	}
 }
 
-// A real 200-migration directory must pass; the counts and sizes above it must not.
+func directory(n int, body string) []*godwitv1.MigrationFile {
+	out := make([]*godwitv1.MigrationFile, 0, 2*n)
+	for i := range n {
+		id := "2026090112" + strconv.Itoa(i) + "_t"
+		out = append(out,
+			&godwitv1.MigrationFile{Name: id + ".up.sql", Body: body},
+			&godwitv1.MigrationFile{Name: id + ".down.sql", Body: body})
+	}
+
+	return out
+}
+
+// A real 200-migration directory must pass, and so must the 1000-migration one the load rig builds.
 func TestCheckFiles(t *testing.T) {
 	t.Parallel()
 
 	l := Limits{}.withDefaults()
-	real := make([]*godwitv1.MigrationFile, 0, 400)
-	for i := range 200 {
-		body := strings.Repeat("-- migration\n", 600)
-		real = append(real,
-			&godwitv1.MigrationFile{Name: "2026090112" + strconv.Itoa(i) + "_t.up.sql", Body: body},
-			&godwitv1.MigrationFile{Name: "2026090112" + strconv.Itoa(i) + "_t.down.sql", Body: body})
-	}
-	if err := l.checkFiles(real); err != nil {
+	if err := l.checkFiles(directory(200, strings.Repeat("-- migration\n", 600))); err != nil {
 		t.Fatalf("a 200-migration directory must be admitted: %v", err)
+	}
+	deep := append(directory(1000, "select 1;\n"),
+		&godwitv1.MigrationFile{Name: "20260902000000_squash.up.sql", Body: "-- godwit: checkpoint\n"})
+	if err := l.checkFiles(deep); err != nil {
+		t.Fatalf("a 1000-migration directory and its checkpoint must be admitted: %v", err)
 	}
 
 	cases := []struct {
@@ -48,7 +62,8 @@ func TestCheckFiles(t *testing.T) {
 		in   []*godwitv1.MigrationFile
 		want string
 	}{
-		{"too many", make([]*godwitv1.MigrationFile, l.Files+1), "too many migration files"},
+		{"too many files", make([]*godwitv1.MigrationFile, l.Files+1), "too many migration files"},
+		{"too many migrations", directory(l.Migrations+1, ""), "too many migrations"},
 		{"long name", []*godwitv1.MigrationFile{{Name: strings.Repeat("n", maxNameBytes+1)}}, "file name is"},
 		{"big body", []*godwitv1.MigrationFile{{Name: "a.up.sql", Body: strings.Repeat("x", l.FileBytes+1)}}, "bytes, limit"},
 	}

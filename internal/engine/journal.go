@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var bootstrapDDL = []string{
@@ -49,14 +50,33 @@ var bootstrapDDL = []string{
 	`ALTER TABLE godwit.journal ADD COLUMN IF NOT EXISTS rows_total bigint`,
 }
 
+// IF NOT EXISTS is not race-free: two replicas that both find an object missing both create it, and the loser
+// gets a catalog error. The object exists either way, which is all bootstrap wants.
+var raceOnCreate = map[string]bool{"23505": true, "42701": true, "42P06": true, "42P07": true}
+
 func bootstrap(ctx context.Context, db DB) error {
 	for _, ddl := range bootstrapDDL {
 		if _, err := db.Exec(ctx, ddl); err != nil {
+			var pge *pgconn.PgError
+			if errors.As(err, &pge) && raceOnCreate[pge.Code] {
+				continue
+			}
+
 			return fmt.Errorf("bootstrap godwit schema: %w", err)
 		}
 	}
 
 	return nil
+}
+
+// ensureSchema bootstraps once per session: the DDL is eleven round trips wide and a scratch replay runs
+// an Executor per migration over one connection.
+func ensureSchema(ctx context.Context, db DB) error {
+	if s, ok := db.(*Session); ok {
+		return s.ensure(ctx)
+	}
+
+	return bootstrap(ctx, db)
 }
 
 // runProgress is what the journal says about an unfinished run.

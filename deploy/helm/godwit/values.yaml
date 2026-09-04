@@ -90,8 +90,10 @@ serve:
     runTimeout: 24h
     # --max-request-bytes: largest request body the API decodes (32 MiB).
     maxRequestBytes: 33554432
-    # --max-files: migration files one request may carry.
-    maxFiles: 2000
+    # --max-migrations: migrations one request may carry; every one of them is two files.
+    maxMigrations: 2000
+    # --max-files: migration files one request may carry, migration halves and everything else alike.
+    maxFiles: 5000
     # --max-file-bytes: largest single migration body, and the largest desired schema Diff accepts (4 MiB).
     maxFileBytes: 4194304
     # --max-concurrent-diffs: Diff, PlanRun, CreateRun, RevertRun and Checkpoint calls admitted at once;

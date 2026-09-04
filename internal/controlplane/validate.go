@@ -68,14 +68,15 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 
-	st, err := replayRuns(ctx, conn, history, searchPath)
+	session := engine.NewSession(conn)
+	st, err := replayRuns(ctx, session, history, searchPath)
 	if err != nil {
 		return Validation{}, err
 	}
 	if plans, err = engine.ShapeCheckpoint(plans, st.newest); err != nil {
 		return Validation{}, err
 	}
-	val, err := expander.validateEach(ctx, conn, plans, st.seen)
+	val, err := expander.validateEach(ctx, session, plans, st.seen)
 	val.Replayed, val.Collapsed = st.replayed, st.collapsed
 
 	return val, err
@@ -88,6 +89,7 @@ func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPa
 	if err != nil {
 		return err
 	}
+	conn = engine.NewSession(conn)
 	st, err := replayRuns(ctx, conn, history, searchPath)
 	if err != nil {
 		return err

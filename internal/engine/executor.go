@@ -97,7 +97,7 @@ func WithAssertProbe() Option {
 // New builds an Executor over db.
 func New(db DB, opts Options, extra ...Option) *Executor {
 	e := &Executor{
-		db:      db,
+		db:      NewSession(db),
 		opts:    opts.withDefaults(),
 		hook:    func(HookPoint, int) {},
 		observe: func(StatementEvent) {},
@@ -144,7 +144,7 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 	defer release()
 
-	if err := bootstrap(ctx, e.db); err != nil {
+	if err := ensureSchema(ctx, e.db); err != nil {
 		return res, err
 	}
 
@@ -437,7 +437,7 @@ type StatusRow struct {
 
 // Status reports the applied state of migs against the target; a repeatable whose content changed reads as pending.
 func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, error) {
-	if err := bootstrap(ctx, e.db); err != nil {
+	if err := ensureSchema(ctx, e.db); err != nil {
 		return nil, err
 	}
 	applied, err := readApplied(ctx, e.db)

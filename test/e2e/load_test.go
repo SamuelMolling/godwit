@@ -18,6 +18,7 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/api"
 )
 
 func TestLoadBackfillAtScale(t *testing.T) {
@@ -254,8 +255,10 @@ func TestLoadHistoryGrowth(t *testing.T) {
 	total := envInt("GODWIT_LOAD_HISTORY", 1000)
 	chunk := envInt("GODWIT_LOAD_CHUNK", 100)
 	r := newRig(t, 0)
-	// Every request carries the whole directory: the default --max-files 2000 is a ceiling of 1000 migrations.
-	r.startWith("--max-files", strconv.Itoa(4*total+8))
+	// Every request carries the whole directory; the defaults hold a thousand migrations, a longer run raises them.
+	r.startWith(
+		"--max-migrations", strconv.Itoa(max(api.DefaultMigrations, total+4)),
+		"--max-files", strconv.Itoa(max(api.DefaultFiles, 4*total+8)))
 	r.addTarget("deep")
 
 	dir := t.TempDir()

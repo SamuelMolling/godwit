@@ -132,7 +132,7 @@ func (c *Checkpointer) replay(ctx context.Context, factory *scratchFactory, coll
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 
-	def, err := c.applyCollapsed(ctx, conn, collapsed)
+	def, err := c.applyCollapsed(ctx, engine.NewSession(conn), collapsed)
 	if err != nil {
 		done()
 
