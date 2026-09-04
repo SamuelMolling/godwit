@@ -76,6 +76,9 @@ func (e PGEngine) observer(req ApplyRequest) func(engine.StatementEvent) {
 		if req.Progress != nil {
 			req.Progress(ev)
 		}
+		if ev.Partial {
+			return
+		}
 		kind := "tx"
 		switch {
 		case ev.Statement.Batch != nil:

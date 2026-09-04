@@ -90,3 +90,24 @@ func TestSchedulerNeverLogsPassword(t *testing.T) {
 		t.Fatalf("password leaked:\n%s\n%s", out, r.Error)
 	}
 }
+
+func TestPGEngineObserverReportsPartialsWithoutLogging(t *testing.T) {
+	t.Parallel()
+
+	sink, log := captureLog()
+	var got []engine.StatementEvent
+	observe := PGEngine{Log: log}.observer(ApplyRequest{
+		RunID: "run-1", Target: "app",
+		Progress: func(ev engine.StatementEvent) { got = append(got, ev) },
+	})
+	batch := engine.Statement{SQL: "UPDATE t SET a = b", Batch: &engine.BatchSpec{}}
+	observe(engine.StatementEvent{Migration: "m", Index: 4, Statement: batch, RowsDone: 500, Batches: 1, Partial: true})
+	observe(engine.StatementEvent{Migration: "m", Index: 4, Statement: batch, RowsDone: 1000, Batches: 2})
+
+	if len(got) != 2 || got[0].RowsDone != 500 || got[1].RowsDone != 1000 {
+		t.Fatalf("progress got %+v", got)
+	}
+	if n := strings.Count(sink.String(), `"msg":"statement applied"`); n != 1 {
+		t.Fatalf("logged %d statements, want 1:\n%s", n, sink.String())
+	}
+}

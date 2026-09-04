@@ -46,6 +46,8 @@ type StatementEvent struct {
 	RowsDone  int64
 	RowsTotal int64
 	Batches   int
+	// Partial marks a report from inside a still-running statement: counts only, no duration and no outcome.
+	Partial bool
 }
 
 // Executor applies plans over one database session.

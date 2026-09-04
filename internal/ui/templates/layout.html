@@ -154,6 +154,11 @@ pre{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:
 .act .opt p{margin:0;color:var(--fg-2);font-size:14px}
 .act .opt form{margin:0;display:flex;gap:8px}
 .note{font-size:14px;color:var(--fg-2);margin:0}
+.pg{display:flex;flex-direction:column;gap:10px}
+.pg .bar{height:6px;border-radius:999px;background:var(--panel-3);overflow:hidden}
+.pg .bar i{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width .3s}
+.pg .lbl{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;color:var(--fg-2);font-variant-numeric:tabular-nums}
+.pg .lbl b{font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--fg)}
 .banner{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:18px;align-items:center;padding:18px 22px;border-radius:12px;background:var(--panel);box-shadow:var(--shadow)}
 .banner .icw{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;background:var(--bad-soft);color:var(--bad)}
 .banner .icw .ic{width:20px;height:20px}

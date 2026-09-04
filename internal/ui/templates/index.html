@@ -41,7 +41,7 @@
         <tr>
           <td class="id"><a href="/ui/runs/{{.Id}}">{{short .Id}}</a><span class="sub">{{if .Reverts}}revert of {{short .Reverts}}{{else}}{{.Kind}}{{end}}{{with .PlanId}} · plan {{short .}}{{end}}{{with .CreatedBy}} · by {{.}}{{end}}{{with .Source}} · {{.}}{{end}}</span></td>
           <td><span class="chip">{{.Target}}</span></td>
-          <td><span class="pill {{state .State}}">{{label .State}}</span></td>
+          <td><span class="pill {{state .State}}">{{label .State}}</span>{{with backfill .}}<span class="sub">{{if .Total}}≈{{.Percent}}% · {{end}}{{.Done}}{{if .Total}}/~{{.Total}}{{end}} rows · {{.Batches}}</span>{{end}}</td>
           <td class="ago">{{.Rollout}}{{with .Phase}} <small>{{.}}</small>{{end}}</td>
           <td class="r num{{if gt .Attempts 1}} hot{{end}}">{{.Attempts}}{{if .Retries}} <small class="faint">+{{.Retries}} retried</small>{{end}}</td>
           <td class="ago num">{{ago .CreatedAt}}<small>{{clock .CreatedAt}}</small></td>

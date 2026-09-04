@@ -616,3 +616,40 @@ func TestReconcileBatchKind(t *testing.T) {
 		t.Fatalf("batch reconcile = %v, %v", done, err)
 	}
 }
+
+func TestBatchReportsProgressPerBatch(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := setupBackfill(t)()
+
+	var partials []StatementEvent
+	var final StatementEvent
+	exec := New(conn, Options{}, WithObserver(func(e StatementEvent) {
+		if e.Partial {
+			partials = append(partials, e)
+
+			return
+		}
+		final = e
+	}))
+	if _, err := exec.Up(ctx, intBatchPlan()); err != nil {
+		t.Fatal(err)
+	}
+	if len(partials) != final.Batches {
+		t.Fatalf("partials = %d, batches = %d", len(partials), final.Batches)
+	}
+	if partials[0].RowsDone != batchSize || partials[0].RowsTotal != backfillRows {
+		t.Fatalf("first report = %d of %d rows", partials[0].RowsDone, partials[0].RowsTotal)
+	}
+	for i, p := range partials {
+		if p.Migration != final.Migration || p.Index != final.Index || p.Batches != i+1 {
+			t.Fatalf("report %d = %+v", i, p)
+		}
+		if i > 0 && p.RowsDone < partials[i-1].RowsDone {
+			t.Fatalf("report %d went backwards: %d", i, p.RowsDone)
+		}
+	}
+	if last := partials[len(partials)-1]; last.RowsDone != final.RowsDone {
+		t.Fatalf("last report = %d rows, final = %d", last.RowsDone, final.RowsDone)
+	}
+}

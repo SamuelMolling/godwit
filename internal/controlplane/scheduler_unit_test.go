@@ -82,3 +82,38 @@ func TestApplyMigrationsBadSQL(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestProgressThrottlesPartialReports(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	const id = "44444444-0000-0000-0000-000000000001"
+	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "postgres://x"}); err != nil {
+		t.Fatal(err)
+	}
+	queueRun(t, s, id, goodFiles())
+
+	report := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h"}, testLog).progress(ctx, id)
+	batch := engine.Statement{Batch: &engine.BatchSpec{}}
+	rows := func() int64 {
+		run, err := s.Run(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return run.Progress.RowsDone
+	}
+
+	report(engine.StatementEvent{Migration: "m", Index: 4, Statement: batch, RowsDone: 100, Batches: 1, Partial: true})
+	if got := rows(); got != 100 {
+		t.Fatalf("first report = %d rows", got)
+	}
+	report(engine.StatementEvent{Migration: "m", Index: 4, Statement: batch, RowsDone: 200, Batches: 2, Partial: true})
+	if got := rows(); got != 100 {
+		t.Fatalf("second report inside the interval = %d rows, want the first still", got)
+	}
+	report(engine.StatementEvent{Migration: "m", Index: 4, Statement: batch, RowsDone: 300, Batches: 3})
+	if got := rows(); got != 300 {
+		t.Fatalf("end of statement = %d rows", got)
+	}
+}

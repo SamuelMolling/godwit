@@ -109,8 +109,8 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 
 | Page | What it answers |
 |---|---|
-| `/ui/` | what is running, what needs a human, every run newest first; `?target=` filters |
-| `/ui/runs/{id}` | one run's timeline from `cp_audit`, its error, the plan it is bound to, and resume / park / confirm / revert |
+| `/ui/` | what is running, what needs a human, every run newest first; `?target=` filters. A running backfill carries its rows and batches under the state pill |
+| `/ui/runs/{id}` | one run's timeline from `cp_audit`, the statement it is on, a live *Backfill* block while a batched statement runs, its error, the plan it is bound to, and resume / park / confirm / revert |
 | `/ui/targets` | every registered target with its provider, `search_path`, timeouts, `require_plan`, applied count, ready plans, runs waiting for a human and open drift |
 | `/ui/targets/{name}` | one target: what its journal has applied (checksum mismatches flagged) and its repeatables, what the newest ready plan still has to apply, the ready plans themselves, the open drift with check and accept, and the registered settings |
 | `/ui/plans` | every stored plan newest first, filtered by target (`?target=`) and state (`?state=ready\|bound\|superseded`), with the key prefix, rollout, author, migration count and the run each one is bound to |
@@ -119,6 +119,8 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 | `/ui/diff` | the desired schema pasted as DDL against a target, answered with the up/down migration and the filenames to save it under |
 
 The rail and every target list come from `ListTargets`, so a registered target that was never migrated appears from the moment it is registered. The plan list asks `ListPlans` once per target. A plan that retention has swept renders as *pruned* rather than a `404`: the run keeps the record of what it applied.
+
+Both pages read `Run.progress`, which the executor reports after every committed batch and the scheduler saves at most once a second. Rows written and batches committed are counted; the total is `pg_class.reltuples` for the table taken once when the backfill started, so it is shown as `~n` and the percentage as `≈`, and a run can finish either side of it — the batch only touches rows that still need it. The 3s htmx poll the page already runs is what moves the numbers; a run that is not running shows no backfill block, because the progress it carries is the last statement it reported, not something still moving.
 
 `/ui/targets/{name}` takes its *pending* set from the target's newest **ready** plan, because the service holds no migration directory of its own; `godwit target status <name> --dir ./migrations` is the comparison against the files on disk, and it is also what flags a checksum mismatch.
 
