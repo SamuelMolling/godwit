@@ -15,6 +15,15 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0005](0005-revert-scoped-to-the-ledger.md) | `revert` undoes what a run applied, read from the ledger, never the directory | #68, #71 |
 | [0006](0006-repeatable-objects-are-desired.md) | What a repeatable declares is part of the desired schema | #73 |
 
+## Open questions
+
+`open/` holds questions that are argued but **not decided**. They are not records: nothing in them
+binds the code, and they carry no number until a decision is taken, in either direction.
+
+| Question | Proposes |
+|---|---|
+| [Renaming columns and tables](open/renaming-columns-and-tables.md) | teach the safe path and fix `godwit diff`; do not build a `rename-column` directive |
+
 ## Standing constraints these records assume
 
 - **The journal is the truth.** Progress lives in the target database, committed with the DDL. Every mechanism below either uses it or explains why it cannot.
