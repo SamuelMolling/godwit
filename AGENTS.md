@@ -4,7 +4,7 @@ Instructions for coding agents working in this repository.
 
 ## What this is
 
-godwit is a crash-safe PostgreSQL migration service written in Go: a statement-level journal in the target database, a leased scheduler that survives replica death, and a connect (gRPC + JSON) API. Read `README.md` for the feature map before touching anything.
+godwit is a crash-safe PostgreSQL migration service written in Go: a statement-level journal in the target database, a leased scheduler that survives replica death, and a connect (gRPC + JSON) API. Read `README.md` for the shape of it and `docs/` for the feature map before touching anything.
 
 ## Layout
 
@@ -36,4 +36,4 @@ Tests use testcontainers (postgres:17-alpine); Docker must be running.
 - One feature per PR; merge before starting the next. Never change `.github/workflows/ci.yml`.
 - English everywhere: code, comments, commits, PRs.
 - `DESIGN.md` and `PLAN.md` are local and gitignored — never commit them or mention them in code.
-- A new capability lands with its store migration (`internal/controlplane/schema.go`), proto change, handler, tests at store/scheduler/API level, README row and demo step.
+- A new capability lands with its store migration (`internal/controlplane/schema.go`), proto change, handler, tests at store/scheduler/API level, demo step, and its documentation in `docs/`. The README is a front door, not a manual: a row in *What's inside* is **one line** pointing at the page that explains the feature, and most features need no new row at all.
