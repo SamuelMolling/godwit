@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -25,9 +26,17 @@ var ErrMigrationFiles = errors.New("migration files failed to replay")
 // ErrValidationDisabled marks a diff against the committed files on a service started with validation off.
 var ErrValidationDisabled = errors.New("diffing against the committed files needs validation, which is disabled on this service")
 
+// ErrRepeatablesUnknown marks a diff whose request carried no migration files while the target records
+// repeatable migrations, so the objects those files build cannot be told from objects nothing manages.
+var ErrRepeatablesUnknown = errors.New("target records repeatable migrations and the request carried no migration files")
+
+// ErrRepeatableSchema marks a repeatable migration that does not build on the desired schema.
+var ErrRepeatableSchema = errors.New("repeatable migration does not build on the desired schema")
+
 var (
 	parseDSN     = pgx.ParseConfig
 	generatePlan = diff.Generate
+	listObjects  = scratchObjects
 )
 
 // DiffBase is the schema a desired one is compared against.
@@ -54,6 +63,8 @@ type SchemaDiff struct {
 	Drift    []string
 	// Retained names the retired columns whose drop was taken out of UpSQL.
 	Retained []string
+	// RepeatableObjects names what the request's repeatable migrations build on the desired schema.
+	RepeatableObjects []string
 }
 
 // keepRetired drops the statements that would remove a column a change-type kept as its rollback; the
@@ -125,6 +136,13 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string, base DiffBase, fi
 	if err != nil {
 		return SchemaDiff{}, err
 	}
+	if len(files) == 0 && len(obs.Repeatables) > 0 {
+		return SchemaDiff{}, fmt.Errorf("%w: %s", ErrRepeatablesUnknown, recordedRepeatables(obs.Repeatables))
+	}
+	reps, err := repeatablesIn(files)
+	if err != nil {
+		return SchemaDiff{}, err
+	}
 	out := SchemaDiff{Observed: obs}
 	if d.history != nil {
 		val, err := d.history.Validate(ctx, target, nil, obs.SearchPath)
@@ -159,6 +177,9 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string, base DiffBase, fi
 	defer func() { _ = desired.Close(ctx) }()
 	if _, err := desired.ConnPool.ExecContext(ctx, ddl); err != nil {
 		return SchemaDiff{}, fmt.Errorf("%w: %w", ErrDesiredSchema, err)
+	}
+	if out.RepeatableObjects, err = buildRepeatables(ctx, desired.ConnPool, reps); err != nil {
+		return SchemaDiff{}, err
 	}
 
 	if out.UpSQL, err = generate(ctx, from, desired.ConnPool, factory); err != nil {
@@ -209,6 +230,87 @@ func (d *Differ) filesBase(ctx context.Context, factory *scratchFactory, target,
 	}
 
 	return scratch.ConnPool, done, nil
+}
+
+// repeatablesIn loads the R__ pairs of a request, in the order a run applies them; the versioned files are
+// left alone so a directory a run would refuse still diffs.
+func repeatablesIn(files map[string]string) ([]engine.Migration, error) {
+	sub := map[string]string{}
+	for name, body := range files {
+		if strings.HasPrefix(name, engine.RepeatablePrefix) {
+			sub[name] = body
+		}
+	}
+	if len(sub) == 0 {
+		return nil, nil
+	}
+	migs, err := MigrationsFromFiles(sub)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMigrationFiles, err)
+	}
+
+	return migs, nil
+}
+
+func recordedRepeatables(reps []engine.Repeatable) string {
+	names := make([]string, 0, len(reps))
+	for _, r := range reps {
+		names = append(names, engine.RepeatablePrefix+r.Name)
+	}
+
+	return strings.Join(names, ", ")
+}
+
+// buildRepeatables applies the request's repeatable migrations on the desired schema, so the objects they
+// declare are on both sides of the comparison, and names the objects that appeared.
+func buildRepeatables(ctx context.Context, db *sql.DB, reps []engine.Migration) ([]string, error) {
+	if len(reps) == 0 {
+		return nil, nil
+	}
+	before, err := listObjects(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range reps {
+		if _, err := db.ExecContext(ctx, r.UpSQL); err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrRepeatableSchema, r.UpFile(), err)
+		}
+	}
+	after, err := listObjects(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	built := make([]string, 0, len(after))
+	for _, o := range after {
+		if !slices.Contains(before, o) {
+			built = append(built, o)
+		}
+	}
+
+	return built, nil
+}
+
+const objectsSQL = `SELECT coalesce(string_agg(o, chr(10) ORDER BY o), '') FROM (
+	SELECT n.nspname || '.' || c.relname AS o
+	  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	 WHERE n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
+	UNION
+	SELECT n.nspname || '.' || p.proname
+	  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+	 WHERE n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
+	UNION
+	SELECT n.nspname || '.' || t.tgname
+	  FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+	 WHERE NOT t.tgisinternal AND n.nspname NOT IN ('pg_catalog', 'pg_toast', 'information_schema')
+) objects`
+
+func scratchObjects(ctx context.Context, db *sql.DB) ([]string, error) {
+	var list string
+	if err := db.QueryRowContext(ctx, objectsSQL).Scan(&list); err != nil {
+		return nil, fmt.Errorf("list scratch objects: %w", err)
+	}
+
+	return slices.DeleteFunc(strings.Split(list, "\n"), func(o string) bool { return o == "" }), nil
 }
 
 func generate(ctx context.Context, from, to *sql.DB, factory tempdb.Factory) (string, error) {

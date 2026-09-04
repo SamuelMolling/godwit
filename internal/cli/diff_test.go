@@ -164,6 +164,16 @@ func TestDiffErrors(t *testing.T) {
 		}
 	}
 
+	readOnly := t.TempDir()
+	if err := os.Chmod(readOnly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readOnly, 0o700) })
+	if code, _, errOut := runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--name", "x", "--dir", readOnly); code != 1 ||
+		!strings.Contains(errOut, "permission denied") {
+		t.Fatalf("read-only dir: code = %d, stderr = %q", code, errOut)
+	}
+
 	stub.err = connect.NewError(connect.CodeInvalidArgument, errors.New("desired schema failed to apply: type nosuchtype does not exist"))
 	if code, _, errOut := runCLI(append(base, "--name", "x")...); code != 1 || !strings.Contains(errOut, "type nosuchtype does not exist") {
 		t.Fatalf("service error: code = %d, stderr = %q", code, errOut)
@@ -192,7 +202,7 @@ func TestDiffPrisma(t *testing.T) {
 	stub := diffStub()
 	url := startStub(t, stub)
 	dir := t.TempDir()
-	schema := filepath.Join(dir, "schema.prisma")
+	schema := filepath.Join(t.TempDir(), "schema.prisma")
 	if err := os.WriteFile(schema, []byte(prismaSchema), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -267,12 +277,12 @@ func TestDiffSchemaSourceFromConfig(t *testing.T) {
 	stub := diffStub()
 	url := startStub(t, stub)
 	repo := configRepo(t, map[string]string{
-		"a/godwit.yaml":     "target: app\nschema_source:\n  kind: file\n  path: db/schema.sql\n",
-		"a/db/schema.sql":   "CREATE TABLE a (id int);\n",
-		"a/migrations/keep": "",
-		"b/godwit.yaml":     "target: b_app\nschema_source:\n  kind: file\n  path: schema.sql\n",
-		"b/schema.sql":      "CREATE TABLE b (id int);\n",
-		"b/sub/keep":        "",
+		"a/godwit.yaml":      "target: app\nschema_source:\n  kind: file\n  path: db/schema.sql\n",
+		"a/db/schema.sql":    "CREATE TABLE a (id int);\n",
+		"a/migrations/.keep": "",
+		"b/godwit.yaml":      "target: b_app\nschema_source:\n  kind: file\n  path: schema.sql\n",
+		"b/schema.sql":       "CREATE TABLE b (id int);\n",
+		"b/sub/keep":         "",
 	})
 
 	wd := chdir(t, filepath.Join(repo, "a"))
@@ -506,5 +516,43 @@ func TestDiffSchemaSourceKindsFromConfig(t *testing.T) {
 	want := manage + " showmigrations --plan --no-color\n" + manage + " sqlmigrate orders 0001_initial --no-color\n"
 	if calls, err := os.ReadFile(pythonLog); err != nil || string(calls) != want {
 		t.Fatalf("django: calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestDiffSendsTheMigrationDirectory(t *testing.T) {
+	t.Parallel()
+	stub := diffStub()
+	stub.diff.RepeatableObjects = []string{"public.t_totals"}
+	url := startStub(t, stub)
+	dir, schema := t.TempDir(), schemaFile(t)
+	for name, body := range map[string]string{
+		"20260901120001_t.up.sql":   "CREATE TABLE t (id int);",
+		"20260901120001_t.down.sql": "DROP TABLE t;",
+		"R__t_totals.up.sql":        "CREATE OR REPLACE VIEW t_totals AS SELECT id FROM t;",
+		"R__t_totals.down.sql":      "DROP VIEW IF EXISTS t_totals;",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	sent := map[string]string{}
+	for _, f := range stub.diffed.Files {
+		sent[f.Name] = f.Body
+	}
+	if len(sent) != 4 || sent["R__t_totals.up.sql"] != "CREATE OR REPLACE VIEW t_totals AS SELECT id FROM t;" {
+		t.Fatalf("files sent = %v", sent)
+	}
+	if !strings.Contains(out, "declared by repeatable migrations, so the desired schema keeps them: public.t_totals\n") {
+		t.Fatalf("out = %q", out)
+	}
+
+	code, out, _ = runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--dry-run", "--json")
+	if m := decodeJSON(t, out); code != 0 || m["repeatable_objects"].([]any)[0] != "public.t_totals" {
+		t.Fatalf("code = %d, json = %v", code, m)
 	}
 }

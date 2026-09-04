@@ -180,7 +180,8 @@ call Diff '{"target":"app","schema":"CREATE TABLE orders (id bigserial PRIMARY K
  "downSql":"ALTER TABLE \"public\".\"orders\" DROP COLUMN \"status\";",
  "statements":[{"sql":"ALTER TABLE \"public\".\"orders\" ADD COLUMN ...","hazards":[]}],
  "observed":{"historyHash":"...","schemaFingerprint":"...","appliedCount":"2","newestApplied":"20260901120500","at":"..."},
- "drift":""}
+ "drift":"",
+ "repeatableObjects":[]}
 ```
 
 `schema` is the whole desired database as DDL; it is applied on an empty scratch database with the target's `search_path`. `upSql` is the migration from the base to it, `downSql` the way back, both empty when they already match. `statements` classifies `upSql` with hazards and recipes; `drift` holds the `+`/`-` lines between the target's recorded history and its live schema (empty when validation is off). `invalid_argument` with `desired schema failed to apply: <postgres error>` when the DDL does not apply; `unimplemented` on a service started without a control-plane pool.
@@ -194,7 +195,7 @@ call Diff '{"target":"app","base":"DIFF_BASE_FILES","schema":"CREATE TABLE t (id
 # {"target":"app","upSql":"ALTER TABLE \"public\".\"t\" ADD COLUMN \"email\" text;", ...}
 ```
 
-`files` is required by `DIFF_BASE_FILES` and ignored otherwise. `invalid_argument` with `migration files failed to replay: <reason>` when they do not load or do not apply on the history; `failed_precondition` on a service started with validation disabled, which has no replay to build the base from.
+`files` is required by `DIFF_BASE_FILES`. Under `DIFF_BASE_LIVE` it is optional, but its `R__` pairs are always applied on the desired schema so that what a repeatable declares stays out of the migration, and `repeatable_objects` in the response names what they built; a request with no `files` at all against a target whose `godwit.repeatables` has rows is `failed_precondition` naming them, because the diff would otherwise propose dropping every one. A repeatable that does not apply on the desired schema is `invalid_argument` with `repeatable migration does not build on the desired schema: <file>: <postgres error>`. `invalid_argument` with `migration files failed to replay: <reason>` when they do not load or do not apply on the history; `failed_precondition` on a service started with validation disabled, which has no replay to build the base from.
 
 ### CheckDrift — operator
 

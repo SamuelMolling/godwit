@@ -289,7 +289,8 @@ message DiffRequest {
   string schema = 2;
   // Defaults to DIFF_BASE_LIVE.
   DiffBase base = 3;
-  // The committed migration directory, required by DIFF_BASE_FILES and ignored otherwise.
+  // The committed migration directory. Required by DIFF_BASE_FILES; under DIFF_BASE_LIVE its R__ pairs are
+  // built on the desired schema, and it is required whenever the target records repeatable migrations.
   repeated MigrationFile files = 4;
 }
 
@@ -304,6 +305,9 @@ message DiffResponse {
   PlanObservation observed = 5;
   // Schema changes on the target that no run made, as +/- lines; they are part of up_sql's starting point.
   string drift = 6;
+  // The objects the request's repeatable migrations build; they are part of the desired schema, so up_sql
+  // neither drops nor recreates them while an R__ file still declares them.
+  repeated string repeatable_objects = 7;
 }
 
 message CheckDriftRequest {

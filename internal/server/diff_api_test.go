@@ -230,3 +230,37 @@ func tableExists(t *testing.T, conn *pgx.Conn, name string) bool {
 
 	return present
 }
+
+func TestDiff_Repeatables(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client, _, _ := diffTarget(t, false)
+	repeatable := []*godwitv1.MigrationFile{
+		{Name: "R__t_totals.up.sql", Body: "CREATE OR REPLACE VIEW t_totals AS SELECT id FROM t;"},
+		{Name: "R__t_totals.down.sql", Body: "DROP VIEW IF EXISTS t_totals;"},
+	}
+	runToSuccess(t, client, append(orderedFiles()[:4:4], repeatable...), nil)
+	desired := "CREATE TABLE t (id int, a int);"
+
+	_, err := client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{Target: "app", Schema: desired}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "R__t_totals") {
+		t.Fatalf("without the migration directory: %v", err)
+	}
+
+	res, err := client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: desired, Files: append(orderedFiles()[:4:4], repeatable...),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Msg.UpSql != "" || len(res.Msg.RepeatableObjects) != 1 || res.Msg.RepeatableObjects[0] != "public.t_totals" {
+		t.Fatalf("up = %q, repeatable objects = %v", res.Msg.UpSql, res.Msg.RepeatableObjects)
+	}
+
+	res, err = client.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{
+		Target: "app", Schema: desired, Files: orderedFiles()[:4],
+	}))
+	if err != nil || !strings.Contains(res.Msg.UpSql, `DROP VIEW "public"."t_totals"`) {
+		t.Fatalf("deleted R__ file: up = %q, err = %v", res.Msg.UpSql, err)
+	}
+}

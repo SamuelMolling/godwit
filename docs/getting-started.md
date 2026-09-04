@@ -44,7 +44,7 @@ CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FRO
 DROP VIEW IF EXISTS order_stats;
 ```
 
-The down side runs only when the run that applied the repeatable is reverted; godwit does not keep previous bodies, so roll forward by editing the file. See [concepts: repeatable migrations](concepts.md#repeatable-migrations).
+The down side runs only when the run that applied the repeatable is reverted; godwit does not keep previous bodies, so roll forward by editing the file. See [concepts: repeatable migrations](concepts.md#repeatable-migrations). `godwit diff` reads these files too, so the objects they declare are part of the desired schema and never come back as a proposed drop.
 
 ```sql
 -- 20260901120000_create_orders.up.sql
@@ -269,7 +269,7 @@ wrote db/migrations/20260902103000_orders_status.up.sql
 wrote db/migrations/20260902103000_orders_status.down.sql
 ```
 
-The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift` and `files`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
+The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift`, `files` and `repeatable_objects`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
 
 `--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state. Four other flags skip the dump and render the model with the project's own toolchain, next to the repository; the service only ever receives DDL.
 
@@ -292,6 +292,8 @@ godwit diff --target app --exec 'atlas schema inspect --url env://dev --format "
 `--gorm` runs `go run <package>` and takes its stdout: GORM's dry-run migrator is a Go API over your model structs, not a CLI, so the package stays yours — copy [examples/gorm/schema/main.go](../examples/gorm/schema/main.go), point it at your models, and godwit reports a build failure with the package name and the compiler's stderr. `--django` runs `python manage.py showmigrations --plan --no-color` and one `sqlmigrate` per migration, concatenated in plan order with Django's `BEGIN;`/`COMMIT;` wrappers dropped; a `DATABASES` `ENGINE` that is not PostgreSQL is refused before any process starts, and because `sqlmigrate` introspects over the configured connection, `DATABASES` must point at a reachable PostgreSQL (`--django-database` picks the alias). `--go-bin` and `--python-bin` (or `GODWIT_GO_BIN` / `GODWIT_PYTHON_BIN`) name the interpreter when it is not on `PATH`.
 
 The ORM keeps owning the model; godwit keeps owning what runs, when, under which lock and with which hazards acknowledged. The file must describe the whole database: anything the target has that the file does not is a `DROP` in the generated `up`, so a Django dump keeps its `django_*` tables and a Prisma project that also has `_prisma_migrations` on the target declares it too.
+
+The one exception is what a repeatable declares. `godwit diff` sends `--dir` to the service and applies its `R__` migrations on top of the desired schema, so an ORM team that also keeps a couple of views or functions in `R__` files gets them left alone instead of dropped — and `lint`'s `E005` stops firing on them for good. Delete the `R__` file when you want the object gone: then nothing declares it and the next diff proposes the drop. On a target that has run repeatables, a diff that cannot see the directory is refused rather than answered with those drops ([concepts: objects a repeatable declares](concepts.md#objects-a-repeatable-declares)).
 
 ## 4. Stop repeating flags
 
