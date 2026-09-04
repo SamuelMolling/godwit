@@ -216,7 +216,7 @@ Request size, file count, page size and concurrency are bounded, and the knobs a
 
 ## Network
 
-- The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it (the Helm Ingress needs an h2c- or gRPC-capable class, or a service mesh); the CLI accepts `https://` URLs.
+- The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it — whatever publishes it, an Ingress class or a Gateway API implementation, has to speak h2c or gRPC to the backend; the CLI accepts `https://` URLs.
 - `/metrics`, `/healthz` and `/readyz` are unauthenticated. Scope them to the cluster network; `/metrics` label values include target names.
 - The service dials out to: the store, every target, the scratch server, Vault, the webhook URL, `slack.com`. Egress rules need those and nothing else.
 - Replicas do not talk to each other; the store is the only shared state.

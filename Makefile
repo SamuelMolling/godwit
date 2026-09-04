@@ -34,9 +34,11 @@ HELM_CHART := deploy/helm/godwit
 
 helm-lint:
 	helm lint $(HELM_CHART)
-	helm lint $(HELM_CHART) -f $(HELM_CHART)/ci/full-values.yaml
 	helm template godwit $(HELM_CHART) > /dev/null
-	helm template godwit $(HELM_CHART) -f $(HELM_CHART)/ci/full-values.yaml > /dev/null
+	for f in $(HELM_CHART)/ci/*-values.yaml; do \
+	  helm lint $(HELM_CHART) -f $$f || exit 1; \
+	  helm template godwit $(HELM_CHART) -f $$f > /dev/null || exit 1; \
+	done
 
 release-snapshot:
 	goreleaser release --snapshot --clean --skip=publish

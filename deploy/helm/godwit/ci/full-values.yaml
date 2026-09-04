@@ -1,4 +1,6 @@
 replicaCount: 3
+commonLabels:
+  app.kubernetes.io/part-of: platform
 image:
   repository: registry.example.com/platform/godwit
   tag: 0.0.1-rc1
@@ -60,6 +62,30 @@ extraVolumeMounts:
   - name: orders-dsn
     mountPath: /secrets/orders
     readOnly: true
+initContainers:
+  - name: wait-for-store
+    image: busybox:1.36
+    command: ["sh", "-c", "sleep 1"]
+extraContainers:
+  - name: sidecar
+    image: busybox:1.36
+    command: ["sh", "-c", "sleep infinity"]
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: godwit-extra-map
+    data:
+      key: value
+  - |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ include "godwit.fullname" . }}-extra-string
+      labels:
+        {{- include "godwit.labels" . | nindent 4 }}
+    data:
+      namespace: {{ .Release.Namespace }}
 serviceAccount:
   name: godwit-sa
   annotations:
@@ -119,3 +145,81 @@ topologySpreadConstraints:
       matchLabels:
         app.kubernetes.io/name: godwit
 podAntiAffinity: hard
+priorityClassName: platform-critical
+revisionHistoryLimit: 3
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: internal
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - godwit.example.com
+  labels:
+    gateway: internal
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: godwit.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ui
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: godwit-canary
+          port: 80
+          weight: 10
+targets:
+  enabled: true
+  server: http://godwit.godwit.svc:9000
+  tokenSecret:
+    name: godwit-admin
+    key: GODWIT_ADMIN_TOKEN
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  podAnnotations:
+    sidecar.istio.io/inject: "false"
+  podLabels:
+    job: register-targets
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  extraEnv:
+    - name: HTTPS_PROXY
+      value: http://proxy:3128
+  extraVolumes:
+    - name: targets
+      secret:
+        secretName: godwit-targets
+  extraVolumeMounts:
+    - name: targets
+      mountPath: /secrets/targets
+      readOnly: true
+  list:
+    - name: orders
+      provider: vault
+      vaultPath: secret/data/orders/db
+      vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
+      lockTimeout: 5s
+      statementTimeout: 15m
+      requirePlan: true
+      searchPath: app,public
+      keepOld: false
+      extraArgs: ["--json"]
+    - name: billing
+      provider: kubernetes
+      secretPath: /secrets/targets/billing
+    - name: legacy
+      provider: static
+      dsnSecret:
+        name: legacy-dsn
+        key: dsn
