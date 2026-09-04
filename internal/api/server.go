@@ -2,6 +2,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -663,8 +664,26 @@ func (s *Server) GetRun(ctx context.Context, req *connect.Request[godwitv1.GetRu
 	if err != nil {
 		return nil, rpcErr(err)
 	}
+	out := &godwitv1.GetRunResponse{Run: toProto(r), Applied: appliedToProto(applied)}
+	if req.Msg.IncludeFiles {
+		files, err := s.store.RunFiles(ctx, r.ID)
+		if err != nil {
+			return nil, rpcErr(err)
+		}
+		out.Files = filesToProto(files)
+	}
 
-	return connect.NewResponse(&godwitv1.GetRunResponse{Run: toProto(r), Applied: appliedToProto(applied)}), nil
+	return connect.NewResponse(out), nil
+}
+
+func filesToProto(files map[string]string) []*godwitv1.MigrationFile {
+	out := make([]*godwitv1.MigrationFile, 0, len(files))
+	for name, body := range files {
+		out = append(out, &godwitv1.MigrationFile{Name: name, Body: body})
+	}
+	slices.SortFunc(out, func(a, b *godwitv1.MigrationFile) int { return cmp.Compare(a.Name, b.Name) })
+
+	return out
 }
 
 func appliedToProto(applied []controlplane.RunMigration) []*godwitv1.RunMigration {

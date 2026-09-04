@@ -119,7 +119,7 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 | `/ui/plans` | every stored plan newest first, filtered by target (`?target=`) and state (`?state=ready\|bound\|superseded`), with the key prefix, rollout, author, migration count and the run each one is bound to |
 | `/ui/plans/{id}` | one plan in full: statements per migration grouped by phase, every hazard with its recipe, `already applied by hand` with the effect it recorded, the directives a migration carried and the expansion they produced, the observation the plan was taken against, and the drift the target had at that moment |
 | `/ui/drift` | drift events per target, with check and accept-baseline |
-| `/ui/diff` | the desired schema pasted as DDL against a target, answered with the up/down migration and the filenames to save it under |
+| `/ui/diff` | the desired schema pasted as DDL against a target, answered with the up/down migration and the filenames to save it under; on a target that records repeatable migrations it supplies the `R__` pairs from the newest stored plan, the run that last succeeded, or boxes on the page |
 
 The rail and every target list come from `ListTargets`, so a registered target that was never migrated appears from the moment it is registered. The plan list asks `ListPlans` once per target. A plan that retention has swept renders as *pruned* rather than a `404`: the run keeps the record of what it applied.
 

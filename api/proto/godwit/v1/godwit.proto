@@ -263,10 +263,15 @@ message Plan {
 
 message GetPlanRequest {
   string plan_id = 1;
+  // Also return the migration files stored with the plan.
+  bool include_files = 2;
 }
 
 message GetPlanResponse {
   Plan plan = 1;
+  // The migration directory the plan was taken from, when include_files is set: a snapshot of that
+  // moment, not of the repository now. By name.
+  repeated MigrationFile files = 2;
 }
 
 message ListPlansRequest {
@@ -457,12 +462,17 @@ message ListAuditResponse {
 
 message GetRunRequest {
   string run_id = 1;
+  // Also return the migration files the run carried.
+  bool include_files = 2;
 }
 
 message GetRunResponse {
   Run run = 1;
   // What the run actually put into the target's history, in the order it applied them.
   repeated RunMigration applied = 2;
+  // The migration directory the run carried, when include_files is set: a snapshot of that moment,
+  // not of the repository now. By name.
+  repeated MigrationFile files = 3;
 }
 
 // RunMigration is one migration a run applied, as recorded in the control plane's ledger.

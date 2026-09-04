@@ -227,3 +227,42 @@ func TestSweep_KeepsReady(t *testing.T) {
 		t.Fatalf("ready plans = %d", n)
 	}
 }
+
+func TestGetPlanAndRun_IncludeFiles(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	storeDSN := newDatabase(t, "st")
+	client := newClient(startService(t, storeDSN, "r1", nil), "")
+	registerTarget(t, client, newDatabase(t, "tg"))
+	all := orderedFiles()[:2]
+
+	stored := persistPlan(t, client, all, nil)
+	plan, err := client.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: stored.PlanId}))
+	if err != nil || len(plan.Msg.Files) != 0 {
+		t.Fatalf("files must be opt-in: %+v, err = %v", plan.Msg.Files, err)
+	}
+	plan, err = client.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: stored.PlanId, IncludeFiles: true}))
+	if err != nil || len(plan.Msg.Files) != 2 ||
+		plan.Msg.Files[0].Name != all[1].Name || plan.Msg.Files[1].Body != all[0].Body {
+		t.Fatalf("plan files = %+v, err = %v", plan.Msg.Files, err)
+	}
+
+	created, err := createRun(t, client, all, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, client, created.RunId)
+	run, err := client.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: created.RunId, IncludeFiles: true}))
+	if err != nil || len(run.Msg.Files) != 2 || run.Msg.Files[0].Name != all[1].Name {
+		t.Fatalf("run files = %+v, err = %v", run.Msg.Files, err)
+	}
+
+	execStore(t, storeDSN, "DROP TABLE cp_plan_files")
+	if _, err := client.GetPlan(ctx, connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: stored.PlanId, IncludeFiles: true})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("missing plan files table: %v", err)
+	}
+	execStore(t, storeDSN, "DROP TABLE cp_run_files")
+	if _, err := client.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: created.RunId, IncludeFiles: true})); connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("missing run files table: %v", err)
+	}
+}

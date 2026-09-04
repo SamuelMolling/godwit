@@ -133,6 +133,8 @@ call GetRun '{"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c"}'
 
 `GetRun` also returns `applied`: the ledger of what the run actually put into the target's history, in the order it applied them, each with `migration`, `appliedAt`, `held` (its contract phase never ran) and `revertedBy` (the revert that undid it). It is what `RevertRun` is scoped to.
 
+`{"runId":"...","includeFiles":true}` also returns `files`: the migration directory the run carried, by name. It is a snapshot of the directory as it was when the run was created, not of the repository now.
+
 `Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan), `progress` (`migration`, `statement`, `phase`, `rowsDone`, `rowsTotal`, `batches`: what the statement being executed last reported, written under the heartbeat so a long backfill is visible while it runs, and cleared by every transition that starts or ends an attempt — a run that is not running has none).
 
 ### ListRuns — read
@@ -264,6 +266,8 @@ journal. `appliedCount` counts the distinct versions the target's runs applied t
 ### GetPlan — read
 
 `{"planId":"..."}` returns one stored plan: `id`, `target`, `key`, `rollout`, `state` (`ready`, `bound`, `superseded`), `observed` (history hash, schema fingerprint, applied count, newest applied, time), `drift`, `migrations` (statements with hazards and recipes, phase, applied), `validated`, `acknowledgedHazards`, `allowOutOfOrder`, `createdBy`, `source`, `createdAt`, `runId` (the run that bound it) and `supersededBy`. `not_found` after `--plan-retention` deleted it; the `run.create` audit entry keeps `plan=<id>`.
+
+`{"planId":"...","includeFiles":true}` also returns `files`: the migration directory the plan was taken from, by name. Like the run's, it is a snapshot of that moment, not of the repository now. `migrations` is only the **pending** set, so a repeatable whose content already matched the target is absent from it and present in `files`.
 
 ### ListPlans — read
 
