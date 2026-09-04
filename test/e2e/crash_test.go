@@ -8,12 +8,6 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
 
-const (
-	v1 = 20260901120000
-	v2 = 20260901120001
-	v3 = 20260901120002
-)
-
 var usersTable = migration{v1, "users", "CREATE TABLE users (id bigint PRIMARY KEY, email text);", "DROP TABLE users;"}
 
 func TestKillMidTransactionalStatement(t *testing.T) {

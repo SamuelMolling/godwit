@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build e2e || load || chaos
 
 package e2e
 
@@ -26,6 +26,12 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+)
+
+const (
+	v1 = 20260901120000
+	v2 = 20260901120001
+	v3 = 20260901120002
 )
 
 const (
@@ -91,12 +97,15 @@ func run(m *testing.M) int {
 type rig struct {
 	t        *testing.T
 	storeDSN string
+	storeDB  string
 	appDSN   string
 	appDB    string
 	target   string
 	workdir  string
 	mu       sync.Mutex
 	replicas []*replica
+	// prefer is the replica every client call goes to, for tests that island one of them.
+	prefer *replica
 }
 
 func newRig(t *testing.T, replicas int) *rig {
@@ -104,6 +113,7 @@ func newRig(t *testing.T, replicas int) *rig {
 	name := fmt.Sprintf("e2e%d", rigSeq.Add(1))
 	r := &rig{
 		t:        t,
+		storeDB:  "store_" + name,
 		storeDSN: createDatabase(t, "store_"+name),
 		appDSN:   createDatabase(t, "app_"+name),
 		appDB:    "app_" + name,
@@ -133,17 +143,23 @@ type replica struct {
 }
 
 func (r *rig) start() {
+	r.t.Helper()
+	r.startWith()
+}
+
+func (r *rig) startWith(extra ...string) *replica {
 	t := r.t
 	t.Helper()
 	rep := &replica{logs: &logBuffer{}}
-	rep.cmd = exec.Command(bin, "serve",
+	rep.cmd = exec.Command(bin, append([]string{
+		"serve",
 		"--store-dsn", r.storeDSN,
 		"--listen", "127.0.0.1:0",
 		"--lease-ttl", leaseTTL.String(),
 		"--tick-interval", "500ms",
 		"--max-attempts", "3",
 		"--drift-interval", "2s",
-	)
+	}, extra...)...)
 	rep.cmd.Env = append(os.Environ(), "GODWIT_MASTER_KEY="+strings.Repeat("ab", 32), "GODWIT_TOKENS="+actor+":admin:"+token)
 	rep.cmd.Stderr = rep.logs
 	if err := rep.cmd.Start(); err != nil {
@@ -166,6 +182,8 @@ func (r *rig) start() {
 	r.mu.Lock()
 	r.replicas = append(r.replicas, rep)
 	r.mu.Unlock()
+
+	return rep
 }
 
 func (r *rig) kill(rep *replica) {
@@ -194,6 +212,9 @@ func (r *rig) alive() *replica {
 	r.t.Helper()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.prefer != nil && !r.prefer.dead {
+		return r.prefer
+	}
 	for _, rep := range r.replicas {
 		if !rep.dead {
 			return rep
@@ -301,8 +322,13 @@ func (r *rig) mustCLI(args ...string) string {
 
 func (r *rig) addTarget(name string) {
 	r.t.Helper()
+	r.addTargetDSN(name, r.appDSN)
+}
+
+func (r *rig) addTargetDSN(name, dsn string) {
+	r.t.Helper()
 	r.target = name
-	r.mustCLI("target", "add", name, "--provider", "static", "--dsn", r.appDSN)
+	r.mustCLI("target", "add", name, "--provider", "static", "--dsn", dsn)
 }
 
 func (r *rig) migrate(dir string, extra ...string) (int, string, string) {
@@ -506,6 +532,13 @@ func await[T any](t *testing.T, timeout time.Duration, what string, fn func() (T
 func waitUntil(t *testing.T, timeout time.Duration, what string, fn func() bool) {
 	t.Helper()
 	await(t, timeout, what, func() (struct{}, bool) { return struct{}{}, fn() })
+}
+
+func columnExists(t *testing.T, dsn, table, column string) bool {
+	t.Helper()
+
+	return query[bool](t, dsn,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2)`, table, column)
 }
 
 func expectContains(t *testing.T, text string, wants ...string) {

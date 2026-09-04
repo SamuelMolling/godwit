@@ -43,7 +43,8 @@ func classify(err error) (string, bool) {
 		return ReasonTimeout, true
 	}
 	var netErr net.Error
-	if errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	if errors.As(err, &netErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, pgconn.ErrConnClosed) {
 		return ReasonNetwork, true
 	}
 

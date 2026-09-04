@@ -89,7 +89,7 @@ Also: [examples](examples/README.md) (copy-ready pipelines), [deploy/helm/godwit
 
 ## Testing
 
-`make all` runs lint, proto lint, the unit and in-process integration suites at 100% coverage, and the build. `make e2e` drives the built binary through the CLI against PostgreSQL in Docker, SIGKILLing replicas mid-statement, mid-index-build, under lock timeouts, across expand/contract, reverts and drift; it needs Docker and is not part of CI.
+`make all` runs lint, proto lint, the unit and in-process integration suites at 100% coverage, and the build. `make e2e` drives the built binary through the CLI against PostgreSQL in Docker, SIGKILLing replicas mid-statement, mid-index-build, under lock timeouts, across expand/contract, reverts and drift; it needs Docker and is not part of CI. `make load` measures godwit at size — a backfill over ten million rows, a target with a thousand migrations, many targets at once — and `make chaos` kills it in the gaps the crash rig cannot reach: mid-batch, between the intent and the statement, between the statement and the journal, inside `finalize`, and with the store or the target severed at the network. Both print their numbers; [docs/testing.md](docs/testing.md) has the last set and the knobs.
 
 ## Status
 

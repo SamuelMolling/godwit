@@ -149,6 +149,28 @@ func TestStatementFailureMarksRun(t *testing.T) {
 	}
 }
 
+func TestResumeRefusesAPlanShorterThanItsJournal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+
+	m := Migration{
+		Version: 1, Name: "wide", Checksum: "c",
+		UpSQL: "CREATE TABLE a (id int);\nCREATE TABLE b (id int);\nSELECT 1/0;", DownSQL: "SELECT 1;",
+	}
+	exec := New(conn, Options{})
+	if _, err := exec.Up(ctx, buildPlanT(t, m, DirectionUp)); err == nil {
+		t.Fatal("want the third statement to fail")
+	}
+
+	shrunk := m
+	shrunk.UpSQL = "CREATE TABLE a (id int);"
+	if _, err := exec.Up(ctx, buildPlanT(t, shrunk, DirectionUp)); err == nil ||
+		!strings.Contains(err.Error(), "refusing to resume") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCrashResumeTx(t *testing.T) {
 	t.Parallel()
 

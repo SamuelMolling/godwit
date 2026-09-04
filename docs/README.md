@@ -13,6 +13,7 @@ Plain markdown, one file per concern. Everything here describes the code on `mai
 | [API](api.md) | You call the connect endpoint directly: every RPC, the scope it needs, request and response shapes, curl examples. |
 | [Security](security.md) | Tokens and scopes, the master key and how to rotate it, credential providers, what is and is not logged, network exposure. |
 | [Comparison](comparison.md) | You are choosing between godwit and Flyway, Liquibase or Atlas and want the honest list, including what godwit does not have. |
+| [Testing](testing.md) | You want to run the load or chaos rigs, or read what they measured: backfill throughput, the cost of the scratch replay as a target's history grows, contention across many targets, and the failure injections behind `make chaos`. |
 | [Decisions](decisions/README.md) | You want to know *why* — the question that was open, the evidence, what it costs, and what was refused. The pages above describe the code; these explain it. |
 
 Suggested order for a first read: getting started → concepts → configuration. Operators add operations and the runbook; pipeline authors add CI/CD.
