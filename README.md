@@ -72,6 +72,7 @@ The store role needs `CREATEDB` (validation replays history on a scratch databas
 | [API](docs/api.md) | every RPC with scope, request, response and curl |
 | [Security](docs/security.md) | tokens, master key rotation, providers, what is logged, network |
 | [Comparison](docs/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
+| [Decisions](docs/decisions/README.md) | why godwit is shaped this way: the plan contract, directives, ORM sources, the UI, revert, repeatables |
 
 Also: [examples](examples/README.md) (copy-ready pipelines), [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
 

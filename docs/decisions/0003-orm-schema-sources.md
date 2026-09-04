@@ -1,0 +1,56 @@
+# 0003 — The ORM model is a desired schema, rendered client-side, gated by `lint`
+
+Shipped in #46 (`Diff` RPC and `godwit diff`), #48 (Prisma), #55 (`schema_source` in `godwit.yaml`), #60 (command, GORM, Django), #61 (`E005`).
+
+## The open question
+
+Teams using an ORM never write SQL. They change `schema.prisma` or a Go struct and expect a migration to exist. godwit runs versioned SQL files and will not stop doing so — so the question was how the ORM's model becomes such a file, **without giving godwit a Node, Python or Go-ORM dependency, and without letting the two drift apart afterwards.**
+
+## The decision
+
+Three separate pieces, each refusing to absorb the next.
+
+**1. `godwit diff` writes the file.** A `Diff` RPC takes the target as the "before" side and a description of the whole desired database as the "after" side, and generates both directions: live → desired is the `up`, desired → live the `down`. The `up` goes through `engine.BuildPlan`, so the response carries the same hazards and recipes a run would, and the files then go through the normal `lint` → `plan` → apply gate. `godwit diff` writes `<timestamp>_<name>.{up,down}.sql` into the migration directory and stops there.
+
+The engine is `github.com/stripe/pg-schema-diff` (MIT), evaluated first and used. Its API is a plain `Generate(ctx, from, to)` over `*sql.DB`, so godwit keeps the connections: the live target through its own DSN, the desired schema on a scratch database godwit creates through the same `CREATEDB` privilege the validator already needs. Its plan validation stays on — it applies the generated plan on a temp copy and checks it reaches the destination, which is what guarantees the `down` really undoes the `up`. *Rejected: shelling out to `migra`* (a Python runtime in the image) and *writing a differ over `engine.Snapshot`* (columns, constraints, indexes and view hashes only — it would order dependent DDL wrongly and could not produce `CONCURRENTLY` index replacement).
+
+**2. The desired schema comes from a `Source`, and every source runs client-side.**
+
+```go
+type Source interface{ Load(ctx context.Context) (string, error) }
+```
+
+Five kinds: `file` (plain DDL), `prisma`, `gorm`, `django`, `command`. Each shells out to the *project's own* toolchain next to the repository. **The service only ever receives DDL.** An ORM source running on the service is refused: the schema lives next to the repository, needs the project's toolchain, and would give the service a Node/Python/Go dependency and a reason to read the user's source tree.
+
+The exec is injected (`Runner`), so every branch is unit-tested with a fake and **CI needs neither Node, nor Go-ORM code, nor Python**. Only one test per adapter touches a real process — a `/bin/sh` fixture proving the `os/exec` path and the exact argv — plus opt-in integration tests skipped unless an env var names the real binary.
+
+Each adapter refuses what it cannot serve, **before running anything**: Prisma refuses a non-`postgresql` `datasource` provider by minimally parsing the block; Django reads `manage.py` for `DJANGO_SETTINGS_MODULE`, resolves the settings file and matches `DATABASES[alias]["ENGINE"]`, so a MySQL or SQLite project is refused with zero subprocesses. A missing binary is reported as a godwit message naming the flag, never as `exec: "npx": executable file not found`.
+
+**3. `godwit.yaml` says which source a directory follows.** A `schema_source` block, per directory, because `godwit.yaml` is already per directory and its path is resolved against the file that declares it — so a monorepo puts one next to each migration directory and each resolves its own. *Rejected: a per-directory `.godwit-source` file* (a second config format and a second discovery rule for one setting). *Rejected: an Action input* (it would make `godwit lint` locally disagree with `godwit lint` in CI — the same argument that put the drift check in `lint` rather than the workflow).
+
+**4. `lint` catches the two files drifting apart — `E005`.** Nothing stopped someone hand-editing a generated `.up.sql`, or changing the schema with the generation step skipped.
+
+The obvious check is wrong as stated, and the record is worth keeping: comparing `diff --dry-run --json`'s `up_sql` against the newest pending pair fails, because `Diff`'s before side is the **live** target where the pending files are not applied, so the diff re-proposes everything pending. So `Diff` gained a second before side — `DIFF_BASE_FILES`, a scratch database with the recorded history *and* the request's files replayed on it. That is `S_n`, the schema the committed files claim to produce, and `up_sql` is then empty **exactly when** the committed migrations already express the ORM schema. Anything left is the residue, whatever caused it.
+
+The replay is the validator's own (`Validator.Replay` shares `historyOf` + `replayRuns` with `Validate`), not a second implementation, so the rule that a directive is expanded once holds unchanged. A second copy in `diff.go` would have drifted from it on the next directive change.
+
+## Consequences to live with
+
+- **Prisma versions.** Prisma 7 renamed `--to-schema-datamodel` to `--to-schema`, so `Load` asks `prisma --version` first and picks the flag by major version. Prisma 7 also moved the datasource url into `prisma.config.ts`; when it is missing the CLI exits 0 with no output, which would silently mean "drop everything" — so empty output is refused with that exact hint.
+- **`--gorm` is a validating wrapper, not a GORM integration.** GORM's dry-run migrator is a Go API over the user's model structs; godwit is a binary, not a library the user imports. The adapter runs `go run <package>` and turns `exit status 1` into a message naming the package and the compiler's stderr, and `examples/gorm/schema/main.go` is the copyable 20-line `main.go`. It carries its own `go.mod` only to stay out of `go build ./...` — godwit does not depend on GORM. *Rejected: a `godwit-gorm` package the user imports*, which would put godwit in their build graph for one function.
+- **Django's constraint is documented, not hidden.** `sqlmigrate` opens the configured connection to introspect, so `DATABASES` must point at a reachable PostgreSQL. Teams for whom that does not hold use `kind: command` with their own dump. Its `BEGIN;`/`COMMIT;` wrappers are stripped, because concatenating fifty migrations would otherwise hand the service fifty nested transactions.
+- **What the diff does not cover** is documented rather than discovered: types other than enums, exclusion constraints, comments, roles, grants on anything but tables, and renames (emitted as drop + add, flagged by their hazards). The scratch database is empty apart from the target's `search_path`, so the desired schema must declare what it relies on or qualify names.
+- **The Action never commits.** `command: diff` writes the pair into `dir` and stops; the example workflow does the `git commit`. Keeping git out of a shared composite action means no token, no branch and no push semantics baked into it, and the workflow stays where a team decides whether the files are committed, suggested or just reviewed.
+- **A non-obvious workflow constraint:** a push made with `GITHUB_TOKEN` triggers no workflow, so `lint` and `plan` must run **in the same job** that generated and committed the files. In a normal `on: pull_request` job they would never see them, and the plan `/godwit apply` binds to would not cover them.
+
+## Refused or deferred
+
+| Thing | Verdict | Reason |
+|---|---|---|
+| Parsing `.prisma` in Go | refused | The datamodel language has generators, preview features, `@@map`, native type attributes and per-provider rendering. Reimplementing its SQL renderer would be wrong the day Prisma changes, and no maintained Go parser exists. |
+| Asking users to keep a checked-in dump | refused | The whole point is that they do not. |
+| A declarative `godwit apply schema.sql` | refused | What runs is always a versioned file that went through the gate. `godwit diff` writes the file; it does not replace the history. |
+| `E005` on a transport failure | refused | A service that is down is an operational problem, not a finding about the migrations. The command fails; no finding is raised. |
+| `W002` shelling out to the ORM | refused | With no server configured the check is skipped and says so. A broken `schema_source` block, however, is a command error even offline — the block is either usable or it is not, and reporting `W002` against a source that cannot be constructed would hide a config mistake until someone happens to run with a server. |
+| Registering the whole `clientFlags` set on `lint` | refused | It would add `--json` next to `lint`'s existing `--format json`, which would mean nothing. Only `--server` and `--token` are registered. |
+| A `DiffFiles` RPC | refused | Everything around the before side — target lookup, `search_path` mirroring, the scratch factory, retired-column suppression, statement classification — is identical. A second RPC would duplicate the body for one substitution and add a scope entry. |
