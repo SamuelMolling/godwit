@@ -877,9 +877,23 @@ func cursorParam(kind string) string {
 }
 
 func syncFunction(col columnFacts, sync, newCol, expr string) string {
-	return fmt.Sprintf("CREATE FUNCTION %s.%s() RETURNS trigger LANGUAGE plpgsql AS $godwit$"+
-		" BEGIN SELECT %s INTO new.%s FROM (SELECT new.*) AS %s; RETURN new; END $godwit$",
-		engine.Ident(col.Schema), engine.Ident(sync), expr, engine.Ident(newCol), engine.Ident(col.Table))
+	body := fmt.Sprintf(" BEGIN SELECT %s INTO new.%s FROM (SELECT new.*) AS %s; RETURN new; END ",
+		expr, engine.Ident(newCol), engine.Ident(col.Table))
+	tag := dollarTag(body)
+
+	return fmt.Sprintf("CREATE FUNCTION %s.%s() RETURNS trigger LANGUAGE plpgsql AS %s%s%s",
+		engine.Ident(col.Schema), engine.Ident(sync), tag, body, tag)
+}
+
+// dollarTag picks a tag the body cannot close: a fixed one inside the author's raw `using=` would end the
+// function body and leave the rest at statement level.
+func dollarTag(body string) string {
+	tag := "$godwit$"
+	for n := 0; strings.Contains(body, tag); n++ {
+		tag = fmt.Sprintf("$godwit%d$", n)
+	}
+
+	return tag
 }
 
 func syncTrigger(col columnFacts, sync string) string {

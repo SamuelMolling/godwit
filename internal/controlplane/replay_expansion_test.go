@@ -109,7 +109,7 @@ func replayFixture(t *testing.T, targets ...string) (*Store, *Validator) {
 		succeededRun(t, s, target, peopleFiles(), nil)
 	}
 
-	return s, NewValidator(pool, s, uuid.NewString)
+	return s, NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 }
 
 // applyDirective validates the directive while it is still pending, then records it as a succeeded run
@@ -216,7 +216,7 @@ func TestReplayLeavesOutARevertedMigration(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
 		t.Fatal(err)
 	}
-	v := NewValidator(pool, s, uuid.NewString)
+	v := NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 	first := succeededRun(t, s, "app", peopleFiles(), nil)
 	succeededRun(t, s, "app", withShops(peopleFiles()), nil)
 	revertRun(t, s, first)
@@ -263,7 +263,7 @@ func TestDiffReplaysAppliedDirectives(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d, s, targetDSN := newDiffer(t, nil)
-	v := NewValidator(d.pool, s, uuid.NewString)
+	v := NewValidator(d.scratch, s, uuid.NewString)
 	d.history = v
 	execDSN(t, targetDSN, peopleUp)
 	succeededRun(t, s, "app", peopleFiles(), nil)

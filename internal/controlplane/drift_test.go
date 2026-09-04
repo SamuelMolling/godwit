@@ -270,7 +270,7 @@ func TestValidator(t *testing.T) {
 	if err := s2.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
 		t.Fatal(err)
 	}
-	v := NewValidator(pool, s2, func() string { return strings.ReplaceAll(uuid.NewString(), "-", "") })
+	v := NewValidator(NewScratch(pool, ""), s2, func() string { return strings.ReplaceAll(uuid.NewString(), "-", "") })
 
 	good, err := buildPlans([]engine.Migration{{
 		Version: 1, Name: "ok",
@@ -296,7 +296,7 @@ func TestValidator(t *testing.T) {
 
 	// A pre-existing scratch database makes CREATE DATABASE fail.
 	taken := fmt.Sprintf("dup%d", dbSeq.Add(1))
-	dup := NewValidator(pool, s2, func() string { return taken })
+	dup := NewValidator(NewScratch(pool, ""), s2, func() string { return taken })
 	if _, err := pool.Exec(ctx, "CREATE DATABASE godwit_validate_"+taken); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestValidatorReplay(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
 		t.Fatal(err)
 	}
-	v := NewValidator(pool, s, func() string { return "replay" })
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "replay" })
 	mock, err := pgxmock.NewConn()
 	if err != nil {
 		t.Fatal(err)

@@ -31,7 +31,7 @@ func newDiffer(t *testing.T, history HistoryReplayer) (*Differ, *Store, string) 
 	var seq atomic.Int64
 	newID := func() string { return fmt.Sprintf("%s%d", strings.ToLower(t.Name()), seq.Add(1)) }
 
-	return NewDiffer(pool, sched, history, newID), s, targetDSN
+	return NewDiffer(NewScratch(pool, ""), sched, history, newID), s, targetDSN
 }
 
 func execDSN(t *testing.T, dsn, sql string) {
@@ -51,7 +51,7 @@ func TestDifferBothDirections(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d, s, targetDSN := newDiffer(t, nil)
-	d.history = NewValidator(d.pool, s, d.newID)
+	d.history = NewValidator(d.scratch, s, d.newID)
 	queueRun(t, s, "dddddddd-0000-0000-0000-000000000001", goodFiles())
 	d.sched.Tick(ctx)
 	waitState(t, s, "dddddddd-0000-0000-0000-000000000001", StateSucceeded)
@@ -122,7 +122,7 @@ func TestDifferBaseFiles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d, s, _ := newDiffer(t, nil)
-	d.history = NewValidator(d.pool, s, d.newID)
+	d.history = NewValidator(d.scratch, s, d.newID)
 	queueRun(t, s, "dddddddd-0000-0000-0000-000000000002", goodFiles())
 	d.sched.Tick(ctx)
 	waitState(t, s, "dddddddd-0000-0000-0000-000000000002", StateSucceeded)
@@ -171,10 +171,10 @@ func TestDifferBaseFilesErrors(t *testing.T) {
 	}
 
 	taken := fmt.Sprintf("dupfiles%d", dbSeq.Add(1))
-	if _, err := d.pool.Exec(ctx, "CREATE DATABASE godwit_diff_"+taken); err != nil {
+	if _, err := d.scratch.pool.Exec(ctx, "CREATE DATABASE godwit_diff_"+taken); err != nil {
 		t.Fatal(err)
 	}
-	dup := NewDiffer(d.pool, d.sched, stubHistory{}, func() string { return taken })
+	dup := NewDiffer(d.scratch, d.sched, stubHistory{}, func() string { return taken })
 	if _, err := dup.Diff(ctx, "app", desiredDDL, DiffBaseFiles, goodFiles()); err == nil || !strings.Contains(err.Error(), "create scratch database") {
 		t.Fatalf("scratch err = %v", err)
 	}
@@ -212,10 +212,10 @@ func TestDifferErrors(t *testing.T) {
 	parseDSN = pgx.ParseConfig
 
 	taken := fmt.Sprintf("dup%d", dbSeq.Add(1))
-	if _, err := d.pool.Exec(ctx, "CREATE DATABASE godwit_diff_"+taken); err != nil {
+	if _, err := d.scratch.pool.Exec(ctx, "CREATE DATABASE godwit_diff_"+taken); err != nil {
 		t.Fatal(err)
 	}
-	dup := NewDiffer(d.pool, d.sched, nil, func() string { return taken })
+	dup := NewDiffer(d.scratch, d.sched, nil, func() string { return taken })
 	if _, err := dup.Diff(ctx, "app", desiredDDL, DiffBaseLive, nil); err == nil || !strings.Contains(err.Error(), "create scratch database") {
 		t.Fatalf("scratch err = %v", err)
 	}

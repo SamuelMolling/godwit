@@ -75,6 +75,8 @@ Every service command also accepts `--json` (print the raw protojson response in
 |---|---|---|
 | `--listen` | `:8474` | address for the API, `/metrics`, `/healthz` and `/readyz` |
 | `--store-dsn` | required | control-plane PostgreSQL DSN |
+| `--scratch-dsn` | `GODWIT_SCRATCH_DSN` | PostgreSQL validation and diff create their throwaway databases on. Unset runs them on the store server with the store's own credentials, which is what submitted DDL then executes as; `serve` warns on every start and [security](security.md#the-scratch-database) says why that is bad. Set, the role is inspected at start-up and `serve` refuses to run when it is a superuser, owns the store database, is a member of `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, or holds `CREATEROLE` or `REPLICATION` |
+| `--scratch-template` | `GODWIT_SCRATCH_TEMPLATE` or `template0` | database scratch databases are cloned from. `template0` carries nothing an operator installed into `template1`; name a prepared template to give validation the extensions a migration needs |
 | `--drift-interval` | `5m` | how often every snapshotted target is fingerprinted |
 | `--lease-ttl` | `30s` | how long a claimed run stays leased without a heartbeat; heartbeats run every third of it |
 | `--tick-interval` | `2s` | how often the scheduler looks for runnable runs |
@@ -91,7 +93,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared identity (and the anonymous one, when the UI is open) may do: `read`, `pipeline`, `operator` or `admin` |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
-A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts.
+A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts. A `--scratch-dsn` that does not parse, cannot be reached, or names a role that can act outside its own scratch databases fails it right after the store migration.
 
 `/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth` and audits as `ui:anonymous`. Pages offer only the actions the scope allows and a request beyond it is refused with `403`. Every form post must also come from the UI's own origin, so a `POST /ui/…` from a script — with no `Origin` and no `Sec-Fetch-Site` — is refused with `403 cross-site request refused`; see [security](security.md#cross-site-requests).
 
@@ -101,6 +103,8 @@ A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, o
 |---|---|---|
 | `GODWIT_MASTER_KEY` | yes | 64 hex characters (32 bytes); AES-256-GCM key for DSNs of `static` targets |
 | `GODWIT_TOKENS` | no | comma-separated bearer token specs ([below](#token-spec)); unset means every caller is `anonymous` with scope `admin` |
+| `GODWIT_SCRATCH_DSN` | no | default for `--scratch-dsn` |
+| `GODWIT_SCRATCH_TEMPLATE` | no | default for `--scratch-template` |
 | `GODWIT_WEBHOOK_URL` | no | POST every run and drift event here as JSON |
 | `GODWIT_SLACK_TOKEN` | no | Slack bot token; enables the Slack provider |
 | `GODWIT_SLACK_CHANNEL` | with the token | channel id or name for the root messages; `serve` refuses to start with a token and no channel |
@@ -206,4 +210,4 @@ See [CI/CD](ci-cd.md#action-inputs-and-outputs); they map one-to-one onto the CL
 
 ## Helm values
 
-`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `logFormat`, `logLevel`, `ui.enabled`, `ui.basicAuth`, `ui.scope` and `extraArgs`, and every environment variable above comes from the Secret named by `existingSecret` or from `vault.*`, `notifications.*`, `extraEnv` / `extraEnvFrom`. `--lease-ttl`, `--tick-interval` and `--max-attempts` go through `serve.extraArgs`.
+`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `scratch.enabled`, `scratch.template`, `logFormat`, `logLevel`, `ui.enabled`, `ui.basicAuth`, `ui.scope` and `extraArgs`, and every environment variable above comes from the Secret named by `existingSecret` or from `vault.*`, `notifications.*`, `extraEnv` / `extraEnvFrom`. `serve.scratch.enabled` wires `GODWIT_SCRATCH_DSN` from `existingSecret.keys.scratchDSN`; off, the chart ships the unisolated fallback and the pods warn about it. `--lease-ttl`, `--tick-interval` and `--max-attempts` go through `serve.extraArgs`.

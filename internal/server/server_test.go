@@ -326,6 +326,9 @@ func TestRunStartErrors(t *testing.T) {
 	if err := Run(ctx, Config{StoreDSN: "postgres://bad:bad@127.0.0.1:1/x", Log: testLog}); err == nil {
 		t.Fatal("unreachable store must fail")
 	}
+	if err := Run(ctx, Config{StoreDSN: newDatabase(t, "st"), ScratchDSN: "://bad", Log: testLog}); err == nil {
+		t.Fatal("bad scratch DSN must fail")
+	}
 	if err := Run(ctx, Config{StoreDSN: newDatabase(t, "st"), Listen: "127.0.0.1:1", Log: testLog}); err == nil {
 		t.Fatal("privileged port must fail")
 	}

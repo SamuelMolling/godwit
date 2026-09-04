@@ -25,9 +25,14 @@ import (
 
 // Config assembles one godwit service instance.
 type Config struct {
-	Listen    string
-	StoreDSN  string
-	MasterKey []byte
+	Listen   string
+	StoreDSN string
+	// ScratchDSN is the PostgreSQL validation and diff create their throwaway databases on; empty runs
+	// them on the store server with the store's own credentials.
+	ScratchDSN string
+	// ScratchTemplate is the database scratch databases are cloned from; empty means template0.
+	ScratchTemplate string
+	MasterKey       []byte
 	// Tokens are bearer token specs, "name:scope:secret"; "name:secret" and a bare secret (named anonymous) are admin.
 	Tokens        []string
 	Holder        string
@@ -106,6 +111,12 @@ func Run(ctx context.Context, cfg Config) error {
 	log.Info("store migrated", "applied", applied)
 	store := controlplane.NewStore(pool)
 
+	scratch, closeScratch, err := newScratch(ctx, cfg, pool, log)
+	if err != nil {
+		return err
+	}
+	defer closeScratch()
+
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
@@ -128,7 +139,7 @@ func Run(ctx context.Context, cfg Config) error {
 	var validator api.Validator
 	var history controlplane.HistoryReplayer
 	if !cfg.SkipValidation {
-		v := controlplane.NewValidator(pool, store, newID)
+		v := controlplane.NewValidator(scratch, store, newID)
 		validator, history = v, v
 	}
 
@@ -147,7 +158,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Notifier = notifier
 	apiSrv.Baseliner = controlplane.NewBaseliner(sched)
 	apiSrv.Inspector = controlplane.NewInspector(sched)
-	apiSrv.Differ = controlplane.NewDiffer(pool, sched, history, newID)
+	apiSrv.Differ = controlplane.NewDiffer(scratch, sched, history, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	handler := api.Handler(apiSrv, tokens)
 	if cfg.UI {

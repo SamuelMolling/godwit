@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stripe/pg-schema-diff/pkg/diff"
 	"github.com/stripe/pg-schema-diff/pkg/tempdb"
@@ -115,15 +114,15 @@ func mentions(line string, parts ...string) bool {
 
 // Differ generates the migration between a target's live schema and a desired DDL applied on a scratch database.
 type Differ struct {
-	pool    *pgxpool.Pool
+	scratch *Scratch
 	sched   *Scheduler
 	history HistoryReplayer
 	newID   func() string
 }
 
-// NewDiffer wires a Differ over the control-plane pool; history is optional (nil skips drift).
-func NewDiffer(pool *pgxpool.Pool, sched *Scheduler, history HistoryReplayer, newID func() string) *Differ {
-	return &Differ{pool: pool, sched: sched, history: history, newID: newID}
+// NewDiffer wires a Differ over the scratch connection; history is optional (nil skips drift).
+func NewDiffer(scratch *Scratch, sched *Scheduler, history HistoryReplayer, newID func() string) *Differ {
+	return &Differ{scratch: scratch, sched: sched, history: history, newID: newID}
 }
 
 // Diff applies ddl on a scratch database and returns the SQL between base and it in both directions.
@@ -159,7 +158,7 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string, base DiffBase, fi
 	live := stdlib.OpenDB(*liveCfg)
 	defer func() { _ = live.Close() }()
 
-	factory := &scratchFactory{pool: d.pool, newID: d.newID, searchPath: obs.SearchPath}
+	factory := &scratchFactory{scratch: d.scratch, newID: d.newID, searchPath: obs.SearchPath}
 	from, label := live, "live"
 	if base == DiffBaseFiles {
 		replayed, done, err := d.filesBase(ctx, factory, target, obs.SearchPath, files)
@@ -213,9 +212,7 @@ func (d *Differ) filesBase(ctx context.Context, factory *scratchFactory, target,
 	}
 	done := func() { _ = scratch.Close(context.WithoutCancel(ctx)) }
 
-	cfg := d.pool.Config().ConnConfig.Copy()
-	cfg.Database = name
-	conn, err := connectScratch(ctx, cfg)
+	conn, err := connectScratch(ctx, d.scratch.connConfig(name, ""))
 	if err != nil {
 		done()
 
@@ -336,12 +333,12 @@ func (quietLog) Errorf(string, ...any) {}
 func (quietLog) Warnf(string, ...any) {}
 
 type scratchFactory struct {
-	pool       *pgxpool.Pool
+	scratch    *Scratch
 	newID      func() string
 	searchPath string
 }
 
-// Create makes a fresh database on the control-plane server, reachable with the pool's credentials.
+// Create makes a fresh database on the scratch server, reachable with the scratch credentials.
 func (f *scratchFactory) Create(ctx context.Context) (*tempdb.Database, error) {
 	_, db, err := f.create(ctx)
 
@@ -350,33 +347,27 @@ func (f *scratchFactory) Create(ctx context.Context) (*tempdb.Database, error) {
 
 func (f *scratchFactory) create(ctx context.Context) (string, *tempdb.Database, error) {
 	name := "godwit_diff_" + f.newID()
-	if _, err := f.pool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		return "", nil, fmt.Errorf("create scratch database: %w", err)
+	if err := f.scratch.create(ctx, name); err != nil {
+		return "", nil, err
 	}
-	cfg := f.pool.Config().ConnConfig.Copy()
-	cfg.Database = name
-	if f.searchPath != "" {
-		cfg.RuntimeParams["search_path"] = f.searchPath
-	}
-	db := stdlib.OpenDB(*cfg)
+	db := stdlib.OpenDB(*f.scratch.connConfig(name, f.searchPath))
 
-	return name, &tempdb.Database{ConnPool: db, ContextualCloser: scratchCloser{pool: f.pool, db: db, name: name}}, nil
+	return name, &tempdb.Database{ConnPool: db, ContextualCloser: scratchCloser{scratch: f.scratch, db: db, name: name}}, nil
 }
 
 // Close is a no-op: every scratch database is dropped by its own closer.
 func (*scratchFactory) Close() error { return nil }
 
 type scratchCloser struct {
-	pool *pgxpool.Pool
-	db   *sql.DB
-	name string
+	scratch *Scratch
+	db      *sql.DB
+	name    string
 }
 
 // Close drops the scratch database even when ctx is already cancelled.
 func (c scratchCloser) Close(ctx context.Context) error {
 	_ = c.db.Close()
-	_, _ = c.pool.Exec(context.WithoutCancel(ctx),
-		"DROP DATABASE IF EXISTS "+pgx.Identifier{c.name}.Sanitize()+" WITH (FORCE)")
+	c.scratch.drop(ctx, c.name)
 
 	return nil
 }

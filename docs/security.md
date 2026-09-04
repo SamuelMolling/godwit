@@ -45,11 +45,45 @@ The DSN, whichever provider produced it, exists only in the replica's memory for
 
 ## Database privileges
 
-**Store role**: owner of the store database, `CREATEDB` for validation scratch databases. Nothing else.
+**Store role**: owner of the store database. Nothing else — `CREATEDB` is only needed when scratch databases stay on the store server, which is the configuration below tells you not to keep.
 
 **Target role** (the one in the DSN): whatever the migrations need, plus `CREATE` on the database for the `godwit` schema on first contact. godwit takes `pg_advisory_lock` (no extra privilege) and reads `information_schema` / `pg_catalog` for status and drift. Give it a dedicated role rather than the application's, so `lock_timeout` and `statement_timeout` are set per run (`SET LOCAL` inside transactions, `SET`/`RESET` around no-tx statements) without touching application sessions, and so `pg_stat_activity` shows who is migrating.
 
-The validation scratch database runs the migrations as the store role on the store server; migrations that reference roles, tablespaces or extensions that exist only on the target fail validation. Install the same extensions on the store server or run those with `--skip-validation`. Nothing records that a run skipped validation; if that matters, make the pipeline log it.
+**Scratch role**: `LOGIN CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS`, owner of nothing but the databases it makes for itself.
+
+## The scratch database
+
+`Diff`, `PlanRun` and `CreateRun` all execute submitted SQL — the pasted desired schema, the `R__` bodies, every migration file in the pull request — on a throwaway database, to find out what it produces before anything reaches a target. `Diff` needs only `read` scope, so **the weakest credential in the system runs DDL of the caller's choosing on whatever PostgreSQL that database lives on**. Treat that server as hostile ground.
+
+`--scratch-dsn` (or `GODWIT_SCRATCH_DSN`) says where it lives. Point it at a PostgreSQL that holds nothing:
+
+```sql
+-- on the scratch server, as a superuser, once
+CREATE ROLE godwit_scratch LOGIN PASSWORD '...'
+  CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+```
+
+The role needs `CREATEDB` and `CONNECT` on whatever database the DSN names (`postgres` is the usual choice); it makes, owns and drops its own `godwit_diff_<id>` / `godwit_validate_<id>` databases and nothing else. What that buys, all of it verified against PostgreSQL 17 rather than read off the manual:
+
+| Submitted DDL tries | Result |
+|---|---|
+| `DROP DATABASE <store> WITH (FORCE)` | `must be owner of database` |
+| `COPY … FROM PROGRAM 'id'` | `permission denied to COPY to or from an external program` |
+| `pg_read_file('/etc/passwd')` | `permission denied for function pg_read_file` |
+| `CREATE EXTENSION dblink` / `postgres_fdw` | `permission denied to create extension` (neither is a trusted extension) |
+| `ALTER ROLE <store> …`, `CREATE ROLE` | `permission denied to alter role` / `to create role` |
+
+Scratch databases are cloned from **`template0`**, not from the default `template1`, so an extension an operator installed into `template1` — `dblink` above all — is not inherited by a database submitted DDL runs in. `--scratch-template <db>` names a prepared template instead, for migrations that need extensions the scratch server would otherwise lack; whatever is in that template is reachable from every diff, so put only what validation needs in it.
+
+**At start-up godwit inspects the scratch role and refuses to serve** when it is a superuser, owns the store database, is a member of `pg_execute_server_program` / `pg_read_server_files` / `pg_write_server_files`, or holds `CREATEROLE` or `REPLICATION`. There is no flag to override that: the way to run without the check is to leave `--scratch-dsn` unset, which is the fallback below, and it is loud.
+
+**Without `--scratch-dsn` scratch databases stay on the store server under the store's own role**, which is what every version before this one did. The store role needs `CREATEDB` again, and submitted DDL then runs as the owner of the control-plane database: one statement can `DROP DATABASE <store> WITH (FORCE)` and take `cp_runs`, `cp_plans` and `cp_audit` with it, and if that role is a superuser it reaches command execution on the store host. `serve` logs `scratch database is not isolated` for each finding plus a warning naming the fix, on every start. Use it on a laptop; do not run it where anyone but you holds a token.
+
+Whichever way it is configured, a scratch role that can reach the store database over the network is one extension away from reading `cp_targets.config`. `REVOKE CONNECT ON DATABASE <store> FROM PUBLIC` and grant it back only to the store role; `serve` warns when the scratch role still has it.
+
+Migrations that reference roles, tablespaces or extensions that exist only on the target fail validation. Give the scratch server the extensions through `--scratch-template`, or run those with `--skip-validation`. Nothing records that a run skipped validation; if that matters, make the pipeline log it.
+
+**Residual, named rather than hidden.** All scratch databases share one role, so DDL submitted by one caller can drop another caller's in-flight scratch database and fail their validation. Nothing bounds how many are created, how large they grow, or how long a statement in one runs; the scratch server needs its own disk and `max_connections` headroom, and it should not be shared with anything that matters.
 
 ## What is logged
 
@@ -79,7 +113,7 @@ Every secret is compared in constant time as a SHA-256 digest, and the password 
 
 The UI calls the service in process, so its actions appear in `cp_audit` under `ui:<name>` rather than under the token that a browser would have used over HTTP. That in-process path does **not** pass the auth interceptor, so the UI runs the same decision itself: every call goes through `api.Authorize(procedure, principal)`, the identical `procedure → scope` table the interceptor uses. A page therefore renders only the actions the scope allows, and a request posted around the page — `POST /ui/runs/<id>/resume` typed by hand — is refused with `403` and the scope message (`ResumeRun requires scope operator; token ui:viewer has scope read`). Scopes reach the UI as: `read` sees every page and can change nothing; `pipeline` adds confirm rollout and revert; `operator` adds resume, park, check drift and accept baseline, which is everything the UI offers; `admin` adds nothing, because the UI calls no admin RPC.
 
-The one button `read` may press is **Generate migration** on `/ui/diff`, and that is deliberate: `Diff` is a `read` RPC, it writes nothing to any database and nothing to disk — it applies the pasted DDL to a scratch database that is dropped again, and hands back SQL for a human to commit. The page is gated by the same `.Can` map as every other action, so if `Diff` ever needs a wider scope the button disappears on its own.
+The one button `read` may press is **Generate migration** on `/ui/diff`, and that is deliberate: `Diff` persists nothing — it applies the pasted DDL to a scratch database that is dropped again, and hands back SQL for a human to commit. It does *execute* that DDL, on the scratch server, as the scratch role; what stops it from being a privilege escalation is [the scratch database](#the-scratch-database) being isolated, not the RPC being read-only. The page is gated by the same `.Can` map as every other action, so if `Diff` ever needs a wider scope the button disappears on its own.
 
 Basic auth sends the password on every request, so the TLS termination below is not optional when the UI is on.
 
@@ -128,7 +162,7 @@ What this does **not** protect against, stated so nobody reads more into it:
 
 - The listener is plaintext h2c/HTTP/1.1. Terminate TLS in front of it (the Helm Ingress needs an h2c- or gRPC-capable class, or a service mesh); the CLI accepts `https://` URLs.
 - `/metrics`, `/healthz` and `/readyz` are unauthenticated. Scope them to the cluster network; `/metrics` label values include target names.
-- The service dials out to: the store, every target, the store server for scratch databases, Vault, the webhook URL, `slack.com`. Egress rules need those and nothing else.
+- The service dials out to: the store, every target, the scratch server, Vault, the webhook URL, `slack.com`. Egress rules need those and nothing else.
 - Replicas do not talk to each other; the store is the only shared state.
 - The container runs as non-root with a read-only root filesystem, no capabilities (chart defaults); the CLI in hook Jobs does the same.
 

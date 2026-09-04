@@ -130,12 +130,12 @@ WHERE r.target = :'target' AND NOT a.held AND a.reverted_by IS NULL
 GROUP BY r.id ORDER BY r.created_at;
 ```
 
-**Action.** For `migration failed validation`: fix the migration. For `replay history`: install the missing extension on the store server, or, when the history is legitimately unreplayable, baseline the target (`godwit target baseline <target> --version <newest applied>` needs an empty `godwit.migrations`, see [baseline](concepts.md#baseline)) so replay starts from the baseline run. `--skip-validation` on a single run is the escape hatch; it leaves no trace in the audit trail, so note it in the pull request.
+**Action.** For `migration failed validation`: fix the migration. For `replay history`: put the missing extension in the database `--scratch-template` names, or, when the history is legitimately unreplayable, baseline the target (`godwit target baseline <target> --version <newest applied>` needs an empty `godwit.migrations`, see [baseline](concepts.md#baseline)) so replay starts from the baseline run. `--skip-validation` on a single run is the escape hatch; it leaves no trace in the audit trail, so note it in the pull request.
 
-Scratch databases are dropped after every validation; a leftover after a crash is harmless:
+Scratch databases are dropped after every validation; a leftover after a crash is harmless. On the scratch server (the store server when `--scratch-dsn` is unset):
 
 ```sql
-SELECT datname FROM pg_database WHERE datname LIKE 'godwit_validate_%';
+SELECT datname FROM pg_database WHERE datname LIKE 'godwit_validate_%' OR datname LIKE 'godwit_diff_%';
 DROP DATABASE godwit_validate_xxx WITH (FORCE);
 ```
 

@@ -45,6 +45,10 @@ spec:
             - --listen=:{{ .Values.serve.port }}
             - --store-dsn=$(GODWIT_STORE_DSN)
             - --drift-interval={{ .Values.serve.driftInterval }}
+            {{- if .Values.serve.scratch.enabled }}
+            - --scratch-dsn=$(GODWIT_SCRATCH_DSN)
+            {{- end }}
+            - --scratch-template={{ .Values.serve.scratch.template }}
             {{- if .Values.serve.skipValidation }}
             - --skip-validation
             {{- end }}
@@ -74,6 +78,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.existingSecret.name }}
                   key: {{ .Values.existingSecret.keys.storeDSN }}
+            {{- if .Values.serve.scratch.enabled }}
+            - name: GODWIT_SCRATCH_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.keys.scratchDSN }}
+            {{- end }}
             - name: GODWIT_LOG_FORMAT
               value: {{ .Values.serve.logFormat | quote }}
             - name: GODWIT_LOG_LEVEL

@@ -34,7 +34,7 @@ func TestValidateReportsEffects(t *testing.T) {
 	sched.Tick(ctx)
 	waitState(t, s, "dddddddd-0000-0000-0000-000000000001", StateSucceeded)
 
-	v := NewValidator(pool, s, func() string { return "effects" })
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "effects" })
 	val, err := v.Validate(ctx, "app", columnPlans(t), "public")
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestValidateSnapshotFails(t *testing.T) {
 
 		return orig(ctx, db)
 	}
-	v := NewValidator(pool, s, func() string { return "snapfail" })
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "snapfail" })
 	plans, err := buildPlans([]engine.Migration{{Version: 1, Name: "t", Checksum: "c", UpSQL: upBody, DownSQL: "DROP TABLE t;"}}, engine.DirectionUp)
 	if err != nil {
 		t.Fatal(err)
