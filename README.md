@@ -25,11 +25,15 @@ Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behin
 $ godwit plan --target app --dir db/migrations --rollout expand-contract
 20260901121000_customer_id_text (up): 13 statement(s) [expand, pending]   directive, expand 7 / contract 6
   -- godwit: change-type orders.customer_id text using='customer_id::text'
+  -- godwit: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
+  -- godwit expanded: change-type orders.customer_id text
+  [0] tx    ALTER TABLE public.orders ADD COLUMN customer_id_new text   [expand]
   [1] tx    CREATE FUNCTION public.orders_customer_id_sync() RETURNS trigger LANGUAGE plpgsql AS …   [expand]
   [2] tx    CREATE TRIGGER orders_customer_id_sync BEFORE INSERT OR UPDATE ON public.orders …   [expand]
   [3] batch WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint AND …)   [expand]
         batch over id (int), 5000 rows per transaction
-  [6] assert -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0   [expand]
+  -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
+  [6] assert SELECT count(*) FROM orders WHERE customer_id IS NULL   [expand]
         the result must be = 0
   [9] tx    ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old   [contract]
   [10] tx    ALTER TABLE public.orders RENAME COLUMN customer_id_new TO customer_id   [contract]

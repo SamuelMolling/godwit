@@ -209,7 +209,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit run get <run-id>` | | read |
 | `godwit run watch <run-id>` | | read; exits 1 on `failed` / `needs_attention` |
 | `godwit run resume <run-id>` | | operator |
-| `godwit run confirm [run-id]` | `--latest`, `--target`, `--allow-none` | pipeline (`--latest` also lists runs: read) |
+| `godwit run confirm [run-id]` | `--latest`, `--target`, `--allow-none`, `--no-wait` | pipeline (`--latest` also lists runs: read); streams the contract phase and exits with it, 1 on `failed` / `needs_attention`. `--no-wait` returns as soon as the phase is queued |
 | `godwit runs` | `--target` | read |
 | `godwit drift check <target>` | | operator |
 | `godwit drift accept <target>` | | operator |

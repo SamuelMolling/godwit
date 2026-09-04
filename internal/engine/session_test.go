@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
@@ -104,25 +105,50 @@ func TestBootstrapTreatsALostCreateRaceAsDone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	mock, err := pgxmock.NewConn()
-	if err != nil {
-		t.Fatal(err)
+	for code := range raceOnCreate {
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			mock, err := pgxmock.NewConn()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = mock.Close(ctx) }()
+
+			for i, ddl := range bootstrapDDL {
+				exp := mock.ExpectExec(regexp.QuoteMeta(ddl))
+				if i == 0 {
+					exp.WillReturnError(&pgconn.PgError{Code: code, Message: "already exists"})
+
+					continue
+				}
+				exp.WillReturnResult(pgxmock.NewResult("DDL", 0))
+			}
+			if err := ensureSchema(ctx, mock); err != nil {
+				t.Fatalf("a lost create race must not fail bootstrap: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	defer func() { _ = mock.Close(ctx) }()
+}
 
-	for i, ddl := range bootstrapDDL {
-		exp := mock.ExpectExec(regexp.QuoteMeta(ddl))
-		if i == 0 {
-			exp.WillReturnError(&pgconn.PgError{Code: "42P07", Message: "relation already exists"})
+func TestBootstrapSurvivesTheDuplicateTypeARaceLeaves(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
 
-			continue
+	conn := newTestDB(t)()
+	for _, ddl := range []string{`CREATE SCHEMA godwit`, `CREATE TYPE godwit.migrations AS ENUM ('planted')`} {
+		if _, err := conn.Exec(ctx, ddl); err != nil {
+			t.Fatal(err)
 		}
-		exp.WillReturnResult(pgxmock.NewResult("DDL", 0))
 	}
-	if err := ensureSchema(ctx, mock); err != nil {
-		t.Fatalf("a lost create race must not fail bootstrap: %v", err)
+	_, err := conn.Exec(ctx, bootstrapDDL[1])
+	var pge *pgconn.PgError
+	if !errors.As(err, &pge) || pge.Code != "42710" {
+		t.Fatalf("a taken composite type must raise 42710, got %v", err)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
+	if err := bootstrap(ctx, conn); err != nil {
+		t.Fatalf("bootstrap must survive %s: %v", pge.Code, err)
 	}
 }

@@ -51,8 +51,12 @@ var bootstrapDDL = []string{
 }
 
 // IF NOT EXISTS is not race-free: two replicas that both find an object missing both create it, and the loser
-// gets a catalog error. The object exists either way, which is all bootstrap wants.
-var raceOnCreate = map[string]bool{"23505": true, "42701": true, "42P06": true, "42P07": true}
+// gets whichever duplicate its CREATE reached first — a unique catalog index (23505), a column (42701), a type,
+// trigger or constraint (42710, where a lost CREATE TABLE lands on the table's implicit composite type), a
+// function (42723), a schema (42P06), a table, index, sequence or view (42P07). The object exists either way.
+var raceOnCreate = map[string]bool{
+	"23505": true, "42701": true, "42710": true, "42723": true, "42P06": true, "42P07": true,
+}
 
 func bootstrap(ctx context.Context, db DB) error {
 	for _, ddl := range bootstrapDDL {

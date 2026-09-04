@@ -252,7 +252,7 @@ func TestChaosKillDuringContractPhase(t *testing.T) {
 	expectContains(t, r.mustMigrate(dir, "--rollout", "expand-contract", "--ack", "H003"), "awaiting_contract")
 	held := r.latestRun()
 
-	victim := reclaimer(t, r, held.Id, func() { r.mustCLI("run", "confirm", held.Id) })
+	victim := reclaimer(t, r, held.Id, func() { r.mustCLI("run", "confirm", held.Id, "--no-wait") })
 	r.waitActive("SELECT pg_sleep")
 	r.kill(victim)
 
@@ -505,7 +505,7 @@ func TestChaosLockTimeoutInContractPhase(t *testing.T) {
 	held := r.latestRun()
 
 	release := holdLock(t, r.appDSN, "LOCK TABLE users IN ACCESS EXCLUSIVE MODE")
-	r.mustCLI("run", "confirm", held.Id)
+	r.mustCLI("run", "confirm", held.Id, "--no-wait")
 	waitUntil(t, settle, "the contract phase hits the lock timeout", func() bool { return r.getRun(held.Id).Retries >= 1 })
 	blocked := r.getRun(held.Id)
 	expectContains(t, blocked.Error, "transient:", "55P03")

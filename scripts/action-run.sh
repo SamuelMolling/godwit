@@ -215,7 +215,8 @@ cmd_confirm() {
   fi
   args=()
   if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
-  "${godwit}" run confirm "${id}" ${args[@]+"${args[@]}"} >/dev/null 2>"${errors}" || status=$?
+  # --no-wait keeps release and outcome apart: the watch below writes the summary a failed contract phase needs.
+  "${godwit}" run confirm "${id}" --no-wait ${args[@]+"${args[@]}"} >/dev/null 2>"${errors}" || status=$?
   cat "${errors}" >&2
   if [ "${status}" != "0" ]; then
     refused confirm "run ${id} was not released"

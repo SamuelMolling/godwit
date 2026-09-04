@@ -296,6 +296,7 @@ func writePlanText(w io.Writer, r planReport) {
 			fmt.Fprintln(w, "  "+d)
 		}
 		for i, st := range p.Statements {
+			fmt.Fprint(w, markerLine(st.SQL, "  "))
 			fmt.Fprintf(w, "  [%d] %-5s %s%s\n", i, statementMode(st), firstLine(st.SQL), phaseSuffix(st))
 			if b := st.Batch; b != nil {
 				fmt.Fprintf(w, "        batch over %s (%s), %d rows per transaction%s\n", b.Key, b.KeyKind, b.Size, pauseSuffix(b.Pause))
@@ -512,7 +513,8 @@ func markdownCell(s string) string {
 }
 
 func oneLine(sql string) string {
-	line := strings.Join(strings.Fields(sql), " ")
+	_, body := engine.SplitExpanded(sql)
+	line := strings.Join(strings.Fields(body), " ")
 	if len(line) > 120 {
 		return line[:119] + "…"
 	}
@@ -669,10 +671,21 @@ func statementMode(st engine.Statement) string {
 	}
 }
 
+// firstLine skips the expander's marker: a reader shown only that never sees the statement.
 func firstLine(sql string) string {
-	line, _, _ := strings.Cut(sql, "\n")
+	_, body := engine.SplitExpanded(sql)
+	line, _, _ := strings.Cut(body, "\n")
 
 	return line
+}
+
+func markerLine(sql, indent string) string {
+	marker, _ := engine.SplitExpanded(sql)
+	if marker == "" {
+		return ""
+	}
+
+	return indent + marker + "\n"
 }
 
 // directionsOf is the sides a migration has: a checkpoint has no inverse, so it has only an up.
