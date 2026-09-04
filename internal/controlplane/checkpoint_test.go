@@ -97,6 +97,51 @@ func TestCheckpointGeneratesAVerifiedSchema(t *testing.T) {
 	}
 }
 
+// The scratch role of these tests is called godwit, which is also the schema the journal lives in and the
+// schema the render excludes. Unqualified DDL must not land there, whatever the role is called.
+func TestCheckpointRendersUnqualifiedDDL(t *testing.T) {
+	t.Parallel()
+	c, _ := newCheckpointer(t)
+	files := map[string]string{
+		"20260101000001_u1.up.sql":   "CREATE TABLE u1 (id bigint PRIMARY KEY, note text);",
+		"20260101000001_u1.down.sql": "DROP TABLE u1;",
+		"20260101000002_u2.up.sql":   "CREATE TABLE u2 (id bigint PRIMARY KEY);",
+		"20260101000002_u2.down.sql": "DROP TABLE u2;",
+	}
+	cp := mustCheckpoint(t, c, files, 0)
+	if !strings.Contains(cp.Body, `"public"."u1"`) || !strings.Contains(cp.Body, `"public"."u2"`) {
+		t.Fatalf("unqualified DDL must be rendered from public:\n%s", cp.Body)
+	}
+}
+
+// A checkpoint body only ever meets an empty database, so it is rendered for one: no concurrent index
+// build outside a transaction, and no constraint adopting an index the same body just created.
+func TestCheckpointBodyIsRenderedForAnEmptyDatabase(t *testing.T) {
+	t.Parallel()
+	c, _ := newCheckpointer(t)
+	cp := mustCheckpoint(t, c, longHistory(3), 0)
+	if strings.Contains(cp.Body, "CONCURRENTLY") || strings.Contains(cp.Body, "USING INDEX") {
+		t.Fatalf("the body must carry neither:\n%s", cp.Body)
+	}
+	for i := 1; i <= 3; i++ {
+		if !strings.Contains(cp.Body, fmt.Sprintf(`CONSTRAINT "t%d_pkey" PRIMARY KEY ("id")`, i)) {
+			t.Fatalf("the primary key of t%d must be part of its CREATE TABLE:\n%s", i, cp.Body)
+		}
+	}
+	p, err := engine.BuildPlan(engine.Migration{Version: 1, Name: "cp", Checkpoint: true, UpSQL: cp.Body}, engine.DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Statements) != 6 {
+		t.Fatalf("statements = %d, want two per table:\n%s", len(p.Statements), cp.Body)
+	}
+	for _, st := range p.Statements {
+		if st.NoTx || len(st.Hazards) > 0 {
+			t.Fatalf("a checkpoint statement runs in a transaction and raises nothing: %+v", st)
+		}
+	}
+}
+
 // The checkpoint's body is generated from the scratch replay, so a directive below it lands as the SQL
 // godwit expanded, not as the directive: nothing under a checkpoint is ever expanded again.
 func TestCheckpointExpandsDirectivesBelowIt(t *testing.T) {
@@ -487,6 +532,19 @@ func TestCheckpointScratchFailures(t *testing.T) {
 		defer func() { generatePlan = orig }()
 		if _, err := c.Generate(ctx, files, 0, "squash", time.Now()); !errors.Is(err, ErrCheckpoint) ||
 			!strings.Contains(err.Error(), "render the schema as DDL") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("fold", func(t *testing.T) {
+		c, _ := newCheckpointer(t)
+		orig := generatePlan
+		generatePlan = func(context.Context, diff.SchemaSource, diff.SchemaSource, ...diff.PlanOpt) (diff.Plan, error) {
+			return diff.Plan{Statements: []diff.Statement{{DDL: "NOT SQL"}}}, nil
+		}
+		defer func() { generatePlan = orig }()
+		if _, err := c.Generate(ctx, files, 0, "squash", time.Now()); !errors.Is(err, ErrCheckpoint) ||
+			!strings.Contains(err.Error(), "parse the rendered schema") {
 			t.Fatalf("err = %v", err)
 		}
 	})

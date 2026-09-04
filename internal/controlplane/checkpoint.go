@@ -17,6 +17,10 @@ import (
 // ErrCheckpoint marks a checkpoint godwit refuses to generate.
 var ErrCheckpoint = errors.New("checkpoint")
 
+// checkpointSearchPath is pinned because generation has no target whose search_path it could mirror, and
+// an unpinned "$user" resolves to the journal schema whenever the scratch role shares its name.
+const checkpointSearchPath = "public"
+
 // Checkpoint is a generated checkpoint file: the schema a prefix of the migration directory produces.
 type Checkpoint struct {
 	Version int64
@@ -59,7 +63,7 @@ func (c *Checkpointer) Generate(ctx context.Context, files map[string]string, at
 	if err != nil {
 		return Checkpoint{}, err
 	}
-	factory := &scratchFactory{scratch: c.scratch, newID: c.newID}
+	factory := &scratchFactory{scratch: c.scratch, newID: c.newID, searchPath: checkpointSearchPath}
 	replayed, done, err := c.replay(ctx, factory, collapsed)
 	if err != nil {
 		return Checkpoint{}, err
@@ -71,7 +75,7 @@ func (c *Checkpointer) Generate(ctx context.Context, files map[string]string, at
 		return Checkpoint{}, err
 	}
 	defer func() { _ = empty.Close(ctx) }()
-	ddl, err := generate(ctx, empty.ConnPool, replayed.pool, factory)
+	ddl, err := renderForEmptyDatabase(ctx, empty.ConnPool, replayed.pool, factory)
 	if err != nil {
 		return Checkpoint{}, fmt.Errorf("%w: render the schema as DDL: %w", ErrCheckpoint, err)
 	}
@@ -120,7 +124,7 @@ func (c *Checkpointer) replay(ctx context.Context, factory *scratchFactory, coll
 		return replayedSchema{}, nil, err
 	}
 	done := func() { _ = scratch.Close(context.WithoutCancel(ctx)) }
-	conn, err := connectScratch(ctx, c.scratch.connConfig(name, ""))
+	conn, err := connectScratch(ctx, c.scratch.connConfig(name, checkpointSearchPath))
 	if err != nil {
 		done()
 
@@ -169,13 +173,13 @@ func (c *Checkpointer) verify(ctx context.Context, factory *scratchFactory, ddl,
 		return err
 	}
 	defer func() { _ = scratch.Close(context.WithoutCancel(ctx)) }()
-	conn, err := connectScratch(ctx, c.scratch.connConfig(name, ""))
+	conn, err := connectScratch(ctx, c.scratch.connConfig(name, checkpointSearchPath))
 	if err != nil {
 		return fmt.Errorf("connect scratch database: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 
-	p, err := engine.BuildPlan(engine.Migration{Version: 1, Name: "checkpoint", UpSQL: ddl}, engine.DirectionUp)
+	p, err := engine.BuildPlan(engine.Migration{Version: 1, Name: "checkpoint", Checkpoint: true, UpSQL: ddl}, engine.DirectionUp)
 	if err != nil {
 		return fmt.Errorf("%w: the generated schema does not plan: %w", ErrCheckpoint, err)
 	}

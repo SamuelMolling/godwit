@@ -664,6 +664,12 @@ The service replays the versioned migrations at or below `--at` (the newest by d
 
 It is generated from a **scratch replay of the files**, never from a live target. Dumping a target would bake that target's drift — a hand-made `ALTER`, a column someone added at 3am — into the repository, and every other target would then be told it is missing it.
 
+**The body is rendered for the database it will meet.** A checkpoint only ever runs on an empty scratch database or on a target with no history — never on one holding rows, readers or writers — so the online shape the DDL generator produces for a live table is pure cost. Indexes are rendered **without `CONCURRENTLY`**, so every statement runs inside a transaction rather than committing on its own, and the `CREATE UNIQUE INDEX` / `ALTER TABLE … ADD CONSTRAINT … USING INDEX` pair that every primary key and unique constraint would otherwise become is folded back into its `CREATE TABLE`. On a thousand single-table migrations that is one statement per table instead of three. Anything the fold cannot reproduce exactly — a partial index, an expression, a non-`btree` method, a deferrable constraint — is left as the generator wrote it, and the fingerprint check covers the difference either way.
+
+For the same reason **a checkpoint's statements raise no hazards**. `godwit lint` gates `CREATE INDEX` without `CONCURRENTLY`, `DROP TABLE`, `ADD CONSTRAINT` without a prepared index and the rest on every other migration; each of those is about a table that already holds rows, readers or writers, and a checkpoint runs on a database with none of the three.
+
+**Unqualified DDL lands in `public`.** Generation has no target whose `search_path` it could mirror, so the schema is pinned rather than resolved from the scratch role's name: `"$user"` otherwise resolves to whatever schema shares that name, and when that is godwit's own journal schema the render excludes it and the checkpoint comes out empty. Migrations that build objects in another schema have to name it, as they do to be portable at all.
+
 The file is written into the migration directory with a fresh timestamp (one above the newest file when the directory is stamped in the future, so it always sorts last), and `--dry-run` prints it instead. Commit it; the collapsed files stay where they are.
 
 ### What each database does with it

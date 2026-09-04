@@ -141,6 +141,11 @@ func BuildPlan(m Migration, dir Direction) (Plan, error) {
 		if err := classify(raw.Stmt, &st); err != nil {
 			return Plan{}, fmt.Errorf("%d_%s (%s): %w", m.Version, m.Name, dir, err)
 		}
+		// Every hazard godwit raises is about a table that already holds rows, readers or writers; a
+		// checkpoint body only ever runs on a database with none of the three.
+		if m.Checkpoint {
+			st.Hazards = nil
+		}
 		p.Statements = append(p.Statements, st)
 	}
 

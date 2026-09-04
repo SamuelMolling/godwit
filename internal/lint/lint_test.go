@@ -403,7 +403,8 @@ func TestSchemaCheckPropagatesTheError(t *testing.T) {
 	}
 }
 
-// A checkpoint has no down side, so the down checks skip it; its own body is still hazard-gated.
+// A checkpoint has no down side, so the down checks skip it; and it raises no hazard, because every
+// hazard is about a table with rows, readers or writers and a checkpoint only ever runs without them.
 func TestCheckpointLintsWithoutADown(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -414,10 +415,10 @@ func TestCheckpointLintsWithoutADown(t *testing.T) {
 			"CREATE TABLE a (id int);\nCREATE INDEX a_id_idx ON a (id);",
 	})
 	rep := check(t, dir, nil, Options{})
-	if got := codes(rep); got != "20260102000000_squash.up.sql:error:H001" {
+	if got := codes(rep); got != "" {
 		t.Fatalf("codes = %q", got)
 	}
-	if rep.Blocking != 1 {
+	if rep.Blocking != 0 {
 		t.Fatalf("blocking = %d", rep.Blocking)
 	}
 }

@@ -216,6 +216,9 @@ func TestLoadHistoryGrowth(t *testing.T) {
 	cut := timed(func() { r.mustCLI("checkpoint", "--name", "squash", "--dir", dir) })
 	record := timed(func() { r.mustMigrate(dir) })
 	body := checkpointBody(t, dir)
+	if strings.Contains(body, "CONCURRENTLY") {
+		t.Fatal("a checkpoint body only ever meets an empty database and must carry no concurrent index build")
+	}
 	report(t, "history/checkpoint", "history", total,
 		"generate_seconds", cut.Seconds(), "record_seconds", record.Seconds(),
 		"body_bytes", len(body), "statements", strings.Count(body, ";"),
@@ -304,7 +307,6 @@ func newestVersion(t *testing.T, dir string) int64 {
 	return newest
 }
 
-// Unqualified DDL lands in the scratch role's own schema, which godwit checkpoint then renders as nothing.
 func tableDDL(i int) string {
 	return fmt.Sprintf("CREATE TABLE public.h%04d (id bigint PRIMARY KEY, note text);", i)
 }
