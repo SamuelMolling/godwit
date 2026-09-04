@@ -155,6 +155,8 @@ godwit target add app --provider static --dsn postgres://app:app@localhost/app -
 
 `target add` needs the `admin` scope; the `kubernetes` and `vault` providers avoid storing a DSN at all ([security: providers](security.md#credential-providers)).
 
+The `app` database here is empty, so the next section just runs. **A real first target rarely is**: a database that already has a schema, or a `godwit` journal written by something else, has to be adopted before the first plan — one `godwit target baseline` or one `godwit target reconcile`. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database) is the section to read before pointing this at anything that exists.
+
 ## 3. First run
 
 ```bash

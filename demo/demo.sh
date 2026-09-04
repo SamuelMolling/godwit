@@ -287,8 +287,42 @@ for _ in $(seq 1 30); do
 done
 echo "state: $STATE"
 docker compose exec -T target-db psql -U app -d legacy -c "\d orders"
-echo "==> a second baseline is refused: the target already has applied versions"
+echo "==> a second baseline is refused: nothing is left to record on either side"
 rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475
+echo
+echo "==> reconcile: the target's own journal is the truth, and a lost ledger is rebuilt from it"
+docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE adopted;" > /dev/null
+rpc RegisterTarget '{
+  "name": "adopted",
+  "provider": "static",
+  "dsn": "postgres://app:app@target-db:5432/adopted?sslmode=disable"
+}' 18475
+ADOPT_FILES='[
+    {"name": "20260901200000_events.up.sql", "body": "CREATE TABLE events (id bigint PRIMARY KEY);"},
+    {"name": "20260901200000_events.down.sql", "body": "DROP TABLE events;"},
+    {"name": "20260901200001_events_at.up.sql", "body": "ALTER TABLE events ADD COLUMN at timestamptz;"},
+    {"name": "20260901200001_events_at.down.sql", "body": "ALTER TABLE events DROP COLUMN at;"}
+  ]'
+AD_ID=$(rpc CreateRun "{\"target\": \"adopted\", \"files\": $ADOPT_FILES}" 18475 | field runId)
+for _ in $(seq 1 30); do
+  STATE=$(rpc GetRun "{\"runId\": \"$AD_ID\"}" 18475 | sed -E 's/.*"state":"([^"]+)".*/\1/')
+  [ "$STATE" = "RUN_STATE_SUCCEEDED" ] && break
+  sleep 1
+done
+echo "state: $STATE"
+echo "-- now the store loses its ledger for that target, the way a restore from an older backup would"
+docker compose exec -T store-db psql -U godwit -d godwit_store -c \
+  "DELETE FROM cp_run_applied a USING cp_runs r WHERE r.id = a.run_id AND r.target = 'adopted';" > /dev/null
+echo "-- the control plane says nothing is applied; the target still knows exactly what it holds"
+rpc ListTargets '{}' 18475 | sed -E 's/.*(\{"name":"adopted"[^}]*\}).*/\1/'
+rpc GetTargetStatus "{\"target\": \"adopted\", \"files\": $ADOPT_FILES}" 18475
+echo "==> planning against it is refused, and the refusal names the command"
+rpc PlanRun "{\"target\": \"adopted\", \"persist\": true, \"files\": $ADOPT_FILES}" 18475
+echo
+rpc ReconcileTarget "{\"target\": \"adopted\", \"files\": $ADOPT_FILES}" 18475
+rpc ListTargets '{}' 18475 | sed -E 's/.*(\{"name":"adopted"[^}]*\}).*/\1/'
+echo "==> reconciling again adopts nothing: the two agree"
+rpc ReconcileTarget "{\"target\": \"adopted\", \"files\": $ADOPT_FILES}" 18475
 echo
 echo "==> target status: applied versions from the database, pending against the files, last run and drift baseline"
 rpc GetTargetStatus "{\"target\": \"legacy\", \"files\": $BASELINE_FILES}" 18475

@@ -257,6 +257,9 @@ func TestDriftDisabled(t *testing.T) {
 	if _, err := s.AcceptBaseline(ctx, connect.NewRequest(&godwitv1.AcceptBaselineRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("err = %v", err)
 	}
+	if _, err := s.ReconcileTarget(ctx, connect.NewRequest(&godwitv1.ReconcileTargetRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("reconcile without a reconciler: %v", err)
+	}
 	if _, err := s.BaselineTarget(ctx, connect.NewRequest(&godwitv1.BaselineTargetRequest{})); connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("err = %v", err)
 	}

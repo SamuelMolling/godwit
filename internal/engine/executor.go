@@ -110,11 +110,13 @@ func New(db DB, opts Options, extra ...Option) *Executor {
 	return e
 }
 
-// Result reports what one apply did; Held marks a plan stopped at its contract boundary.
+// Result reports what one apply did; Held marks a plan stopped at its contract boundary, and Recorded
+// a skip the target's own journal already accounts for, as against one there was nothing to do for.
 type Result struct {
 	Migration string
 	Skipped   bool
 	Held      bool
+	Recorded  bool
 	Applied   int
 }
 
@@ -154,7 +156,7 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 	if p.Direction == DirectionUp && recorded {
 		if checksum == p.Migration.Checksum {
-			res.Skipped = true
+			res.Skipped, res.Recorded = true, true
 
 			return res, nil
 		}

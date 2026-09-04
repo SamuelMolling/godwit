@@ -28,7 +28,7 @@ type ApplyRequest struct {
 // Engine applies plans to a target database, marks migrations applied and inspects its schema and journal.
 type Engine interface {
 	Apply(ctx context.Context, req ApplyRequest) error
-	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error
+	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) ([]engine.Migration, error)
 	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
 	Applied(ctx context.Context, dsn string) ([]engine.Applied, []engine.Repeatable, error)
 	Observe(ctx context.Context, dsn string) (Observation, error)
@@ -105,10 +105,10 @@ func (e PGEngine) observer(req ApplyRequest) func(engine.StatementEvent) {
 }
 
 // MarkApplied implements Engine.
-func (PGEngine) MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) error {
+func (PGEngine) MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) ([]engine.Migration, error) {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		return fmt.Errorf("connect target: %w", err)
+		return nil, fmt.Errorf("connect target: %w", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 

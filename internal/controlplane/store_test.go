@@ -376,7 +376,7 @@ func TestStoreQueryErrors(t *testing.T) {
 	if err := s.CreateRevert(ctx, "id", Run{ID: "id", State: StateSucceeded}, false, Timeouts{}, Provenance{}); err == nil {
 		t.Fatal("want error")
 	}
-	if err := s.CreateBaseline(ctx, "id", "x", nil, Provenance{}); err == nil {
+	if err := s.CreateAdoption(ctx, "id", "x", KindBaseline, nil, Provenance{}); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := s.Confirm(ctx, "id"); err == nil {

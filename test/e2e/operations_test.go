@@ -307,3 +307,39 @@ func TestDryRunPlansWithoutQueueing(t *testing.T) {
 		t.Fatalf("runs after refused dry run = %d, want 1", n)
 	}
 }
+
+// A database migrated by a godwit whose store is gone: the ledger is rebuilt from the target's own
+// journal, and the next migration lands on top.
+func TestReconcileAfterALostLedger(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("app")
+	dir := migrationDir(t, usersTable, migration{v2, "plan", "ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;"})
+	expectContains(t, r.mustMigrate(migrationDir(t, usersTable)), "succeeded")
+
+	execSQL(t, r.storeDSN, `DELETE FROM cp_run_applied a USING cp_runs r WHERE r.id = a.run_id AND r.target = 'app'`)
+	expectContains(t, r.mustCLI("targets"), "app")
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 1 {
+		t.Fatalf("the target keeps its journal whatever the store lost: %d", n)
+	}
+
+	code, _, errOut := r.cli("plan", "--target", "app", "--dir", dir)
+	if code != 1 {
+		t.Fatalf("plan on an unreconciled target exit = %d, want 1", code)
+	}
+	expectContains(t, errOut, "records migrations the ledger does not")
+	expectContains(t, errOut, "godwit target reconcile app")
+
+	out := r.mustCLI("target", "reconcile", "app", "--dir", dir)
+	expectContains(t, out, "adopted 1 migration(s) from its journal")
+	expectContains(t, out, "20260901120000_users")
+	expectContains(t, r.mustCLI("target", "reconcile", "app", "--dir", dir), "already reconciled")
+
+	expectContains(t, r.mustMigrate(dir), "succeeded")
+	if !columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("the migration above the adopted history must apply")
+	}
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 2 {
+		t.Fatalf("applied versions after migrate = %d, want 2", n)
+	}
+}

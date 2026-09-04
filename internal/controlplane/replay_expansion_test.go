@@ -188,7 +188,11 @@ func TestValidateDoesNotReexpandBaselinedDirectives(t *testing.T) {
 	ctx := context.Background()
 	s, v := replayFixture(t, "app")
 	files := directiveFiles("add-not-null public.people.team_id", revertDown)
-	if err := s.CreateBaseline(ctx, uuid.NewString(), "app", files, Provenance{}); err != nil {
+	migs, err := MigrationsFromFiles(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateAdoption(ctx, uuid.NewString(), "app", KindBaseline, migs, Provenance{}); err != nil {
 		t.Fatal(err)
 	}
 	val, err := v.Validate(ctx, "app", upPlans(t, files), "")

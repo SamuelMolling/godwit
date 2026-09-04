@@ -65,6 +65,7 @@ var procedureScopes = map[string]Scope{
 	godwitv1connect.GodwitServiceCheckDriftProcedure:      ScopeOperator,
 	godwitv1connect.GodwitServiceAcceptBaselineProcedure:  ScopeOperator,
 	godwitv1connect.GodwitServiceBaselineTargetProcedure:  ScopeOperator,
+	godwitv1connect.GodwitServiceReconcileTargetProcedure: ScopeOperator,
 	godwitv1connect.GodwitServiceRegisterTargetProcedure:  ScopeAdmin,
 }
 

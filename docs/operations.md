@@ -23,9 +23,9 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 | Table | Rows | Grows with |
 |---|---|---|
 | `cp_targets` | one per target; `config` holds the encrypted DSN or the provider config | targets |
-| `cp_runs` | one per run: state, attempts, rollout, phase, `reverts`, timeouts, kind, `created_by`, `source`, error | runs |
+| `cp_runs` | one per run: state, attempts, rollout, phase, `reverts`, timeouts, kind (`migrate`, `baseline`, `reconcile`), `created_by`, `source`, error | runs |
 | `cp_run_files` | every migration file body sent with a run (the source of the bodies a replay and a revert use, narrowed by `cp_run_applied`) | runs × files; the largest table |
-| `cp_run_applied` | one row per migration a run actually applied: order, whether its contract phase is held, the directive expansion frozen for it, and the revert that undid it. This is what a revert, the applied set and the scratch-validation replay are all scoped to | runs × migrations applied |
+| `cp_run_applied` | one row per migration a run put on the books: order, whether its contract phase is held, whether the run merely `adopted` it from the target's own journal, the directive expansion frozen for it, and the revert that undid it. This is what the applied set and the scratch-validation replay are scoped to; a revert takes the same rows minus the adopted ones | runs × migrations applied |
 | `cp_plans` | one per stored plan: key, rollout, state, observation, drift, directive expansions, the run it is bound to | `godwit plan --target` calls; swept by `--plan-retention` |
 | `cp_plan_files` | the file bodies of a stored plan | plans × files; second largest |
 | `cp_retired_columns` | one per `<c>_old` a completed `change-type` left behind, so `godwit diff` stops proposing to drop it; cleared by the revert or the `drop-column` that removes the column | `change-type` directives |
@@ -33,7 +33,7 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 | `cp_snapshots` | one per target: schema fingerprint and definition after the last successful run or baseline | targets |
 | `cp_drift_events` | one per detected diff, `resolved_at` when it goes away or is accepted | drift |
 | `cp_notifications` | Slack root message ts per run / drift key | runs |
-| `cp_audit` | one per admitted mutation (`target.register`, `target.baseline`, `run.create`, `run.reattach`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`) | mutations |
+| `cp_audit` | one per admitted mutation (`target.register`, `target.baseline`, `target.reconcile`, `run.create`, `run.reattach`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`) | mutations |
 
 Privileges for the store role: owner of the store database, and that is all it needs once `--scratch-dsn` points scratch databases elsewhere. Left unset, it also needs `CREATEDB` — and then submitted DDL executes as the owner of the control-plane database, which [security](security.md#the-scratch-database) explains and `serve` warns about on every start.
 
@@ -85,7 +85,7 @@ DELETE FROM cp_drift_events WHERE resolved_at < now() - interval '180 days';
 DELETE FROM cp_audit WHERE at < now() - interval '365 days';
 ```
 
-The `NOT EXISTS` is the load-bearing part: a `failed` run that applied three migrations before it stopped still owns their history, so deleting its files takes the replay's bodies with it. Do not delete runs with `kind = 'migrate'` that still have standing rows unless the target has been baselined since: [`BaselineTarget`](concepts.md#baseline) records the baseline run as the new history root, after which older runs are no longer replayed.
+The `NOT EXISTS` is the load-bearing part: a `failed` run that applied three migrations before it stopped still owns their history, so deleting its files takes the replay's bodies with it. Do not delete runs with `kind = 'migrate'` that still have standing rows unless the target has been baselined since: [`BaselineTarget`](concepts.md#adopting-an-existing-database) records the baseline run as the new history root, after which older runs are no longer replayed. Runs of kind `baseline` and `reconcile` are history roots themselves and hold the only copy of the bodies they adopted; never delete them while their rows stand.
 
 Target (`godwit` schema):
 

@@ -318,6 +318,25 @@ UPDATE cp_run_applied a SET expansion = r.expansions -> a.migration
 FROM cp_runs r WHERE r.id = a.run_id AND r.expansions ? a.migration;`,
 		DownSQL: `DROP TABLE cp_run_applied;`,
 	},
+	{
+		Version:  20260904000016,
+		Name:     "ledger_adoption",
+		Checksum: "cp-ledger-adoption-v1",
+		UpSQL: `
+ALTER TABLE cp_run_applied ADD COLUMN adopted boolean NOT NULL DEFAULT false;
+
+UPDATE cp_run_applied a SET adopted = true
+FROM cp_runs r WHERE r.id = a.run_id AND r.kind = 'baseline';
+
+ALTER TABLE cp_runs
+	DROP CONSTRAINT cp_runs_kind_check,
+	ADD CONSTRAINT cp_runs_kind_check CHECK (kind IN ('migrate', 'baseline', 'reconcile'));`,
+		DownSQL: `
+ALTER TABLE cp_runs
+	DROP CONSTRAINT cp_runs_kind_check,
+	ADD CONSTRAINT cp_runs_kind_check CHECK (kind IN ('migrate', 'baseline'));
+ALTER TABLE cp_run_applied DROP COLUMN adopted;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

@@ -6,6 +6,7 @@ The short version:
 
 - A target is registered by **one API call**, `RegisterTarget`, which the CLI spells `godwit target add`. It needs the `admin` scope. **There is no way to register or edit a target from the web UI** — `/ui/targets` and `/ui/targets/{name}` are read-only pages.
 - What godwit stores per target is a *provider name plus a small config map*, never a live credential unless you chose `static`.
+- **A database that is not empty must be adopted before the first plan** — `godwit target baseline` when godwit never journalled it, `godwit target reconcile` when it carries a journal from elsewhere.
 - For Vault you need `VAULT_ADDR` on the service, a way to authenticate (Kubernetes auth is the one to use), a policy with `read` on exactly one path per target, and a `--vault-template` that turns the secret's fields into a DSN.
 - One godwit serving every application's database is the intended shape. Put the service in the shared stack; put the target registration, the migrations and the hook Jobs with the application.
 
@@ -81,6 +82,59 @@ In an ArgoCD setup the natural home is a small Job in the shared stack, one `god
 `/ui/targets` lists every registered target with its provider, `search_path`, timeouts and `require_plan`; `/ui/targets/{name}` shows one target's applied migrations, pending set, ready plans and open drift. Both are `GET` routes. The only `POST` routes the UI serves are run actions, drift actions and `/ui/diff` — **there is no form that registers, edits or removes a target**, at any scope, including `admin`. This is deliberate: `RegisterTarget` is the one RPC the UI never calls, so an `admin` browser session is worth no more than an `operator` one ([security](security.md#web-ui)).
 
 There is also no `target remove` — deleting a target is a `DELETE FROM cp_targets` on the store, and the runs that reference it keep their rows.
+
+## Adopting an existing database
+
+Almost no first target is empty. Registering it is one call; putting what it already holds on godwit's books is the next one, and **it must happen before the first `plan`.** Which call depends on what the database carries, and you can tell in one query:
+
+```bash
+psql "$DSN" -c "SELECT version, name FROM godwit.migrations ORDER BY version"
+```
+
+| | Adopt with |
+|---|---|
+| the relation does not exist — the schema is there, godwit never touched it | `godwit target baseline` |
+| rows come back — another godwit instance migrated it, or this one's store was rebuilt | `godwit target reconcile` |
+
+### No godwit journal: baseline
+
+Write a schema dump as the first migration in the directory, so the replay has something to build from, then name the version it stands for:
+
+```bash
+pg_dump --schema-only --no-owner --no-privileges "$DSN" > db/migrations/20260101000000_baseline.up.sql
+echo '-- no inverse: this is where the history starts' > db/migrations/20260101000000_baseline.down.sql
+
+godwit target baseline orders --dir db/migrations --version 20260101000000
+# target orders: baselined to version 20260101000000 (run 3f9c…)
+```
+
+Every migration at or below `--version` is written into the target's `godwit.migrations` with its checksum, without running it. `--version` is required: godwit will not guess how much of your directory the database already contains. Migrations above it are left for the next `godwit migrate`.
+
+If the directory already reaches further than the dump — say the database is at `20260415…` and the files go up to `20260901…` — baseline to `20260415000000` and let `migrate` apply the rest.
+
+### A godwit journal from elsewhere: reconcile
+
+The database has `godwit.migrations` rows this service's store knows nothing about. Check out the commit those migrations were applied from, and:
+
+```bash
+godwit target reconcile orders --dir db/migrations
+# target orders: adopted 12 migration(s) from its journal (run 6f2c…): 20260101000000_baseline, …
+```
+
+Reconciling **reads the target and writes only the store**. It takes no `--version`: the target's own journal says what it holds. Run it again and it says `already reconciled, nothing to adopt`.
+
+It refuses, rather than guessing, when the two genuinely disagree — a file whose checksum is not the one the target recorded, a migration the target ran that your directory does not carry, or a migration the store thinks is applied that the target does not have. Each refusal names the migrations it means; [the runbook](runbook.md#the-ledger-is-behind-a-target) has the query for each and what to do.
+
+### What happens if you skip this
+
+The first `godwit plan` refuses and tells you:
+
+```
+failed_precondition: target records migrations the ledger does not: orders records 20260101000000_baseline, …;
+run `godwit target reconcile orders --dir <migrations>` to adopt what it already has
+```
+
+That refusal exists because the control plane's ledger is what the out-of-order guard and the scratch replay read ([decision 0014](decisions/0014-the-target-journal-is-authoritative.md)). Planning against a ledger that cannot see what the target already has produces a plan for a database that does not exist.
 
 ## The three credential providers
 
@@ -507,6 +561,15 @@ godwit target status orders    # this one actually reaches Vault and the databas
 ```
 
 `target status` failing here is the point of running it: `vault provider not configured` means `VAULT_ADDR` is unset, `status 403` means the policy or the Kubernetes auth role, `no field for x` means the template, and a connection error means the host in the template.
+
+**5b. Adopt what the database already has.** Skip only if it is genuinely empty; see [adopting an existing database](#adopting-an-existing-database).
+
+```bash
+psql "$DSN" -c "SELECT count(*) FROM godwit.migrations"   # relation missing → baseline; rows → reconcile
+godwit target baseline orders --dir db/migrations --version <the version the schema stands at>
+# or
+godwit target reconcile orders --dir db/migrations
+```
 
 **6. First run, by hand, before any hook exists.**
 

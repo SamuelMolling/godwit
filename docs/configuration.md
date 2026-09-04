@@ -197,6 +197,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 |---|---|---|
 | `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path` | admin |
 | `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
+| `godwit target reconcile <name>` | `--dir` | operator |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
 | `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them. The applied count is versioned migrations only; `target status` also lists the repeatables, so its `applied (N)` is the larger number |
 | `godwit migrations` | `--target` (repeatable), `--from`, `--to`, `--not-everywhere`, `--in`, `--not-in` | read; one row per migration and content with a column per target, so a version standing on two targets under different checksums is two rows and reads `differs`. `--in staging --not-in production` is what is ahead in staging ([concepts](concepts.md#the-fleet-view)) |

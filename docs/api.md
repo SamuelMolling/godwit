@@ -37,7 +37,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 |---|---|
 | `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
-| `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
+| `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget`, `ReconcileTarget` |
 | `admin` | + `RegisterTarget` |
 
 Missing or unknown token: `unauthenticated: invalid or missing bearer token`. Insufficient scope: `permission_denied: <Method> requires scope <x>; token <name> has scope <y>`. Both are counted in `godwit_api_requests_total{code=...}` and logged as `api call` at warn.
@@ -50,7 +50,7 @@ Missing or unknown token: `unauthenticated: invalid or missing bearer token`. In
 | `unauthenticated` | 401 | bad bearer |
 | `permission_denied` | 403 | scope too low |
 | `not_found` | 404 | unknown target or run id |
-| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not revertable: ...` (a newer run stands — pass `force`, the target is busy, or the run applied nothing that still stands), `revert would destroy data: ...` (pass `allowDataLoss`), `baseline runs cannot be reverted`, `target already has applied migrations`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`), `plan <id> is bound to run <r>`, `plan <id> was superseded by <id>`, `plan <id> expired ...` |
+| `failed_precondition` | 412 | `unacknowledged hazards ...`, `out-of-order migrations ...`, `run is not failed or parked`, `run is not awaiting contract`, `run is not revertable: ...` (a newer run stands — pass `force`, the target is busy, or the run applied nothing that still stands), `revert would destroy data: ...` (pass `allowDataLoss`), `baseline runs cannot be reverted`, `target already has applied migrations`, `recorded on the target under different content`, `target and ledger disagree ...`, `target records migrations the ledger does not ...`, `plan <id> on <target> is stale ...` (detail `godwit.v1.PlanStale`), `target <t> requires a stored plan ...` (detail `godwit.v1.PlanRequired`), `plan <id> is bound to run <r>`, `plan <id> was superseded by <id>`, `plan <id> expired ...` |
 | `unimplemented` | 501 | `drift detection is not enabled`, `baselining is not enabled`, `target status is not enabled`, `stored plans are not enabled` (server wired without those components; not the case for `godwit serve`) |
 | `internal` | 500 | store errors, credential provider errors, `replay history run N: ...` from validation |
 
@@ -135,7 +135,7 @@ call GetRun '{"runId":"0d3c6c6e-3f9b-4b8a-9c8e-1d1f0c1b2a3c"}'
 
 `{"runId":"...","includeFiles":true}` also returns `files`: the migration directory the run carried, by name. It is a snapshot of the directory as it was when the run was created, not of the repository now.
 
-`Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan), `progress` (`migration`, `statement`, `phase`, `rowsDone`, `rowsTotal`, `batches`: what the statement being executed last reported, written under the heartbeat so a long backfill is visible while it runs, and cleared by every transition that starts or ends an attempt — a run that is not running has none).
+`Run` fields: `id`, `target`, `state`, `error`, `attempts`, `createdAt`, `finishedAt`, `rollout`, `phase`, `reverts` (id of the run this one undoes), `lockTimeout`, `statementTimeout`, `kind` (`migrate` / `baseline` / `reconcile`), `createdBy`, `source`, `planId` (the stored plan the run bound to; empty for an implicit plan), `progress` (`migration`, `statement`, `phase`, `rowsDone`, `rowsTotal`, `batches`: what the statement being executed last reported, written under the heartbeat so a long backfill is visible while it runs, and cleared by every transition that starts or ends an attempt — a run that is not running has none).
 
 ### ListRuns — read
 
@@ -244,7 +244,16 @@ call BaselineTarget '{"target":"legacy","version":"20260801000000","files":[...]
 # {"runId":"..."}
 ```
 
-Records every migration with `version <= version` in the target's `godwit.migrations` without executing it, and stores the files as a `kind = baseline` run so validation replays from here. Refused with `target already has applied migrations` when the target's journal is not empty; `no migration at or below version N` when the files do not reach the version.
+Records every migration with `version <= version` in the target's `godwit.migrations` without executing it, and stores the files as a `kind = baseline` run so validation replays from here. Both halves are idempotent: a version the target already records is left alone, one the ledger already stands on is not recorded twice. Refused with `target already has applied migrations` when nothing is left to record on either side; `recorded on the target under different content` when a file's checksum differs from the target's row for that version; `no migration at or below version N` when the files do not reach the version. See [adopting an existing database](concepts.md#adopting-an-existing-database).
+
+### ReconcileTarget — operator
+
+```bash
+call ReconcileTarget '{"target":"legacy","files":[...]}'
+# {"runId":"...","adopted":["20260101000000_orders","20260101000001_total"]}
+```
+
+Reads the target's `godwit.migrations` and `godwit.repeatables` and writes into the ledger, as a `kind = reconcile` run, every migration the target records and no standing ledger row accounts for. It never writes to the target and takes no version. `adopted` is empty and `runId` empty when the two already agree. Refused with `target and ledger disagree on <target>: ...` naming the migrations that are recorded under different content than the directory carries, recorded on the target and absent from the directory, or standing in the ledger and absent from the target.
 
 ### GetTargetStatus — read
 
@@ -324,7 +333,7 @@ and the UI as `/ui/migrations`.
 
 ### ListAudit — read
 
-`{"target":"app","runId":"","limit":50}`; every field optional, `limit` 0 means 100. Newest first. Entries: `id`, `at`, `actor`, `action` (`target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`), `runId`, `target`, `detail`.
+`{"target":"app","runId":"","limit":50}`; every field optional, `limit` 0 means 100. Newest first. Entries: `id`, `at`, `actor`, `action` (`target.register`, `target.baseline`, `target.reconcile`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`), `runId`, `target`, `detail`.
 
 ## Generated clients
 
