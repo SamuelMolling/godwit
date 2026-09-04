@@ -51,36 +51,45 @@ Measured on an Apple M5 Pro (18 cores, 48 GB), macOS 15.6, Docker Desktop (12 CP
 
 `-- godwit: backfill bf set='w = v * 2' where='w IS DISTINCT FROM v * 2' key=id batch=20000`
 
+The box was shared while these were taken and the spread is wide, so each row is the **median of four runs** with the range beside it.
+
 | | |
 |---|---|
-| seed | 10 000 000 rows, 9.6 s, 668 MB |
-| backfill | 27.2 s, 500 batches, **367 110 rows/s** |
-| peak RSS of the replica | 44 MB |
-| `godwit.journal` rows during the run | 2 (one `intent`, one `done` from the earlier migration) |
+| seed | 10 000 000 rows, 668 MB |
+| backfill | **30.0 s, ~333 000 rows/s**, 500 batches (29.3–41.1 s) |
+| the same run without the sync trigger | 28.2 s, ~355 000 rows/s (24.6–45.0 s) |
+| the same run with the guard inside the plpgsql body | 53.0 s, ~189 000 rows/s (41.3–95.5 s) |
+| peak RSS of the replica | 44–48 MB |
+| `godwit.journal` rows when the run ends | 8: the earlier migration's, the backfill's six statements, and the batch's `intent` row beside its `done` |
 | `godwit.journal` on disk, before and after | 32 KB → 32 KB |
 | the table on disk, before and after | 668 MB → 1.41 GB |
 | journalled `rows_done` | exactly 10 000 000 |
 
 The journal does not grow with the backfill: a batched statement keeps one `intent` row whose `cursor` and `rows_done` are updated in place, in the same transaction as the rows it counts. Memory is flat — the executor holds one batch of keys at a time, never the result set. The cursor never went backwards across the run.
 
+**The sync trigger costs about 6%, and where its guard sits is why.** The backfill's own batches fire the trigger for every row they touch, so whatever it does it does ten million times. With the guard inside the plpgsql body (`IF EXISTS (SELECT 1 FROM (SELECT new.*) …)`) every one of those rows entered plpgsql and ran an SPI query: **1.9× the run**. The same predicate as the trigger's `WHEN` clause is evaluated by the executor in C, and the function is entered only for a row that needs it — which, once a batch has written the row, is none of them. That is 30.0 s against a 28.2 s floor.
+
 ### `pause` does what it claims
 
-40 000 rows, `batch=1000`, 40 batches: 0.47 s with no pause, 8.56 s with `pause=200ms`. The 8.08 s it added clears the 7.8 s floor (39 gaps × 200 ms) with scheduling on top. `pause` sleeps between batches only, so the last batch is not followed by one.
+40 000 rows, `batch=1000`, 40 batches: 0.53 s with no pause, 8.92 s with `pause=200ms`. The 8.39 s it added clears the 7.8 s floor (39 gaps × 200 ms) with scheduling on top. `pause` sleeps between batches only, so the last batch is not followed by one.
 
 ### A backfill under a live write workload
 
-2 000 000 seeded rows, one writer appending 100 rows every 5 ms and one updating 100 existing rows every 5 ms inside the first fifth of the key space, for the 5.0 s the backfill ran.
+2 000 000 seeded rows, one writer appending 100 rows every 5 ms and one updating 100 existing rows every 5 ms inside the first fifth of the key space. The writers are stopped once the journalled cursor is past the middle of the table, so everything they wrote — the reserved band above all, which the cursor left behind in the first fractions of a second — landed while the sync trigger was installed. What is written after the trigger goes is past the migration and is not what the backfill promised.
 
-| | |
-|---|---|
-| appended during the run | 83 500 |
-| updated during the run | 83 100 |
-| left stale in the band the updater wrote to | **61 818** |
-| left stale above the last batch's cursor | **1 100** |
-| left stale where nobody wrote | 0 |
-| journalled `rows_done` | 2 082 400, exactly what the database changed |
+| | before the sync trigger | with it |
+|---|---:|---:|
+| the run | 6.0 s, `succeeded` | 5.5 s, `succeeded` |
+| appended during the run | 58 800 | 49 400 |
+| updated during the run | 55 800 | 47 800 |
+| left stale in the band the updater wrote to | **34 402** | **0** |
+| left stale above the seeded rows | 0 | 0 |
+| left stale where nobody wrote | 0 | 0 |
+| left stale, all told | **34 402** | **0** |
 
-The run reported `succeeded`. **A `backfill` directive is not write-safe**: a row written below the cursor after the cursor passed it is never revisited, and a row appended after the final batch is never seen. Rows nobody touched are all backfilled and `rows_done` is exactly what the database changed, so the journal does not lie — but "the backfill succeeded" does not mean "every row now satisfies the predicate". `change-type` does not have this problem: its expansion installs a sync trigger before the backfill, so a write during the run sets both columns. A plain `backfill` installs nothing. Either write that trigger into the same migration, or run the backfill again until it changes no rows.
+Before, the run reported `succeeded` over 34 402 stale rows: a row written below the cursor after the cursor passed it was never revisited, and a row appended after the final batch was never seen. `rows_done` was exactly what the database changed, so the journal did not lie — but "the backfill succeeded" did not mean "every row now satisfies the predicate". `change-type` never had the problem, because its expansion installs a sync trigger before the backfill; a plain `backfill` installed nothing.
+
+Now it installs the same thing, and refuses to finish without counting what is left ([concepts](concepts.md#backfill-keeps-its-rows-in-sync-while-it-runs)). `rows_done` is no longer the seeded row count and should not be: the trigger reaches some rows before the batches do, and the batches then skip them. The rig bounds it from below by `seeded − appended − updated` instead, and the check that matters is that **no row is left**.
 
 ### A target with a long history
 
@@ -154,7 +163,7 @@ Each case injects a fault and then asserts the same three things: the journal ne
 
 | Case | Fault | What it pins |
 |---|---|---|
-| `KillMidBatch` | SIGKILL during a batched backfill | the resumed cursor is the last committed batch, `rows_done` ends at exactly the row count, and the crash costs the in-flight batch and nothing else |
+| `KillMidBatch` | SIGKILL during a batched backfill | the resumed cursor is the last committed batch, `rows_done` ends at exactly the row count, the crash costs the in-flight batch and nothing else, and the resume leaves no sync trigger behind |
 | `KillBetweenIntentAndStatement` | SIGKILL while `CREATE INDEX CONCURRENTLY` waits for a lock, after the `intent` row | an intent with no index means "run it", and the index is built once |
 | `KillBetweenStatementAndJournal` | the `done` write frozen on a table lock after the index is valid, then SIGKILL | the survivor adopts the index by OID instead of rebuilding it |
 | `KillDuringFinalize` | `godwit.migrations` frozen while `finalize` waits, then SIGKILL | the resume records the migration once and re-runs no statement |
@@ -189,7 +198,7 @@ Every case above passed; the suite takes 69 s. What the timings say:
 |---|---|---|
 | A version re-submitted with fewer statements than a failed run journalled panicked `loadProgress` with an index out of range. Nothing recovers a panic, so the replica died, the next replica claimed the same run and died too. | `internal/engine/journal.go` | fixed: the journal row's index is bounds-checked against the plan and the run refuses to resume, the way a changed statement hash already did |
 | A severed target connection surfaces as pgx's `ErrConnClosed`, which is neither a `net.Error` nor an `io.EOF` nor a `PgError`, so `classify` called it permanent: a network blip failed the deploy on the first attempt with no `transient:` prefix and no retry. | `internal/controlplane/retry.go` | fixed: `pgconn.ErrConnClosed` joins the network class the decision record already puts there |
-| A `backfill` directive silently leaves rows stale when the table is written to during the run. | `internal/controlplane/expand.go` | documented above; a fix means either generating a sync trigger for `backfill` the way `change-type` does, or refusing the directive on a table with live writes. An owner decision. |
+| A `backfill` directive silently left rows stale when the table was written to during the run: 34 402 of 2 000 000, reported as `succeeded`. | `internal/controlplane/expand.go` | fixed: the expansion now installs the sync trigger `change-type` always had, and generates a closing assertion that counts the rows still matching before the run may succeed |
 | A checkpoint does not make the scratch replay cheaper: `plan` 31.9 s → 36.3 s and `diff` 79.2 s → 81.1 s at 1000 migrations. The collapse works; what replaces the replayed migrations is a 3001-statement body with 1000 `CREATE INDEX CONCURRENTLY` in it. | `internal/controlplane/checkpoint.go` | fixed: the body is rendered for the empty database it meets — no `CONCURRENTLY`, and the index/constraint pairs folded back into their `CREATE TABLE`. 1001 statements, and the replay 1.9× faster on this shape and 76× on a churning one. Numbers above |
 | `godwit checkpoint` renders an empty checkpoint and refuses on the setup every doc example uses. `Checkpointer.Generate` replays the collapsed migrations on a scratch database and renders the result with pg-schema-diff, which excludes schema `godwit`. Nothing pins that session's `search_path`, and the replay's own `bootstrap` creates schema `godwit` there — so when the scratch role is also called `godwit`, `search_path = "$user", public` resolves `$user` to it and every unqualified `CREATE TABLE` lands in the excluded schema. Three migrations of `CREATE TABLE h0 (id bigint PRIMARY KEY)` reproduce it; the same three written `CREATE TABLE public.h0 …` generate correctly. `Validator.Validate` is immune because it mirrors the target's observed `search_path` onto the scratch; `Generate` takes no target and mirrors nothing. | `internal/controlplane/checkpoint.go` | fixed: generation pins `search_path` to `public`, so no scratch role's name can decide where the collapsed migrations land. `TestCheckpointRendersUnqualifiedDDL` is the regression |
 | A directory of 1000 migrations is the ceiling on the default `--max-files 2000`: every request carries the whole directory at two files per migration, and a checkpoint adds a file rather than removing any — the collapsed migrations stay until every target is above the checkpoint and someone deletes them by hand. | `internal/api/limits.go` | reported, not fixed: raising the default, or sending only the pending set, are both product decisions |

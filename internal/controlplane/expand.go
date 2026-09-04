@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	pgquery "github.com/pganalyze/pg_query_go/v6"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -25,6 +26,9 @@ const DefaultBatchSize = 5000
 
 // batchKeyAlias names the cursor column the batched backfill returns, kept distinct from the table's own columns.
 const batchKeyAlias = "godwit_key"
+
+// backfillSyncSuffix names the trigger and the function a backfill holds on its table while it runs.
+const backfillSyncSuffix = "_backfill_sync"
 
 // RetiredColumn is a column a change-type left behind as the rollback of a completed swap.
 type RetiredColumn struct {
@@ -479,7 +483,10 @@ func (x *Expander) retire(b *built, d engine.Directive, col columnFacts, newCol,
 	}
 }
 
-// backfill expands a directive-driven UPDATE into one resumable batched statement.
+// backfill expands a directive-driven UPDATE into a resumable batched statement a sync trigger keeps
+// honest. The trigger applies the same assignment to every row written while the batches run, so a row
+// written below the cursor after it passed — the case a plain batched UPDATE never revisits — lands
+// already backfilled; a closing assertion counts what is left rather than trusting the loop.
 func (x *Expander) backfill(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	tbl, err := resolveTable(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -489,16 +496,278 @@ func (x *Expander) backfill(ctx context.Context, conn engine.DB, d engine.Direct
 	if err != nil {
 		return built{}, err
 	}
-	where := "true"
-	if w, ok := d.Opts["where"]; ok {
-		where = w
+	set, err := parseAssignments(d)
+	if err != nil {
+		return built{}, err
 	}
+	if err := set.syncable(ctx, conn, d, tbl, spec); err != nil {
+		return built{}, err
+	}
+	where, fresh := "true", "true"
+	if w, ok := d.Opts["where"]; ok {
+		val, err := checkedExpr(ctx, conn, d, "where="+w, w, tbl.Table)
+		if err != nil {
+			return built{}, err
+		}
+		where, fresh = w, qualifiedText(val)
+	}
+	sync := tbl.Table + backfillSyncSuffix
+	if err := tbl.syncFree(ctx, conn, d, sync); err != nil {
+		return built{}, err
+	}
+	set.qualify()
+	pending := set.pending(where)
 
 	return built{
-		expand:  []step{{sql: backfillSQL(tbl, spec, d.Opts["set"], where), batch: spec}},
-		notes:   []string{fmt.Sprintf("backfills %s in batches of %d over %s", tbl.rel(), spec.Size, spec.Key)},
+		expand: []step{
+			{sql: backfillSyncFunction(tbl, sync, set)},
+			{sql: backfillSyncTrigger(tbl, sync, set.pendingNew(fresh))},
+			{sql: backfillSQL(tbl, spec, set.set(), pending), batch: spec},
+			{
+				sql:    fmt.Sprintf("SELECT count(*) FROM %s WHERE %s", tbl.rel(), pending),
+				assert: &engine.AssertSpec{Op: "=", Kind: engine.AssertInt, Value: "0"},
+			},
+			{sql: fmt.Sprintf("DROP TRIGGER %s ON %s", engine.Ident(sync), tbl.rel())},
+			{sql: fmt.Sprintf("DROP FUNCTION %s.%s()", engine.Ident(tbl.Schema), engine.Ident(sync))},
+		},
+		notes: []string{
+			fmt.Sprintf("backfills %s in batches of %d over %s", tbl.rel(), spec.Size, spec.Key),
+			fmt.Sprintf("keeps rows written while it runs in sync through the trigger %s, and drops it after the "+
+				"last batch; a run abandoned before that leaves it in place — `DROP TRIGGER %s ON %s; DROP FUNCTION %s.%s();`",
+				engine.Ident(sync), engine.Ident(sync), tbl.rel(), engine.Ident(tbl.Schema), engine.Ident(sync)),
+			fmt.Sprintf("counts what is left before it finishes: the run fails rather than reporting success while "+
+				"a row of %s still matches the backfill", tbl.rel()),
+		},
 		downWhy: "a backfill has no generated inverse; write the .down.sql by hand",
 	}, nil
+}
+
+// assignment is one column of a `set=` and the expression the backfill and its trigger both write into it.
+type assignment struct {
+	column string
+	val    *pgquery.Node
+	expr   string
+	fresh  string
+}
+
+type assignments []assignment
+
+func (as assignments) set() string {
+	out := make([]string, len(as))
+	for i, a := range as {
+		out[i] = engine.Ident(a.column) + " = " + a.expr
+	}
+
+	return strings.Join(out, ", ")
+}
+
+func (as assignments) into() string {
+	out := make([]string, len(as))
+	for i, a := range as {
+		out[i] = "new." + engine.Ident(a.column)
+	}
+
+	return strings.Join(out, ", ")
+}
+
+func (as assignments) exprs() string {
+	out := make([]string, len(as))
+	for i, a := range as {
+		out[i] = a.expr
+	}
+
+	return strings.Join(out, ", ")
+}
+
+// qualify binds every assignment to the trigger's NEW row, which is what lets the guard sit in the
+// trigger's WHEN clause instead of inside its body.
+func (as assignments) qualify() {
+	for i := range as {
+		as[i].fresh = qualifiedText(as[i].val)
+	}
+}
+
+// pending is the predicate for a row the backfill has still to touch: the author's filter, and the
+// assignment not yet in place. The batches select it and the closing assertion counts it; pendingNew is
+// the same predicate on the row a trigger is handed, so the three cannot disagree about "backfilled".
+func (as assignments) pending(where string) string {
+	return as.notYet(where, func(a assignment) (string, string) { return engine.Ident(a.column), a.expr })
+}
+
+func (as assignments) pendingNew(where string) string {
+	return as.notYet(where, func(a assignment) (string, string) { return "new." + engine.Ident(a.column), a.fresh })
+}
+
+func (as assignments) notYet(where string, of func(assignment) (string, string)) string {
+	cols := make([]string, len(as))
+	exprs := make([]string, len(as))
+	for i, a := range as {
+		cols[i], exprs[i] = of(a)
+	}
+
+	return fmt.Sprintf("(%s) AND (ROW(%s) IS DISTINCT FROM ROW(%s))",
+		where, strings.Join(cols, ", "), strings.Join(exprs, ", "))
+}
+
+// parseAssignments splits a `set=` into the columns it writes and the expressions it writes into them,
+// refusing the assignment forms a row-level trigger cannot repeat.
+func parseAssignments(d engine.Directive) (assignments, error) {
+	set := d.Opts["set"]
+	res, err := pgquery.Parse("UPDATE t SET " + set)
+	if err != nil {
+		return nil, refuse(d, "set=%s does not parse: %v", set, err)
+	}
+	var out assignments
+	for _, node := range res.Stmts[0].Stmt.GetUpdateStmt().GetTargetList() {
+		t := node.GetResTarget()
+		if len(t.GetIndirection()) > 0 {
+			return nil, refuse(d, "set= writes into an element or field of %s; the trigger assigns whole columns", t.GetName())
+		}
+		if t.GetVal().GetSetToDefault() != nil {
+			return nil, refuse(d, "set= assigns DEFAULT to %s; write the default expression out so godwit can tell "+
+				"a backfilled row from a stale one", t.GetName())
+		}
+		expr, err := exprText(t.GetVal())
+		if err != nil {
+			return nil, refuse(d, "set= assigns %s in a form godwit cannot render on its own (%v); a multi-column "+
+				"assignment has to be written one column at a time", t.GetName(), err)
+		}
+		out = append(out, assignment{column: t.GetName(), val: t.GetVal(), expr: expr})
+	}
+
+	return out, nil
+}
+
+// syncable refuses a `set=` the trigger would not reproduce the way the batches do: an expression the
+// trigger form cannot carry, one that is not idempotent, and a target the run could not verify.
+func (as assignments) syncable(ctx context.Context, conn engine.DB, d engine.Directive, t columnFacts, spec *engine.BatchSpec) error {
+	written := make([]string, len(as))
+	for i, a := range as {
+		written[i] = a.column
+	}
+	for _, a := range as {
+		if engine.Ident(a.column) == spec.Key {
+			return refuse(d, "set= assigns the batch key %s; a row that moves under the cursor is skipped or repeated", spec.Key)
+		}
+		read, funcs, err := scanExpr(a.val, t.Table)
+		if err != nil {
+			return refuse(d, "set=%s %s", a.expr, err)
+		}
+		if other := slices.IndexFunc(read, func(c string) bool { return slices.Contains(written, c) }); other >= 0 {
+			return refuse(d, "set= assigns %s from %s, which it also assigns; applying it twice would not mean the "+
+				"same as applying it once, and the trigger and the batches would both apply it", a.column, read[other])
+		}
+		if err := checkVolatile(ctx, conn, d, "set="+a.expr, funcs); err != nil {
+			return err
+		}
+	}
+
+	return as.comparable(ctx, conn, d, t, written)
+}
+
+// comparable refuses a target godwit cannot compare against its own expression: the run's guarantee is a
+// count of the rows still matching, and a type with no equality operator makes that count unaskable.
+func (as assignments) comparable(ctx context.Context, conn engine.DB, d engine.Directive, t columnFacts, cols []string) error {
+	rows, err := conn.Query(ctx, `
+		SELECT w.name, coalesce(format_type(a.atttypid, a.atttypmod), ''),
+		       EXISTS (SELECT 1 FROM pg_operator o
+		               WHERE o.oprname = '=' AND o.oprleft = a.atttypid AND o.oprright = a.atttypid)
+		FROM unnest($2::text[]) AS w(name)
+		LEFT JOIN pg_attribute a ON a.attrelid = to_regclass($1) AND a.attname = w.name
+		     AND a.attnum > 0 AND NOT a.attisdropped
+		ORDER BY w.name`, t.rel(), cols)
+	if err != nil {
+		return fmt.Errorf("inspect %s set= columns: %w", t.ref(), err)
+	}
+	found, err := pgx.CollectRows(rows, pgx.RowToStructByPos[setTarget])
+	if err != nil {
+		return fmt.Errorf("read %s set= columns: %w", t.ref(), err)
+	}
+	for _, c := range found {
+		if c.Type == "" {
+			return refuse(d, "set= assigns %s.%s, which does not exist in the schema this migration starts from", t.ref(), c.Name)
+		}
+		if !c.Equality {
+			return refuse(d, "set= assigns %s.%s of type %s, which has no equality operator; godwit could not tell "+
+				"a backfilled row from a stale one", t.ref(), c.Name, c.Type)
+		}
+	}
+
+	return nil
+}
+
+type setTarget struct {
+	Name     string
+	Type     string
+	Equality bool
+}
+
+// syncFree refuses the directive when the names the expansion needs are taken; a leftover from a run that
+// never finished is named here rather than discovered when the CREATE fails.
+func (c columnFacts) syncFree(ctx context.Context, conn engine.DB, d engine.Directive, name string) error {
+	var n int
+	if err := conn.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM pg_trigger WHERE tgrelid = to_regclass($1) AND tgname = $3 AND NOT tgisinternal)
+		     + (SELECT count(*) FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+		        WHERE s.nspname = $2 AND p.proname = $3)`, c.rel(), c.Schema, name).Scan(&n); err != nil {
+		return fmt.Errorf("inspect %s sync trigger: %w", c.ref(), err)
+	}
+	if n > 0 {
+		return refuse(d, "%s already carries a trigger or a function named %s; the expansion would collide with it",
+			c.ref(), name)
+	}
+
+	return nil
+}
+
+// backfillSyncFunction assigns unconditionally: the guard is the trigger's WHEN clause, so a row that
+// needs nothing never enters plpgsql at all — which matters because the backfill's own batches fire it.
+func backfillSyncFunction(t columnFacts, sync string, set assignments) string {
+	rel := engine.Ident(t.Table)
+	body := fmt.Sprintf(" BEGIN SELECT %s INTO %s FROM (SELECT new.*) AS %s; RETURN new; END ",
+		set.exprs(), set.into(), rel)
+	tag := dollarTag(body)
+
+	return fmt.Sprintf("CREATE FUNCTION %s.%s() RETURNS trigger LANGUAGE plpgsql AS %s%s%s",
+		engine.Ident(t.Schema), engine.Ident(sync), tag, body, tag)
+}
+
+func backfillSyncTrigger(t columnFacts, sync, when string) string {
+	return fmt.Sprintf("CREATE TRIGGER %s BEFORE INSERT OR UPDATE ON %s FOR EACH ROW WHEN (%s) EXECUTE FUNCTION %s.%s()",
+		engine.Ident(sync), t.rel(), when, engine.Ident(t.Schema), engine.Ident(sync))
+}
+
+// qualifiedText renders an expression with every column reference bound to the trigger's NEW row. The
+// tree has already been deparsed once and rewriting a column reference cannot make it undeparsable.
+func qualifiedText(val *pgquery.Node) string {
+	walkNodes(val.ProtoReflect(), func(m protoreflect.Message) bool {
+		if ref, ok := m.Interface().(*pgquery.ColumnRef); ok {
+			var name string
+			for _, f := range ref.GetFields() {
+				name = f.GetString_().GetSval()
+			}
+			ref.Fields = []*pgquery.Node{pgquery.MakeStrNode("new"), pgquery.MakeStrNode(name)}
+		}
+
+		return true
+	})
+	out, _ := exprText(val)
+
+	return out
+}
+
+// exprText renders one parsed expression back as SQL; the deparser refuses a multi-column assignment,
+// which is the only shape of a `set=` target it cannot write out.
+func exprText(val *pgquery.Node) (string, error) {
+	sel := &pgquery.SelectStmt{TargetList: []*pgquery.Node{pgquery.MakeResTargetNodeWithVal(val, 0)}}
+	out, err := pgquery.Deparse(&pgquery.ParseResult{Stmts: []*pgquery.RawStmt{
+		{Stmt: &pgquery.Node{Node: &pgquery.Node_SelectStmt{SelectStmt: sel}}},
+	}})
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimPrefix(out, "SELECT "), nil
 }
 
 // addColumn adds the column nullable and, when it must end up NOT NULL, fills it in batches before the
@@ -1305,83 +1574,127 @@ func keyKind(ctx context.Context, conn engine.DB, d engine.Directive, t columnFa
 // checkUsing refuses an expression the trigger form cannot carry: another table, a subquery, or a
 // function the catalog reports as VOLATILE.
 func checkUsing(ctx context.Context, conn engine.DB, d engine.Directive, using, table string) error {
-	res, err := pgquery.Parse("SELECT " + using)
+	_, err := checkedExpr(ctx, conn, d, "using="+using, using, table)
+
+	return err
+}
+
+// checkedExpr is the one gate on every raw expression a directive hands to a trigger — a change-type's
+// `using=` and a backfill's `where=` — and returns the tree so the caller can render it as it needs.
+func checkedExpr(ctx context.Context, conn engine.DB, d engine.Directive, label, expr, table string) (*pgquery.Node, error) {
+	res, err := pgquery.Parse("SELECT " + expr)
 	if err != nil {
-		return refuse(d, "using=%s does not parse: %v", using, err)
+		return nil, refuse(d, "%s does not parse: %v", label, err)
 	}
-	names, err := scanUsing(res.Stmts[0].Stmt.GetSelectStmt().GetTargetList()[0].GetResTarget().GetVal(), table)
+	val := res.Stmts[0].Stmt.GetSelectStmt().GetTargetList()[0].GetResTarget().GetVal()
+	_, funcs, err := scanExpr(val, table)
 	if err != nil {
-		return refuse(d, "using=%s %s", using, err)
+		return nil, refuse(d, "%s %s", label, err)
 	}
-	if len(names) == 0 {
+
+	return val, checkVolatile(ctx, conn, d, label, funcs)
+}
+
+func checkVolatile(ctx context.Context, conn engine.DB, d engine.Directive, label string, funcs []string) error {
+	if len(funcs) == 0 {
 		return nil
 	}
 	var volatile string
-	err = conn.QueryRow(ctx, `
-		SELECT p.proname FROM pg_proc p WHERE p.provolatile = 'v' AND p.proname = ANY($1) LIMIT 1`, names).Scan(&volatile)
+	err := conn.QueryRow(ctx, `
+		SELECT p.proname FROM pg_proc p WHERE p.provolatile = 'v' AND p.proname = ANY($1) LIMIT 1`, funcs).Scan(&volatile)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect volatility of %s: %w", using, err)
+		return fmt.Errorf("inspect volatility of %s: %w", label, err)
 	}
 
-	return refuse(d, "using=%s calls the VOLATILE function %s(); the trigger and the backfill would disagree", using, volatile)
+	return refuse(d, "%s calls the VOLATILE function %s(); the trigger and the backfill would disagree", label, volatile)
 }
 
-func scanUsing(root *pgquery.Node, table string) ([]string, error) {
-	var names []string
-	var walk func(v *pgquery.Node) error
-	walk = func(v *pgquery.Node) error {
-		switch {
-		case v == nil:
-		case v.GetSubLink() != nil:
-			return errors.New("contains a subquery; the trigger form cannot express it")
-		case v.GetColumnRef() != nil:
-			return checkColumnRef(v.GetColumnRef(), table)
-		case v.GetFuncCall() != nil:
-			f := v.GetFuncCall()
-			names = append(names, f.Funcname[len(f.Funcname)-1].GetString_().GetSval())
-			for _, a := range f.Args {
-				if err := walk(a); err != nil {
-					return err
-				}
-			}
-		case v.GetTypeCast() != nil:
-			return walk(v.GetTypeCast().Arg)
-		case v.GetAExpr() != nil:
-			if err := walk(v.GetAExpr().Lexpr); err != nil {
-				return err
+// scanExpr walks the whole parse tree of one expression, so a shape the trigger cannot carry is caught
+// wherever it sits rather than only in the handful of node kinds a hand-written walk knows about. It
+// returns every column the expression reads and every function it calls.
+func scanExpr(root *pgquery.Node, table string) ([]string, []string, error) {
+	r := exprRefs{table: table}
+	walkNodes(root.ProtoReflect(), r.visit)
+	if r.err != nil {
+		return nil, nil, r.err
+	}
+
+	return r.cols, r.funcs, nil
+}
+
+// walkNodes visits every message of a parse tree, depth first and in field order, until visit stops it.
+func walkNodes(m protoreflect.Message, visit func(protoreflect.Message) bool) bool {
+	if !visit(m) {
+		return false
+	}
+	fields := m.Descriptor().Fields()
+	for i := range fields.Len() {
+		fd := fields.Get(i)
+		if fd.Kind() != protoreflect.MessageKind || !m.Has(fd) {
+			continue
+		}
+		v := m.Get(fd)
+		if !fd.IsList() {
+			if !walkNodes(v.Message(), visit) {
+				return false
 			}
 
-			return walk(v.GetAExpr().Rexpr)
-		case v.GetCoalesceExpr() != nil:
-			for _, a := range v.GetCoalesceExpr().Args {
-				if err := walk(a); err != nil {
-					return err
-				}
+			continue
+		}
+		for j := range v.List().Len() {
+			if !walkNodes(v.List().Get(j).Message(), visit) {
+				return false
 			}
 		}
-
-		return nil
-	}
-	if err := walk(root); err != nil {
-		return nil, err
 	}
 
-	return names, nil
+	return true
 }
 
-func checkColumnRef(ref *pgquery.ColumnRef, table string) error {
-	if len(ref.Fields) == 1 {
-		return nil
-	}
-	if ref.Fields[0].GetString_().GetSval() == table {
-		return nil
+type exprRefs struct {
+	table string
+	cols  []string
+	funcs []string
+	err   error
+}
+
+func (r *exprRefs) visit(m protoreflect.Message) bool {
+	switch m.Descriptor().Name() {
+	case "SubLink":
+		r.err = errors.New("contains a subquery; the trigger form cannot express it")
+
+		return false
+	case "ColumnRef":
+		return r.column(m.Interface().(*pgquery.ColumnRef))
+	case "FuncCall":
+		var name string
+		for _, n := range m.Interface().(*pgquery.FuncCall).GetFuncname() {
+			name = n.GetString_().GetSval()
+		}
+		r.funcs = append(r.funcs, name)
 	}
 
-	return fmt.Errorf("references %s; only columns of %s are in scope inside the trigger",
-		ref.Fields[0].GetString_().GetSval(), table)
+	return true
+}
+
+// column records the name the reference reads, and refuses a qualifier that is not the table the trigger
+// runs on: only that row's own columns are in scope inside it.
+func (r *exprRefs) column(ref *pgquery.ColumnRef) bool {
+	var name string
+	for i, f := range ref.GetFields() {
+		name = f.GetString_().GetSval()
+		if i == 0 && len(ref.GetFields()) > 1 && name != r.table {
+			r.err = fmt.Errorf("references %s; only columns of %s are in scope inside the trigger", name, r.table)
+
+			return false
+		}
+	}
+	r.cols = append(r.cols, name)
+
+	return true
 }
 
 // ExpandUp replaces each directive migration's body with the expansion frozen on the plan or the run,

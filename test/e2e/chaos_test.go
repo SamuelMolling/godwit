@@ -106,8 +106,12 @@ func TestChaosKillMidBatch(t *testing.T) {
 	if done != rows {
 		t.Fatalf("rows_done = %d, want %d: the crash must cost the in-flight batch and nothing else", done, rows)
 	}
-	if n := journalRows(t, r.appDSN, v2, "done"); n != 1 {
-		t.Fatalf("done journal rows for the backfill = %d, want 1", n)
+	if n := journalRows(t, r.appDSN, v2, "done"); n != 6 {
+		t.Fatalf("done journal rows for the backfill = %d, want its six statements", n)
+	}
+	if n := query[int64](t, r.appDSN,
+		`SELECT count(*) FROM pg_trigger WHERE tgname = 'bf_backfill_sync' AND NOT tgisinternal`); n != 0 {
+		t.Fatalf("the resume left %d sync trigger(s) behind", n)
 	}
 	report(t, "chaos/kill_mid_batch",
 		"rows", rows, "batch", batch, "cursor_at_kill", before, "rows_done_at_kill", doneBefore,
