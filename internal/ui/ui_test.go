@@ -27,16 +27,18 @@ var (
 
 type stub struct {
 	godwitv1connect.UnimplementedGodwitServiceHandler
-	actor  string
-	err    error
-	runs   []*godwitv1.Run
-	audit  []*godwitv1.AuditEntry
-	plans  map[string]*godwitv1.Plan
-	status *godwitv1.GetTargetStatusResponse
-	sums   []*godwitv1.TargetSummary
-	events []*godwitv1.DriftEvent
-	drift  *godwitv1.CheckDriftResponse
-	calls  []string
+	actor    string
+	err      error
+	runs     []*godwitv1.Run
+	audit    []*godwitv1.AuditEntry
+	plans    map[string]*godwitv1.Plan
+	status   *godwitv1.GetTargetStatusResponse
+	sums     []*godwitv1.TargetSummary
+	fleet    *godwitv1.ListMigrationsResponse
+	fleetErr error
+	events   []*godwitv1.DriftEvent
+	drift    *godwitv1.CheckDriftResponse
+	calls    []string
 }
 
 func (s *stub) call(ctx context.Context, name string) error {

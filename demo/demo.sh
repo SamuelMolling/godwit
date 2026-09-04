@@ -545,6 +545,10 @@ echo "==> every registered target, from the control plane alone: settings, appli
 docker compose exec -T godwit-2 /godwit targets --server http://localhost:8474 --token demo-token
 
 echo
+echo "==> which target has which migration, keyed by version and content, and which target is missing one"
+docker compose exec -T godwit-2 /godwit migrations --server http://localhost:8474 --token demo-token
+
+echo
 echo "==> the same API from the CLI: every run so far, with who created it"
 docker compose exec -T godwit-2 /godwit runs --server http://localhost:8474 --token demo-token
 

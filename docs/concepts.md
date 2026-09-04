@@ -903,6 +903,39 @@ What the diff covers is what pg-schema-diff covers: schemas, extensions, enums, 
 
 `GetTargetStatus` reads `godwit.migrations` and `godwit.repeatables` on the live target without creating them (a never-migrated database reports nothing), compares against optional files (pending versions, `checksum_mismatch` when an applied migration's up file changed, repeatables listed as applied when their content matches and as pending when it does not), and adds the last run, the drift baseline (`taken_at`, the run that took it, whether drift is open), the provider and the registered timeouts. Repeatable rows carry `repeatable = true` and no version.
 
+## The fleet view
+
+`GetTargetStatus` answers *what does this database have*, one database at a time. `ListMigrations` — `godwit migrations`,
+`/ui/migrations` — answers the question that spans them: **which of my targets has this migration**. It reads the
+control plane's ledger and opens no connection to any target, so it answers while one is unreachable.
+
+The key is the migration **and its content**: the id (`<version>_<name>` or `R__<name>`) with the sha256 of the up file
+the target applied. So a version two targets applied from different files is two rows, both marked *divergent*, and each
+target reads `differs` in the other's row. That is the case worth catching — the same version meaning two different
+things in staging and production — and it is why the checksum is in the key and not a detail on the side. Repeatables
+are keyed the same way, which is their normal identity anyway (name and content, no version).
+
+A migration is on a target when its ledger row still **stands**: not `held`, not withdrawn by a revert. That is the same
+predicate `Applied`, the replay and the out-of-order guard use, so a run that applied three migrations and then failed on
+the fourth has those three here, exactly as the target's own journal has them.
+
+A target that does not have a migration is reported with the reason:
+
+| Reading | What it means |
+|---|---|
+| *not there yet* | the target's newest standing version is below this one — it simply has not got there |
+| *missing* | the target is already past this version and does not have it: it was skipped, or applied and reverted |
+| *differs* | the target has this migration under other content, with the checksum it has |
+
+Two more readings come from elsewhere in godwit. A migration a checkpoint collapsed is marked with the checkpoint that
+recorded it: on a database built from the checkpoint it never ran, and the view says so rather than implying it did. A
+migration whose file bodies retention has swept keeps its row with the content `unknown` instead of vanishing, because
+dropping it would say the target does not have it.
+
+Filters: by target, by version range, *not everywhere*, and `--in staging --not-in production` — what is ahead in
+staging. The view is read-only and takes no position on what should follow from it: it does not refuse a run in
+production because staging never saw it.
+
 ## Actors and provenance
 
 Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`, `plan.create`, `plan.supersede`) after it succeeds; reads are not audited (`Diff` creates and drops a scratch database on the scratch server but writes nothing in the store). `PlanRun{persist}` is the one `read`-scope call that writes: the plan and its `plan.create` row.

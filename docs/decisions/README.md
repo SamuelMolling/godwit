@@ -20,6 +20,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0010](0010-checkpoints-collapse-the-replay.md) | A checkpoint is a file in the directory, and what it collapses can never be reverted | #85 |
 | [0011](0011-token-spec-is-three-fields.md) | A token spec is three fields or one, never two | #84 |
 | [0012](0012-the-key-is-optional-and-comes-from-a-provider.md) | The key is optional, comes from a provider, and the ciphertext says which | #93 |
+| [0013](0013-the-fleet-view-is-keyed-by-content.md) | The fleet view is keyed by content, and answers rather than refuses | #95 |
 
 ## Open questions
 

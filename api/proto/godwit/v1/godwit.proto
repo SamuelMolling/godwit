@@ -428,6 +428,65 @@ message ListTargetsResponse {
   repeated TargetSummary targets = 1;
 }
 
+message ListMigrationsRequest {
+  // Only these targets, by name; empty is every registered one. An unregistered name is not_found.
+  repeated string targets = 1;
+  // Inclusive version bounds; 0 leaves that end open. Either bound leaves repeatables out: they have no version.
+  int64 from_version = 2;
+  int64 to_version = 3;
+  // Only migrations at least one target in the answer does not hold.
+  bool not_everywhere = 4;
+  // Only migrations standing on in_target and not standing on not_in_target; either may be given alone.
+  string in_target = 5;
+  string not_in_target = 6;
+}
+
+// MigrationOn is a target that holds one migration under the entry's checksum.
+message MigrationOn {
+  string target = 1;
+  google.protobuf.Timestamp applied_at = 2;
+  // Run that recorded it.
+  string run_id = 3;
+  // Id of the checkpoint that recorded it on this target without running it; empty when the target ran it.
+  string collapsed_by = 4;
+}
+
+// MigrationGap is a target the entry does not stand on, and why.
+message MigrationGap {
+  string target = 1;
+  // Newest version standing on the target; 0 when it has no history.
+  int64 newest_version = 2;
+  // The target has not reached this migration yet, rather than skipped it.
+  bool behind = 3;
+  // The target holds this migration under other content: the environments have diverged.
+  bool holds = 4;
+  // The checksum it holds it under; empty when the file bodies of the run that applied it are gone.
+  string other_checksum = 5;
+}
+
+// FleetMigration is one migration as one content: a version applied under two checksums is two of these.
+message FleetMigration {
+  // Migration id: <version>_<name>, or R__<name>.
+  string migration = 1;
+  int64 version = 2;
+  string name = 3;
+  bool repeatable = 4;
+  bool checkpoint = 5;
+  // sha256 of the up file the targets applied; empty when retention swept the bodies.
+  string checksum = 6;
+  repeated MigrationOn applied_on = 7;
+  repeated MigrationGap missing_from = 8;
+  // The same migration stands somewhere else under a different checksum.
+  bool divergent = 9;
+}
+
+message ListMigrationsResponse {
+  // Versions ascending, then repeatables by name; a divergent migration once per checksum.
+  repeated FleetMigration migrations = 1;
+  // The targets the answer is computed over, by name.
+  repeated string targets = 2;
+}
+
 message GetTargetStatusRequest {
   string target = 1;
   // Optional: when given, versions missing on the target and repeatables whose content changed are reported as pending,
@@ -621,6 +680,9 @@ service GodwitService {
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
   // Summarises every registered target from the control plane alone, without opening a connection to any of them.
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
+  // Answers, per migration and content, which targets hold it and which do not, from the control plane's
+  // ledger alone, without opening a connection to any of them.
+  rpc ListMigrations(ListMigrationsRequest) returns (ListMigrationsResponse);
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
   rpc GetPlan(GetPlanRequest) returns (GetPlanResponse);
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);
