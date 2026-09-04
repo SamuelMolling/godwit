@@ -2,10 +2,12 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
@@ -31,7 +33,7 @@ type Config struct {
 
 // Scheduler defaults. MaxConcurrentRuns keeps a long backfill on one target from parking every other
 // target on the replica; RunTimeout is the wall clock no single run may exceed, generous enough for an
-// overnight backfill and finite enough that a stuck advisory lock cannot hold a slot forever.
+// overnight backfill and finite enough that a statement nothing else bounds cannot hold a slot forever.
 const (
 	DefaultMaxConcurrentRuns = 4
 	DefaultRunTimeout        = 24 * time.Hour
@@ -173,11 +175,18 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 
 	hbCtx, stopHB := context.WithCancel(ctx)
 	defer stopHB()
-	go s.heartbeat(hbCtx, run.ID)
-
 	applyCtx, stopRun := context.WithTimeout(ctx, s.cfg.RunTimeout)
 	defer stopRun()
+	var lost atomic.Bool
+	go s.heartbeat(hbCtx, run.ID, func() { lost.Store(true); stopRun() })
+
 	held, err := s.applyRun(applyCtx, run)
+	// Without the lease this replica may no longer write the run: another one can already be executing it.
+	if lost.Load() {
+		log.Error("lease lost mid-run; leaving the run to the next claimer", "error", err)
+
+		return
+	}
 	if err != nil {
 		s.fail(ctx, run, err, finish)
 
@@ -528,20 +537,37 @@ func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, er
 	}, nil
 }
 
-func (s *Scheduler) heartbeat(ctx context.Context, runID string) {
-	ticker := time.NewTicker(s.cfg.TTL / 3)
-	defer ticker.Stop()
+// heartbeat holds the lease for the run until ctx ends. A beat that fails is retried faster than the
+// beat interval, because a store blip must not cost the lease. The lease still expires TTL after the
+// beat that landed, so a fifth of it earlier the run is given up: past that another replica can claim a
+// run this one is still executing. A lease taken by another holder is that moment arriving early.
+func (s *Scheduler) heartbeat(ctx context.Context, runID string, lost func()) {
+	beat := s.cfg.TTL / 4
+	giveUp := s.cfg.TTL - s.cfg.TTL/5
+	timer := time.NewTimer(beat)
+	defer timer.Stop()
+	lastOK := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if err := s.store.Heartbeat(ctx, runID, s.cfg.Holder, s.cfg.TTL); err != nil {
-				s.log.Warn("heartbeat lost", "run", runID, "error", err)
-				s.Metrics.HeartbeatFailed()
+		case now := <-timer.C:
+			err := s.store.Heartbeat(ctx, runID, s.cfg.Holder, s.cfg.TTL)
+			if err == nil {
+				lastOK = now
+				timer.Reset(beat)
+
+				continue
+			}
+			s.Metrics.HeartbeatFailed()
+			if errors.Is(err, ErrLeaseLost) || now.Sub(lastOK) >= giveUp {
+				s.log.Error("heartbeat lost", "run", runID, "error", err, "failing_for", now.Sub(lastOK))
+				lost()
 
 				return
 			}
+			s.log.Warn("heartbeat failed; retrying", "run", runID, "error", err)
+			timer.Reset(min(beat, s.cfg.TTL/10))
 		}
 	}
 }

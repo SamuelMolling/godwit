@@ -589,6 +589,149 @@ func TestChaosPrivilegeLostBetweenPlanAndApply(t *testing.T) {
 	report(t, "chaos/privilege_lost", "attempts", run.Attempts, "seconds", elapsed.Seconds(), "error", run.Error)
 }
 
+func TestChaosIndexOfThatNameIsNotTheOneThePlanBuilds(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 2)
+	r.addTarget("impostor")
+	r.mustMigrate(migrationDir(t, migration{v1, "big", "CREATE TABLE big (id bigserial PRIMARY KEY, v int);", "DROP TABLE big;"}))
+	seedRows(t, r.appDSN, "big", 50_000)
+
+	release := holdLock(t, r.appDSN, "LOCK TABLE big IN SHARE MODE")
+	id := r.createRunFull(&godwitv1.CreateRunRequest{
+		Files: files(migration{
+			v2, "idx",
+			"CREATE INDEX CONCURRENTLY big_v_idx ON big (v);", "DROP INDEX CONCURRENTLY big_v_idx;",
+		}),
+		LockTimeout: "120s",
+	})
+	victim := r.claimer(id)
+	waitJournal(t, r.appDSN, v2, 0, "intent")
+	r.waitActive("CREATE INDEX CONCURRENTLY")
+	r.reap(victim, "CREATE INDEX CONCURRENTLY%")
+	// Somebody else's index, of the name the plan reserved, over a different column. A plain CREATE INDEX
+	// wants only SHARE, so it lands beside the lock the test is holding once the reap clears the queue.
+	execSQL(t, r.appDSN, "CREATE INDEX big_v_idx ON big (id)")
+	release()
+
+	run, elapsed := watchRun(t, r, id)
+	if run.State != godwitv1.RunState_RUN_STATE_FAILED {
+		t.Fatalf("run %s: state %s, want failed (error: %s)", id, run.State, run.Error)
+	}
+	expectContains(t, run.Error, `index "big_v_idx" already exists as`, "is not what this statement builds")
+	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations WHERE version = $1`, v2); n != 0 {
+		t.Fatalf("godwit.migrations rows = %d, want 0: the index the plan promised was never built", n)
+	}
+	if n := journalRows(t, r.appDSN, v2, "done"); n != 0 {
+		t.Fatalf("done journal rows = %d, want 0", n)
+	}
+	def := query[string](t, r.appDSN, `SELECT pg_get_indexdef('big_v_idx'::regclass)`)
+	if !strings.Contains(def, "(id)") {
+		t.Fatalf("big_v_idx = %q: godwit must not drop an index it did not build", def)
+	}
+	report(t, "chaos/foreign_index_same_name",
+		"attempts", run.Attempts, "seconds", elapsed.Seconds(), "error", run.Error)
+}
+
+func TestChaosStoreBlipMidRun(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 0)
+	blip, blipDSN := newProxy(t, r.storeDSN)
+	rep := r.startWith("--store-dsn", blipDSN)
+	r.addTarget("blipped")
+	r.mustMigrate(migrationDir(t, migration{
+		v1, "users",
+		"CREATE TABLE users (id bigint PRIMARY KEY, email text);", "DROP TABLE users;",
+	}))
+
+	id := r.createRun(migration{
+		v2, "plan",
+		"ALTER TABLE users ADD COLUMN plan text; SELECT pg_sleep(20);", "ALTER TABLE users DROP COLUMN plan;",
+	})
+	r.claimer(id)
+	r.waitActive("SELECT pg_sleep")
+	// Longer than one beat (--lease-ttl 5s, so 1.25s), well short of the lease.
+	blip.set(proxyCut)
+	time.Sleep(2 * time.Second)
+	blip.set(proxyPass)
+
+	run, elapsed := watchRun(t, r, id)
+	if run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED {
+		t.Fatalf("run %s: state %s, error %s", id, run.State, run.Error)
+	}
+	if run.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1: a store blip must not cost the lease", run.Attempts)
+	}
+	if n := rep.logs.count("heartbeat lost"); n != 0 {
+		t.Fatalf("heartbeat lost %d times, want 0", n)
+	}
+	retried := rep.logs.count("heartbeat failed; retrying")
+	if retried == 0 {
+		t.Fatal("the blip must have cost at least one beat")
+	}
+	if n := journalRows(t, r.appDSN, v2, "done"); n != 2 {
+		t.Fatalf("done journal rows = %d, want 2", n)
+	}
+	report(t, "chaos/store_blip",
+		"attempts", run.Attempts, "beats_retried", retried, "converge_seconds", elapsed.Seconds())
+}
+
+func TestChaosOrphanHoldsTheAdvisoryLock(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("orphaned")
+	r.mustMigrate(migrationDir(t, migration{
+		v1, "users",
+		"CREATE TABLE users (id bigint PRIMARY KEY, email text);", "DROP TABLE users;",
+	}))
+
+	release := holdAdvisoryLock(t, r.appDSN, r.appDB)
+	id := r.createRun(migration{v2, "plan", "ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;"})
+	// The wait is the executor's own, not the run timeout: without it this never reports at all.
+	blocked := timed(func() {
+		waitUntil(t, 90*time.Second, "the advisory lock wait is reported", func() bool { return r.getRun(id).Error != "" })
+	})
+	stuck := r.getRun(id)
+	expectContains(t, stuck.Error, "transient:", "acquire advisory lock on "+r.appDB, `application_name "godwit"`, "SQLSTATE 57014")
+	release()
+
+	run, elapsed := watchRun(t, r, id)
+	if run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED {
+		t.Fatalf("run %s: state %s, error %s", id, run.State, run.Error)
+	}
+	if !columnExists(t, r.appDSN, "users", "plan") {
+		t.Fatal("column plan missing after the orphan let go")
+	}
+	report(t, "chaos/orphan_advisory_lock",
+		"seconds_until_reported", blocked.Seconds(), "attempts", run.Attempts,
+		"retries", run.Retries, "error", stuck.Error, "converge_seconds_after_release", elapsed.Seconds())
+}
+
+func TestChaosDiskFullRetries(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, 1)
+	r.addTarget("nospace")
+	r.mustMigrate(migrationDir(t, migration{v1, "seq", "CREATE SEQUENCE attempts;", "DROP SEQUENCE attempts;"}))
+
+	// The scratch database admission validates on is not the target, and only the target runs out of disk.
+	id := r.createRun(migration{
+		v2, "fills_the_disk",
+		fmt.Sprintf(`DO $$ BEGIN IF current_database() = '%s' THEN
+			IF nextval('attempts') < 2 THEN
+				RAISE EXCEPTION 'could not extend file: No space left on device' USING ERRCODE = '53100';
+			END IF;
+		END IF; END $$;`, r.appDB),
+		"SELECT 1;",
+	})
+	run, elapsed := watchRun(t, r, id)
+	if run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED {
+		t.Fatalf("run %s: state %s, error %s", id, run.State, run.Error)
+	}
+	if run.Retries != 1 {
+		t.Fatalf("retries = %d, want 1: a full disk is transient", run.Retries)
+	}
+	report(t, "chaos/disk_full", "retries", run.Retries, "attempts", run.Attempts, "seconds", elapsed.Seconds())
+}
+
 func TestChaosResumeAfterTheMigrationShrank(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, 1)
