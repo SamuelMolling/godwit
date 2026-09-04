@@ -85,7 +85,8 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--run-timeout` | `24h` | wall clock one run may take; past it the run is cancelled and finished as `failed` |
 | `--store-max-conns` | `20` | size of the pool against the store; wins over `pool_max_conns` in `--store-dsn` |
 | `--max-request-bytes` | `33554432` (32 MiB) | largest request body the API decodes; over it the transport refuses before any handler runs |
-| `--max-files` | `2000` | migration files one `CreateRun`, `PlanRun`, `RevertRun`, `Diff` or `Checkpoint` may carry |
+| `--max-migrations` | `2000` | migrations one `CreateRun`, `PlanRun`, `RevertRun`, `Diff` or `Checkpoint` may carry; the `.up.sql` half is what names one |
+| `--max-files` | `5000` | files one such request may carry, migration halves and everything else alike |
 | `--max-file-bytes` | `4194304` (4 MiB) | largest single migration body, and the largest desired schema `Diff` accepts |
 | `--max-concurrent-diffs` | `4` | `Diff`, `PlanRun`, `CreateRun`, `RevertRun` and `Checkpoint` calls admitted at once; each builds scratch databases on `--scratch-dsn`, or on the store server when it is unset |
 | `--skip-validation` | `false` | disable the scratch-database validation at admission (also disables `validated` in `PlanRun`) |
@@ -104,7 +105,11 @@ A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, o
 
 ### Admission limits
 
-Everything above the `--max-*` line is refused with `invalid_argument` naming the limit, except a body over `--max-request-bytes`, which the connect transport refuses before the request is decoded. The defaults hold roughly an order of magnitude more than a real directory: 200 migrations of 8 KiB is about 400 files and 2 MiB, well inside 2000 files and 32 MiB. Raise `--max-file-bytes` for a generated schema dump, `--max-files` for a directory past a thousand migrations, and `--max-request-bytes` above the sum of what one run sends.
+Everything above the `--max-*` line is refused with `invalid_argument` naming the limit, except a body over `--max-request-bytes`, which the connect transport refuses before the request is decoded.
+
+A directory is counted in migrations, not in files, because a migration is two files and the count that matters is the one that costs a replay step. The three defaults stop at the same directory rather than one stopping short of the others: 2000 migrations is 4000 files, inside `--max-files` with room for checkpoints and strays, and 32 MiB at the 8 KiB-a-file shape `--max-request-bytes` was sized for. The load rig's 1000-migration target and its checkpoint fit the defaults with the same margin again.
+
+Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` and `--max-request-bytes` together for a directory past two thousand migrations — the byte cap is the one that bites first on bodies larger than 8 KiB, and `--max-files` only needs to move if the directory holds files that are not migration halves.
 
 `--max-concurrent-diffs` is a queue, not a hard refusal: a call waits 30 seconds for a free slot and is then refused with `resource_exhausted`. Each admitted call creates four to five databases on whatever `--scratch-dsn` points at — the store server itself when it is unset — so this is the number to size that server's `max_connections` and disk against. The pool that creates and drops them is sized from this flag (`max(4, 2 × --max-concurrent-diffs)`) and needs no knob of its own. `Checkpoint` is in the queue too: it needs only `read` and builds two databases per call. The UI calls the service in process and does not pass through the queue.
 

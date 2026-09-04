@@ -54,6 +54,7 @@ spec:
             - --max-concurrent-runs={{ .maxConcurrentRuns }}
             - --run-timeout={{ .runTimeout }}
             - --max-request-bytes={{ int64 .maxRequestBytes }}
+            - --max-migrations={{ .maxMigrations }}
             - --max-files={{ .maxFiles }}
             - --max-file-bytes={{ int64 .maxFileBytes }}
             - --max-concurrent-diffs={{ .maxConcurrentDiffs }}

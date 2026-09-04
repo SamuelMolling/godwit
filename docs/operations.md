@@ -159,7 +159,8 @@ Set in [configuration](configuration.md#admission-limits); this is when to move 
 | Symptom | Raise |
 |---|---|
 | `invalid_argument: migration file <name> is N bytes, limit 4194304` | `--max-file-bytes`, and check whether the file is a schema dump that belongs in a `schema_source` instead |
-| `invalid_argument: too many migration files: N, limit 2000` | `--max-files`; a directory past a thousand migrations is the only legitimate cause |
+| `invalid_argument: too many migrations: N, limit 2000` | `--max-migrations`, and `--max-request-bytes` with it; a directory past two thousand migrations is the only legitimate cause |
+| `invalid_argument: too many migration files: N, limit 5000` | `--max-files`; at two files a migration the migration limit is reached first, so this one means the directory holds files that are not migration halves |
 | `invalid_argument: schema is N bytes, limit 4194304` | `--max-file-bytes`; it bounds the desired schema `Diff` accepts as well |
 | the client reports the message as too large before the service answers | `--max-request-bytes`, above the sum of what one run sends |
 | `resource_exhausted: too many concurrent validation requests` on pull-request plans | `--max-concurrent-diffs`, and size the scratch server's `max_connections` and disk for it: each admitted call builds four to five databases there |

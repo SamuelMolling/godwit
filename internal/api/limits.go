@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -12,23 +13,28 @@ import (
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 )
 
-// Admission defaults. RequestBytes holds a directory an order of magnitude larger than any real one
-// (200 migrations of 8 KiB is under 2 MiB); FileBytes holds a generated schema dump; HeavyCalls is the
-// number of requests allowed to build scratch databases at once.
+// Admission defaults. A directory is counted in migrations because a file count halves in practice; 2000
+// of them is 4000 files and, at the 8 KiB a file RequestBytes was sized for, 32 MiB — so none of the three
+// stops a directory the others admit. FileBytes holds a generated schema dump; HeavyCalls is how many
+// requests may build scratch databases at once.
 const (
 	DefaultRequestBytes = 32 << 20
-	DefaultFiles        = 2000
+	DefaultMigrations   = 2000
+	DefaultFiles        = 5000
 	DefaultFileBytes    = 4 << 20
 	DefaultHeavyCalls   = 4
 	DefaultHeavyWait    = 30 * time.Second
 	maxNameBytes        = 512
+	upSuffix            = ".up.sql"
 )
 
 // Limits are the admission bounds a Server applies to every request; a zero field takes its default.
 type Limits struct {
 	// RequestBytes caps one decoded request body.
 	RequestBytes int
-	// Files caps how many migration files one request may carry.
+	// Migrations caps how many migrations one request may carry; the up half is what names one.
+	Migrations int
+	// Files caps how many files one request may carry, migration halves and everything else alike.
 	Files int
 	// FileBytes caps one migration body and one desired schema.
 	FileBytes int
@@ -41,6 +47,9 @@ type Limits struct {
 func (l Limits) withDefaults() Limits {
 	if l.RequestBytes <= 0 {
 		l.RequestBytes = DefaultRequestBytes
+	}
+	if l.Migrations <= 0 {
+		l.Migrations = DefaultMigrations
 	}
 	if l.Files <= 0 {
 		l.Files = DefaultFiles
@@ -62,6 +71,7 @@ func (l Limits) checkFiles(in []*godwitv1.MigrationFile) error {
 	if len(in) > l.Files {
 		return invalid(fmt.Sprintf("too many migration files: %d, limit %d", len(in), l.Files))
 	}
+	migrations := 0
 	for _, f := range in {
 		if len(f.Name) > maxNameBytes {
 			return invalid(fmt.Sprintf("migration file name is %d bytes, limit %d", len(f.Name), maxNameBytes))
@@ -69,6 +79,12 @@ func (l Limits) checkFiles(in []*godwitv1.MigrationFile) error {
 		if len(f.Body) > l.FileBytes {
 			return invalid(fmt.Sprintf("migration file %s is %d bytes, limit %d", f.Name, len(f.Body), l.FileBytes))
 		}
+		if strings.HasSuffix(f.Name, upSuffix) {
+			migrations++
+		}
+	}
+	if migrations > l.Migrations {
+		return invalid(fmt.Sprintf("too many migrations: %d, limit %d", migrations, l.Migrations))
 	}
 
 	return nil

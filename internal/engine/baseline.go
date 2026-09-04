@@ -16,7 +16,7 @@ func RecordCollapsed(ctx context.Context, db DB, migs []Migration) error {
 	if len(migs) == 0 {
 		return nil
 	}
-	if err := bootstrap(ctx, db); err != nil {
+	if err := ensureSchema(ctx, db); err != nil {
 		return err
 	}
 	versions, names, sums := make([]int64, 0, len(migs)), make([]string, 0, len(migs)), make([]string, 0, len(migs))
@@ -41,7 +41,7 @@ func (e *Executor) MarkApplied(ctx context.Context, migs []Migration) error {
 	}
 	defer release()
 
-	if err := bootstrap(ctx, e.db); err != nil {
+	if err := ensureSchema(ctx, e.db); err != nil {
 		return err
 	}
 	var applied int
