@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"maps"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -36,8 +37,7 @@ func (b *Baseliner) Baseline(ctx context.Context, runID, target string, migs []e
 func migrationFiles(migs []engine.Migration) map[string]string {
 	files := make(map[string]string, 2*len(migs))
 	for _, m := range migs {
-		files[m.UpFile()] = m.UpSQL
-		files[m.DownFile()] = m.DownSQL
+		maps.Copy(files, pairOf(m.ID(), m.UpSQL, m.DownSQL))
 	}
 
 	return files

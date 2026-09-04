@@ -70,6 +70,8 @@ type Server struct {
 	Inspector Inspector
 	// Differ serves Diff; nil leaves it unimplemented.
 	Differ Differ
+	// Checkpointer serves Checkpoint; nil leaves it unimplemented.
+	Checkpointer CheckpointGenerator
 	// RequirePlan refuses runs without a stored plan on every target, not only those registered with require_plan.
 	RequirePlan bool
 	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
@@ -537,6 +539,12 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	}
 	if err := s.checkOrder(target, plans, applied.Versions, allowOutOfOrder); err != nil {
 		return admission{}, err
+	}
+	plans, err = engine.ShapeCheckpoint(plans, applied.Newest())
+	if err != nil {
+		s.Log.Warn("run refused by the checkpoint gate", "target", target, "error", err.Error())
+
+		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	adm := admission{applied: applied, plans: plans}
 	if s.validator == nil || skipValidation {

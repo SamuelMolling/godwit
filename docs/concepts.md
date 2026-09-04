@@ -633,6 +633,79 @@ The monitor fingerprints every snapshotted target every `--drift-interval` (5m).
 
 `BaselineTarget{target, files, version}` adopts a database that already has a schema: every migration with `version <= N` is inserted into the target's `godwit.migrations` with its checksum, without running it, in one transaction under the advisory lock. The store records a `succeeded` run of kind `baseline` holding those files, so scratch validation of later runs replays them, and a drift snapshot is taken. Refused with `failed_precondition` when the target already has any applied version. The usual first file is a schema dump named like `20260101000000_baseline.up.sql` with an empty-effect down side.
 
+## Checkpoints
+
+Every plan replays the target's whole recorded history on a scratch database before it is admitted ([admission](#admission)). On a directory that has been accumulating for years that replay is the slowest thing godwit does, and it grows with every merge. A **checkpoint** collapses the history up to a version into one file: the replay executes that file and skips everything below it.
+
+**A checkpoint is a migration file, not a row in the store.** It travels with the repository, it is reviewed in the pull request that adds it, it is part of the plan key and of what `godwit diff` and `godwit lint` compare against, and a target godwit has never seen can be built from the directory alone. A row in the control plane would be none of those things.
+
+Its shape is Atlas's: an ordinary versioned file whose first line is a directive.
+
+```sql
+-- godwit: checkpoint through=20260430120000
+-- 137 migrations, 20260101000000_init through 20260430120000_orders_index.
+-- A target that has applied any of them records this file; one with no history runs it instead of them.
+
+CREATE TABLE public.users (...);
+CREATE INDEX CONCURRENTLY users_email_idx ON public.users (email);
+...
+```
+
+`through=` names the newest version the body accounts for; it must be below the checkpoint's own version. **There is no `.down.sql`** — the loader requires one for every other migration and refuses one here, because an inverse for a hundred collapsed migrations would be a file nobody has run.
+
+### Generating one
+
+```
+godwit checkpoint --name squash              # collapse the whole directory
+godwit checkpoint --name squash --at 20260430120000
+```
+
+The service replays the versioned migrations at or below `--at` (the newest by default) on a scratch database, expanding any `-- godwit:` directive among them against the catalog the ones before it left, and renders the resulting schema as DDL with the same engine `godwit diff` uses. It then applies that DDL alone on a second scratch database and **refuses the checkpoint unless the schema fingerprint comes out identical** to the one the migrations produced. A generated file is worth exactly what a replay of it is, so the replay is part of generating it.
+
+It is generated from a **scratch replay of the files**, never from a live target. Dumping a target would bake that target's drift — a hand-made `ALTER`, a column someone added at 3am — into the repository, and every other target would then be told it is missing it.
+
+The file is written into the migration directory with a fresh timestamp (one above the newest file when the directory is stamped in the future, so it always sorts last), and `--dry-run` prints it instead. Commit it; the collapsed files stay where they are.
+
+### What each database does with it
+
+The decision is a pure function of the files and of what the target has applied, so it is taken again at plan time, at apply time and inside the scratch replay, and can never go stale on a stored plan.
+
+| The target has applied | The checkpoint | Everything it collapses |
+|---|---|---|
+| nothing | **runs** | recorded without running, in the same run |
+| everything the checkpoint collapses | recorded without running | already applied |
+| some of them (mid-history) | recorded without running, after the rest have run | the missing ones run from their own files, in order |
+
+The fresh case is Atlas's rule — a new database starts from the checkpoint and skips what is below it — with one addition godwit needs: the collapsed migrations are **recorded** in `godwit.migrations` as the checkpoint runs, so the target's history is the same set of versions an old target has and the next `godwit plan` finds nothing pending below the checkpoint. Recording without running is the same `MarkOnly` path a baseline and already-applied detection use.
+
+**A target mid-history is not a special case**: the migrations between where it stopped and `through=` are simply pending, they run from their own files as they always did, and the checkpoint is recorded once the target reaches it. It only breaks if those files are gone from the directory, and then godwit refuses by name rather than guessing:
+
+```
+checkpoint 20260501000000_squash collapses history through 20260430120000, the newest applied
+version is 20260301000000 and 20260430120000 is not in the migration directory; restore the
+migrations below the checkpoint, or baseline at it
+```
+
+### What the replay does with it
+
+`Store.History` returns what the target applied and no revert undid, oldest first. The replay looks for the newest row that is a checkpoint, executes that one first, drops every versioned row at or below its `through=`, and records those on the scratch database in one statement. Everything else keeps its order. So both an old target (which recorded the checkpoint) and a new one (which ran it) replay the same single file, and the two scratch databases come out with the same fingerprint.
+
+The collapsed migrations are still counted as **replayed**, which is what the rest of the machinery consumes:
+
+- **already-applied detection** ([already-applied migrations](#already-applied-migrations)) walks the fingerprints after the checkpoint, from a base that already holds everything below it;
+- **directive expansion** is frozen once ([directives](#directives)): a `change-type` under the checkpoint is in the replayed set, so it is never expanded a second time — and its expansion is baked into the checkpoint's body, not left as a directive;
+- **`godwit diff --base files`** and the **ORM drift gate** build their base through the same replay, so they get the short one too;
+- **the ledger** ([revert](#revert)) is untouched: the checkpoint is a row like any other, and the collapsed rows stay exactly where they were.
+
+**Repeatables are never collapsed.** A repeatable's identity is its body, it has no version, and the checkpoint's body is generated from the versioned migrations alone — so no `R__` object is inside it, and every repeatable in the history replays on top of the checkpoint as it always did. This is the reason to keep views, functions and triggers in `R__` files: they survive a checkpoint untouched.
+
+### What is lost, on purpose
+
+- **Nothing at or below a checkpoint can be reverted.** `godwit revert` refuses a run whose standing ledger holds the checkpoint itself (`it is a checkpoint, and a checkpoint has no inverse`) or any migration the checkpoint collapsed (`checkpoint <id> collapsed it: the target's history below version <v> cannot be reverted`). The reason is not squeamishness: on a target that started from the checkpoint those migrations never ran, their down files were written against states that target never passed through, and the replay would rebuild them from the checkpoint's body anyway — so a revert would "succeed" and leave permanent drift. `godwit down --version <v>` refuses the checkpoint offline for the same reason.
+- **Data a collapsed migration inserted is not in the checkpoint.** The body is schema only, as in Atlas. A history whose migrations seed rows needs those `INSERT`s added to the checkpoint by hand, or kept above it with `--at`.
+- **Anything the DDL generator cannot express is refused, not dropped.** The generated body has the same holes as `godwit diff` (domains, composite types, exclusion constraints, comments, roles — see [generating migrations from a schema](#generating-migrations-from-a-schema)), and the fingerprint check turns each of them into a refusal at generation time instead of a silent loss at apply time.
+- **The collapsed files are still needed.** godwit does not delete them and neither should you until every target has passed the checkpoint: they are what carries a target that stopped below it.
+
 ## Timeouts
 
 Every statement runs under `lock_timeout` (default 5s) and `statement_timeout` (default 0, disabled). Both can be set on the target at registration and overridden per run; the run value wins field by field, then the target's, then the default. Values are Go durations (`5s`, `2m`, `0`); a lock timeout below 1ms is refused. A statement that hits one fails the run with PostgreSQL's `55P03` (lock) or `57014` (statement) error, counted in `godwit_statement_failures_total{reason="lock_timeout"|"statement_timeout"}`.

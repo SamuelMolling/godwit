@@ -119,7 +119,10 @@ func (r *Report) checkSchema(c *SchemaCheck, migs []engine.Migration) error {
 	}
 	files := map[string]string{}
 	for _, m := range migs {
-		files[m.UpFile()], files[m.DownFile()] = m.UpSQL, m.DownSQL
+		files[m.UpFile()] = m.UpSQL
+		if m.DownSQL != "" {
+			files[m.DownFile()] = m.DownSQL
+		}
 	}
 	residue, err := c.Diff(files)
 	if err != nil {
@@ -171,7 +174,7 @@ func (r *Report) checkMigration(m engine.Migration, acked map[string]bool) {
 		}
 	}
 
-	if m.RevertDirective {
+	if m.RevertDirective || m.Checkpoint {
 		return
 	}
 

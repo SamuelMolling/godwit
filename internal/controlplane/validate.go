@@ -44,6 +44,9 @@ type Validation struct {
 	Expansions map[string]Expansion
 	// Plans is the validated set: every directive migration replaced by its expansion.
 	Plans []engine.Plan
+	// Replayed counts the history migrations the replay executed, Collapsed the ones a checkpoint spared it.
+	Replayed  int
+	Collapsed int
 }
 
 // Validate replays the history, applies each plan on top and snapshots the schema after every step.
@@ -65,12 +68,17 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 
-	replayed, err := replayRuns(ctx, conn, history, searchPath)
+	st, err := replayRuns(ctx, conn, history, searchPath)
 	if err != nil {
 		return Validation{}, err
 	}
+	if plans, err = engine.ShapeCheckpoint(plans, st.newest); err != nil {
+		return Validation{}, err
+	}
+	val, err := expander.validateEach(ctx, conn, plans, st.seen)
+	val.Replayed, val.Collapsed = st.replayed, st.collapsed
 
-	return expander.validateEach(ctx, conn, plans, replayed)
+	return val, err
 }
 
 // Replay rebuilds target's recorded history on conn and applies plans on top, so conn ends up holding the
@@ -80,12 +88,15 @@ func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPa
 	if err != nil {
 		return err
 	}
-	replayed, err := replayRuns(ctx, conn, history, searchPath)
+	st, err := replayRuns(ctx, conn, history, searchPath)
 	if err != nil {
 		return err
 	}
+	if plans, err = engine.ShapeCheckpoint(plans, st.newest); err != nil {
+		return err
+	}
 	for _, p := range plans {
-		if p, err = expander.expandPlan(ctx, conn, p, map[string]Expansion{}, replayed); err != nil {
+		if p, err = expander.expandPlan(ctx, conn, p, map[string]Expansion{}, st.seen); err != nil {
 			return err
 		}
 		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithAssertProbe()); err != nil {
@@ -109,25 +120,101 @@ func (v *Validator) historyOf(ctx context.Context, target string) ([]HistoryRun,
 	return history, expander, nil
 }
 
-func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searchPath string) (map[string]bool, error) {
-	if err := mirrorSearchPath(ctx, conn, searchPath); err != nil {
-		return nil, err
+// replayState is what a replay left on the scratch database: the migrations it accounted for, whether by
+// running them or by collapsing them into a checkpoint, and the newest version among them.
+type replayState struct {
+	seen   map[string]bool
+	newest int64
+	// replayed counts the migrations the replay executed, collapsed the ones a checkpoint spared it.
+	replayed  int
+	collapsed int
+}
+
+func (s *replayState) add(m engine.Migration) {
+	s.seen[m.ID()] = true
+	if !m.Repeatable && m.Version > s.newest {
+		s.newest = m.Version
 	}
-	replayed := map[string]bool{}
+}
+
+// historyStep is one migration of the history with the run that applied it, so a replay failure still
+// names the run the body came from.
+type historyStep struct {
+	plan engine.Plan
+	run  int
+}
+
+func replayRuns(ctx context.Context, conn engine.DB, history []HistoryRun, searchPath string) (replayState, error) {
+	st := replayState{seen: map[string]bool{}}
+	if err := mirrorSearchPath(ctx, conn, searchPath); err != nil {
+		return st, err
+	}
+	steps, err := historySteps(history)
+	if err != nil {
+		return st, err
+	}
+	ordered, collapsed := collapseAtCheckpoint(steps)
+	migs := make([]engine.Migration, 0, len(collapsed))
+	for _, s := range collapsed {
+		st.add(s.plan.Migration)
+		migs = append(migs, s.plan.Migration)
+	}
+	st.collapsed = len(migs)
+	if err := engine.RecordCollapsed(ctx, conn, migs); err != nil {
+		return st, err
+	}
+	for _, s := range ordered {
+		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded([]engine.Plan{s.plan}), nil, engine.WithAssertProbe()); err != nil {
+			return st, fmt.Errorf("replay history run %d: %w", s.run, err)
+		}
+		st.add(s.plan.Migration)
+		st.replayed++
+	}
+
+	return st, nil
+}
+
+func historySteps(history []HistoryRun) ([]historyStep, error) {
+	var out []historyStep
 	for i, run := range history {
-		histPlans, err := historyPlans(run)
+		plans, err := historyPlans(run)
 		if err != nil {
 			return nil, fmt.Errorf("history run %d: %w", i, err)
 		}
-		if _, err := applyPlans(ctx, conn, engine.Options{}, recordUnexpanded(histPlans), nil, engine.WithAssertProbe()); err != nil {
-			return nil, fmt.Errorf("replay history run %d: %w", i, err)
-		}
-		for _, p := range histPlans {
-			replayed[p.Migration.ID()] = true
+		for _, p := range plans {
+			out = append(out, historyStep{plan: p, run: i})
 		}
 	}
 
-	return replayed, nil
+	return out, nil
+}
+
+// collapseAtCheckpoint puts the newest checkpoint the history holds first and takes every version it
+// subsumes out of the replay: those are what its body already builds, so they are recorded, never run.
+// A repeatable is never collapsed — its identity is its body, and the checkpoint carries none of them.
+func collapseAtCheckpoint(steps []historyStep) (ordered, collapsed []historyStep) {
+	at := -1
+	for i, s := range steps {
+		if s.plan.Migration.Checkpoint && (at < 0 || s.plan.Migration.Version >= steps[at].plan.Migration.Version) {
+			at = i
+		}
+	}
+	if at < 0 {
+		return steps, nil
+	}
+	cp := steps[at].plan.Migration
+	ordered = append(ordered, steps[at])
+	for i, s := range steps {
+		switch {
+		case i == at:
+		case s.plan.Migration.Collapses(cp):
+			collapsed = append(collapsed, s)
+		default:
+			ordered = append(ordered, s)
+		}
+	}
+
+	return ordered, collapsed
 }
 
 // historyPlans rebuilds one run's up plans from its ledger: the migrations it applied, in the order it
@@ -139,8 +226,7 @@ func historyPlans(run HistoryRun) ([]engine.Plan, error) {
 		if m.Expansion != nil {
 			exps[m.ID] = *m.Expansion
 		}
-		plans, err := PlansFromFiles(
-			map[string]string{m.ID + ".up.sql": m.UpSQL, m.ID + ".down.sql": m.DownSQL}, engine.DirectionUp)
+		plans, err := PlansFromFiles(pairOf(m.ID, m.UpSQL, m.DownSQL), engine.DirectionUp)
 		if err != nil {
 			return nil, err
 		}

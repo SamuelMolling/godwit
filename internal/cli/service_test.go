@@ -22,41 +22,52 @@ import (
 
 type stubService struct {
 	godwitv1connect.UnimplementedGodwitServiceHandler
-	mu          sync.Mutex
-	auth        string
-	registered  *godwitv1.RegisterTargetRequest
-	baselined   *godwitv1.BaselineTargetRequest
-	statused    *godwitv1.GetTargetStatusRequest
-	status      *godwitv1.GetTargetStatusResponse
-	summaries   []*godwitv1.TargetSummary
-	created     *godwitv1.CreateRunRequest
-	planned     *godwitv1.PlanRunRequest
-	plan        *godwitv1.PlanRunResponse
-	reverted    *godwitv1.RevertRunRequest
-	listed      *godwitv1.ListRunsRequest
-	got         string
-	watched     string
-	resumed     string
-	confirmed   string
-	checked     string
-	accepted    string
-	audited     *godwitv1.ListAuditRequest
-	entries     []*godwitv1.AuditEntry
-	run         *godwitv1.Run
-	runs        []*godwitv1.Run
-	events      []*godwitv1.Run
-	drift       *godwitv1.CheckDriftResponse
-	revertID    string
-	applied     []*godwitv1.RunMigration
-	planID      string
-	planGot     string
-	plansListed *godwitv1.ListPlansRequest
-	stored      *godwitv1.Plan
-	plans       []*godwitv1.Plan
-	reattached  bool
-	diffed      *godwitv1.DiffRequest
-	diff        *godwitv1.DiffResponse
-	err         error
+	mu           sync.Mutex
+	auth         string
+	registered   *godwitv1.RegisterTargetRequest
+	baselined    *godwitv1.BaselineTargetRequest
+	statused     *godwitv1.GetTargetStatusRequest
+	status       *godwitv1.GetTargetStatusResponse
+	summaries    []*godwitv1.TargetSummary
+	created      *godwitv1.CreateRunRequest
+	planned      *godwitv1.PlanRunRequest
+	plan         *godwitv1.PlanRunResponse
+	reverted     *godwitv1.RevertRunRequest
+	listed       *godwitv1.ListRunsRequest
+	got          string
+	watched      string
+	resumed      string
+	confirmed    string
+	checked      string
+	accepted     string
+	audited      *godwitv1.ListAuditRequest
+	entries      []*godwitv1.AuditEntry
+	run          *godwitv1.Run
+	runs         []*godwitv1.Run
+	events       []*godwitv1.Run
+	drift        *godwitv1.CheckDriftResponse
+	revertID     string
+	applied      []*godwitv1.RunMigration
+	planID       string
+	planGot      string
+	plansListed  *godwitv1.ListPlansRequest
+	stored       *godwitv1.Plan
+	plans        []*godwitv1.Plan
+	reattached   bool
+	diffed       *godwitv1.DiffRequest
+	diff         *godwitv1.DiffResponse
+	checkpointed *godwitv1.CheckpointRequest
+	checkpoint   *godwitv1.CheckpointResponse
+	err          error
+}
+
+func (s *stubService) Checkpoint(_ context.Context, req *connect.Request[godwitv1.CheckpointRequest]) (*connect.Response[godwitv1.CheckpointResponse], error) {
+	s.checkpointed = req.Msg
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(s.checkpoint), nil
 }
 
 func (s *stubService) Diff(_ context.Context, req *connect.Request[godwitv1.DiffRequest]) (*connect.Response[godwitv1.DiffResponse], error) {

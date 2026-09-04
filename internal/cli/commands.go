@@ -232,7 +232,7 @@ func newPlanCmd() *cobra.Command {
 			}
 			report := planReport{items: make([]planItem, 0, 2*len(migs))}
 			for _, m := range migs {
-				for _, dir := range []engine.Direction{engine.DirectionUp, engine.DirectionDown} {
+				for _, dir := range directionsOf(m) {
 					p, err := engine.BuildPlan(m, dir)
 					if err != nil {
 						return err
@@ -675,6 +675,15 @@ func firstLine(sql string) string {
 	return line
 }
 
+// directionsOf is the sides a migration has: a checkpoint has no inverse, so it has only an up.
+func directionsOf(m engine.Migration) []engine.Direction {
+	if m.Checkpoint {
+		return []engine.Direction{engine.DirectionUp}
+	}
+
+	return []engine.Direction{engine.DirectionUp, engine.DirectionDown}
+}
+
 func newApplyCmd() *cobra.Command {
 	flags := &targetFlags{}
 	cmd := &cobra.Command{
@@ -691,16 +700,16 @@ func newApplyCmd() *cobra.Command {
 			}
 			defer closeFn()
 
-			for _, m := range migs {
-				p, err := engine.BuildPlan(m, engine.DirectionUp)
-				if err != nil {
-					return err
-				}
+			plans, err := upPlans(cmd.Context(), exec, migs)
+			if err != nil {
+				return err
+			}
+			for _, p := range plans {
 				res, err := exec.Up(cmd.Context(), p)
 				if err != nil {
 					return err
 				}
-				printResult(cmd, m, p.Direction, res)
+				printResult(cmd, p.Migration, p.Direction, res)
 			}
 
 			return nil
@@ -709,6 +718,31 @@ func newApplyCmd() *cobra.Command {
 	flags.register(cmd, true)
 
 	return cmd
+}
+
+// upPlans builds the up side of every migration and decides what a checkpoint among them does against
+// the versions the database already holds.
+func upPlans(ctx context.Context, exec *engine.Executor, migs []engine.Migration) ([]engine.Plan, error) {
+	plans := make([]engine.Plan, 0, len(migs))
+	for _, m := range migs {
+		p, err := engine.BuildPlan(m, engine.DirectionUp)
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, p)
+	}
+	rows, err := exec.Status(ctx, migs)
+	if err != nil {
+		return nil, err
+	}
+	var newest int64
+	for _, r := range rows {
+		if r.Applied && !r.Migration.Repeatable {
+			newest = max(newest, r.Migration.Version)
+		}
+	}
+
+	return engine.ShapeCheckpoint(plans, newest)
 }
 
 func printResult(cmd *cobra.Command, m engine.Migration, dir engine.Direction, res engine.Result) {
@@ -783,6 +817,9 @@ func newDownCmd() *cobra.Command {
 			for _, m := range migs {
 				if m.Repeatable || m.Version != version {
 					continue
+				}
+				if m.Checkpoint {
+					return fmt.Errorf("%s is a checkpoint: it has no inverse, and the versions it collapses can no longer be reverted", m.ID())
 				}
 				p, err := engine.BuildPlan(m, engine.DirectionDown)
 				if err != nil {

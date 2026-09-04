@@ -139,6 +139,7 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 			Version: m.Version, Name: m.Name, Repeatable: m.Repeatable, Checksum: m.Checksum, Applied: m.Applied,
 			Phase: m.Phase, AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
 			Directives: m.Directives, Expanded: m.Expanded, Notes: m.Notes, Withheld: m.Withheld,
+			Checkpoint: m.Checkpoint, CollapsesThrough: m.Through,
 		}
 		pm.Statements = statementsToProto(m.Statements)
 		out = append(out, pm)

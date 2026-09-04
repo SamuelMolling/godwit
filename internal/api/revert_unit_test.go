@@ -28,6 +28,8 @@ func TestRevertRunWithoutInspector(t *testing.T) {
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
 		pgxmock.NewRows([]string{"migration", "applied_at", "coalesce", "held", "expansion"}).
 			AddRow("20260101000000_a", time.Now(), "", false, (*controlplane.Expansion)(nil)))
+	mock.ExpectQuery("ORDER BY a.migration DESC").WithArgs(anyArgs(2)...).
+		WillReturnRows(pgxmock.NewRows([]string{"migration", "body"}))
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnRows(
 		pgxmock.NewRows([]string{"name", "body"}).
 			AddRow("20260101000000_a.up.sql", "CREATE TABLE a (id int);").

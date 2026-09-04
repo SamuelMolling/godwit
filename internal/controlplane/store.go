@@ -56,11 +56,13 @@ var (
 
 // Reasons a run cannot be reverted, appended to ErrNotRevertable.
 const (
-	reasonState    = "its state is %q; a revertable run is succeeded, awaiting_contract, failed or needs_attention"
-	reasonBusy     = "target %s has a queued or running run"
-	reasonNewer    = "run %s is newer and still stands; revert it first, or force this one"
-	reasonNothing  = "it applied no migration that still stands"
-	reasonIsRevert = "it is itself a revert"
+	reasonState      = "its state is %q; a revertable run is succeeded, awaiting_contract, failed or needs_attention"
+	reasonBusy       = "target %s has a queued or running run"
+	reasonNewer      = "run %s is newer and still stands; revert it first, or force this one"
+	reasonNothing    = "it applied no migration that still stands"
+	reasonIsRevert   = "it is itself a revert"
+	reasonCheckpoint = "it is a checkpoint, and a checkpoint has no inverse"
+	reasonCollapsed  = "checkpoint %s collapsed it: the target's history below version %014d cannot be reverted"
 )
 
 // Run kinds.

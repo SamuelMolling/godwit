@@ -95,6 +95,10 @@ type PlanMigration struct {
 	Note           string `json:"note,omitempty"`
 	Withheld       bool   `json:"withheld,omitempty"`
 
+	// Checkpoint marks the migration that carries the whole schema of everything through Through.
+	Checkpoint bool  `json:"checkpoint,omitempty"`
+	Through    int64 `json:"collapses_through,omitempty"`
+
 	Directives []string `json:"directives,omitempty"`
 	Expanded   bool     `json:"expanded,omitempty"`
 	Notes      []string `json:"notes,omitempty"`
@@ -259,6 +263,16 @@ func (a AppliedSet) Has(m engine.Migration) bool {
 	return slices.Contains(a.Versions, m.Version)
 }
 
+// Newest is the highest version the target has applied, or zero when it has none.
+func (a AppliedSet) Newest() int64 {
+	var out int64
+	for _, v := range a.Versions {
+		out = max(out, v)
+	}
+
+	return out
+}
+
 // BuildPlanMigrations records what admission decided for each plan: phase under the rollout and whether it is applied.
 func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet, exps map[string]Expansion) []PlanMigration {
 	expand, _ := Policies()[rollout].Split(plans)
@@ -275,6 +289,9 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet
 		pm.Statements = PlanStatements(p.Statements)
 		if exp, ok := exps[pm.ID()]; ok {
 			pm.Directives, pm.Expanded, pm.Notes, pm.Expansion = exp.Lines, true, exp.Notes, exp.Hash
+		}
+		if p.Migration.Checkpoint {
+			pm.Checkpoint, pm.Through, pm.Note = true, p.Migration.Through, engine.CheckpointNote(p, engine.Collapsed(plans, p.Migration))
 		}
 		out = append(out, pm)
 	}

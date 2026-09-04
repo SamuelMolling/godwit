@@ -81,6 +81,9 @@ const (
 	GodwitServiceListPlansProcedure = "/godwit.v1.GodwitService/ListPlans"
 	// GodwitServiceDiffProcedure is the fully-qualified name of the GodwitService's Diff RPC.
 	GodwitServiceDiffProcedure = "/godwit.v1.GodwitService/Diff"
+	// GodwitServiceCheckpointProcedure is the fully-qualified name of the GodwitService's Checkpoint
+	// RPC.
+	GodwitServiceCheckpointProcedure = "/godwit.v1.GodwitService/Checkpoint"
 )
 
 // GodwitServiceClient is a client for the godwit.v1.GodwitService service.
@@ -108,6 +111,8 @@ type GodwitServiceClient interface {
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
 	// Generates the migration between the target's live schema and a desired DDL, in both directions.
 	Diff(context.Context, *connect.Request[v1.DiffRequest]) (*connect.Response[v1.DiffResponse], error)
+	// Collapses a prefix of the migration directory into one checkpoint file the replay starts from.
+	Checkpoint(context.Context, *connect.Request[v1.CheckpointRequest]) (*connect.Response[v1.CheckpointResponse], error)
 }
 
 // NewGodwitServiceClient constructs a client for the godwit.v1.GodwitService service. By default,
@@ -241,6 +246,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("Diff")),
 			connect.WithClientOptions(opts...),
 		),
+		checkpoint: connect.NewClient[v1.CheckpointRequest, v1.CheckpointResponse](
+			httpClient,
+			baseURL+GodwitServiceCheckpointProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("Checkpoint")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -266,6 +277,7 @@ type godwitServiceClient struct {
 	getPlan         *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	listPlans       *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
 	diff            *connect.Client[v1.DiffRequest, v1.DiffResponse]
+	checkpoint      *connect.Client[v1.CheckpointRequest, v1.CheckpointResponse]
 }
 
 // RegisterTarget calls godwit.v1.GodwitService.RegisterTarget.
@@ -368,6 +380,11 @@ func (c *godwitServiceClient) Diff(ctx context.Context, req *connect.Request[v1.
 	return c.diff.CallUnary(ctx, req)
 }
 
+// Checkpoint calls godwit.v1.GodwitService.Checkpoint.
+func (c *godwitServiceClient) Checkpoint(ctx context.Context, req *connect.Request[v1.CheckpointRequest]) (*connect.Response[v1.CheckpointResponse], error) {
+	return c.checkpoint.CallUnary(ctx, req)
+}
+
 // GodwitServiceHandler is an implementation of the godwit.v1.GodwitService service.
 type GodwitServiceHandler interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
@@ -393,6 +410,8 @@ type GodwitServiceHandler interface {
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
 	// Generates the migration between the target's live schema and a desired DDL, in both directions.
 	Diff(context.Context, *connect.Request[v1.DiffRequest]) (*connect.Response[v1.DiffResponse], error)
+	// Collapses a prefix of the migration directory into one checkpoint file the replay starts from.
+	Checkpoint(context.Context, *connect.Request[v1.CheckpointRequest]) (*connect.Response[v1.CheckpointResponse], error)
 }
 
 // NewGodwitServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -522,6 +541,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("Diff")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceCheckpointHandler := connect.NewUnaryHandler(
+		GodwitServiceCheckpointProcedure,
+		svc.Checkpoint,
+		connect.WithSchema(godwitServiceMethods.ByName("Checkpoint")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/godwit.v1.GodwitService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case GodwitServiceRegisterTargetProcedure:
@@ -564,6 +589,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceListPlansHandler.ServeHTTP(w, r)
 		case GodwitServiceDiffProcedure:
 			godwitServiceDiffHandler.ServeHTTP(w, r)
+		case GodwitServiceCheckpointProcedure:
+			godwitServiceCheckpointHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -651,4 +678,8 @@ func (UnimplementedGodwitServiceHandler) ListPlans(context.Context, *connect.Req
 
 func (UnimplementedGodwitServiceHandler) Diff(context.Context, *connect.Request[v1.DiffRequest]) (*connect.Response[v1.DiffResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.Diff is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) Checkpoint(context.Context, *connect.Request[v1.CheckpointRequest]) (*connect.Response[v1.CheckpointResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.Checkpoint is not implemented"))
 }

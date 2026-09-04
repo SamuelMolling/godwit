@@ -19,6 +19,11 @@ func appliedRows() *pgxmock.Rows {
 	return pgxmock.NewRows([]string{"migration", "applied_at", "coalesce", "held", "expansion"})
 }
 
+func expectNoCheckpoints(mock pgxmock.PgxPoolIface) {
+	mock.ExpectQuery("ORDER BY a.migration DESC").WithArgs(anyArgs(2)...).
+		WillReturnRows(pgxmock.NewRows([]string{"migration", "body"}))
+}
+
 func TestLedgerStoreErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -82,6 +87,7 @@ func TestPlanRevertErrors(t *testing.T) {
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
 		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, noExpansion))
+	expectNoCheckpoints(mock)
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnError(errBoom)
 	if _, err := s.PlanRevert(ctx, "r1"); err == nil || !strings.Contains(err.Error(), "list run files") {
 		t.Fatalf("files error = %v", err)
@@ -90,6 +96,7 @@ func TestPlanRevertErrors(t *testing.T) {
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
 		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, noExpansion))
+	expectNoCheckpoints(mock)
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnRows(
 		pgxmock.NewRows([]string{"name", "body"}).AddRow("20260101000000_a.up.sql", "SELECT 1;"))
 	if _, err := s.PlanRevert(ctx, "r1"); !errors.Is(err, ErrRevertPlan) ||
@@ -100,6 +107,7 @@ func TestPlanRevertErrors(t *testing.T) {
 	expectRunRow(mock)
 	mock.ExpectQuery("FROM cp_run_applied").WithArgs("r1").WillReturnRows(
 		appliedRows().AddRow("20260101000000_a", time.Now(), "", false, noExpansion))
+	expectNoCheckpoints(mock)
 	mock.ExpectQuery("FROM cp_run_files").WithArgs("r1").WillReturnRows(
 		pgxmock.NewRows([]string{"name", "body"}).
 			AddRow("20260101000000_a.up.sql", "SELECT 1;").

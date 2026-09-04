@@ -402,3 +402,22 @@ func TestSchemaCheckPropagatesTheError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A checkpoint has no down side, so the down checks skip it; its own body is still hazard-gated.
+func TestCheckpointLintsWithoutADown(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMigs(t, dir, map[string]string{
+		"20260101000000_a.up.sql":   "CREATE TABLE a (id int);",
+		"20260101000000_a.down.sql": "DROP TABLE a;",
+		"20260102000000_squash.up.sql": "-- godwit: checkpoint through=20260101000000\n" +
+			"CREATE TABLE a (id int);\nCREATE INDEX a_id_idx ON a (id);",
+	})
+	rep := check(t, dir, nil, Options{})
+	if got := codes(rep); got != "20260102000000_squash.up.sql:error:H001" {
+		t.Fatalf("codes = %q", got)
+	}
+	if rep.Blocking != 1 {
+		t.Fatalf("blocking = %d", rep.Blocking)
+	}
+}

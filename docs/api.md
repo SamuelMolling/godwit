@@ -35,7 +35,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 | Scope | RPCs |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListDriftEvents`, `ListAudit`, `Diff` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
 | `admin` | + `RegisterTarget` |
@@ -200,6 +200,25 @@ call Diff '{"target":"app","base":"DIFF_BASE_FILES","schema":"CREATE TABLE t (id
 ```
 
 `files` is required by `DIFF_BASE_FILES`. Under `DIFF_BASE_LIVE` it is optional, but its `R__` pairs are always applied on the desired schema so that what a repeatable declares stays out of the migration, and `repeatable_objects` in the response names what they built; a request with no `files` at all against a target whose `godwit.repeatables` has rows is `failed_precondition` naming them, because the diff would otherwise propose dropping every one. A repeatable that does not apply on the desired schema is `invalid_argument` with `repeatable migration does not build on the desired schema: <file>: <postgres error>`. `invalid_argument` with `migration files failed to replay: <reason>` when they do not load or do not apply on the history; `failed_precondition` on a service started with validation disabled, which has no replay to build the base from.
+
+### Checkpoint — read
+
+```bash
+call Checkpoint '{"name":"squash","files":[{"name":"20260101000000_a.up.sql","body":"CREATE TABLE a (id int);"},
+                                           {"name":"20260101000000_a.down.sql","body":"DROP TABLE a;"},
+                                           {"name":"20260102000000_b.up.sql","body":"CREATE TABLE b (id int);"},
+                                           {"name":"20260102000000_b.down.sql","body":"DROP TABLE b;"}]}'
+```
+
+```json
+{"version":"20260904120000","name":"squash","through":"20260102000000",
+ "covers":["20260101000000_a","20260102000000_b"],
+ "body":"-- godwit: checkpoint through=20260102000000\n-- 2 migrations, ...\n\nCREATE TABLE ..."}
+```
+
+Collapses the versioned migrations of `files` at or below `at` (zero takes the newest) into one checkpoint file: the schema they produce, rendered as DDL after replaying them on a scratch database, and refused unless applying that DDL alone on a second scratch database reproduces the same schema fingerprint ([concepts](concepts.md#checkpoints)). Nothing is stored and no target is touched — the caller writes `body` into the migration directory as `<version>_<name>.up.sql`, and there is no down file.
+
+`invalid_argument` when `files` do not load, when fewer than two versioned migrations are at or below `at`, when the directory already holds a checkpoint covering that range, or when the generated schema does not apply or does not match; `unimplemented` on a service started without a control-plane pool.
 
 ### CheckDrift — operator
 
