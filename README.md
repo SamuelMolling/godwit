@@ -111,7 +111,7 @@ That single-server form executes submitted SQL on the store server as the store 
 | [Comparison](docs/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
 | [Decisions](docs/decisions/README.md) | why godwit is shaped this way, and what was refused |
 
-Also: [examples](examples/README.md) (copy-ready pipelines), [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
+Also: [examples](examples/README.md) (copy-ready pipelines), [examples/deploy](examples/deploy/README.md) (the service on ingress-nginx, ECS, Docker Compose and a plain VM), [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
 
 ## Design principles
 
