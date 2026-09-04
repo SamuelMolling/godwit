@@ -78,30 +78,33 @@ godwit plan --dir db/migrations
 
 `tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([concepts: hazards](concepts.md#hazards)).
 
-Lint the directory the way a pull request gate does, and apply against a local database. Create it first if you do not have one — the walkthrough uses a database `app` owned by a role `app`:
+Lint the directory the way a pull request gate does, and apply against a local database. Create two: `app_dev` for this loop, and `app` for the service to manage from section 2 onwards. Keep them apart — what `godwit apply` writes goes into the target's own journal and not into the service's ledger, so a database you have already migrated by hand is not a database to register as a target.
 
 ```bash
-psql -U postgres -c "CREATE ROLE app LOGIN PASSWORD 'app'" -c "CREATE DATABASE app OWNER app"
+psql -U postgres -c "CREATE ROLE app LOGIN PASSWORD 'app'" \
+                 -c "CREATE DATABASE app_dev OWNER app" -c "CREATE DATABASE app OWNER app"
 ```
 
 ```bash
 godwit lint --dir db/migrations                       # exit 1 on unacknowledged hazards, parse errors, empty files
-godwit apply --dsn postgres://app:app@localhost/app --dir db/migrations
-godwit status --dsn postgres://app:app@localhost/app --dir db/migrations
-godwit down --dsn postgres://app:app@localhost/app --dir db/migrations --version 20260901120500 --yes
+godwit apply --dsn postgres://app:app@localhost/app_dev --dir db/migrations
+godwit status --dsn postgres://app:app@localhost/app_dev --dir db/migrations
+godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --version 20260901120500 --yes
 ```
 
 ```
 $ godwit lint --dir db/migrations
 0 finding(s), 0 blocking
-$ godwit apply --dsn postgres://app:app@localhost/app --dir db/migrations
+$ godwit apply --dsn postgres://app:app@localhost/app_dev --dir db/migrations
 20260901120000_create_orders: applied (1 statement(s))
 20260901120500_orders_customer_idx: applied (1 statement(s))
 R__order_stats: applied (1 statement(s))
-$ godwit status --dsn postgres://app:app@localhost/app --dir db/migrations
-20260901120000_create_orders: applied 2026-09-03T16:56:34Z
-20260901120500_orders_customer_idx: applied 2026-09-03T16:56:34Z
-R__order_stats: unchanged since 2026-09-03T16:56:34Z
+$ godwit status --dsn postgres://app:app@localhost/app_dev --dir db/migrations
+20260901120000_create_orders: applied 2026-09-04T17:50:24Z
+20260901120500_orders_customer_idx: applied 2026-09-04T17:50:24Z
+R__order_stats: unchanged since 2026-09-04T17:50:24Z
+$ godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --version 20260901120500 --yes
+20260901120500_orders_customer_idx: reverted (1 statement(s))
 ```
 
 `apply` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
@@ -119,15 +122,17 @@ godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store --liste
 ```
 
 ```
-{"time":"...","level":"INFO","msg":"store migrated","replica":"host","build":"dev","applied":15}
+{"time":"...","level":"INFO","msg":"store migrated","replica":"host","build":"dev","applied":16}
 {"time":"...","level":"INFO","msg":"listening","replica":"host","build":"dev","addr":"[::]:8474","validation":true}
 ```
 
 `serve` migrates the store schema, starts the leased scheduler, the drift monitor and the scratch-database validator, then listens for gRPC and JSON on one port (plus `/metrics`, `/healthz`, `/readyz`).
 
-It also prints this, and it means what it says:
+Between those two lines it also prints these three, and they mean what they say:
 
 ```
+{"time":"...","level":"WARN","msg":"scratch database is not isolated","detail":"scratch role godwit owns the store database \"godwit_store\", so submitted DDL can DROP DATABASE ... WITH (FORCE)"}
+{"time":"...","level":"WARN","msg":"scratch database is not isolated","detail":"scratch role godwit may CONNECT to the store database \"godwit_store\": REVOKE CONNECT ON DATABASE \"godwit_store\" FROM PUBLIC and from this role"}
 {"time":"...","level":"WARN","msg":"validation and diff execute submitted DDL on the store server with the store credentials; set --scratch-dsn to a throwaway PostgreSQL that holds nothing"}
 ```
 
@@ -159,11 +164,12 @@ godwit migrate --target app --dir db/migrations
 
 ```
 no stored plan for this set: implicit plan
-run 907350dc-e705-4cc1-b880-65cc3848b4a5: queued
-run 907350dc-e705-4cc1-b880-65cc3848b4a5: succeeded (attempt 1) [statement 0 of 20260901120500_orders_customer_idx]
+run 2cc06d64-7721-4ec3-8417-bcf51299b688: queued
+run 2cc06d64-7721-4ec3-8417-bcf51299b688: running (attempt 1) [statement 0 of 20260901120000_create_orders]
+run 2cc06d64-7721-4ec3-8417-bcf51299b688: succeeded (attempt 1)
 ```
 
-The first line is the plan binding: this run had no stored plan to bind to, so it planned itself. [Section 3c](#3c-plan-on-the-pull-request-apply-from-it) is the other way round. The trailing bracket is how far the run got — it stays on the line while the run progresses, so a slow migration shows which statement it is on.
+The first line is the plan binding: this run had no stored plan to bind to, so it planned itself. [Section 3c](#3c-plan-on-the-pull-request-apply-from-it) is the other way round. The trailing bracket on a `running` line is how far the run had got when the state last changed, so a slow migration shows which statement it is on; a run this small may settle before any `running` line is streamed at all.
 
 `migrate` sends every file in the directory, waits for admission (hazard gate, out-of-order guard, scratch replay of the target's whole history plus the new files), then streams the run until it settles. Exit code 0 on `succeeded` or `awaiting_contract`, 1 on `failed`, `needs_attention` or any refusal. A run with an unacknowledged hazard is refused before anything is queued:
 
@@ -174,15 +180,26 @@ H001: CREATE INDEX without CONCURRENTLY blocks writes on orders
 
 Hazards are reported for the direction being planned; a normal `migrate` plans the up side only, so the `DROP TABLE` in the down file above is not in the way (it will be when that run is reverted). Acknowledge with `--ack H001` when you do mean it.
 
-To land a branch one migration at a time, stop the run at a version instead of editing the directory:
+To land a branch one migration at a time, stop the run at a version instead of editing the directory. With two new files in the directory, `20260904181500_orders_source` and `20260904182000_orders_channel`:
 
 ```
-$ godwit migrate --target app --dir db/migrations --to 20260901120400
-withheld: 1 migration(s) in the directory this plan does not cover (20260901120500_orders_customer_idx)
-run 4b1c…: succeeded (attempt 1)
+$ godwit plan --target app --dir db/migrations --to 20260904181500
+plan e6d08852-34ff-42a9-a327-b4e193c80640 on app (rollout direct, validated on a scratch database)
+key: bc051b2c60b53c2d31ffa945f98c369c08da213b3c4a890ff8ccab7b8731ae53
+observed: 5 applied, newest 20260904181000, history 369a12ef…, schema ec575f3f…, at 2026-09-04T18:03:08Z
+withheld: 2 migration(s) in the directory this plan does not cover (20260904182000_orders_channel, R__order_stats)
+...
+20260904181500_orders_source (up): 1 statement(s) [expand, pending]
+  [0] tx    ALTER TABLE orders ADD COLUMN source text
+20260904182000_orders_channel (up): 0 statement(s) [withheld]
+
+$ godwit migrate --target app --dir db/migrations --to 20260904181500
+plan e6d08852-34ff-42a9-a327-b4e193c80640: bound
+run b10197aa-8d27-4cdb-87fc-1d7adfd3d1c9: queued
+run b10197aa-8d27-4cdb-87fc-1d7adfd3d1c9: succeeded (attempt 1)
 ```
 
-The migrations above the version stay in the directory and in the plan, marked `withheld`, so nobody reads the report as the whole set; the next `migrate` without `--to` applies them. A version below what the target has already applied is refused — `--to` stops a run short, it never reverts ([concepts](concepts.md#version-targets)).
+The migrations above the version stay in the directory and in the plan, marked `withheld`, so the report cannot be read as the whole set; the next `migrate` without `--to` applies them. The withheld list is on the plan, not on the run: `migrate` streams the run and prints no plan, so read `plan --to` (or `migrate --to --dry-run`) when the set matters. A version below what the target has already applied is refused — `--to` stops a run short, it never reverts ([concepts](concepts.md#version-targets)).
 
 Look around:
 
@@ -198,20 +215,20 @@ godwit audit --target app
 ```
 $ godwit targets
 NAME  PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN
-app   static    2        0            0          clean  none         5s    none       false         907350dc-… succeeded
+app   static    3        0            0          clean  none         5s    none       false         2cc06d64-… succeeded
 
 $ godwit target status app --dir db/migrations
 target app: provider static, lock timeout 5s, statement timeout none, search path none
 applied (3):
-  20260901120000_create_orders        2026-09-03T16:56:34Z
-  20260901120500_orders_customer_idx  2026-09-03T16:57:07Z
-  R__order_stats                      2026-09-03T16:56:34Z  unchanged
-last run: 907350dc-e705-4cc1-b880-65cc3848b4a5 migrate succeeded finished 2026-09-03T16:57:07Z
+  20260901120000_create_orders        2026-09-04T17:50:27Z
+  20260901120500_orders_customer_idx  2026-09-04T17:50:27Z
+  R__order_stats                      2026-09-04T17:50:27Z  unchanged
+last run: 2cc06d64-7721-4ec3-8417-bcf51299b688 migrate succeeded finished 2026-09-04T17:50:27Z
 ready plans: 0
-drift baseline: taken 2026-09-03T16:57:07Z by run 907350dc-e705-4cc1-b880-65cc3848b4a5
+drift baseline: taken 2026-09-04T17:50:27Z by run 2cc06d64-7721-4ec3-8417-bcf51299b688
 ```
 
-`targets` counts versioned migrations; `target status` also lists the repeatables, which is why one says 2 and the other 3.
+The two counts answer different questions and can differ: `targets` counts the migrations the **service's own runs** recorded, `target status` reads the **target's** journal. They agree here because the service applied everything `app` has.
 
 With `serve --ui`, the same answers are pages: `/ui/` is the run list and the needs-you queue, `/ui/targets/app` is that status page, `/ui/plans` the stored plans. Sign in with any token's secret as the basic-auth password — the username is ignored — or run `serve` with `--ui-user` / `--ui-password` for one shared identity. What a page offers follows the scope behind the password; anything beyond it is a `403`.
 
@@ -226,17 +243,25 @@ godwit migrate --target app --dir db/migrations   # after review; binds the stor
 
 ```
 $ godwit plan --target app --dir db/migrations
-plan 1f458a7b-99f6-4814-8c25-2a2650f2a13c on app (rollout direct, validated on a scratch database)
-key: fb7ec691f5bb5e833ef353d7f74db78c09e7ee9039e4ee64e7675a787aecbc35
-observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-03T16:58:05Z
-20260903165759_orders_status (up): 1 statement(s) [expand, pending]
-  [0] tx    ALTER TABLE "public"."orders" ADD COLUMN "status" text ... NOT NULL
+plan 48779753-1d13-4637-a290-6639adaca3dc on app (rollout direct, validated on a scratch database)
+key: 7fa0a893cf922112cc5365a626276bfdf770708ea117a7d854d70ab8df6c783b
+observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-04T18:00:14Z
+20260901120000_create_orders (up): 1 statement(s) [expand, applied]
+  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
+20260901120500_orders_customer_idx (up): 1 statement(s) [expand, applied]
+  [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
+20260904180008_orders_status (up): 1 statement(s) [expand, pending]
+  [0] tx    ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL
+R__order_stats (up): 1 statement(s) [expand, unchanged]
+  [0] tx    CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id
 
 $ godwit migrate --target app --dir db/migrations
-plan 1f458a7b-99f6-4814-8c25-2a2650f2a13c: bound
-run a47be3a6-…: queued
-run a47be3a6-…: succeeded (attempt 1) [statement 0 of 20260903165759_orders_status]
+plan 48779753-1d13-4637-a290-6639adaca3dc: bound
+run 5bd4a4f6-2e7f-4014-af6b-ce5601604b8a: queued
+run 5bd4a4f6-2e7f-4014-af6b-ce5601604b8a: succeeded (attempt 1)
 ```
+
+The plan covers the whole directory, so it lists what the target already has as `applied` and `unchanged` beside the one migration that is `pending`; only the pending ones are run.
 
 If the target moves between the two, `migrate` refuses with the diff and exits 3 instead of applying something nobody reviewed. `godwit target add --require-plan` (or `serve --require-plan`) makes the stored plan mandatory, and `godwit plans` / `godwit plan show <id>` read them back.
 
@@ -245,41 +270,58 @@ If the target moves between the two, `migrate` refuses with the diff and exits 3
 A `-- godwit: <op>` comment line states the intent and godwit renders the lock-safe statements against the real catalog at plan time. A type change, whose safe form is a dozen statements nobody wants to hand-write:
 
 ```sql
--- 20260903170000_customer_id_text.up.sql
--- godwit: change-type orders.customer_id text using='customer_id::text'
--- 20260903170000_customer_id_text.down.sql
+-- 20260904180100_total_cents.up.sql
+-- godwit: change-type orders.total bigint using='(total * 100)::bigint'
+-- 20260904180100_total_cents.down.sql
 -- godwit: revert
 ```
 
 `godwit lint` parses it offline; `godwit plan --target` shows the expansion, split into the phases it will run in:
 
 ```
-20260903170000_customer_id_text (up): 12 statement(s) [expand, pending]   directive, expand 6 / contract 6
-  -- godwit: change-type orders.customer_id text using='customer_id::text'
-  [1] tx    CREATE FUNCTION public.orders_customer_id_sync() RETURNS trigger ...   [expand]
+20260904180100_total_cents (up): 12 statement(s) [expand, pending]   directive, expand 6 / contract 6
+  -- godwit: change-type orders.total bigint using='(total * 100)::bigint'
+  -- godwit expanded: change-type orders.total bigint
+  [0] tx    ALTER TABLE public.orders ADD COLUMN total_new bigint   [expand]
+  [1] tx    CREATE FUNCTION public.orders_total_sync() RETURNS trigger ...   [expand]
   [3] batch WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint ...)   [expand]
         batch over id (int), 5000 rows per transaction
-  [8] tx    ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old   [contract]
-  note: leaves public.orders.customer_id_old for rollback; drop it with `-- godwit: drop-column public.orders.customer_id_old`
+  [8] tx    ALTER TABLE public.orders RENAME COLUMN total TO total_old   [contract]
+  note: leaves public.orders.total_old for rollback; drop it with `-- godwit: drop-column public.orders.total_old`
 ```
 
-Under `--rollout expand-contract` the run applies the expand half and stops:
+The `-- godwit expanded:` line is the expander's own marker: everything under it up to the next marker was generated by that directive rather than written by hand.
+
+The column has to be one nothing else depends on. `change-type` swaps the column by renaming it, and PostgreSQL moves indexes, views and constraints with the physical attribute — so they would silently keep reading the pre-swap column. The expander refuses instead of doing that, by name:
+
+```
+$ godwit plan --target app --dir db/migrations   # with change-type on orders.customer_id
+godwit: godwit directive on line 1 (-- godwit: change-type orders.customer_id text using='customer_id::text'):
+index public.orders_customer_idx, view public.order_stats depend on public.orders.customer_id; ...
+Drop and recreate them around this migration, in their own migrations
+```
+
+Under `--rollout expand-contract` the run applies the expand half and stops; `run confirm` releases the contract phase and streams it to the end:
 
 ```
 $ godwit migrate --target app --dir db/migrations --rollout expand-contract
-run 62a6f7cc-…: awaiting_contract (attempt 1) [statement 5 of 20260903170000_customer_id_text]
+plan a9492a64-d3c7-4dcf-bec6-6fcb2c5198d0: bound
+run 2076f415-7188-46ef-9f34-1f495d0fb324: queued
+run 2076f415-7188-46ef-9f34-1f495d0fb324: awaiting_contract (attempt 1)
 $ godwit run confirm --latest --target app        # once the application reads both shapes
-run 62a6f7cc-…: contract confirmed
+run 2076f415-7188-46ef-9f34-1f495d0fb324: contract confirmed
+run 2076f415-7188-46ef-9f34-1f495d0fb324: queued
+run 2076f415-7188-46ef-9f34-1f495d0fb324: succeeded (attempt 1)
 ```
 
-`awaiting_contract` is exit code 0, not a failure: the expand half is on the database and the swap waits for a human. The full directive list, the expansion rules and everything the expander refuses are in [concepts: directives](concepts.md#directives).
+`awaiting_contract` is exit code 0, not a failure: the expand half is on the database and the swap waits for a human. `run confirm` waits for the contract phase it released and exits on its outcome — 0 on `succeeded`, 1 on `failed` or `needs_attention` — so a deploy step or a Kubernetes hook cannot go green on a contract phase that then fails; `--no-wait` returns as soon as it is queued, for a caller that watches the run elsewhere. The full directive list, the expansion rules and everything the expander refuses are in [concepts: directives](concepts.md#directives).
 
 One directive reads instead of writing. `-- godwit: assert` states a condition about the **data** and makes it part of the plan, so the swap above is gated on the backfill having actually worked:
 
 ```sql
--- 20260903170000_customer_id_text.up.sql
--- godwit: change-type orders.customer_id text using='customer_id::text'
--- godwit: assert 'SELECT count(*) FROM orders WHERE customer_id_new IS DISTINCT FROM customer_id::text' = 0
+-- 20260904180100_total_cents.up.sql
+-- godwit: change-type orders.total bigint using='(total * 100)::bigint'
+-- godwit: assert 'SELECT count(*) FROM orders WHERE total_new IS DISTINCT FROM (total * 100)::bigint' = 0
 ```
 
 The assertion is a statement of the plan like any other — it shows up in `godwit plan` and in the pull-request comment with the condition beside its SQL — and it runs at the end of the expand phase. If it does not hold the run fails there, `awaiting_contract` is never reached, and no swap happens. `godwit run confirm` re-checks it against the data as it is at confirm time, not as it was when the backfill finished. See [concepts: assertions](concepts.md#assertions).
@@ -293,6 +335,7 @@ godwit diff --target app --schema db/schema.sql --name orders_status --dir db/mi
 ```
 
 ```
+declared by repeatable migrations, so the desired schema keeps them: public.order_stats
 app -> db/schema.sql: 1 statement(s)
   [0] tx    ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL
 
@@ -300,8 +343,8 @@ app -> db/schema.sql: 1 statement(s)
 ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL;
 -- down
 ALTER TABLE "public"."orders" DROP COLUMN "status";
-wrote db/migrations/20260902103000_orders_status.up.sql
-wrote db/migrations/20260902103000_orders_status.down.sql
+wrote db/migrations/20260904180008_orders_status.up.sql
+wrote db/migrations/20260904180008_orders_status.down.sql
 ```
 
 The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift`, `files` and `repeatable_objects`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
