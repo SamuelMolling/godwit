@@ -388,7 +388,7 @@ func TestValidatorCorruptHistory(t *testing.T) {
 	sched.Tick(ctx)
 	waitState(t, s, "cccccccc-0000-0000-0000-000000000001", StateSucceeded)
 
-	v := NewValidator(pool, s, func() string { return "hist" })
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "hist" })
 	good, err := buildPlans([]engine.Migration{{
 		Version: 2, Name: "next",
 		UpSQL: "CREATE TABLE n (id int);", DownSQL: "DROP TABLE n;",
@@ -425,7 +425,7 @@ func TestValidatorScratchConnectFails(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
 		t.Fatal(err)
 	}
-	v := NewValidator(pool, s, func() string { return "connfail" })
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "connfail" })
 	good, err := buildPlans([]engine.Migration{{
 		Version: 1, Name: "ok",
 		UpSQL: "SELECT 1;", DownSQL: "SELECT 1;",

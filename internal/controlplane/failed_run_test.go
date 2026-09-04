@@ -84,7 +84,7 @@ func TestFailedRunKeepsWhatItApplied(t *testing.T) {
 		t.Fatalf("targets = %+v, err = %v", targets, err)
 	}
 
-	v := NewValidator(pool, s, uuid.NewString)
+	v := NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 	val, err := v.Validate(ctx, "app", upPlans(t, twoTableFiles()), "")
 	if err != nil {
 		t.Fatalf("validating over a failed run's history: %v", err)
@@ -192,7 +192,7 @@ func assertHeldIsNotApplied(t *testing.T, s *Store, pool *pgxpool.Pool, id strin
 	if err != nil || targets[0].AppliedCount != 0 {
 		t.Fatalf("targets = %+v, err = %v", targets, err)
 	}
-	val, err := NewValidator(pool, s, uuid.NewString).Validate(ctx, "app", nil, "")
+	val, err := NewValidator(NewScratch(pool, ""), s, uuid.NewString).Validate(ctx, "app", nil, "")
 	if err != nil || strings.Contains(val.Base, "public.u") {
 		t.Fatalf("base = %q, err = %v", val.Base, err)
 	}

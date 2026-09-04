@@ -364,7 +364,7 @@ func TestDiffRetiredColumnsError(t *testing.T) {
 	ctx := context.Background()
 	d, _, targetDSN := newDiffer(t, nil)
 	execDSN(t, targetDSN, `CREATE TABLE public.users (id bigint PRIMARY KEY)`)
-	if _, err := d.pool.Exec(ctx, `DROP TABLE cp_retired_columns`); err != nil {
+	if _, err := d.scratch.pool.Exec(ctx, `DROP TABLE cp_retired_columns`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Diff(ctx, "app", `CREATE TABLE public.users (id bigint PRIMARY KEY, age bigint)`, DiffBaseLive, nil); err == nil ||
@@ -380,7 +380,7 @@ func TestValidateReplaysExpandedHistory(t *testing.T) {
 	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "x"}); err != nil {
 		t.Fatal(err)
 	}
-	v := NewValidator(pool, s, uuid.NewString)
+	v := NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 
 	runID := uuid.NewString()
 	files := map[string]string{
@@ -446,7 +446,7 @@ func TestValidatorKeepOldTargetDefault(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s, pool := newStore(t)
-	v := NewValidator(pool, s, uuid.NewString)
+	v := NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 	if _, err := v.expander(ctx, "ghost"); err == nil {
 		t.Fatal("an unknown target must fail before the scratch is created")
 	}

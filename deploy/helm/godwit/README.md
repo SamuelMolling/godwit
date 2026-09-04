@@ -5,6 +5,7 @@ Runs `godwit serve` as a two-replica Deployment: the second replica is what turn
 ## Prerequisites
 
 - A PostgreSQL database for the control-plane store (any version the service supports; it creates its own tables).
+- A second PostgreSQL for the scratch databases validation and `godwit diff` execute submitted SQL on, with a role that owns nothing else. Skipping it leaves that execution on the store server as the store role, and the pods say so on every start ([security](../../../docs/security.md#the-scratch-database)).
 - An image. The chart defaults to `ghcr.io/samuelmolling/godwit:main`, published from every merge to `main` (also tagged `sha-<short commit>`); to run from your own registry, `docker build -t <registry>/godwit:<tag> .` at the repo root, push it, set `image.repository` / `image.tag`.
 - A Secret with the credentials. The chart never creates it:
 
@@ -12,8 +13,17 @@ Runs `godwit serve` as a two-replica Deployment: the second replica is what turn
 kubectl -n godwit create secret generic godwit \
   --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
   --from-literal=GODWIT_TOKENS=ci:pipeline:orders-ci-token,ops:operator:ops-token,admin:admin:admin-token \
-  --from-literal=GODWIT_STORE_DSN='postgres://godwit:secret@store.internal:5432/godwit_store'
+  --from-literal=GODWIT_STORE_DSN='postgres://godwit:secret@store.internal:5432/godwit_store' \
+  --from-literal=GODWIT_SCRATCH_DSN='postgres://godwit_scratch:secret@scratch.internal:5432/postgres'
 ```
+
+```sql
+-- on scratch.internal, once
+CREATE ROLE godwit_scratch LOGIN PASSWORD 'secret'
+  CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+```
+
+Then `--set serve.scratch.enabled=true`. The pods refuse to start when that role is a superuser or owns the store database.
 
 `GODWIT_MASTER_KEY` encrypts the DSNs of `static` targets; losing it means re-registering those targets. `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; `name:secret` and a bare secret are admin); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
 
@@ -30,7 +40,7 @@ The release prints the in-cluster URL and the first commands to run. Every value
 
 | Object | Notes |
 |---|---|
-| Deployment | `serve --listen --store-dsn=$(GODWIT_STORE_DSN) --drift-interval [--skip-validation] [--ui --ui-scope]`, env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
+| Deployment | `serve --listen --store-dsn=$(GODWIT_STORE_DSN) --drift-interval [--scratch-dsn=$(GODWIT_SCRATCH_DSN)] --scratch-template [--skip-validation] [--ui --ui-scope]`, env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
 | Service | ClusterIP on `service.port` → container port `serve.port` |
 | ServiceAccount | `serviceAccount.annotations` for Vault Kubernetes auth or cloud workload identity; token mounted by default because the Vault provider reads it |
 | PodDisruptionBudget | `minAvailable: 1` so a drain never takes both replicas |

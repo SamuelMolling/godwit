@@ -201,7 +201,7 @@ func TestValidateReplaysRepeatables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	val, err := NewValidator(pool, s, func() string { return "reps" }).Validate(ctx, "app", next, live.SearchPath)
+	val, err := NewValidator(NewScratch(pool, ""), s, func() string { return "reps" }).Validate(ctx, "app", next, live.SearchPath)
 	if err != nil {
 		t.Fatal(err)
 	}

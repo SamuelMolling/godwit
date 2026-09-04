@@ -14,7 +14,7 @@ import (
 )
 
 func newServeCmd() *cobra.Command {
-	var listen, storeDSN, logFormat, logLevel, uiUser, uiPassword, uiScope string
+	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope string
 	var uiOrigins []string
 	var driftInterval, leaseTTL, tickInterval time.Duration
 	var maxAttempts int
@@ -25,6 +25,7 @@ func newServeCmd() *cobra.Command {
 		Short: "Run the godwit control-plane service",
 		Long: "Runs the godwit service: state store, scheduler, drift monitor and API.\n" +
 			"Env: GODWIT_MASTER_KEY (64 hex chars), GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; name:secret and a bare secret are admin),\n" +
+			"GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --scratch-dsn and --scratch-template),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level),\n" +
@@ -47,33 +48,39 @@ func newServeCmd() *cobra.Command {
 			hostname, _ := os.Hostname()
 
 			return server.Run(cmd.Context(), server.Config{
-				Listen:         listen,
-				StoreDSN:       storeDSN,
-				MasterKey:      key,
-				Tokens:         tokens,
-				Holder:         hostname,
-				Scheduler:      controlplane.Config{TTL: leaseTTL, Interval: tickInterval, MaxAttempts: maxAttempts},
-				DriftInterval:  driftInterval,
-				WebhookURL:     os.Getenv("GODWIT_WEBHOOK_URL"),
-				SlackToken:     os.Getenv("GODWIT_SLACK_TOKEN"),
-				SlackChannel:   os.Getenv("GODWIT_SLACK_CHANNEL"),
-				SlackMode:      os.Getenv("GODWIT_SLACK_MODE"),
-				PublicURL:      os.Getenv("GODWIT_PUBLIC_URL"),
-				SkipValidation: skipValidation,
-				RequirePlan:    requirePlan,
-				PlanTTL:        planTTL,
-				PlanRetention:  planRetention,
-				UI:             withUI || os.Getenv("GODWIT_UI") == "true",
-				UIUser:         uiUser,
-				UIPassword:     uiPassword,
-				UIScope:        uiScope,
-				UIOrigins:      uiOrigins,
-				Log:            log,
+				Listen:          listen,
+				StoreDSN:        storeDSN,
+				ScratchDSN:      scratchDSN,
+				ScratchTemplate: scratchTemplate,
+				MasterKey:       key,
+				Tokens:          tokens,
+				Holder:          hostname,
+				Scheduler:       controlplane.Config{TTL: leaseTTL, Interval: tickInterval, MaxAttempts: maxAttempts},
+				DriftInterval:   driftInterval,
+				WebhookURL:      os.Getenv("GODWIT_WEBHOOK_URL"),
+				SlackToken:      os.Getenv("GODWIT_SLACK_TOKEN"),
+				SlackChannel:    os.Getenv("GODWIT_SLACK_CHANNEL"),
+				SlackMode:       os.Getenv("GODWIT_SLACK_MODE"),
+				PublicURL:       os.Getenv("GODWIT_PUBLIC_URL"),
+				SkipValidation:  skipValidation,
+				RequirePlan:     requirePlan,
+				PlanTTL:         planTTL,
+				PlanRetention:   planRetention,
+				UI:              withUI || os.Getenv("GODWIT_UI") == "true",
+				UIUser:          uiUser,
+				UIPassword:      uiPassword,
+				UIScope:         uiScope,
+				UIOrigins:       uiOrigins,
+				Log:             log,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", ":8474", "address to serve the API on")
 	cmd.Flags().StringVar(&storeDSN, "store-dsn", "", "control-plane database DSN")
+	cmd.Flags().StringVar(&scratchDSN, "scratch-dsn", os.Getenv("GODWIT_SCRATCH_DSN"),
+		"DSN validation and diff create their throwaway databases on (or GODWIT_SCRATCH_DSN); unset runs them on the store server with the store credentials")
+	cmd.Flags().StringVar(&scratchTemplate, "scratch-template", envOr("GODWIT_SCRATCH_TEMPLATE", controlplane.DefaultScratchTemplate),
+		"database scratch databases are cloned from (or GODWIT_SCRATCH_TEMPLATE); name a prepared template to give them extensions")
 	cmd.Flags().DurationVar(&driftInterval, "drift-interval", 5*time.Minute, "how often to check targets for schema drift")
 	cmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "how long a claimed run stays leased without a heartbeat")
 	cmd.Flags().DurationVar(&tickInterval, "tick-interval", 2*time.Second, "how often the scheduler looks for runnable runs")

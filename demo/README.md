@@ -1,6 +1,8 @@
 # godwit demo
 
-Two godwit replicas, a control-plane Postgres, a target Postgres and a dev-mode Vault — enough to see crash-safe execution with your own eyes.
+Two godwit replicas, a control-plane Postgres, a scratch Postgres, a target Postgres and a dev-mode Vault — enough to see crash-safe execution with your own eyes.
+
+The store role is a plain owner (no `SUPERUSER`, no `CREATEDB`) and the SQL callers submit is executed on `scratch-db` by a role that owns nothing else, which is the shape [security](../docs/security.md#the-scratch-database) asks for in production.
 
 ```bash
 cd demo

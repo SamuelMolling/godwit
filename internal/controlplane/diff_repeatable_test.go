@@ -30,7 +30,7 @@ func differWithRepeatable(t *testing.T, id string, files map[string]string) *Dif
 	t.Helper()
 	ctx := context.Background()
 	d, s, _ := newDiffer(t, nil)
-	d.history = NewValidator(d.pool, s, d.newID)
+	d.history = NewValidator(d.scratch, s, d.newID)
 	queueRun(t, s, id, files)
 	d.sched.Tick(ctx)
 	waitState(t, s, id, StateSucceeded)

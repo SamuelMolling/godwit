@@ -10,6 +10,7 @@ existingSecret:
     masterKey: master-key
     tokens: tokens
     storeDSN: store-dsn
+    scratchDSN: scratch-dsn
     slackToken: slack-token
     uiUser: ui-user
     uiPassword: ui-password
@@ -17,6 +18,9 @@ serve:
   port: 9000
   driftInterval: 1m
   skipValidation: true
+  scratch:
+    enabled: true
+    template: godwit_scratch_template
   logFormat: text
   logLevel: debug
   ui:

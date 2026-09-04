@@ -123,7 +123,22 @@ godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store --liste
 {"time":"...","level":"INFO","msg":"listening","replica":"host","build":"dev","addr":"[::]:8474","validation":true}
 ```
 
-`serve` migrates the store schema, starts the leased scheduler, the drift monitor and the scratch-database validator, then listens for gRPC and JSON on one port (plus `/metrics`, `/healthz`, `/readyz`). The store role needs `CREATEDB` because validation creates a throwaway `godwit_validate_<id>` database on the store server ([operations: store](operations.md#the-store)).
+`serve` migrates the store schema, starts the leased scheduler, the drift monitor and the scratch-database validator, then listens for gRPC and JSON on one port (plus `/metrics`, `/healthz`, `/readyz`).
+
+It also prints this, and it means what it says:
+
+```
+{"time":"...","level":"WARN","msg":"validation and diff execute submitted DDL on the store server with the store credentials; set --scratch-dsn to a throwaway PostgreSQL that holds nothing"}
+```
+
+Validation and `godwit diff` execute the SQL a caller submits, to find out what it produces. Without `--scratch-dsn` that happens on the store server as the store role, which is fine on a laptop and wrong anywhere a token is shared. Point it at a second PostgreSQL with a role that owns nothing else, and the store role stops needing `CREATEDB` ([security: the scratch database](security.md#the-scratch-database)):
+
+```bash
+psql -U postgres -h scratch-host -c \
+  "CREATE ROLE godwit_scratch LOGIN PASSWORD 'scratch' CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store \
+             --scratch-dsn postgres://godwit_scratch:scratch@scratch-host/postgres --listen :8474
+```
 
 Register a target. The DSN is encrypted with the master key and never printed again:
 

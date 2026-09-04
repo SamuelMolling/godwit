@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -26,14 +25,14 @@ type Validator struct {
 	// Expander renders `-- godwit:` directives against the scratch catalog before each plan is applied.
 	Expander *Expander
 
-	pool  *pgxpool.Pool
-	store *Store
-	newID func() string
+	scratch *Scratch
+	store   *Store
+	newID   func() string
 }
 
-// NewValidator wires a Validator over the control-plane pool.
-func NewValidator(pool *pgxpool.Pool, store *Store, newID func() string) *Validator {
-	return &Validator{Expander: NewExpander(), pool: pool, store: store, newID: newID}
+// NewValidator wires a Validator over the scratch connection.
+func NewValidator(scratch *Scratch, store *Store, newID func() string) *Validator {
+	return &Validator{Expander: NewExpander(), scratch: scratch, store: store, newID: newID}
 }
 
 // Validation is what the scratch database looked like after the history and after each plan in turn.
@@ -55,17 +54,12 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	}
 
 	name := "godwit_validate_" + v.newID()
-	if _, err := v.pool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		return Validation{}, fmt.Errorf("create scratch database: %w", err)
+	if err := v.scratch.create(ctx, name); err != nil {
+		return Validation{}, err
 	}
-	defer func() {
-		_, _ = v.pool.Exec(context.WithoutCancel(ctx),
-			"DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
-	}()
+	defer func() { v.scratch.drop(ctx, name) }()
 
-	cfg := v.pool.Config().ConnConfig.Copy()
-	cfg.Database = name
-	conn, err := connectScratch(ctx, cfg)
+	conn, err := connectScratch(ctx, v.scratch.connConfig(name, ""))
 	if err != nil {
 		return Validation{}, fmt.Errorf("connect scratch database: %w", err)
 	}

@@ -1,12 +1,32 @@
 services:
+  # The store role owns its database and nothing else: no SUPERUSER, no CREATEDB.
+  # Scratch databases live on scratch-db, so it never needs either.
   store-db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: godwit
-      POSTGRES_PASSWORD: godwit
-      POSTGRES_DB: godwit_store
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./store-init.sql:/docker-entrypoint-initdb.d/store-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U godwit -d godwit_store"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # Where validation and `godwit diff` execute the SQL a caller submits. It holds nothing,
+  # and godwit_scratch owns nothing but the databases it makes for itself.
+  scratch-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./scratch-init.sql:/docker-entrypoint-initdb.d/scratch-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s
       timeout: 2s
       retries: 15
@@ -42,6 +62,7 @@ services:
     command:
       - serve
       - --store-dsn=postgres://godwit:godwit@store-db:5432/godwit_store?sslmode=disable
+      - --scratch-dsn=postgres://godwit_scratch:scratch@scratch-db:5432/postgres?sslmode=disable
       - --listen=:8474
       - --ui
     environment:
@@ -59,6 +80,8 @@ services:
     depends_on:
       store-db:
         condition: service_healthy
+      scratch-db:
+        condition: service_healthy
       target-db:
         condition: service_healthy
       vault:
@@ -69,6 +92,7 @@ services:
     command:
       - serve
       - --store-dsn=postgres://godwit:godwit@store-db:5432/godwit_store?sslmode=disable
+      - --scratch-dsn=postgres://godwit_scratch:scratch@scratch-db:5432/postgres?sslmode=disable
       - --listen=:8474
       - --ui
     environment:
@@ -85,6 +109,8 @@ services:
       - "18475:8474"
     depends_on:
       store-db:
+        condition: service_healthy
+      scratch-db:
         condition: service_healthy
       target-db:
         condition: service_healthy
