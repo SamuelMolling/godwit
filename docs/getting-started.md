@@ -281,7 +281,7 @@ wrote db/migrations/20260902103000_orders_status.down.sql
 
 The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift`, `files` and `repeatable_objects`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
 
-`--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state. Four other flags skip the dump and render the model with the project's own toolchain, next to the repository; the service only ever receives DDL.
+`--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state. Seven other flags skip the dump and render the model with the project's own toolchain, next to the repository; the service only ever receives DDL.
 
 ```bash
 # Prisma: the datamodel itself; the datasource provider must be postgresql
@@ -293,15 +293,30 @@ godwit diff --target app --gorm ./cmd/schema --name sync_gorm
 # Django: showmigrations --plan, then sqlmigrate for every migration, in that order
 godwit diff --target app --django manage.py --name sync_django
 
+# SQLAlchemy/Alembic: offline mode replays every revision from base, nothing connects
+godwit diff --target app --alembic alembic.ini --name sync_alembic
+
+# Rails: the committed db/structure.sql, no Ruby and no database (schema.rb is refused)
+godwit diff --target app --rails . --name sync_rails
+
+# Drizzle: drizzle-kit export prints the schema's DDL on stdout
+godwit diff --target app --drizzle drizzle.config.ts --name sync_drizzle
+
 # Anything else: your own command, its stdout is the desired schema
 godwit diff --target app --exec 'atlas schema inspect --url env://dev --format "{{ sql . }}"' --name sync_orm
 ```
 
 `--prisma` runs `prisma migrate diff --from-empty --script` on the file (`npx prisma` by default, so the `prisma` devDependency the project pins is what renders it; `--prisma-bin` or `GODWIT_PRISMA_BIN` names another command line, such as `node_modules/.bin/prisma --config prisma.config.ts` on Prisma 7, whose `prisma.config.ts` must set a `datasource.url`, any value, nothing connects to it). Prisma 5, 6 and 7 are supported; the CLI's own errors are surfaced as-is.
 
-`--gorm` runs `go run <package>` and takes its stdout: GORM's dry-run migrator is a Go API over your model structs, not a CLI, so the package stays yours — copy [examples/gorm/schema/main.go](../examples/gorm/schema/main.go), point it at your models, and godwit reports a build failure with the package name and the compiler's stderr. `--django` runs `python manage.py showmigrations --plan --no-color` and one `sqlmigrate` per migration, concatenated in plan order with Django's `BEGIN;`/`COMMIT;` wrappers dropped; a `DATABASES` `ENGINE` that is not PostgreSQL is refused before any process starts, and because `sqlmigrate` introspects over the configured connection, `DATABASES` must point at a reachable PostgreSQL (`--django-database` picks the alias). `--go-bin` and `--python-bin` (or `GODWIT_GO_BIN` / `GODWIT_PYTHON_BIN`) name the interpreter when it is not on `PATH`.
+`--gorm` runs `go run <package>` and takes its stdout: GORM's dry-run migrator is a Go API over your model structs, not a CLI, so the package stays yours — copy [examples/gorm/schema/main.go](../examples/gorm/schema/main.go), point it at your models, and godwit reports a build failure with the package name and the compiler's stderr. `--django` runs `python manage.py showmigrations --plan --no-color` and one `sqlmigrate` per migration, concatenated in plan order with Django's `BEGIN;`/`COMMIT;` wrappers dropped; a `DATABASES` `ENGINE` that is not PostgreSQL is refused before any process starts, and because `sqlmigrate` introspects over the configured connection, `DATABASES` must point at a reachable PostgreSQL (`--django-database` picks the alias). `--go-bin`, `--python-bin`, `--alembic-bin` and `--drizzle-bin` (or `GODWIT_GO_BIN` / `GODWIT_PYTHON_BIN` / `GODWIT_ALEMBIC_BIN` / `GODWIT_DRIZZLE_BIN`) name the interpreter when it is not on `PATH`.
 
-The ORM keeps owning the model; godwit keeps owning what runs, when, under which lock and with which hazards acknowledged. The file must describe the whole database: anything the target has that the file does not is a `DROP` in the generated `up`, so a Django dump keeps its `django_*` tables and a Prisma project that also has `_prisma_migrations` on the target declares it too.
+`--alembic` runs `alembic -c <alembic.ini> upgrade head --sql`, Alembic's documented offline mode: every revision from base rendered into a script with no connection open. The `BEGIN;`/`COMMIT;` wrappers are dropped; the `alembic_version` table and the rows tracking the revision are **kept**, because they exist on your target and a desired schema without them would make the first diff propose dropping your own migration history. A `sqlalchemy.url` godwit can read whose dialect is not PostgreSQL is refused before anything runs — a project that builds the URL in `env.py` declares none in the file and is not refused. Two constraints worth knowing before you point it at a real project: offline mode cannot render a revision that queries the database (`op.get_bind()`, reflection), and a plain relative `script_location` is resolved against the working directory, so write `script_location = %(here)s/alembic` or run `godwit diff` from the project root. `uv run alembic` and `poetry run alembic` work as `--alembic-bin`.
+
+`--rails` reads the `db/structure.sql` your application already commits — no Ruby, no `pg_dump`, no database. It takes the application root (or the dump itself when it lives elsewhere), and strips what could not be replayed: the `\restrict` / `\unrestrict` psql meta-commands recent `pg_dump` emits, the session `SET` preamble and the `SET search_path` Rails appends, and the trailing `INSERT INTO "schema_migrations"` rows. `db/schema.rb` is **refused**: it is a Ruby DSL, not SQL, and the only way to turn it into DDL is to boot ActiveRecord against a database — which is the thing this avoids. If that is what your repository has, set `config.active_record.schema_format = :sql` in `config/application.rb` and run `bin/rails db:schema:dump`.
+
+`--drizzle` runs `drizzle-kit export --config=<file>`, which renders the TypeScript schema from empty state onto stdout without a database, without `dbCredentials` and without writing a migration directory. A `dialect` other than `postgresql` is refused first, because `export` answers a mismatched dialect with an empty script and exit 0 rather than an error.
+
+The ORM keeps owning the model; godwit keeps owning what runs, when, under which lock and with which hazards acknowledged. The file must describe the whole database: anything the target has that the file does not is a `DROP` in the generated `up`, so a Django dump keeps its `django_*` tables and a Prisma project that also has `_prisma_migrations` on the target declares it too. The Alembic and Rails sources already do this for you: `alembic_version` and `schema_migrations` come out of the tools themselves.
 
 The one exception is what a repeatable declares. `godwit diff` sends `--dir` to the service and applies its `R__` migrations on top of the desired schema, so an ORM team that also keeps a couple of views or functions in `R__` files gets them left alone instead of dropped — and `lint`'s `E005` stops firing on them for good. Delete the `R__` file when you want the object gone: then nothing declares it and the next diff proposes the drop. On a target that has run repeatables, a diff that cannot see the directory is refused rather than answered with those drops ([concepts: objects a repeatable declares](concepts.md#objects-a-repeatable-declares)).
 

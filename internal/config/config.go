@@ -23,10 +23,13 @@ const (
 	SourcePrisma  = "prisma"
 	SourceGorm    = "gorm"
 	SourceDjango  = "django"
+	SourceAlembic = "alembic"
+	SourceRails   = "rails"
+	SourceDrizzle = "drizzle"
 	SourceCommand = "command"
 )
 
-var sourceKinds = []string{SourceFile, SourcePrisma, SourceGorm, SourceDjango, SourceCommand}
+var sourceKinds = []string{SourceFile, SourcePrisma, SourceGorm, SourceDjango, SourceAlembic, SourceRails, SourceDrizzle, SourceCommand}
 
 // Config holds the per-project defaults shared by every CLI command.
 type Config struct {

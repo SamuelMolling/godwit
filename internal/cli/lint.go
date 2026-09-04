@@ -106,10 +106,12 @@ func schemaCheck(cmd *cobra.Command, flags *clientFlags, target string, off bool
 // falls back to the same environment variable godwit diff defaults it to.
 func configSource(declared config.SchemaSource, cmd *cobra.Command) (schemasource.Source, string, error) {
 	src := &sourceFlags{
-		prismaBin: envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin),
-		goBin:     envOr("GODWIT_GO_BIN", schemasource.DefaultGoBin),
-		pythonBin: envOr("GODWIT_PYTHON_BIN", schemasource.DefaultPythonBin),
-		settings:  os.Getenv("DJANGO_SETTINGS_MODULE"),
+		prismaBin:  envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin),
+		goBin:      envOr("GODWIT_GO_BIN", schemasource.DefaultGoBin),
+		pythonBin:  envOr("GODWIT_PYTHON_BIN", schemasource.DefaultPythonBin),
+		alembicBin: envOr("GODWIT_ALEMBIC_BIN", schemasource.DefaultAlembicBin),
+		drizzleBin: envOr("GODWIT_DRIZZLE_BIN", schemasource.DefaultDrizzleBin),
+		settings:   os.Getenv("DJANGO_SETTINGS_MODULE"),
 	}
 
 	return src.fromConfig(declared, cmd)
