@@ -96,16 +96,21 @@ func newDiffCmd() *cobra.Command {
 }
 
 type sourceFlags struct {
-	schema    string
-	prisma    string
-	exec      string
-	gorm      string
-	django    string
-	prismaBin string
-	goBin     string
-	pythonBin string
-	database  string
-	settings  string
+	schema     string
+	prisma     string
+	exec       string
+	gorm       string
+	django     string
+	alembic    string
+	rails      string
+	drizzle    string
+	prismaBin  string
+	goBin      string
+	pythonBin  string
+	alembicBin string
+	drizzleBin string
+	database   string
+	settings   string
 }
 
 func (s *sourceFlags) register(cmd *cobra.Command) {
@@ -114,18 +119,35 @@ func (s *sourceFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&s.exec, "exec", "", "command line that prints the whole desired database as DDL on stdout")
 	cmd.Flags().StringVar(&s.gorm, "gorm", "", "Go package, run with go run, that prints GORM's dry-run DDL on stdout")
 	cmd.Flags().StringVar(&s.django, "django", "", "Django manage.py whose migrations are rendered with showmigrations and sqlmigrate")
+	cmd.Flags().StringVar(&s.alembic, "alembic", "", "Alembic config (alembic.ini) whose revisions are rendered with upgrade head --sql")
+	cmd.Flags().StringVar(&s.rails, "rails", "", "Rails application root (or the dump itself) whose committed db/structure.sql is the DDL")
+	cmd.Flags().StringVar(&s.drizzle, "drizzle", "", "Drizzle Kit config (drizzle.config.ts) rendered to DDL by drizzle-kit export")
 	cmd.Flags().StringVar(&s.prismaBin, "prisma-bin", envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin), "command line that runs the Prisma CLI ($GODWIT_PRISMA_BIN)")
 	cmd.Flags().StringVar(&s.goBin, "go-bin", envOr("GODWIT_GO_BIN", schemasource.DefaultGoBin), "command line that runs the Go toolchain ($GODWIT_GO_BIN)")
 	cmd.Flags().StringVar(&s.pythonBin, "python-bin", envOr("GODWIT_PYTHON_BIN", schemasource.DefaultPythonBin), "command line that runs manage.py ($GODWIT_PYTHON_BIN)")
+	cmd.Flags().StringVar(&s.alembicBin, "alembic-bin", envOr("GODWIT_ALEMBIC_BIN", schemasource.DefaultAlembicBin), "command line that runs the Alembic CLI ($GODWIT_ALEMBIC_BIN)")
+	cmd.Flags().StringVar(&s.drizzleBin, "drizzle-bin", envOr("GODWIT_DRIZZLE_BIN", schemasource.DefaultDrizzleBin), "command line that runs Drizzle Kit ($GODWIT_DRIZZLE_BIN)")
 	cmd.Flags().StringVar(&s.database, "django-database", "", "DATABASES alias sqlmigrate introspects; empty leaves Django on its own default")
 	s.settings = os.Getenv("DJANGO_SETTINGS_MODULE")
 }
 
+func (s *sourceFlags) named() []struct{ name, value string } {
+	return []struct{ name, value string }{
+		{"--schema", s.schema},
+		{"--prisma", s.prisma},
+		{"--exec", s.exec},
+		{"--gorm", s.gorm},
+		{"--django", s.django},
+		{"--alembic", s.alembic},
+		{"--rails", s.rails},
+		{"--drizzle", s.drizzle},
+	}
+}
+
 func (s *sourceFlags) pick(cmd *cobra.Command) (schemasource.Source, string, error) {
-	var given []string
-	for _, f := range []struct{ name, value string }{
-		{"--schema", s.schema}, {"--prisma", s.prisma}, {"--exec", s.exec}, {"--gorm", s.gorm}, {"--django", s.django},
-	} {
+	var given, all []string
+	for _, f := range s.named() {
+		all = append(all, f.name)
 		if f.value != "" {
 			given = append(given, f.name)
 		}
@@ -138,7 +160,7 @@ func (s *sourceFlags) pick(cmd *cobra.Command) (schemasource.Source, string, err
 	}
 	configured := configFrom(cmd.Context()).SchemaSource
 	if configured == nil {
-		return nil, "", errors.New("one of --schema, --prisma, --exec, --gorm, --django, or schema_source in godwit.yaml is required")
+		return nil, "", fmt.Errorf("one of %s, or schema_source in godwit.yaml is required", strings.Join(all, ", "))
 	}
 
 	return s.fromConfig(*configured, cmd)
@@ -154,9 +176,15 @@ func (s *sourceFlags) fromFlag(name string) (schemasource.Source, string, error)
 		return commandSource(strings.Fields(s.exec))
 	case "--gorm":
 		return gormSource(s.gorm, s.goBin)
+	case "--django":
+		return s.djangoSource(s.django, s.pythonBin)
+	case "--alembic":
+		return alembicSource(s.alembic, s.alembicBin)
+	case "--rails":
+		return railsSource(s.rails)
 	}
 
-	return s.djangoSource(s.django, s.pythonBin)
+	return drizzleSource(s.drizzle, s.drizzleBin)
 }
 
 func (s *sourceFlags) fromConfig(source config.SchemaSource, cmd *cobra.Command) (schemasource.Source, string, error) {
@@ -174,9 +202,15 @@ func (s *sourceFlags) fromConfig(source config.SchemaSource, cmd *cobra.Command)
 		return prismaSource(source.Path, pick(s.prismaBin, source.Bin, flags.Changed("prisma-bin")))
 	case config.SourceGorm:
 		return gormSource(source.Path, pick(s.goBin, source.Bin, flags.Changed("go-bin")))
+	case config.SourceDjango:
+		return s.djangoSource(source.Path, pick(s.pythonBin, source.Bin, flags.Changed("python-bin")))
+	case config.SourceAlembic:
+		return alembicSource(source.Path, pick(s.alembicBin, source.Bin, flags.Changed("alembic-bin")))
+	case config.SourceRails:
+		return railsSource(source.Path)
 	}
 
-	return s.djangoSource(source.Path, pick(s.pythonBin, source.Bin, flags.Changed("python-bin")))
+	return drizzleSource(source.Path, pick(s.drizzleBin, source.Bin, flags.Changed("drizzle-bin")))
 }
 
 func pick(fromFlag, fromConfig string, flagGiven bool) string {
@@ -213,6 +247,26 @@ func gormSource(pkg, bin string) (schemasource.Source, string, error) {
 	}
 
 	return schemasource.Gorm{Pkg: pkg, Bin: bin}, "go run " + pkg, nil
+}
+
+func alembicSource(cfg, bin string) (schemasource.Source, string, error) {
+	if strings.TrimSpace(bin) == "" {
+		return nil, "", errors.New("--alembic-bin (or GODWIT_ALEMBIC_BIN) must name the Alembic CLI")
+	}
+
+	return schemasource.Alembic{Config: cfg, Bin: bin}, cfg, nil
+}
+
+func drizzleSource(cfg, bin string) (schemasource.Source, string, error) {
+	if strings.TrimSpace(bin) == "" {
+		return nil, "", errors.New("--drizzle-bin (or GODWIT_DRIZZLE_BIN) must name Drizzle Kit")
+	}
+
+	return schemasource.Drizzle{Config: cfg, Bin: bin}, cfg, nil
+}
+
+func railsSource(path string) (schemasource.Source, string, error) {
+	return schemasource.Rails{Path: path}, path, nil
 }
 
 func (s *sourceFlags) djangoSource(managePy, bin string) (schemasource.Source, string, error) {

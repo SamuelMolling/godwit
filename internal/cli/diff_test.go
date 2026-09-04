@@ -147,13 +147,15 @@ func TestDiffErrors(t *testing.T) {
 		want string
 	}{
 		{"no target", []string{"diff", "--server", url, "--schema", schema}, "--target"},
-		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "one of --schema, --prisma, --exec, --gorm, --django, or schema_source in godwit.yaml is required"},
+		{"no schema", []string{"diff", "--server", url, "--target", "app"}, "one of --schema, --prisma, --exec, --gorm, --django, --alembic, --rails, --drizzle, or schema_source in godwit.yaml is required"},
 		{"schema and prisma", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--prisma", "schema.prisma"}, "--schema and --prisma are exclusive: one desired schema per diff"},
 		{"three sources", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--exec", "dump", "--django", "manage.py"}, "--schema, --exec and --django are exclusive: one desired schema per diff"},
 		{"empty prisma bin", []string{"diff", "--server", url, "--target", "app", "--prisma", "schema.prisma", "--prisma-bin", " "}, "--prisma-bin (or GODWIT_PRISMA_BIN) must name the Prisma CLI"},
 		{"empty exec", []string{"diff", "--server", url, "--target", "app", "--exec", " "}, "--exec (or schema_source.command) must name a command that prints the desired schema as DDL"},
 		{"empty go bin", []string{"diff", "--server", url, "--target", "app", "--gorm", "./cmd/schema", "--go-bin", " "}, "--go-bin (or GODWIT_GO_BIN) must name the Go toolchain"},
 		{"empty python bin", []string{"diff", "--server", url, "--target", "app", "--django", "manage.py", "--python-bin", " "}, "--python-bin (or GODWIT_PYTHON_BIN) must name the Python interpreter"},
+		{"empty alembic bin", []string{"diff", "--server", url, "--target", "app", "--alembic", "alembic.ini", "--alembic-bin", " "}, "--alembic-bin (or GODWIT_ALEMBIC_BIN) must name the Alembic CLI"},
+		{"empty drizzle bin", []string{"diff", "--server", url, "--target", "app", "--drizzle", "drizzle.config.ts", "--drizzle-bin", " "}, "--drizzle-bin (or GODWIT_DRIZZLE_BIN) must name Drizzle Kit"},
 		{"no name", base, "--name is required"},
 		{"bad name", append(base, "--name", "Drop-A"), "snake_case"},
 		{"missing schema file", []string{"diff", "--server", url, "--target", "app", "--schema", filepath.Join(dir, "nope.sql"), "--name", "x"}, "no such file"},
@@ -361,7 +363,7 @@ func TestDiffSchemaSourceConfigErrors(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
 		"missing path":    {"schema_source:\n  kind: gorm\n", "schema_source.path is required for kind gorm"},
 		"missing command": {"schema_source:\n  kind: command\n", "--exec (or schema_source.command) must name a command that prints the desired schema as DDL"},
-		"unknown kind":    {"schema_source:\n  kind: sqlite\n", "schema_source.kind \"sqlite\" is not one of file, prisma, gorm, django, command"},
+		"unknown kind":    {"schema_source:\n  kind: sqlite\n", "schema_source.kind \"sqlite\" is not one of file, prisma, gorm, django, alembic, rails, drizzle, command"},
 	} {
 		chdir(t, configRepo(t, map[string]string{"godwit.yaml": "target: app\n" + tc.body}))
 		if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 1 || !strings.Contains(errOut, tc.want) {
@@ -554,5 +556,140 @@ func TestDiffSendsTheMigrationDirectory(t *testing.T) {
 	code, out, _ = runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--dir", dir, "--dry-run", "--json")
 	if m := decodeJSON(t, out); code != 0 || m["repeatable_objects"].([]any)[0] != "public.t_totals" {
 		t.Fatalf("code = %d, json = %v", code, m)
+	}
+}
+
+const alembicINI = "[alembic]\nscript_location = %(here)s/alembic\nsqlalchemy.url = postgresql+psycopg://app@localhost/app\n"
+
+const drizzleConfig = "export default { dialect: \"postgresql\", schema: './src/schema.ts' };\n"
+
+const railsStructure = "\\restrict abc\nSET statement_timeout = 0;\nSELECT pg_catalog.set_config('search_path', '', false);\n" +
+	"CREATE TABLE t (id int);\nSET search_path TO \"$user\", public;\n" +
+	"INSERT INTO \"schema_migrations\" (version) VALUES\n('20240115120000');\n\\unrestrict abc\n"
+
+func TestDiffAlembic(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	repo := configRepo(t, map[string]string{"alembic.ini": alembicINI})
+	ini := filepath.Join(repo, "alembic.ini")
+	bin, log := fakeBin(t, "alembic", "printf 'BEGIN;\\nCREATE TABLE t (id int);\\nCOMMIT;\\n'\n")
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--alembic", ini, "--alembic-bin", bin, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n\n" || !strings.Contains(out, "app -> "+ini+": 2 statement(s)\n") {
+		t.Fatalf("schema sent = %q, out = %q", stub.diffed.Schema, out)
+	}
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != "-c "+ini+" upgrade head --sql\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+
+	mysql := filepath.Join(repo, "mysql.ini")
+	if err := os.WriteFile(mysql, []byte("[alembic]\nsqlalchemy.url = mysql+pymysql://app@localhost/app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runCLI("diff", "--server", url, "--target", "app", "--alembic", mysql, "--alembic-bin", bin, "--dry-run")
+	if code != 1 || !strings.Contains(errOut, "sqlalchemy.url is mysql+pymysql; godwit targets PostgreSQL only") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestDiffDrizzle(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	repo := configRepo(t, map[string]string{"drizzle.config.ts": drizzleConfig})
+	cfg := filepath.Join(repo, "drizzle.config.ts")
+	bin, log := fakeBin(t, "drizzle-kit", "echo 'CREATE TABLE t (id int);'\n")
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--drizzle", cfg, "--drizzle-bin", bin, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n" || !strings.Contains(out, "app -> "+cfg+": 2 statement(s)\n") {
+		t.Fatalf("schema sent = %q, out = %q", stub.diffed.Schema, out)
+	}
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != "export --config="+cfg+"\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+
+	mysql := filepath.Join(repo, "mysql.config.ts")
+	if err := os.WriteFile(mysql, []byte("export default { dialect: 'mysql' };\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runCLI("diff", "--server", url, "--target", "app", "--drizzle", mysql, "--drizzle-bin", bin, "--dry-run")
+	if code != 1 || !strings.Contains(errOut, `dialect is "mysql"; godwit targets PostgreSQL only`) {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestDiffRails(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	repo := configRepo(t, map[string]string{"db/structure.sql": railsStructure})
+
+	code, out, errOut := runCLI("diff", "--server", url, "--target", "app", "--rails", repo, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n" || !strings.Contains(out, "app -> "+repo+": 2 statement(s)\n") {
+		t.Fatalf("schema sent = %q, out = %q", stub.diffed.Schema, out)
+	}
+
+	ruby := configRepo(t, map[string]string{"db/schema.rb": "ActiveRecord::Schema[8.0].define do\nend\n"})
+	code, _, errOut = runCLI("diff", "--server", url, "--target", "app", "--rails", ruby, "--dry-run")
+	if code != 1 || !strings.Contains(errOut, "is a Ruby DSL, not SQL") ||
+		!strings.Contains(errOut, "config.active_record.schema_format = :sql") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestDiffAlembicRailsAndDrizzleFromConfig(t *testing.T) {
+	stub := diffStub()
+	url := startStub(t, stub)
+	alembic, alembicLog := fakeBin(t, "alembic", "printf 'BEGIN;\\nCREATE TABLE t (id int);\\nCOMMIT;\\n'\n")
+	drizzle, drizzleLog := fakeBin(t, "drizzle-kit", "echo 'CREATE TABLE t (id int);'\n")
+
+	for _, tc := range []struct {
+		name   string
+		files  map[string]string
+		schema string
+		log    string
+		want   func(repo string) string
+	}{
+		{
+			"alembic",
+			map[string]string{"godwit.yaml": "target: app\nschema_source:\n  kind: alembic\n  path: alembic.ini\n  bin: " + alembic + "\n", "alembic.ini": alembicINI},
+			"CREATE TABLE t (id int);\n\n", alembicLog,
+			func(repo string) string { return "-c " + filepath.Join(repo, "alembic.ini") + " upgrade head --sql\n" },
+		},
+		{
+			"drizzle",
+			map[string]string{"godwit.yaml": "target: app\nschema_source:\n  kind: drizzle\n  path: drizzle.config.ts\n  bin: " + drizzle + "\n", "drizzle.config.ts": drizzleConfig},
+			"CREATE TABLE t (id int);\n", drizzleLog,
+			func(repo string) string { return "export --config=" + filepath.Join(repo, "drizzle.config.ts") + "\n" },
+		},
+	} {
+		repo := chdir(t, configRepo(t, tc.files))
+		if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 0 {
+			t.Fatalf("%s: code = %d, stderr = %s", tc.name, code, errOut)
+		}
+		if calls, err := os.ReadFile(tc.log); err != nil || string(calls) != tc.want(repo) {
+			t.Fatalf("%s: calls = %q, err = %v", tc.name, calls, err)
+		}
+		if stub.diffed.Schema != tc.schema {
+			t.Fatalf("%s: schema sent = %q", tc.name, stub.diffed.Schema)
+		}
+	}
+
+	chdir(t, configRepo(t, map[string]string{
+		"godwit.yaml":      "target: app\nschema_source:\n  kind: rails\n  path: .\n",
+		"db/structure.sql": railsStructure,
+	}))
+	if code, _, errOut := runCLI("diff", "--server", url, "--dry-run"); code != 0 {
+		t.Fatalf("rails: code = %d, stderr = %s", code, errOut)
+	}
+	if stub.diffed.Schema != "CREATE TABLE t (id int);\n" {
+		t.Fatalf("rails: schema sent = %q", stub.diffed.Schema)
 	}
 }

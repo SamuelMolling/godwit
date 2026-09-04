@@ -566,3 +566,423 @@ func TestDjangoIntegration(t *testing.T) {
 		t.Fatalf("ddl = %q, err = %v", ddl, err)
 	}
 }
+
+const alembicINI = `; sqlalchemy.url = mysql+pymysql://app@localhost/shop
+[alembic]
+script_location = %(here)s/alembic
+
+sqlalchemy.url = postgresql+psycopg://app@localhost/shop
+`
+
+const alembicOffline = `BEGIN;
+
+CREATE TABLE alembic_version (
+    version_num VARCHAR(32) NOT NULL,
+    CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+);
+
+-- Running upgrade  -> 1975ea83b712
+
+CREATE TABLE account (
+    id SERIAL NOT NULL,
+    name VARCHAR(50) NOT NULL,
+    PRIMARY KEY (id)
+);
+
+INSERT INTO alembic_version (version_num) VALUES ('1975ea83b712');
+
+COMMIT;
+`
+
+func TestAlembicLoadDropsTheTransactionWrappers(t *testing.T) {
+	t.Parallel()
+	ini := writeFile(t, "alembic.ini", alembicINI)
+	for _, tc := range []struct {
+		bin  string
+		want string
+	}{
+		{"", "alembic -c " + ini + " upgrade head --sql"},
+		{"uv  run  alembic", "uv run alembic -c " + ini + " upgrade head --sql"},
+	} {
+		runner := &fakeExec{replies: []reply{{out: alembicOffline}}}
+		ddl, err := Alembic{Config: ini, Bin: tc.bin, Run: runner.run}.Load(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", tc.bin, err)
+		}
+		if strings.Contains(ddl, "BEGIN;") || strings.Contains(ddl, "COMMIT;") {
+			t.Fatalf("%s: transaction wrappers kept: %q", tc.bin, ddl)
+		}
+		if !strings.Contains(ddl, "CREATE TABLE alembic_version") || !strings.Contains(ddl, "INSERT INTO alembic_version") ||
+			!strings.Contains(ddl, "-- Running upgrade  -> 1975ea83b712") || !strings.Contains(ddl, "CREATE TABLE account") {
+			t.Fatalf("%s: ddl = %q", tc.bin, ddl)
+		}
+		runner.assert(t, tc.want)
+	}
+}
+
+func TestAlembicLoadRefusesOtherDialectsBeforeRunning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"mysql", "[alembic]\nsqlalchemy.url = mysql+pymysql://app@localhost/shop\n", `sqlalchemy.url is mysql+pymysql; godwit targets PostgreSQL only`},
+		{"sqlite", "[alembic]\nsqlalchemy.url = sqlite:///shop.db\n", "sqlalchemy.url is sqlite;"},
+		{"untouched template", "[alembic]\nsqlalchemy.url = driver://user:pass@localhost/dbname\n", "sqlalchemy.url is driver;"},
+		{"every database non-postgres", "[db1]\nsqlalchemy.url = mysql://a/b\n[db2]\nsqlalchemy.url = oracle://c/d\n", "sqlalchemy.url is mysql, oracle;"},
+	} {
+		ini := writeFile(t, "alembic.ini", tc.body)
+		runner := &fakeExec{}
+		_, err := Alembic{Config: ini, Run: runner.run}.Load(context.Background())
+		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.HasPrefix(err.Error(), ini+": ") {
+			t.Fatalf("%s: err = %v", tc.name, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("%s: alembic ran %d time(s)", tc.name, len(runner.calls))
+		}
+	}
+}
+
+func TestAlembicLoadRunsWhenTheURLIsNotReadable(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, body string }{
+		{"built in env.py", "[alembic]\nscript_location = alembic\n"},
+		{"empty", "[alembic]\nsqlalchemy.url =\n"},
+		{"no scheme", "[alembic]\nsqlalchemy.url = ${DATABASE_URL}\n"},
+		{"one postgres among many", "[db1]\nsqlalchemy.url = mysql://a/b\n[db2]\nsqlalchemy.url = postgresql://c/d\n"},
+	} {
+		ini := writeFile(t, "alembic.ini", tc.body)
+		runner := &fakeExec{replies: []reply{{out: alembicOffline}}}
+		if _, err := (Alembic{Config: ini, Run: runner.run}).Load(context.Background()); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(runner.calls) != 1 {
+			t.Fatalf("%s: alembic ran %d time(s)", tc.name, len(runner.calls))
+		}
+	}
+}
+
+func TestAlembicLoadErrors(t *testing.T) {
+	t.Parallel()
+	ini := writeFile(t, "alembic.ini", alembicINI)
+	for _, tc := range []struct {
+		name  string
+		reply reply
+		want  string
+	}{
+		{"exit with stderr", reply{err: errors.New("exit status 1"), errOut: "FAILED: Can't locate revision identified by 'head'\n"}, "alembic upgrade head --sql failed: exit status 1: FAILED: Can't locate revision identified by 'head'"},
+		{"exit without stderr", reply{err: errors.New("signal: killed")}, "alembic upgrade head --sql failed: signal: killed"},
+		{"missing binary", reply{err: exec.ErrNotFound}, "the Alembic CLI was not found (executable file not found in $PATH); install alembic or point --alembic-bin / GODWIT_ALEMBIC_BIN at it"},
+		{"only wrappers", reply{out: "BEGIN;\n\nCOMMIT;\n"}, "alembic upgrade head --sql produced no DDL for " + ini + "; offline mode renders every revision from base, so an empty history renders nothing"},
+	} {
+		_, err := Alembic{Config: ini, Run: (&fakeExec{replies: []reply{tc.reply}}).run}.Load(context.Background())
+		if err == nil || err.Error() != tc.want {
+			t.Fatalf("%s: err = %v", tc.name, err)
+		}
+	}
+	if _, err := (Alembic{Config: "  "}).Load(context.Background()); err == nil ||
+		err.Error() != "no Alembic project configured; pass --alembic alembic.ini or set schema_source.path" {
+		t.Fatalf("empty project: err = %v", err)
+	}
+	if _, err := (Alembic{Config: filepath.Join(t.TempDir(), "alembic.ini")}).Load(context.Background()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing alembic.ini: err = %v", err)
+	}
+}
+
+func TestAlembicLoadExec(t *testing.T) {
+	t.Parallel()
+	ini := writeFile(t, "alembic.ini", alembicINI)
+	bin, log := shellFixture(t, "alembic", "printf '%s' '"+shellQuoted(alembicOffline)+"'\n")
+	ddl, err := Alembic{Config: ini, Bin: bin}.Load(context.Background())
+	if err != nil || strings.Contains(ddl, "BEGIN;") || !strings.Contains(ddl, "CREATE TABLE account") {
+		t.Fatalf("ddl = %q, err = %v", ddl, err)
+	}
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != "-c "+ini+" upgrade head --sql\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestAlembicLoadMissingBinary(t *testing.T) {
+	t.Parallel()
+	ini := writeFile(t, "alembic.ini", alembicINI)
+	_, err := Alembic{Config: ini, Bin: "godwit-no-such-alembic"}.Load(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "the Alembic CLI was not found") ||
+		!strings.Contains(err.Error(), "--alembic-bin / GODWIT_ALEMBIC_BIN") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAlembicIntegration(t *testing.T) {
+	bin, ini := os.Getenv("GODWIT_ALEMBIC_BIN"), os.Getenv("GODWIT_ALEMBIC_CONFIG")
+	if bin == "" || ini == "" {
+		t.Skip("GODWIT_ALEMBIC_BIN and GODWIT_ALEMBIC_CONFIG are not both set")
+	}
+	ddl, err := Alembic{Config: ini, Bin: bin}.Load(context.Background())
+	if err != nil || !strings.Contains(strings.ToUpper(ddl), "CREATE TABLE") {
+		t.Fatalf("ddl = %q, err = %v", ddl, err)
+	}
+}
+
+const drizzleConfig = "import { defineConfig } from 'drizzle-kit';\n" +
+	"// dialect: 'mysql'\n" +
+	"/* dialect: \"sqlite\" */\n" +
+	"export default defineConfig({\n" +
+	"  dialect: \"postgresql\",\n" +
+	"  schema: './src/schema.ts',\n" +
+	"  out: './drizzle',\n" +
+	"});\n"
+
+const drizzleDDL = "CREATE TABLE \"users\" (\n\t\"id\" serial PRIMARY KEY NOT NULL,\n\t\"email\" text NOT NULL\n);\n\nCREATE UNIQUE INDEX \"users_email_idx\" ON \"users\" USING btree (\"email\");\n"
+
+func TestDrizzleLoad(t *testing.T) {
+	t.Parallel()
+	cfg := writeFile(t, "drizzle.config.ts", drizzleConfig)
+	for _, tc := range []struct {
+		bin  string
+		want string
+	}{
+		{"", "npx drizzle-kit export --config=" + cfg},
+		{"pnpm  exec  drizzle-kit", "pnpm exec drizzle-kit export --config=" + cfg},
+	} {
+		runner := &fakeExec{replies: []reply{{out: drizzleDDL}}}
+		ddl, err := Drizzle{Config: cfg, Bin: tc.bin, Run: runner.run}.Load(context.Background())
+		if err != nil || ddl != drizzleDDL {
+			t.Fatalf("%s: ddl = %q, err = %v", tc.bin, ddl, err)
+		}
+		runner.assert(t, tc.want)
+	}
+}
+
+func TestDrizzleLoadRefusesOtherDialectsBeforeRunning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, body, want string }{
+		{"mysql", "export default { dialect: 'mysql', schema: './s.ts' };\n", `dialect is "mysql"; godwit targets PostgreSQL only (dialect: "postgresql")`},
+		{"sqlite", "export default {\n  dialect: `sqlite`,\n};\n", `dialect is "sqlite"`},
+		{"gel", "export default {\n  dialect: \"gel\",\n};\n", `dialect is "gel"`},
+	} {
+		cfg := writeFile(t, "drizzle.config.ts", tc.body)
+		runner := &fakeExec{}
+		_, err := Drizzle{Config: cfg, Run: runner.run}.Load(context.Background())
+		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.HasPrefix(err.Error(), cfg+": ") {
+			t.Fatalf("%s: err = %v", tc.name, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("%s: drizzle-kit ran %d time(s)", tc.name, len(runner.calls))
+		}
+	}
+}
+
+func TestDrizzleLoadErrors(t *testing.T) {
+	t.Parallel()
+	cfg := writeFile(t, "drizzle.config.ts", drizzleConfig)
+	for _, tc := range []struct {
+		name  string
+		reply reply
+		want  string
+	}{
+		{"exit with stderr", reply{err: errors.New("exit status 1"), errOut: "Invalid input  You can't use both --config and other cli options\n"}, "drizzle-kit export failed: exit status 1: Invalid input  You can't use both --config and other cli options"},
+		{"exit without stderr", reply{err: errors.New("signal: killed")}, "drizzle-kit export failed: signal: killed"},
+		{"missing binary", reply{err: exec.ErrNotFound}, "drizzle-kit was not found (executable file not found in $PATH); install drizzle-kit in the project or point --drizzle-bin / GODWIT_DRIZZLE_BIN at it"},
+		{"empty output", reply{out: "\n  \n"}, "drizzle-kit export produced no DDL for " + cfg + "; it exits 0 with an empty script when the schema files declare no table or use a dialect other than the configured one"},
+	} {
+		_, err := Drizzle{Config: cfg, Run: (&fakeExec{replies: []reply{tc.reply}}).run}.Load(context.Background())
+		if err == nil || err.Error() != tc.want {
+			t.Fatalf("%s: err = %v", tc.name, err)
+		}
+	}
+	if _, err := (Drizzle{Config: " "}).Load(context.Background()); err == nil ||
+		err.Error() != "no Drizzle project configured; pass --drizzle drizzle.config.ts or set schema_source.path" {
+		t.Fatalf("empty project: err = %v", err)
+	}
+	if _, err := (Drizzle{Config: filepath.Join(t.TempDir(), "drizzle.config.ts")}).Load(context.Background()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing config: err = %v", err)
+	}
+}
+
+func TestDrizzleLoadExec(t *testing.T) {
+	t.Parallel()
+	cfg := writeFile(t, "drizzle.config.ts", drizzleConfig)
+	bin, log := shellFixture(t, "drizzle-kit", "printf '%s' '"+shellQuoted(drizzleDDL)+"'\n")
+	ddl, err := Drizzle{Config: cfg, Bin: bin}.Load(context.Background())
+	if err != nil || ddl != drizzleDDL {
+		t.Fatalf("ddl = %q, err = %v", ddl, err)
+	}
+	if calls, err := os.ReadFile(log); err != nil || string(calls) != "export --config="+cfg+"\n" {
+		t.Fatalf("calls = %q, err = %v", calls, err)
+	}
+}
+
+func TestDrizzleLoadMissingBinary(t *testing.T) {
+	t.Parallel()
+	cfg := writeFile(t, "drizzle.config.ts", drizzleConfig)
+	_, err := Drizzle{Config: cfg, Bin: "godwit-no-such-drizzle-kit"}.Load(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "drizzle-kit was not found") ||
+		!strings.Contains(err.Error(), "--drizzle-bin / GODWIT_DRIZZLE_BIN") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDrizzleIntegration(t *testing.T) {
+	bin, cfg := os.Getenv("GODWIT_DRIZZLE_BIN"), os.Getenv("GODWIT_DRIZZLE_CONFIG")
+	if bin == "" || cfg == "" {
+		t.Skip("GODWIT_DRIZZLE_BIN and GODWIT_DRIZZLE_CONFIG are not both set")
+	}
+	ddl, err := Drizzle{Config: cfg, Bin: bin}.Load(context.Background())
+	if err != nil || !strings.Contains(strings.ToUpper(ddl), "CREATE TABLE") {
+		t.Fatalf("ddl = %q, err = %v", ddl, err)
+	}
+}
+
+const railsStructure = `\restrict 8kQpVn2hZ
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
+SET client_encoding = 'UTF8';
+SELECT pg_catalog.set_config('search_path', '', false);
+SET row_security = off;
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: users; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.users (
+    id bigint NOT NULL,
+    email character varying NOT NULL
+);
+
+CREATE FUNCTION public.touch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  SET LOCAL statement_timeout = 0;
+  SELECT pg_catalog.set_config('x', '', false);
+  RETURN NEW;
+END;
+$$;
+
+CREATE UNIQUE INDEX index_users_on_email ON public.users USING btree (email);
+
+SET search_path TO "$user", public;
+
+INSERT INTO "schema_migrations" (version) VALUES
+('20240301101500'),
+('20240115120000');
+
+\unrestrict 8kQpVn2hZ
+`
+
+func railsApp(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return root
+}
+
+func TestRailsLoadStripsThePgDumpPreamble(t *testing.T) {
+	t.Parallel()
+	root := railsApp(t, map[string]string{"db/structure.sql": railsStructure, "db/schema.rb": "ActiveRecord::Schema.define\n"})
+	for _, path := range []string{root, filepath.Join(root, "db", "structure.sql")} {
+		ddl, err := Rails{Path: path}.Load(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		for _, gone := range []string{
+			`\restrict`, `\unrestrict`, "SET statement_timeout", "SET transaction_timeout",
+			"SET client_encoding", "SET row_security", "SET default_tablespace", "SET default_table_access_method",
+			`SET search_path TO "$user"`, "INSERT INTO \"schema_migrations\"", "('20240301101500')",
+		} {
+			if strings.Contains(ddl, gone) {
+				t.Fatalf("%s: %q survived:\n%s", path, gone, ddl)
+			}
+		}
+		if strings.Count(ddl, "pg_catalog.set_config") != 1 {
+			t.Fatalf("%s: the function body's set_config must survive and the preamble's must not:\n%s", path, ddl)
+		}
+		for _, kept := range []string{
+			"CREATE TABLE public.users", "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+			"COMMENT ON EXTENSION pgcrypto", "CREATE UNIQUE INDEX index_users_on_email",
+			"-- Name: users; Type: TABLE; Schema: public; Owner: -", "SET LOCAL statement_timeout = 0;", "$$;",
+		} {
+			if !strings.Contains(ddl, kept) {
+				t.Fatalf("%s: %q was dropped:\n%s", path, kept, ddl)
+			}
+		}
+	}
+}
+
+func TestRailsLoadRefusesSchemaRb(t *testing.T) {
+	t.Parallel()
+	root := railsApp(t, map[string]string{"db/schema.rb": "ActiveRecord::Schema[8.0].define(version: 2024_03_01_101500) do\nend\n"})
+	for _, path := range []string{root, filepath.Join(root, "db", "schema.rb")} {
+		_, err := Rails{Path: path}.Load(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "is a Ruby DSL, not SQL, and rendering it means booting ActiveRecord against a database") ||
+			!strings.Contains(err.Error(), railsSchemaFormat) {
+			t.Fatalf("%s: err = %v", path, err)
+		}
+	}
+}
+
+func TestRailsLoadErrors(t *testing.T) {
+	t.Parallel()
+	if _, err := (Rails{Path: " "}).Load(context.Background()); err == nil ||
+		err.Error() != "no Rails application configured; pass --rails . or set schema_source.path" {
+		t.Fatalf("empty path: err = %v", err)
+	}
+	if _, err := (Rails{Path: filepath.Join(t.TempDir(), "app")}).Load(context.Background()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing root: err = %v", err)
+	}
+	empty := railsApp(t, map[string]string{"config/application.rb": "class Application; end\n"})
+	if _, err := (Rails{Path: empty}).Load(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "has no db/structure.sql and no db/schema.rb; --rails takes the Rails application root or the dump itself") {
+		t.Fatalf("no dump: err = %v", err)
+	}
+	noise := railsApp(t, map[string]string{"db/structure.sql": "SET statement_timeout = 0;\n\\restrict abc\n"})
+	if _, err := (Rails{Path: noise}).Load(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "holds no DDL; "+railsSchemaFormat+" to regenerate it") {
+		t.Fatalf("all noise: err = %v", err)
+	}
+	unreadable := railsApp(t, map[string]string{"db/structure.sql": railsStructure})
+	if err := os.Chmod(filepath.Join(unreadable, "db", "structure.sql"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() != 0 {
+		if _, err := (Rails{Path: unreadable}).Load(context.Background()); !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("unreadable dump: err = %v", err)
+		}
+	}
+}
+
+func TestRailsLoadKeepsUnbalancedDollarQuotesWhole(t *testing.T) {
+	t.Parallel()
+	root := railsApp(t, map[string]string{"db/structure.sql": "CREATE FUNCTION f() RETURNS void AS $tag$\nSET a = 1;\n$other$\nSET b = 2;\n$tag$;\nSET c = 3;\nCREATE TABLE t (id int);\n"})
+	ddl, err := Rails{Path: root}.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ddl, "SET a = 1;") || !strings.Contains(ddl, "SET b = 2;") || strings.Contains(ddl, "SET c = 3;") {
+		t.Fatalf("ddl = %q", ddl)
+	}
+}

@@ -262,7 +262,7 @@ func TestLoadSchemaSourceErrors(t *testing.T) {
 		if name == "unknown key" {
 			continue
 		}
-		if !strings.Contains(err.Error(), "file, prisma, gorm, django, command") {
+		if !strings.Contains(err.Error(), "file, prisma, gorm, django, alembic, rails, drizzle, command") {
 			t.Fatalf("%s: err = %v", name, err)
 		}
 	}
