@@ -182,6 +182,8 @@ $ godwit lint --dir db/migrations
 
 ### Directives
 
+Why the expansion runs where it does, and what it refuses: [decision 0002](decisions/0002-directives-godwit-executes.md).
+
 A hazard recipe hands over the safe SQL as text. A **directive** is the other direction: the migration says what it
 wants and lets godwit produce the lock-safe statements. It is a SQL line comment, so the file stays a plain `.sql`
 that any other tool can read (the syntax precedent is Atlas's `-- atlas:txmode none`).
@@ -480,6 +482,8 @@ A migration split down the middle is **not** run twice. The expand phase stops a
 
 ## Revert
 
+Why the scope is what it is, and the survey behind it: [decision 0005](decisions/0005-revert-scoped-to-the-ledger.md).
+
 `RevertRun` queues a new run of kind `migrate` with `reverts` set, whose plans are the **down sides of the
 migrations the original run actually applied**, in reverse order of application. Not every file it carried:
 `godwit migrate` sends the whole migration directory on every run, and the files it skipped as already
@@ -565,6 +569,8 @@ The effective path is part of a plan's observation. A plan taken under one path 
 
 ## Plans
 
+Why a plan is a contract at all: [decision 0001](decisions/0001-plan-as-contract.md).
+
 `PlanRun{persist}` stores the admitted plan in `cp_plans` / `cp_plan_files` together with an **observation** of the target at that moment: a `history_hash` over the live `godwit.migrations` (version and checksum, ascending) and `godwit.repeatables` (name and checksum, by name), the schema fingerprint and definition (`engine.Snapshot`), and the time. The **plan key** is `sha256` of the target, the rollout and the ordered *pending set* — the files whose version is not yet applied plus the repeatables whose content differs from what the target recorded, with their up and down checksums. It is a pure function of the files and of the target's history: not a git SHA (squash merges change it), not the plan id. One `ready` plan exists per `(target, key)`; re-planning the same set refreshes the row under a new id. An applied migration whose file body differs from the recorded checksum cannot be planned (`invalid_argument`) nor bound (`PlanStale{content}`).
 
 `CreateRun` computes the key from its files and looks for a ready plan not older than `--plan-ttl`:
@@ -601,6 +607,8 @@ Because the starting point is the live schema, hand changes that are not in the 
 
 ### Objects a repeatable declares
 
+Why they are part of the desired schema, and the alternatives refused: [decision 0006](decisions/0006-repeatable-objects-are-desired.md).
+
 An `R__` migration builds objects the ORM schema knows nothing about — a view, a function, a trigger. The desired side is therefore not `schema` alone: `DiffRequest.files` is the migration directory, and every `R__` pair in it is applied on the desired scratch database after the DDL, in the order a run applies them. The object is then on both sides of the comparison and neither direction proposes to touch it, under either base. `repeatable_objects` in the response names what appeared when they ran.
 
 That set comes from the scratch database's own catalog, read before and after the repeatables are applied — not from parsing their bodies and not from `pg_depend` on the target. Parsing sees only what the statements name; `pg_depend` records dependencies, not which file made an object, so it cannot attribute anything on a live target. What appears on a database where nothing else ran is exactly what those files build.
@@ -617,6 +625,8 @@ What follows:
 **Without the migration directory the diff refuses.** A request carrying no `files` while `godwit.repeatables` on the target has rows is `failed_precondition`, naming the recorded repeatables: the diff can see those objects but not what declares them, and would propose dropping every one. `godwit diff` sends `--dir` for exactly that reason, and `/ui/diff`, which has no directory to send, shows the refusal on a target that has repeatables. A target that records none is unaffected: there is nothing to attribute and nothing to refuse.
 
 ### Schema sources
+
+Why every source runs client-side: [decision 0003](decisions/0003-orm-schema-sources.md).
 
 The `schema` the service receives is always DDL; where it comes from is the client's business. `godwit diff` has one **schema source** per flag, each an implementation of `schemasource.Source` (`Load(ctx) (ddl, error)`), all of them running next to the repository with the project's own toolchain — the service never sees a Prisma schema, a Go package or a Django project, and never gains a Node, Go or Python dependency:
 

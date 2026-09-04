@@ -65,6 +65,8 @@ Notifications carry the same fields as the log plus the error text; a webhook UR
 
 ## Web UI
 
+Why the UI has no account model of its own: [decision 0004](decisions/0004-ui-is-a-scoped-client.md).
+
 `serve --ui` mounts the operator UI at `/ui` on the same plaintext listener. It authenticates with HTTP basic auth — browsers send it natively, so there is no login page, no cookie and no session store — and it resolves to a `Principal` exactly like a bearer token does:
 
 | Password | Identity | Scope |
