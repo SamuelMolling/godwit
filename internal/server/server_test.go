@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -248,16 +249,18 @@ func TestServiceFailover(t *testing.T) {
 	ctx := context.Background()
 	storeDSN := newDatabase(t, "st")
 
-	// Replica 1: short-TTL claim then immediate death (context cancelled).
+	// Replica 1: short-TTL claim then immediate death. A grace period this short leaves the run no
+	// chance to drain, which is the abrupt exit a SIGKILL or a lost node gives.
 	replicaCtx, killReplica := context.WithCancel(context.Background())
 	ready := make(chan net.Addr, 1)
 	go func() {
 		_ = Run(replicaCtx, Config{
 			Listen: "127.0.0.1:0", StoreDSN: storeDSN, Keys: testKeys,
-			Holder:    "replica-1",
-			Scheduler: controlplane.Config{Interval: 50 * time.Millisecond, TTL: 2 * time.Second},
-			Log:       testLog,
-			OnReady:   func(addr net.Addr) { ready <- addr },
+			Holder:          "replica-1",
+			Scheduler:       controlplane.Config{Interval: 50 * time.Millisecond, TTL: 2 * time.Second},
+			ShutdownTimeout: time.Millisecond,
+			Log:             testLog,
+			OnReady:         func(addr net.Addr) { ready <- addr },
 		})
 	}()
 	var baseURL string
@@ -344,4 +347,73 @@ func TestRunStartErrors(t *testing.T) {
 	if err := Run(ctx, Config{SlackToken: "xoxb-1", Log: testLog}); err == nil || !strings.Contains(err.Error(), "slack channel is required") {
 		t.Fatalf("missing channel: %v", err)
 	}
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	t.Parallel()
+	var logs safeBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan net.Addr, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys,
+			Holder:        "replica-1",
+			Scheduler:     controlplane.Config{Interval: 50 * time.Millisecond},
+			StoreMaxConns: 4,
+			Log:           slog.New(slog.NewTextHandler(&logs, nil)),
+			OnReady:       func(addr net.Addr) { ready <- addr },
+		})
+	}()
+	select {
+	case addr := <-ready:
+		_ = addr
+	case err := <-done:
+		t.Fatalf("service failed to start: %v", err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("service did not become ready")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run() = %v, want nil after a cancelled context", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return after its context was cancelled")
+	}
+	if got := logs.String(); !strings.Contains(got, "shutting down") || !strings.Contains(got, "runs drained") {
+		t.Fatalf("shutdown log = %q", got)
+	}
+}
+
+func TestAwaitRunsGivesUpAtTheGracePeriod(t *testing.T) {
+	t.Parallel()
+	var logs safeBuffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	awaitRuns(ctx, func() {}, make(chan struct{}), slog.New(slog.NewTextHandler(&logs, nil)))
+	if !strings.Contains(logs.String(), "grace period expired") {
+		t.Fatalf("log = %q", logs.String())
+	}
+}
+
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
 }

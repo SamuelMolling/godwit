@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -125,7 +126,8 @@ func newTargetAddCmd() *cobra.Command {
 	}
 	flags.register(cmd)
 	cmd.Flags().StringVar(&req.Provider, "provider", "", "credential provider: static, kubernetes or vault")
-	cmd.Flags().StringVar(&req.Dsn, "dsn", "", "target DSN (static provider)")
+	cmd.Flags().StringVar(&req.Dsn, "dsn", os.Getenv("GODWIT_TARGET_DSN"),
+		"target DSN, static provider (or GODWIT_TARGET_DSN, which keeps the password out of the process arguments)")
 	cmd.Flags().StringVar(&req.SecretPath, "secret-path", "", "mounted secret file (kubernetes provider)")
 	cmd.Flags().StringVar(&req.VaultPath, "vault-path", "", "Vault secret path under /v1 (vault provider)")
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")

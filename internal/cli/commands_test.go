@@ -369,3 +369,16 @@ func TestConfigFileSetsTimeouts(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 }
+
+func TestLocalDSNFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	code, _, errOut := runCLI("status", "--dir", dir)
+	if code != 1 || !strings.Contains(errOut, "--dsn (or GODWIT_DSN) is required") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+
+	t.Setenv("GODWIT_DSN", newTestDSN(t))
+	if code, _, errOut = runCLI("status", "--dir", dir); code != 0 {
+		t.Fatalf("env DSN must be accepted: code = %d, stderr = %s", code, errOut)
+	}
+}
