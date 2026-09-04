@@ -1,3 +1,9 @@
+# Only for a generated gRPC client, which cannot fall back to HTTP/1.1. The godwit CLI, curl and any
+# connect client reach the API through values.yaml's Ingress and do not need this file.
+#
+# backend-protocol: GRPC makes nginx grpc_pass to the h2c listener, and grpc_pass applies to the whole
+# server block: this host answers every request with a gRPC frame, so it cannot also serve /ui. That is
+# why it is a second hostname rather than another path on values.yaml's Ingress.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

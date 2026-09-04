@@ -73,9 +73,7 @@ args:
   - add
   - {{ $t.name | quote }}
   - {{ printf "--provider=%s" (required "targets.list[].provider is required" $t.provider) | quote }}
-  {{- if $t.dsnSecret }}
-  - "--dsn=$(GODWIT_TARGET_DSN)"
-  {{- else }}
+  {{- if not $t.dsnSecret }}
   {{- with $t.dsn }}
   - {{ printf "--dsn=%s" . | quote }}
   {{- end }}

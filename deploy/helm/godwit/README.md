@@ -47,12 +47,12 @@ The release prints the in-cluster URL and the first commands to run. Every value
 
 | Object | Notes |
 |---|---|
-| Deployment | `serve --listen --store-dsn=$(GODWIT_STORE_DSN) --drift-interval [--scratch-dsn=$(GODWIT_SCRATCH_DSN)] --scratch-template [--skip-validation] [--ui --ui-scope]`, env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
+| Deployment | `serve --listen --drift-interval --scratch-template [--skip-validation] [--ui --ui-scope]` — the two DSNs arrive as `GODWIT_STORE_DSN` and `GODWIT_SCRATCH_DSN`, never as arguments — env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
 | Service | ClusterIP on `service.port` → container port `serve.port` |
 | ServiceAccount | `serviceAccount.annotations` for Vault Kubernetes auth or cloud workload identity; token mounted by default because the Vault provider reads it |
 | PodDisruptionBudget | `minAvailable: 1` so a drain never takes both replicas |
 | ServiceMonitor | off by default; scrapes `/metrics` through the Service |
-| Ingress | off by default; the API is HTTP/2 (connect), so use a class that speaks h2c/gRPC to the backend |
+| Ingress | off by default; an ordinary HTTP backend carries the whole API, and a gRPC backend would stop the same host serving `/ui` |
 | HTTPRoute | off by default; the Gateway API alternative to the Ingress, for a cluster that routes that way |
 | Job | off by default; one `godwit target add` per entry of `targets.list` |
 | anything in `extraObjects` | raw manifests, templated with the release context |
@@ -121,7 +121,7 @@ targets:
 
 `RegisterTarget` is an upsert that replaces the whole config map rather than patching it, which cuts both ways. It is what makes re-running the Job on every sync safe — that is the point of the Job, not a hazard. It is also what makes this list *authoritative*: a setting somebody added by hand with a shorter `target add` is gone at the next sync. Register a target from this list or from somewhere else, never both.
 
-The Job needs an `admin` token, the only scope `RegisterTarget` accepts. Keep it in a Secret of its own rather than reusing an entry of `GODWIT_TOKENS` that humans also hold. A `static` target's DSN goes in `dsnSecret` (injected as `--dsn=$(GODWIT_TARGET_DSN)`) rather than `dsn`, which would put the credential in the pod spec.
+The Job needs an `admin` token, the only scope `RegisterTarget` accepts. Keep it in a Secret of its own rather than reusing an entry of `GODWIT_TOKENS` that humans also hold. A `static` target's DSN goes in `dsnSecret` (passed as `GODWIT_TARGET_DSN`, never as an argument) rather than `dsn`, which would put the credential in the pod spec.
 
 By default the Job is a Helm `post-install,post-upgrade` hook. `targets.helmHook: false` drops those annotations for a deployment tool that drives the Job itself; `targets.annotations` adds its own (`argocd.argoproj.io/hook: Sync`, `hook-delete-policy: BeforeHookCreation`). The service may still be rolling out when the Job starts — `targets.backoffLimit` covers that, and the registration does not touch the target database, so a retry costs nothing.
 

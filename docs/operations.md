@@ -129,7 +129,7 @@ Then open it as an ordinary pull request: `lint` and `plan` run on it like any m
 3. Store migrations are forward-only in practice; `DownSQL` exists but no command applies it. To roll back a release, restore the store from backup taken before step 2.
 4. Old and new replicas share the store during the rollout; keep migrations additive (they are).
 
-Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXISTS` on first contact, no explicit step.
+Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXISTS` on first contact, no explicit step. It is one transaction under an advisory lock of its own, so replicas that meet a fresh target at the same moment queue rather than race, and a bootstrap that cannot finish leaves nothing half-created.
 
 ## Web UI
 
