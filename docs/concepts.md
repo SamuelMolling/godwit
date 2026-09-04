@@ -146,8 +146,8 @@ One target executes one run at a time: the claim query hands out one lease per t
 
 1. **Target exists** — `not_found` otherwise.
 2. **Hazard gate** — every hazard code in the plans must be in `acknowledge_hazards`; otherwise `failed_precondition` listing them.
-3. **Out-of-order guard** — a pending version below the newest version in the target's history (files of `succeeded` runs, migrate and baseline) is refused with `failed_precondition` unless `allow_out_of_order`; allowed ones are logged. Reverts skip this check, and repeatables carry no version so they are never out of order.
-4. **Scratch validation** — a database `godwit_validate_<id>` is created on the store server, the files of every succeeded run of the target are replayed in order, then the new plans one at a time, snapshotting the schema after the history and after each plan; the database is dropped `WITH (FORCE)`. A failure in the new plans is `invalid_argument: migration failed validation: ...`; a failure in the history replay is `internal: replay history run i: ...`. Skipped with `skip_validation` or `serve --skip-validation`. The snapshots feed [already-applied detection](#already-applied-migrations) when the plan is persisted.
+3. **Out-of-order guard** — a pending version below the newest version in the target's history (the migrations `succeeded` runs applied, migrate and baseline, that no revert undid) is refused with `failed_precondition` unless `allow_out_of_order`; allowed ones are logged. Reverts skip this check, and repeatables carry no version so they are never out of order.
+4. **Scratch validation** — a database `godwit_validate_<id>` is created on the store server, every succeeded run of the target is replayed in order — the migrations that run applied and no revert undid, in the order it applied them, each with the expansion frozen on its own `cp_run_applied` row, never the whole directory the run submitted — then the new plans one at a time, snapshotting the schema after the history and after each plan; the database is dropped `WITH (FORCE)`. A failure in the new plans is `invalid_argument: migration failed validation: ...`; a failure in the history replay is `internal: replay history run i: ...`. Skipped with `skip_validation` or `serve --skip-validation`. The snapshots feed [already-applied detection](#already-applied-migrations) when the plan is persisted.
 
 ### Hazards
 
@@ -340,7 +340,8 @@ migration created, and every refusal in the table below — `<c>_old already exi
 exist in the schema this migration starts from` — would fire forever on a migration nobody is going to run again.
 The same holds for the executor: a migration the target has recorded is skipped whatever its body says. A target
 that has *not* applied it yet expands it as usual, so the same directory can be pending on one target and history
-on another.
+on another — and a reverted migration is pending again, so it is expanded again, against the catalog the revert
+left behind.
 
 **A directive does not need a stored plan.** In an implicit run the expansion is computed at admission through the
 same code path and recorded in the run's audit detail and notification (`expands <id> <hash>`). `require_plan` on
@@ -371,7 +372,8 @@ needs-attention case for a human, not something the generated down can guess at.
 
 **Retired columns.** A completed `change-type` records `<t>.<c>_old` in `cp_retired_columns`, with the run that
 retired it. `godwit diff` takes the drop of a retired column out of the generated `up_sql`, so an ORM that never
-knew about the column stops proposing to drop it on every pull request; a revert forgets the row again.
+knew about the column stops proposing to drop it on every pull request. A revert forgets the row again, and so does the
+`-- godwit: drop-column` that finally removes the column: the rollback it recorded is gone with it.
 
 **Dependent objects follow the rename, so the expander refuses them.** The swap is two `RENAME COLUMN` statements,
 and PostgreSQL moves every dependency with the *physical* attribute rather than with the name. A view, index,

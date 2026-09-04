@@ -47,7 +47,7 @@ func TestDriftStoreClosedPool(t *testing.T) {
 	if _, err := s.ListDriftEvents(ctx, ""); err == nil {
 		t.Fatal("want error")
 	}
-	if _, err := s.HistoryFiles(ctx, "a"); err == nil {
+	if _, err := s.History(ctx, "a"); err == nil {
 		t.Fatal("want error")
 	}
 }
@@ -72,10 +72,10 @@ func TestDriftStoreRowErrors(t *testing.T) {
 	}
 
 	mock3, s3 := newMockStore(t)
-	mock3.ExpectQuery("FROM cp_run_files").WithArgs("a").
-		WillReturnRows(pgxmock.NewRows([]string{"run_id", "name", "body"}).
-			AddRow("r", "n", "b").RowError(0, errBoom))
-	if _, err := s3.HistoryFiles(ctx, "a"); err == nil || !strings.Contains(err.Error(), "read history files") {
+	mock3.ExpectQuery("FROM cp_run_applied").WithArgs("a").
+		WillReturnRows(pgxmock.NewRows([]string{"run_id", "migration", "up", "down", "expansion"}).
+			AddRow("r", "m", "u", "d", []byte("null")).RowError(0, errBoom))
+	if _, err := s3.History(ctx, "a"); err == nil || !strings.Contains(err.Error(), "read history") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -398,7 +398,7 @@ func TestValidatorCorruptHistory(t *testing.T) {
 	}
 
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE cp_run_files SET name = 'garbage.txt' WHERE name = '20260901120000_t.up.sql'`); err != nil {
+		`UPDATE cp_run_files SET body = '-- godwit: revert' WHERE name = '20260901120000_t.up.sql'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "history run 0") {
@@ -406,7 +406,7 @@ func TestValidatorCorruptHistory(t *testing.T) {
 	}
 
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE cp_run_files SET name = '20260901120000_t.up.sql', body = 'SELECT 1/0;' WHERE name = 'garbage.txt'`); err != nil {
+		`UPDATE cp_run_files SET body = 'SELECT 1/0;' WHERE name = '20260901120000_t.up.sql'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "replay history run 0") {

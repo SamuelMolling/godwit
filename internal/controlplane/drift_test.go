@@ -303,7 +303,7 @@ func TestValidator(t *testing.T) {
 	}
 
 	pool.Close()
-	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "history files") {
+	if _, err := v.Validate(ctx, "app", good, ""); err == nil || !strings.Contains(err.Error(), "list history") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -348,7 +348,7 @@ func TestValidatorReplay(t *testing.T) {
 	}
 
 	pool.Close()
-	if err := v.Replay(ctx, mock, "app", "", nil); err == nil || !strings.Contains(err.Error(), "history files") {
+	if err := v.Replay(ctx, mock, "app", "", nil); err == nil || !strings.Contains(err.Error(), "list history") {
 		t.Fatalf("history err = %v", err)
 	}
 }

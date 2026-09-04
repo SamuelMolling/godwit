@@ -120,38 +120,49 @@ func (s *Store) ResolveDrift(ctx context.Context, target string) (bool, error) {
 	return tag.RowsAffected() > 0, nil
 }
 
-// HistoryRun is one succeeded run: the files it carried and the directive expansions it ran in their place.
+// HistoryRun is one succeeded run: the migrations it applied that still stand, in the order it applied them.
 type HistoryRun struct {
-	Files      map[string]string
-	Expansions map[string]Expansion
+	Migrations []HistoryMigration
 }
 
-// HistoryFiles returns every succeeded run for a target, oldest first.
-func (s *Store) HistoryFiles(ctx context.Context, target string) ([]HistoryRun, error) {
+// HistoryMigration is one standing ledger row: the pair the run carried for it and the expansion it froze.
+type HistoryMigration struct {
+	ID      string
+	UpSQL   string
+	DownSQL string
+	// Expansion is what the run ran in place of the migration's directives, nil when it had none.
+	Expansion *Expansion
+}
+
+// History returns what every succeeded run of a target applied and no revert undid, oldest first. It is
+// the same row set Applied is derived from, so the replay and the applied set can never disagree.
+func (s *Store) History(ctx context.Context, target string) ([]HistoryRun, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.run_id, f.name, f.body, r.expansions
-		FROM cp_run_files f
-		JOIN cp_runs r ON r.id = f.run_id
-		WHERE r.target = $1 AND r.state = 'succeeded'
-		ORDER BY r.created_at, f.run_id, f.name`, target)
+		SELECT a.run_id, a.migration, u.body, d.body, a.expansion
+		FROM cp_run_applied a
+		JOIN cp_runs r ON r.id = a.run_id
+		JOIN cp_run_files u ON u.run_id = a.run_id AND u.name = a.migration || '.up.sql'
+		JOIN cp_run_files d ON d.run_id = a.run_id AND d.name = a.migration || '.down.sql'
+		WHERE r.target = $1 AND `+standingRow+`
+		ORDER BY r.created_at, a.run_id, a.seq`, target)
 	if err != nil {
-		return nil, fmt.Errorf("list history files: %w", err)
+		return nil, fmt.Errorf("list history: %w", err)
 	}
 
 	var out []HistoryRun
-	var lastRun string
-	var runID, name, body string
-	var exps map[string]Expansion
-	if _, err := pgx.ForEachRow(rows, []any{&runID, &name, &body, &exps}, func() error {
+	var lastRun, runID string
+	var m HistoryMigration
+	if _, err := pgx.ForEachRow(rows, []any{&runID, &m.ID, &m.UpSQL, &m.DownSQL, &m.Expansion}, func() error {
 		if runID != lastRun {
-			out = append(out, HistoryRun{Files: map[string]string{}, Expansions: exps})
+			out = append(out, HistoryRun{})
 			lastRun = runID
 		}
-		out[len(out)-1].Files[name] = body
+		last := &out[len(out)-1]
+		last.Migrations = append(last.Migrations, m)
 
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("read history files: %w", err)
+		return nil, fmt.Errorf("read history: %w", err)
 	}
 
 	return out, nil
