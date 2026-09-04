@@ -154,6 +154,9 @@ func statementsToProto(sts []controlplane.PlanStatement) []*godwitv1.PlannedStat
 		if st.Batch != nil {
 			ps.Batch = &godwitv1.PlannedBatch{Key: st.Batch.Key, Kind: st.Batch.Kind, Size: int32(st.Batch.Size), Pause: st.Batch.Pause}
 		}
+		if st.Assert != nil {
+			ps.Assert = &godwitv1.PlannedAssert{Op: st.Assert.Op, Kind: st.Assert.Kind, Value: st.Assert.Value}
+		}
 		for _, h := range st.Hazards {
 			ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
 		}

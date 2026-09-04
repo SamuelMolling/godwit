@@ -84,6 +84,7 @@ type Statement struct {
 	Hazards     []Hazard
 	Opaque      string
 	Batch       *BatchSpec
+	Assert      *AssertSpec
 	// Drops are the tables and columns the statement removes, whatever hazards it carries.
 	Drops []Drop
 }

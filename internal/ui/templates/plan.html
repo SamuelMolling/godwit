@@ -13,7 +13,7 @@
     {{range .Stmts}}
     <li><i class="{{if .Hazards}}bad{{else}}ok{{end}}"></i><div>
       <pre>{{.SQL}}</pre>
-      <div class="t">{{if .NoTx}}no-tx{{else}}tx{{end}}{{with .Batch}} · {{.}}{{end}}</div>
+      <div class="t">{{if .Assert}}assert{{else if .NoTx}}no-tx{{else}}tx{{end}}{{with .Batch}} · {{.}}{{end}}{{with .Assert}} · {{.}}{{end}}</div>
       {{range .Hazards}}<div class="d"><b>{{.Code}}</b> {{.Detail}}</div>{{with .Recipe}}<pre>{{.}}</pre>{{end}}{{end}}
     </div></li>
     {{end}}

@@ -300,6 +300,9 @@ func writePlanText(w io.Writer, r planReport) {
 			if b := st.Batch; b != nil {
 				fmt.Fprintf(w, "        batch over %s (%s), %d rows per transaction%s\n", b.Key, b.KeyKind, b.Size, pauseSuffix(b.Pause))
 			}
+			if a := st.Assert; a != nil {
+				fmt.Fprintf(w, "        the result must be %s\n", a)
+			}
 			for _, h := range st.Hazards {
 				fmt.Fprintf(w, "        hazard %s: %s\n", h.Code, h.Detail)
 				writeRecipeText(w, "          ", h.Recipe)
@@ -376,8 +379,8 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 				codes = append(codes, fmt.Sprintf("%s: %s", h.Code, h.Detail))
 			}
 			hazards += len(st.Hazards)
-			fmt.Fprintf(w, "| `%s` | %s | %d | %s | `%s` | %s |%s\n", p.Migration.ID(), p.Direction, i,
-				statementMode(st), markdownCell(oneLine(st.SQL)), markdownCell(strings.Join(codes, "; ")), p.liveCells(r.live))
+			fmt.Fprintf(w, "| `%s` | %s | %d | %s | %s | %s |%s\n", p.Migration.ID(), p.Direction, i,
+				statementMode(st), statementCell(st), markdownCell(strings.Join(codes, "; ")), p.liveCells(r.live))
 		}
 	}
 	if len(r.items) > 0 {
@@ -530,7 +533,14 @@ type statementJSON struct {
 	Mode    string       `json:"mode"`
 	Phase   string       `json:"phase,omitempty"`
 	Batch   *batchJSON   `json:"batch,omitempty"`
+	Assert  *assertJSON  `json:"assert,omitempty"`
 	Hazards []hazardJSON `json:"hazards"`
+}
+
+type assertJSON struct {
+	Op    string `json:"op"`
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
 }
 
 type batchJSON struct {
@@ -585,6 +595,9 @@ func toPlanJSON(p engine.Plan) planJSON {
 		if b := st.Batch; b != nil {
 			sj.Batch = &batchJSON{Key: b.Key, Kind: b.KeyKind, Size: b.Size, Pause: durationText(b.Pause)}
 		}
+		if a := st.Assert; a != nil {
+			sj.Assert = &assertJSON{Op: a.Op, Kind: a.Kind, Value: a.Value}
+		}
 		pj.Statements = append(pj.Statements, sj)
 	}
 
@@ -633,8 +646,20 @@ func writeRecipeDetails(w io.Writer, summary, recipe string) {
 	fmt.Fprintf(w, "<details><summary>%s</summary>\n\n```sql\n%s\n```\n\n</details>\n\n", summary, recipe)
 }
 
+// statementCell shows an assertion's condition beside its query; the SQL alone does not carry it.
+func statementCell(st engine.Statement) string {
+	cell := "`" + markdownCell(oneLine(st.SQL)) + "`"
+	if st.Assert != nil {
+		cell += " must be `" + st.Assert.String() + "`"
+	}
+
+	return cell
+}
+
 func statementMode(st engine.Statement) string {
 	switch {
+	case st.Assert != nil:
+		return "assert"
 	case st.Batch != nil:
 		return "batch"
 	case st.NoTx:
