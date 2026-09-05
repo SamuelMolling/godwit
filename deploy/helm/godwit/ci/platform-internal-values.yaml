@@ -10,8 +10,6 @@ image:
 
 existingSecret:
   name: godwit
-  keys:
-    masterKey: ""
 
 serve:
   scratch:

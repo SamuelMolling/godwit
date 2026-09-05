@@ -412,11 +412,10 @@ The chart in [deploy/helm/godwit](../deploy/helm/godwit/README.md) assumes nothi
    ```
 
    Then `serve.scratch.enabled: true`. Left off, scratch databases stay on the store server under the store's own role, submitted DDL runs as the owner of the control plane, and every pod logs `scratch database is not isolated` on every start. That warning is accurate; do not ship staging without `--scratch-dsn` if anyone but you holds a token.
-3. **The Secret.** The chart never creates it. The Deployment references `tokens` and `storeDSN` unconditionally, and a Secret missing either leaves the pod in `CreateContainerConfigError`. The master key is *not* one of them: `existingSecret.keys.masterKey` is wrapped in a `with`, so leaving it empty simply omits `GODWIT_MASTER_KEY` — which is what a deployment whose targets are all `vault` or `kubernetes` wants, since [only `static` needs a key](#the-three-credential-providers).
+3. **The Secret.** The chart never creates it. The Deployment references `tokens` and `storeDSN` unconditionally, and a Secret missing either leaves the pod in `CreateContainerConfigError`. The master key is *not* one of them: `existingSecret.keys.masterKey` defaults to empty and is wrapped in a `with`, so `GODWIT_MASTER_KEY` is omitted unless you ask for it — which is what a deployment whose targets are all `vault` or `kubernetes` wants, since [only `static` needs a key](#the-three-credential-providers). A deployment that does register `static` targets adds `--from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32)` below and `existingSecret.keys.masterKey: GODWIT_MASTER_KEY` in the values.
 
    ```bash
    kubectl -n godwit create secret generic godwit \
-     --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
      --from-literal=GODWIT_TOKENS='orders:pipeline:...,billing:pipeline:...,ops:operator:...,register:admin:...' \
      --from-literal=GODWIT_STORE_DSN='postgres://godwit:...@store.internal:5432/godwit_store' \
      --from-literal=GODWIT_SCRATCH_DSN='postgres://godwit_scratch:...@scratch.internal:5432/postgres'
@@ -572,7 +571,7 @@ kubectl -n godwit create secret generic godwit \
   --from-literal=GODWIT_SCRATCH_DSN='postgres://godwit_scratch:...@scratch:5432/postgres'
 ```
 
-**3. Vault** (skip for a first pass with `--provider static`, and come back):
+**3. Vault** (skip for a first pass with `--provider static`, and come back — a `static` target also needs `--set existingSecret.keys.masterKey=GODWIT_MASTER_KEY` in step 4, since the chart wires no key by default):
 
 ```bash
 vault kv put secret/orders/db username=godwit_orders password='...'

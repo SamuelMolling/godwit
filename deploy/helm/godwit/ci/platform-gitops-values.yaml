@@ -15,7 +15,8 @@ commonLabels:
 existingSecret:
   name: godwit
   keys:
-    masterKey: ""
+    # `legacy` below is a static target, so this deployment opts into a key.
+    masterKey: GODWIT_MASTER_KEY
     tokens: GODWIT_TOKENS
     storeDSN: GODWIT_STORE_DSN
     scratchDSN: GODWIT_SCRATCH_DSN
