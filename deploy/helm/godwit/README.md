@@ -11,7 +11,6 @@ Runs `godwit serve` as a two-replica Deployment: the second replica is what turn
 
 ```bash
 kubectl -n godwit create secret generic godwit \
-  --from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32) \
   --from-literal=GODWIT_TOKENS=ci:pipeline:orders-ci-token,ops:operator:ops-token,admin:admin:admin-token \
   --from-literal=GODWIT_STORE_DSN='postgres://godwit:secret@store.internal:5432/godwit_store' \
   --from-literal=GODWIT_SCRATCH_DSN='postgres://godwit_scratch:secret@scratch.internal:5432/postgres'
@@ -25,7 +24,15 @@ CREATE ROLE godwit_scratch LOGIN PASSWORD 'secret'
 
 Then `--set serve.scratch.enabled=true`. The pods refuse to start when that role is a superuser or owns the store database.
 
-`GODWIT_MASTER_KEY` seals the DSNs of `static` targets and nothing else, so a deployment whose targets all use the `kubernetes` or `vault` credential provider can leave `existingSecret.keys.masterKey` empty and the pods start without it. Rotating it needs no re-registration: put the new key in the Secret, the old one under `existingSecret.keys.masterKeyPrevious`, roll, and every replica reseals what it finds at start-up. `serve.keyProvider.name: gcpkms` or `vault-transit` moves the key into a KMS instead, wrapping a per-value data key so the DSN never leaves the process ([security](../../../docs/security.md#the-key-and-where-it-comes-from)). `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; a bare secret is admin, and a two-field `name:secret` entry is refused at start-up); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
+**No master key is in that Secret, because `existingSecret.keys.masterKey` defaults to empty and only `static` targets need a key** — theirs is the one DSN godwit stores, and a `kubernetes` or `vault` target stores a path. To register a `static` target, opt in: add `--from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32)` to the Secret above and set `existingSecret.keys.masterKey: GODWIT_MASTER_KEY`. Without it, `godwit target add --provider static` is refused with
+
+```
+invalid_argument: static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY
+```
+
+and a `static` target already in the store makes every pod log `static targets are sealed and no key is configured` naming it, with its runs refused. Rotating the key needs no re-registration: put the new key in the Secret, the old one under `existingSecret.keys.masterKeyPrevious` (which the chart refuses to render on its own, since it configures no key by itself), roll, and every replica reseals what it finds at start-up. `serve.keyProvider.name: gcpkms` or `vault-transit` moves the key into a KMS instead — `existingSecret.keys.masterKey` is then unread — wrapping a per-value data key so the DSN never leaves the process ([security](../../../docs/security.md#the-key-and-where-it-comes-from)).
+
+`GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; a bare secret is admin, and a two-field `name:secret` entry is refused at start-up); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
 
 ## Install
 
@@ -131,7 +138,7 @@ Registration is not adoption. A database that already has a schema still needs `
 
 - `vault`: set `vault.addr`; with `vault.k8sRole` the service logs in with the Kubernetes auth method using its own ServiceAccount token, otherwise point `vault.tokenSecret` at a Secret holding `VAULT_TOKEN`.
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
-- `static`: nothing to configure beyond a key provider; the DSN is sealed with it.
+- `static`: the only one that needs a key, and the chart configures none by default. Set `existingSecret.keys.masterKey` (or a `serve.keyProvider` of `gcpkms` / `vault-transit`) before registering one; the DSN is sealed with it.
 
 ## Notifications
 

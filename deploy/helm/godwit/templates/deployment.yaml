@@ -82,6 +82,9 @@ spec:
             {{- end }}
           env:
             {{- if eq .Values.serve.keyProvider.name "env" }}
+            {{- if and .Values.existingSecret.keys.masterKeyPrevious (not .Values.existingSecret.keys.masterKey) }}
+            {{- fail "existingSecret.keys.masterKeyPrevious needs existingSecret.keys.masterKey: GODWIT_MASTER_KEY_PREVIOUS on its own configures no key" }}
+            {{- end }}
             {{- with .Values.existingSecret.keys.masterKey }}
             - name: GODWIT_MASTER_KEY
               valueFrom:

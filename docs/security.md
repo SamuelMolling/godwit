@@ -65,7 +65,7 @@ A target godwit cannot open is **not** a start-up failure. It logs `static targe
 | No key, registering a `static` target | `invalid_argument: static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY` |
 | Key present, the target's key gone | `CreateRun` is **refused outright** — admission observes the target before it queues anything, with or without `--skip-validation` — so no run row exists and there is nothing to resume. A run already queued when the key changed fails at claim instead, with the same error in `cp_runs.error` (`failed`, not transient, resumable with `godwit run resume` once the key is back or the target re-registered) |
 
-Targets using the `kubernetes` or `vault` providers store no secret and need nothing.
+Targets using the `kubernetes` or `vault` providers store no secret and need nothing. That is the case the Helm chart defaults to: `existingSecret.keys.masterKey` is empty, so a release that registers `static` targets has to name the Secret key holding the master key ([chart README](../deploy/helm/godwit/README.md#prerequisites)).
 
 ## Credential providers
 
