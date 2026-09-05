@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -157,5 +158,66 @@ func TestUIDiffSuppliesTheRepeatableFilesItStored(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "differs from what app recorded") ||
 		!strings.Contains(body, "rebuilds it from the body you pasted") || !strings.Contains(body, "CREATE VIEW") {
 		t.Fatalf("pasted body: code = %d body = %s", code, body)
+	}
+}
+
+func TestUIServedWithoutAuthentication(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	logs := &lockedBuffer{}
+	baseURL := startServiceCfg(t, Config{
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1",
+		Tokens:    []string{"root:admin:s-admin"},
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond},
+		Log:       slog.New(slog.NewJSONHandler(logs, nil)),
+		UI:        true, UIAnonymousScope: "operator",
+	})
+	registerTarget(t, newClient(baseURL, "s-admin"), newDatabase(t, "tg"))
+
+	if !strings.Contains(logs.String(), `"msg":"ui served without authentication"`) ||
+		!strings.Contains(logs.String(), `"scope":"operator"`) ||
+		!strings.Contains(logs.String(), "audited as ui:anonymous, with no identity behind them") {
+		t.Fatalf("start-up warning missing from: %s", logs.String())
+	}
+
+	web := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	call := func(method, path, site string) (int, string) {
+		req, _ := http.NewRequestWithContext(ctx, method, baseURL+path, nil)
+		req.Header.Set("Sec-Fetch-Site", site)
+		resp, err := web.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+
+		return resp.StatusCode, string(body)
+	}
+
+	if code, body := call(http.MethodGet, "/ui/drift", "same-origin"); code != http.StatusOK ||
+		!strings.Contains(body, "Unauthenticated") || !strings.Contains(body, "/ui/drift/app/check") {
+		t.Fatalf("anonymous page: code = %d body = %s", code, body)
+	}
+	if code, body := call(http.MethodPost, "/ui/drift/app/accept", "same-origin"); code != http.StatusSeeOther {
+		t.Fatalf("anonymous action: code = %d body = %s", code, body)
+	}
+	if code, body := call(http.MethodPost, "/ui/drift/app/accept", "cross-site"); code != http.StatusForbidden ||
+		!strings.Contains(body, "cross-site request refused") {
+		t.Fatalf("cross-site post: code = %d body = %s", code, body)
+	}
+
+	audit, err := newClient(baseURL, "s-admin").ListAudit(ctx, connect.NewRequest(&godwitv1.ListAuditRequest{Target: "app", Limit: 1}))
+	if err != nil || len(audit.Msg.Entries) != 1 || audit.Msg.Entries[0].Actor != "ui:anonymous" {
+		t.Fatalf("audit = %+v, err = %v", audit, err)
+	}
+
+	if _, err := newClient(baseURL, "").ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{})); err == nil ||
+		connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("the API must still demand a token: %v", err)
+	}
+
+	if err := Run(ctx, Config{UIAnonymousScope: "everyone", Log: testLog}); err == nil ||
+		!strings.Contains(err.Error(), "ui anonymous scope: unknown scope") {
+		t.Fatalf("bad ui anonymous scope: %v", err)
 	}
 }

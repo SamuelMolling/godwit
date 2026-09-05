@@ -1,7 +1,8 @@
 # No ingress of any kind: the API is reached over the Service by in-cluster hook
 # Jobs and by `kubectl port-forward`. A Vault Agent sidecar writes the credential
 # file the `kubernetes` provider reads, so nothing but the Deployment is rendered
-# beyond the Service, the ServiceAccount and the PDB.
+# beyond the Service, the ServiceAccount and the PDB. Nothing off-cluster can reach
+# the port, so the UI is served unauthenticated: `serve.ui.auth: false`.
 replicaCount: 2
 
 image:
@@ -15,7 +16,9 @@ serve:
   scratch:
     enabled: true
   ui:
-    enabled: false
+    enabled: true
+    auth: false
+    anonymousScope: operator
 
 serviceAccount:
   create: true

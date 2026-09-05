@@ -112,6 +112,16 @@ serve:
     # --ui-scope: what the shared identity may do — read, pipeline, operator or admin.
     # An anonymous visitor on a UI with no tokens and no basicAuth is always read, whatever this says.
     scope: operator
+    # false serves /ui with no authentication at all (--ui-anonymous-scope): no password is asked for,
+    # whatever GODWIT_TOKENS holds, and anyone who reaches the address may do whatever anonymousScope
+    # allows, audited as ui:anonymous with no identity behind it. Only for a listener nothing but
+    # trusted operators can reach — an internal Service, a VPN, an authenticating proxy in front.
+    # The pod logs `ui served without authentication` on every start. The API keeps its own tokens.
+    auth: true
+    # --ui-anonymous-scope: what an unauthenticated visitor may do when auth is false — read,
+    # pipeline, operator or admin. read serves a dashboard nobody can act from, which is the safer
+    # shape when the UI exists to be looked at.
+    anonymousScope: operator
     # --ui-origin: the scheme://host[:port] origins a browser reaches /ui at, e.g.
     # ["https://godwit.example.com"]. Set this whenever an Ingress publishes /ui: it is the
     # allowlist of hosts the UI answers on and of origins a form post may come from. Empty

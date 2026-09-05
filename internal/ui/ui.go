@@ -44,6 +44,9 @@ type Config struct {
 	// AnonymousScope is what a visitor gets when neither Tokens nor User/Password can sign anyone in;
 	// it defaults to AnonymousScope, never to Scope, and widening it is an explicit choice.
 	AnonymousScope api.Scope
+	// Anonymous serves /ui with no authentication at all, even when Tokens or User/Password could sign
+	// someone in. Every visitor is then ui:anonymous with AnonymousScope.
+	Anonymous bool
 }
 
 // Handler renders the UI by calling svc in-process with a ui:<user> principal.
@@ -96,7 +99,7 @@ func (h *Handler) shared() bool {
 }
 
 func (h *Handler) protected() bool {
-	return len(h.cfg.Tokens) > 0 || h.shared()
+	return !h.cfg.Anonymous && (len(h.cfg.Tokens) > 0 || h.shared())
 }
 
 func digestEqual(a, b string) int {
@@ -408,6 +411,7 @@ type page struct {
 	Pending   []migRow
 	Error     string
 	Partial   bool
+	Anonymous bool
 }
 
 func needsHuman(r *godwitv1.Run) bool {
@@ -417,7 +421,7 @@ func needsHuman(r *godwitv1.Run) bool {
 func (h *Handler) bare(r *http.Request, nav string) page {
 	who := api.Caller(r.Context())
 	p := page{
-		Nav: nav, Replica: h.cfg.Replica, Version: version.Version,
+		Nav: nav, Replica: h.cfg.Replica, Version: version.Version, Anonymous: h.cfg.Anonymous,
 		Scope: string(who.Scope), Can: allowed(who), Partial: r.Header.Get("HX-Request") != "",
 	}
 	if h.protected() {

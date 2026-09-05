@@ -18,6 +18,7 @@ import (
 
 func newServeCmd() *cobra.Command {
 	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope, holder string
+	var uiAnonymousScope string
 	var uiOrigins []string
 	var driftInterval, leaseTTL, tickInterval, runTimeout, shutdownTimeout time.Duration
 	var maxAttempts, maxConcurrentRuns, storeMaxConns int
@@ -36,7 +37,8 @@ func newServeCmd() *cobra.Command {
 			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level), GODWIT_HOLDER (default for --holder),\n" +
 			"GODWIT_UI=true (web UI at /ui), any bearer token's secret signs in to /ui as that token,\n" +
-			"GODWIT_UI_USER and GODWIT_UI_PASSWORD (a shared /ui identity), GODWIT_UI_SCOPE (what that identity may do)\n" +
+			"GODWIT_UI_USER and GODWIT_UI_PASSWORD (a shared /ui identity), GODWIT_UI_SCOPE (what that identity may do),\n" +
+			"GODWIT_UI_ANONYMOUS_SCOPE (serve /ui unauthenticated at that scope)\n" +
 			"and GODWIT_UI_ORIGIN (comma-separated origins /ui is reached at).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if storeDSN == "" {
@@ -74,23 +76,24 @@ func newServeCmd() *cobra.Command {
 					RequestBytes: maxRequestBytes, Migrations: maxMigrations, Files: maxFiles,
 					FileBytes: maxFileBytes, HeavyCalls: maxConcurrentDiffs,
 				},
-				DriftInterval:   driftInterval,
-				WebhookURL:      os.Getenv("GODWIT_WEBHOOK_URL"),
-				SlackToken:      os.Getenv("GODWIT_SLACK_TOKEN"),
-				SlackChannel:    os.Getenv("GODWIT_SLACK_CHANNEL"),
-				SlackMode:       os.Getenv("GODWIT_SLACK_MODE"),
-				PublicURL:       os.Getenv("GODWIT_PUBLIC_URL"),
-				SkipValidation:  skipValidation,
-				RequirePlan:     requirePlan,
-				PlanTTL:         planTTL,
-				PlanRetention:   planRetention,
-				UI:              withUI || os.Getenv("GODWIT_UI") == "true",
-				UIUser:          uiUser,
-				UIPassword:      uiPassword,
-				UIScope:         uiScope,
-				UIOrigins:       uiOrigins,
-				ShutdownTimeout: shutdownTimeout,
-				Log:             log,
+				DriftInterval:    driftInterval,
+				WebhookURL:       os.Getenv("GODWIT_WEBHOOK_URL"),
+				SlackToken:       os.Getenv("GODWIT_SLACK_TOKEN"),
+				SlackChannel:     os.Getenv("GODWIT_SLACK_CHANNEL"),
+				SlackMode:        os.Getenv("GODWIT_SLACK_MODE"),
+				PublicURL:        os.Getenv("GODWIT_PUBLIC_URL"),
+				SkipValidation:   skipValidation,
+				RequirePlan:      requirePlan,
+				PlanTTL:          planTTL,
+				PlanRetention:    planRetention,
+				UI:               withUI || os.Getenv("GODWIT_UI") == "true",
+				UIUser:           uiUser,
+				UIPassword:       uiPassword,
+				UIScope:          uiScope,
+				UIAnonymousScope: uiAnonymousScope,
+				UIOrigins:        uiOrigins,
+				ShutdownTimeout:  shutdownTimeout,
+				Log:              log,
 			})
 		},
 	}
@@ -132,6 +135,9 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&uiUser, "ui-user", os.Getenv("GODWIT_UI_USER"), "basic auth user for /ui (or GODWIT_UI_USER)")
 	cmd.Flags().StringVar(&uiPassword, "ui-password", os.Getenv("GODWIT_UI_PASSWORD"), "basic auth password for /ui (or GODWIT_UI_PASSWORD)")
 	cmd.Flags().StringVar(&uiScope, "ui-scope", envOr("GODWIT_UI_SCOPE", "operator"), "scope of the --ui-user identity: read, pipeline, operator or admin (or GODWIT_UI_SCOPE)")
+	cmd.Flags().StringVar(&uiAnonymousScope, "ui-anonymous-scope", os.Getenv("GODWIT_UI_ANONYMOUS_SCOPE"),
+		"serve /ui with no authentication at all, at this scope: read, pipeline, operator or admin (or GODWIT_UI_ANONYMOUS_SCOPE). "+
+			"Anyone who reaches the listener may then do whatever it allows, audited as ui:anonymous; empty keeps /ui behind basic auth")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),
 		"scheme://host[:port] origins /ui is reached at; a form post from anywhere else and a request for another host are refused (or GODWIT_UI_ORIGIN)")
 
