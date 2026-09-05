@@ -584,6 +584,48 @@ func TestSharedIdentityScope(t *testing.T) {
 	absent(t, rec, noAction)
 }
 
+func TestAnonymousServesWithoutAuthentication(t *testing.T) {
+	t.Parallel()
+	s := fixture()
+	h := newUI(s, Config{
+		Tokens: uiTokens, User: "sam", Password: "pw", Scope: api.ScopeRead,
+		Anonymous: true, AnonymousScope: api.ScopeOperator,
+	})
+
+	rec := do(h, http.MethodGet, "/ui/", nil)
+	want(t, rec, http.StatusOK, "Unauthenticated", `class="chip">operator<`)
+	absent(t, rec, "Signed in as", "No sign-in configured")
+
+	want(t, do(h, http.MethodGet, "/ui/drift", nil), http.StatusOK, "/ui/drift/app/check", "/ui/drift/app/accept")
+	redirect(t, do(h, http.MethodPost, "/ui/drift/app/accept", nil), "/ui/drift?target=app")
+	if s.actor != "ui:anonymous" {
+		t.Fatalf("actor = %q, want ui:anonymous", s.actor)
+	}
+	if p, ok := h.principal(httptest.NewRequest(http.MethodGet, "/ui/", nil)); !ok ||
+		p != (api.Principal{Name: "ui:anonymous", Scope: api.ScopeOperator}) {
+		t.Fatalf("principal = %+v %v", p, ok)
+	}
+
+	cross := do(h, http.MethodPost, "/ui/drift/app/check", nil, "Sec-Fetch-Site", "cross-site")
+	want(t, cross, http.StatusForbidden, "cross-site request refused")
+
+	read := newUI(fixture(), Config{Tokens: uiTokens, Anonymous: true, AnonymousScope: api.ScopeRead})
+	rec = do(read, http.MethodGet, "/ui/drift", nil)
+	want(t, rec, http.StatusOK, "Unauthenticated", "Actions on this page need a wider scope")
+	absent(t, rec, noAction)
+	want(t, do(read, http.MethodPost, "/ui/drift/app/accept", nil), http.StatusForbidden,
+		"AcceptBaseline requires scope operator; token ui:anonymous has scope read")
+}
+
+// Anonymous without a scope must not widen anything: New still defaults the visitor to read.
+func TestAnonymousWithoutAScopeStaysRead(t *testing.T) {
+	t.Parallel()
+
+	h := New(fixture(), Config{Tokens: uiTokens, Anonymous: true, Scope: api.ScopeAdmin})
+	h.now = func() time.Time { return now }
+	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusOK, `class="chip">read<`)
+}
+
 // A service with no way to sign anyone in must not hand a visitor the rights of the identity it would
 // have authenticated: New defaults the anonymous principal to read, whatever Scope says.
 func TestAnonymousScopeIsRead(t *testing.T) {

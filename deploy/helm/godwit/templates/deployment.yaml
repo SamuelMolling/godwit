@@ -71,8 +71,14 @@ spec:
             - --skip-validation
             {{- end }}
             {{- if .Values.serve.ui.enabled }}
+            {{- if and (not .Values.serve.ui.auth) .Values.serve.ui.basicAuth }}
+            {{- fail "serve.ui.auth: false serves /ui unauthenticated; serve.ui.basicAuth then configures an identity nobody is ever asked for" }}
+            {{- end }}
             - --ui
             - --ui-scope={{ .Values.serve.ui.scope }}
+            {{- if not .Values.serve.ui.auth }}
+            - --ui-anonymous-scope={{ .Values.serve.ui.anonymousScope }}
+            {{- end }}
             {{- range .Values.serve.ui.origins }}
             - --ui-origin={{ . }}
             {{- end }}

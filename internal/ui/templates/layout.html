@@ -270,7 +270,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
     </div>
   </div>
   <div class="foot">
-    <div class="who">{{if .User}}<span class="lbl">Signed in as</span><span class="mono">{{.User}}</span><span class="chip">{{.Scope}}</span>{{else}}<span class="lbl">No sign-in configured</span><span class="mono">--ui-user or a bearer token</span><span class="chip">{{.Scope}}</span>{{end}}</div>
+    <div class="who">{{if .User}}<span class="lbl">Signed in as</span><span class="mono">{{.User}}</span><span class="chip">{{.Scope}}</span>{{else if .Anonymous}}<span class="lbl">Unauthenticated</span><span class="mono">anyone who reaches this address</span><span class="chip">{{.Scope}}</span>{{else}}<span class="lbl">No sign-in configured</span><span class="mono">--ui-user or a bearer token</span><span class="chip">{{.Scope}}</span>{{end}}</div>
   </div>
 </aside>
 <main>{{end}}

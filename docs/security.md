@@ -151,6 +151,7 @@ Why the UI has no account model of its own: [decision 0004](decisions/0004-ui-is
 | the secret of one of `GODWIT_TOKENS` (the username is ignored) | `ui:<token name>` | that token's scope |
 | `--ui-password`, with `--ui-user` as the username | `ui:<user>` | `--ui-scope` (default `operator`) |
 | nothing, on a service with neither tokens nor `--ui-user` | `ui:anonymous` | `read`, always |
+| nothing, on a service started with `--ui-anonymous-scope` | `ui:anonymous` | that scope — see [an unauthenticated UI](#an-unauthenticated-ui) |
 | anything else | refused with `401` and `WWW-Authenticate: Basic realm="godwit"` | — |
 
 Every secret is compared in constant time as a SHA-256 digest, and the password is never logged. The UI is protected as soon as the service has tokens **or** the `--ui-user` / `--ui-password` pair; with neither it is open to anyone who reaches the port and `serve` logs `ui enabled without basic auth` — treat that as a development setting.
@@ -162,6 +163,20 @@ The UI calls the service in process, so its actions appear in `cp_audit` under `
 The one button `read` may press is **Generate migration** on `/ui/diff`, and that is deliberate: `Diff` persists nothing — it applies the pasted DDL to a scratch database that is dropped again, and hands back SQL for a human to commit. It does *execute* that DDL, on the scratch server, as the scratch role; what stops it from being a privilege escalation is [the scratch database](#the-scratch-database) being isolated, not the RPC being read-only. The page is gated by the same `.Can` map as every other action, so if `Diff` ever needs a wider scope the button disappears on its own.
 
 Basic auth sends the password on every request, so the TLS termination below is not optional when the UI is on.
+
+### An unauthenticated UI
+
+`--ui-anonymous-scope <scope>` (`GODWIT_UI_ANONYMOUS_SCOPE`, `serve.ui.auth: false` with `serve.ui.anonymousScope` in the chart) serves `/ui` with **no authentication at all**: no password is asked for, no `401` is ever returned, and every visitor is `ui:anonymous` with that scope, whatever `GODWIT_TOKENS`, `--ui-user` and `--ui-password` hold. It is off by default and nothing else turns it on — the row above it, the `read` an anonymous visitor gets on a service that simply has no credential configured, is a different thing and stays as it is.
+
+**The threat model is one sentence: anyone who can open `http://<host>/ui` in a browser may do whatever the scope allows, and nothing records who they were.** There is no password to guess and no rate limit to hit; the boundary is the network and only the network. `--ui-anonymous-scope operator` is therefore a licence to resume, park, revert with `force` and `allow-data-loss`, confirm a contract, accept a drift baseline and run `Diff` — issued to every host that can route to the listener, including anything else running on it. Use it only where that set is exactly the set of people you would have given an operator token to: a Service with no Ingress, a VPN-only address, or an authenticating proxy that is itself the front door. `--ui-anonymous-scope read` serves the same dashboard with every action gone, which is the shape to reach for when the UI exists to be looked at.
+
+Actions are still audited, honestly rather than usefully: `cp_audit.actor` is `ui:anonymous`, and the answer to "who reverted this run" becomes "someone who could reach the host". Nothing else is relaxed — the scope gate on every in-process call, the [origin check](#cross-site-requests) (which matters *more* here, since there is no credential a browser must have been given first), the response headers and the `--ui-origin` host allowlist all apply unchanged. The API keeps its own tokens: this flag touches `/ui` and nothing else.
+
+`serve` logs one line at warn level on every start, next to `scratch database is not isolated`:
+
+```json
+{"time":"...","level":"WARN","msg":"ui served without authentication","scope":"operator","detail":"anyone who can reach this listener may use /ui at this scope; actions are audited as ui:anonymous, with no identity behind them"}
+```
 
 ### Cross-site requests
 

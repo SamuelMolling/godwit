@@ -69,6 +69,9 @@ type Config struct {
 	UIUser     string
 	UIPassword string
 	UIScope    string
+	// UIAnonymousScope serves /ui with no authentication at all, at that scope, whatever Tokens,
+	// UIUser and UIPassword hold. Empty keeps /ui behind basic auth.
+	UIAnonymousScope string
 	// UIOrigins are the scheme://host[:port] origins /ui is reached at; empty compares the browser's Origin with the request Host.
 	UIOrigins []string
 	// ShutdownTimeout bounds the whole shutdown once ctx ends: draining the listener and then the runs
@@ -119,6 +122,14 @@ func Run(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("ui scope: %w", err)
 		}
 		uiScope = s
+	}
+	var anonScope api.Scope
+	if cfg.UIAnonymousScope != "" {
+		s, err := api.ParseScope(cfg.UIAnonymousScope)
+		if err != nil {
+			return fmt.Errorf("ui anonymous scope: %w", err)
+		}
+		anonScope = s
 	}
 	origins, err := ui.ParseOrigins(cfg.UIOrigins)
 	if err != nil {
@@ -208,7 +219,12 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Limits = cfg.Limits
 	handler := api.Handler(apiSrv, tokens)
 	if cfg.UI {
-		if cfg.UIUser == "" && len(tokens) == 0 {
+		switch {
+		case anonScope != "":
+			log.Warn("ui served without authentication", "scope", string(anonScope),
+				"detail", "anyone who can reach this listener may use /ui at this scope; "+
+					"actions are audited as ui:anonymous, with no identity behind them")
+		case cfg.UIUser == "" && len(tokens) == 0:
 			log.Warn("ui enabled without basic auth", "anonymous_scope", string(ui.AnonymousScope))
 		}
 		mux := http.NewServeMux()
@@ -216,6 +232,7 @@ func Run(ctx context.Context, cfg Config) error {
 		mux.Handle("/ui/", ui.New(apiSrv, ui.Config{
 			Replica: cfg.Holder, Tokens: tokens, User: cfg.UIUser, Password: cfg.UIPassword,
 			Scope: uiScope, Origins: origins,
+			Anonymous: anonScope != "", AnonymousScope: anonScope,
 		}))
 		handler = mux
 	}

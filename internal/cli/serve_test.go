@@ -88,6 +88,15 @@ func TestServeBadUIScope(t *testing.T) {
 	}
 }
 
+func TestServeBadUIAnonymousScope(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	t.Setenv("GODWIT_UI_ANONYMOUS_SCOPE", "everyone")
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--ui")
+	if code != 1 || !strings.Contains(errOut, `ui anonymous scope: unknown scope "everyone"`) {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
 func TestServeStoreDSNFromEnv(t *testing.T) {
 	code, _, errOut := runCLI("serve")
 	if code != 1 || !strings.Contains(errOut, "--store-dsn (or GODWIT_STORE_DSN) is required") {

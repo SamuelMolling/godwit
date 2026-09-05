@@ -103,9 +103,10 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--ui-user` | `GODWIT_UI_USER` | basic auth user for a shared `/ui` identity; needs `--ui-password` |
 | `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for that shared identity |
 | `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared `--ui-user` identity may do: `read`, `pipeline`, `operator` or `admin`; an anonymous visitor on an open UI is always `read` |
+| `--ui-anonymous-scope` | `GODWIT_UI_ANONYMOUS_SCOPE` | serve `/ui` with **no authentication at all** at this scope: `read`, `pipeline`, `operator` or `admin`. Empty (the default) keeps `/ui` behind basic auth |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
-A bad log format or level, an unknown `--ui-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts. A `--scratch-dsn` that does not parse, cannot be reached, or names a role that can act outside its own scratch databases fails it right after the store migration.
+A bad log format or level, an unknown `--ui-scope` or `--ui-anonymous-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts. A `--scratch-dsn` that does not parse, cannot be reached, or names a role that can act outside its own scratch databases fails it right after the store migration.
 
 ### Admission limits
 
@@ -120,6 +121,8 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 `--max-concurrent-runs` and `--run-timeout` are the scheduler's side: the replica claims up to `--max-concurrent-runs` runs and executes each on its own goroutine, so a backfill with `batch=1 pause=1h` occupies one slot instead of the whole replica; `--run-timeout` is the wall clock past which such a run is cancelled and recorded as `failed`. Raise it above the longest backfill you expect to run in one go.
 
 `/ui` also accepts the secret of any [bearer token](#token-spec) as the basic-auth password, whatever username is typed; that signs in as `ui:<token name>` with the token's own scope. The UI is protected as soon as tokens or the user/password pair exist; with neither it serves open, logs `ui enabled without basic auth`, audits as `ui:anonymous` and carries scope **`read`** — not `--ui-scope`, which applies only to the identity that signed in. Pages offer only the actions the scope allows and a request beyond it is refused with `403`. Every form post must also come from the UI's own origin, so a `POST /ui/…` from a script — with no `Origin` and no `Sec-Fetch-Site` — is refused with `403 cross-site request refused`; see [security](security.md#cross-site-requests).
+
+`--ui-anonymous-scope` turns all of that off for `/ui`, deliberately: no password is asked for whatever credentials the service holds, every visitor is `ui:anonymous` with the scope named, and `serve` logs `ui served without authentication` on every start. It is for a listener only trusted operators can reach — the network is then the whole boundary, and the audit trail says `ui:anonymous` and nothing more. The origin check, the scope gate and the API's own tokens are unchanged. Read [an unauthenticated UI](security.md#an-unauthenticated-ui) before setting it.
 
 ### Environment
 
@@ -148,6 +151,7 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_UI_USER` | no | default for `--ui-user` |
 | `GODWIT_UI_PASSWORD` | no | default for `--ui-password` |
 | `GODWIT_UI_SCOPE` | no | default for `--ui-scope` |
+| `GODWIT_UI_ANONYMOUS_SCOPE` | no | default for `--ui-anonymous-scope`; set it and `/ui` asks for no credential at all |
 | `GODWIT_UI_ORIGIN` | no | comma-separated default for `--ui-origin` |
 | `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
 | `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
