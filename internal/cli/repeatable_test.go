@@ -10,7 +10,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
 
-func TestApplyAndStatusRepeatable(t *testing.T) {
+func TestUpAndStatusRepeatable(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)
 	dir := writeMigs(t, map[string]string{

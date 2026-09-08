@@ -167,7 +167,7 @@ func TestPlanErrors(t *testing.T) {
 	}
 }
 
-func TestRunApplyAndSkip(t *testing.T) {
+func TestUpAppliesAndSkips(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)
 	dir := goodMigs(t)
