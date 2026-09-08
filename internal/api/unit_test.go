@@ -340,10 +340,10 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 	}
 	t.Cleanup(mock.Close)
 	mock.MatchExpectationsInOrder(false)
-	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").
+	mock.ExpectQuery("SELECT id, seq, target, state").WithArgs("r1").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
-			AddRow("r1", "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", "", 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
+			[]string{"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
+			AddRow("r1", int64(1), "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", "", 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
 
 	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	s.watchInterval = time.Hour
@@ -377,7 +377,7 @@ func TestParkRunNotifiesWithoutLookup(t *testing.T) {
 	t.Cleanup(mock.Close)
 	mock.ExpectExec("UPDATE cp_runs SET state").WithArgs("r1", controlplane.StateNeedsAttention, "why").
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-	mock.ExpectQuery("SELECT id, target, state").WithArgs("r1").WillReturnError(errors.New("gone"))
+	mock.ExpectQuery("SELECT id, seq, target, state").WithArgs("r1").WillReturnError(errors.New("gone"))
 
 	rec := &recordingNotifier{}
 	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})

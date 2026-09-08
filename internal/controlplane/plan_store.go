@@ -207,7 +207,7 @@ func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time
 		SELECT DISTINCT ON (`+migrationID+`) `+migrationID+`, r.id
 		FROM cp_runs r JOIN cp_run_files f ON f.run_id = r.id
 		WHERE r.target = $1 AND r.state = 'succeeded' AND r.created_at > $2
-		ORDER BY `+migrationID+`, r.created_at`, target, since)
+		ORDER BY `+migrationID+`, r.seq`, target, since)
 	if err != nil {
 		return nil, fmt.Errorf("list applying runs: %w", err)
 	}

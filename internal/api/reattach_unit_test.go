@@ -32,8 +32,8 @@ func expectBoundPlan(mock pgxmock.PgxPoolIface, applied []engine.Applied, migs [
 func expectBoundRun(mock pgxmock.PgxPoolIface, state string) {
 	mock.ExpectQuery("FROM cp_runs WHERE id = \\$1").WithArgs(boundRunID).
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
-			AddRow(boundRunID, "app", state, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", planID, 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
+			[]string{"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
+			AddRow(boundRunID, int64(1), "app", state, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", planID, 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
 }
 
 func expectRunsApplying(mock pgxmock.PgxPoolIface, byVersion map[int64]string) {
