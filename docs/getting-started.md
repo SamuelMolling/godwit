@@ -109,6 +109,8 @@ $ godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --v
 
 `apply` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
 
+Those four are the first of about thirty commands. What each one is for, when you would reach for it, and one example each is the [command reference](cli.md); this page keeps to the path through them.
+
 ## 2. The service
 
 The service needs a PostgreSQL database of its own (the *store*) and two secrets.
@@ -470,4 +472,4 @@ Inputs, outputs, the revert command, the `apply-on-merge` mode and the ArgoCD va
 
 ## Next
 
-[Concepts](concepts.md) explains what just happened in the target database and what happens when a replica dies with a run in flight. [Operations](operations.md) is the checklist before the service takes production traffic. Before you first need it: `godwit revert <run-id>` undoes **every** migration the run carried, not the last one — the [runbook](runbook.md#reverting-a-run) shows what that costs.
+The [command reference](cli.md) is the rest of the CLI: the commands this walkthrough did not need, and what each one is for. [Concepts](concepts.md) explains what just happened in the target database and what happens when a replica dies with a run in flight. [Operations](operations.md) is the checklist before the service takes production traffic. Before you first need it: `godwit revert <run-id>` undoes **every** migration the run carried, not the last one — the [runbook](runbook.md#reverting-a-run) shows what that costs.
