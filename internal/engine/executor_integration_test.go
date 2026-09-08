@@ -606,3 +606,60 @@ func TestCrashInsideTheExpandPhaseResumesThenHolds(t *testing.T) {
 		t.Fatalf("journal = %d rows, want 3", n)
 	}
 }
+
+func TestAtomicKeepsTheJournalForWhatCannotRunInATransaction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+	if _, err := conn.Exec(ctx, "CREATE TABLE ci (v int)"); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Migration{
+		Version: 1, Name: "idx", Checksum: "c",
+		UpSQL:   "CREATE INDEX CONCURRENTLY ci_v_idx ON ci (v);",
+		DownSQL: "DROP INDEX CONCURRENTLY ci_v_idx;",
+	}
+	p := buildPlanT(t, m, DirectionUp)
+	if p.Transactional() {
+		t.Fatal("CREATE INDEX CONCURRENTLY cannot run inside a transaction")
+	}
+	res, err := New(conn, Options{}, WithAtomic()).Up(ctx, p)
+	if err != nil || res.Applied != 1 {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if n := countRows(t, conn, "godwit.journal"); n != 2 {
+		t.Fatalf("journal = %d rows, want the intent and the done of a resumable statement", n)
+	}
+}
+
+func TestAtomicRecordsWithoutAJournal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+
+	m := Migration{
+		Version: 1, Name: "two", Checksum: "c",
+		UpSQL:   "CREATE TABLE a (id int);\nCREATE TABLE b (id int);",
+		DownSQL: "DROP TABLE b;\nDROP TABLE a;",
+	}
+	exec := New(conn, Options{}, WithAtomic())
+	res, err := exec.Up(ctx, buildPlanT(t, m, DirectionUp))
+	if err != nil || res.Applied != 2 {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if n := countRows(t, conn, "godwit.journal"); n != 0 {
+		t.Fatalf("journal = %d rows, want none for a migration that commits whole", n)
+	}
+	if state, count := runOf(t, conn, 1); state != "succeeded" || count != 1 {
+		t.Fatalf("run state = %q over %d rows", state, count)
+	}
+	res, err = exec.Up(ctx, buildPlanT(t, m, DirectionUp))
+	if err != nil || !res.Skipped {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	res, err = exec.Down(ctx, buildPlanT(t, m, DirectionDown))
+	if err != nil || res.Applied != 2 || tableIn(t, conn, "a") {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+}

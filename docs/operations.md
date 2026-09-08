@@ -125,7 +125,7 @@ Then open it as an ordinary pull request: `lint` and `plan` run on it like any m
 ## Upgrades
 
 1. Read the release notes for new store migrations (`internal/controlplane/schema.go`, `storeMigrations`).
-2. Roll the image (`ghcr.io/samuelmolling/godwit`: `main` follows the branch, `sha-<short commit>` pins one build; set `image.tag` in the chart). On start every replica runs `Migrate` on the store under the store's own advisory lock; the first one applies, the others see nothing pending. The log line `store migrated` carries `applied=N`.
+2. Roll the image (`ghcr.io/samuelmolling/godwit`: `main` follows the branch, `sha-<short commit>` pins one build; set `image.tag` in the chart). On start every replica runs `Migrate` on the store under the store's own advisory lock; the first one applies, the others see nothing pending. The log line `store migrated` carries `applied=N`. Each store migration is one transaction: it commits with the row that records it, so a replica killed part way through leaves the store exactly as it was and the next start applies it whole.
 3. Store migrations are forward-only in practice; `DownSQL` exists but no command applies it. To roll back a release, restore the store from backup taken before step 2.
 4. Old and new replicas share the store during the rollout; keep migrations additive (they are).
 
@@ -304,3 +304,5 @@ Never logged: DSNs, tokens, master key, migration SQL text. `/metrics`, `/health
 ## Probes
 
 `GET /healthz` returns 200 once the process listens. `GET /readyz` pings the store and returns 503 while it is unreachable; the Helm chart wires both. Kubernetes routing away from a replica whose store ping fails is what you want: its scheduler cannot claim anyway.
+
+A replica migrates the store before it listens, so both probes fail while it does — including the wait for the advisory lock another replica is holding to migrate. The chart's `startupProbe` (`/healthz`, `periodSeconds: 5`, `failureThreshold: 60`) is what keeps that off the liveness budget: Kubernetes suspends liveness and readiness until it passes, and a replica that would have been killed part way through the wait now gets five minutes to come up. A release carrying a store migration slower than that needs a higher `startupProbe.failureThreshold`, not a longer liveness period.

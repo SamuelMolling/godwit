@@ -156,13 +156,13 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 	return applyMigrations(ctx, conn.Conn(), storeMigrations)
 }
 
-func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration) (int, error) {
+func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration, extra ...engine.Option) (int, error) {
 	plans, err := buildPlans(migs, engine.DirectionUp)
 	if err != nil {
 		return 0, err
 	}
 
-	return applyPlans(ctx, db, engine.Options{}, plans, nil)
+	return applyPlans(ctx, db, engine.Options{}, plans, nil, append(extra, engine.WithAtomic())...)
 }
 
 // RegisterTarget upserts a target and its credential config.

@@ -298,6 +298,18 @@ resources:
   limits:
     memory: 512Mi
 
+# A replica migrates the store before it listens, and waits for the advisory lock
+# while a peer is doing it, so the first HTTP answer can be minutes away on a
+# release that carries a long migration. Kubernetes holds the liveness and
+# readiness probes back until this one passes, so that wait is not a restart.
+# Raise failureThreshold rather than periodSeconds for a store that migrates slowly.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  failureThreshold: 60
+
 livenessProbe:
   httpGet:
     path: /healthz

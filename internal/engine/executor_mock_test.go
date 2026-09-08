@@ -383,6 +383,126 @@ func TestFinalizeErrorPaths(t *testing.T) {
 	}
 }
 
+func TestAtomicErrorPaths(t *testing.T) {
+	t.Parallel()
+
+	prelude := func(mock pgxmock.PgxConnIface) {
+		expectLock(mock)
+		expectBootstrap(mock)
+		expectNotApplied(mock)
+	}
+	expectTimeouts := func(mock pgxmock.PgxConnIface) {
+		mock.ExpectExec("SET LOCAL lock_timeout").WillReturnResult(pgxmock.NewResult("SET", 0))
+		mock.ExpectExec("SET LOCAL statement_timeout").WillReturnResult(pgxmock.NewResult("SET", 0))
+	}
+	expectRun := func(mock pgxmock.PgxConnIface) {
+		mock.ExpectExec("INSERT INTO godwit.runs").
+			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+			WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	}
+
+	cases := []struct {
+		name    string
+		setup   func(mock pgxmock.PgxConnIface)
+		wantErr string
+	}{
+		{
+			name: "begin fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin().WillReturnError(errBoom)
+			},
+			wantErr: "begin",
+		},
+		{
+			name: "set timeout fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin()
+				mock.ExpectExec("SET LOCAL lock_timeout").WillReturnError(errBoom)
+				mock.ExpectRollback()
+			},
+			wantErr: "set timeouts",
+		},
+		{
+			name: "insert run fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin()
+				expectTimeouts(mock)
+				mock.ExpectExec("INSERT INTO godwit.runs").
+					WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+					WillReturnError(errBoom)
+				mock.ExpectRollback()
+			},
+			wantErr: "insert run",
+		},
+		{
+			name: "statement fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin()
+				expectTimeouts(mock)
+				expectRun(mock)
+				mock.ExpectExec("SELECT 1").WillReturnError(errBoom)
+				mock.ExpectRollback()
+			},
+			wantErr: "statement 0 of 00000000000001_m (up): exec",
+		},
+		{
+			name: "record migration fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin()
+				expectTimeouts(mock)
+				expectRun(mock)
+				mock.ExpectExec("SELECT 1").WillReturnResult(pgxmock.NewResult("SELECT", 1))
+				mock.ExpectExec("INSERT INTO godwit.migrations").
+					WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
+				mock.ExpectRollback()
+			},
+			wantErr: "record migration",
+		},
+		{
+			name: "close run fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin()
+				expectTimeouts(mock)
+				expectRun(mock)
+				mock.ExpectExec("SELECT 1").WillReturnResult(pgxmock.NewResult("SELECT", 1))
+				mock.ExpectExec("INSERT INTO godwit.migrations").
+					WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+				mock.ExpectExec("UPDATE godwit.runs SET state = 'succeeded'").WithArgs(pgxmock.AnyArg()).WillReturnError(errBoom)
+				mock.ExpectRollback()
+			},
+			wantErr: "close run",
+		},
+		{
+			name: "commit fails",
+			setup: func(mock pgxmock.PgxConnIface) {
+				mock.ExpectBegin()
+				expectTimeouts(mock)
+				expectRun(mock)
+				mock.ExpectExec("SELECT 1").WillReturnResult(pgxmock.NewResult("SELECT", 1))
+				mock.ExpectExec("INSERT INTO godwit.migrations").
+					WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("INSERT", 1))
+				mock.ExpectExec("UPDATE godwit.runs SET state = 'succeeded'").WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+				mock.ExpectCommit().WillReturnError(errBoom)
+				mock.ExpectRollback()
+			},
+			wantErr: "commit",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock, exec := newMockExec(t, WithAtomic())
+			prelude(mock)
+			tc.setup(mock)
+			_, err := exec.Up(context.Background(), txPlan(t))
+			wantErr(t, err, tc.wantErr)
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestNoTxErrorPaths(t *testing.T) {
 	t.Parallel()
 

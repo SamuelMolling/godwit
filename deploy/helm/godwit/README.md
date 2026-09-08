@@ -54,7 +54,7 @@ The release prints the in-cluster URL and the first commands to run. Every value
 
 | Object | Notes |
 |---|---|
-| Deployment | `serve --listen --drift-interval --scratch-template [--skip-validation] [--ui --ui-scope --ui-anonymous-scope]` — the two DSNs arrive as `GODWIT_STORE_DSN` and `GODWIT_SCRATCH_DSN`, never as arguments — env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, non-root read-only container, soft pod anti-affinity by default |
+| Deployment | `serve --listen --drift-interval --scratch-template [--skip-validation] [--ui --ui-scope --ui-anonymous-scope]` — the two DSNs arrive as `GODWIT_STORE_DSN` and `GODWIT_SCRATCH_DSN`, never as arguments — env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, a `startupProbe` on `/healthz` that gives the store migration five minutes before either of them applies, non-root read-only container, soft pod anti-affinity by default |
 | Service | ClusterIP on `service.port` → container port `serve.port` |
 | ServiceAccount | `serviceAccount.annotations` for Vault Kubernetes auth or cloud workload identity; token mounted by default because the Vault provider reads it |
 | PodDisruptionBudget | `minAvailable: 1` so a drain never takes both replicas |
