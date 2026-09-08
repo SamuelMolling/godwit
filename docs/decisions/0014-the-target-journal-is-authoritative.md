@@ -11,7 +11,7 @@ godwit keeps the same fact in two places.
 
 Nothing reconciled them, and the ledger won every argument by default. Three consequences, each reproduced against PostgreSQL 17 before the fix:
 
-1. **A migration applied outside this service stayed pending for ever.** An earlier tool, a hand `psql`, `godwit apply`, or a godwit instance whose store was lost — the target records it, `Store.Applied` does not. The order guard then refuses every later version below the newest ledger row, and `--allow-out-of-order` only gets you to the next failure: the scratch replay rebuilds only the service's own runs, so validation fails with `relation "…" does not exist`. This is what broke `docs/getting-started.md` §1 → §3 (#94, out-of-scope finding 1).
+1. **A migration applied outside this service stayed pending for ever.** An earlier tool, a hand `psql`, `godwit up` (`godwit apply` when this record was written), or a godwit instance whose store was lost — the target records it, `Store.Applied` does not. The order guard then refuses every later version below the newest ledger row, and `--allow-out-of-order` only gets you to the next failure: the scratch replay rebuilds only the service's own runs, so validation fails with `relation "…" does not exist`. This is what broke `docs/getting-started.md` §1 → §3 (#94, out-of-scope finding 1).
 2. **`baseline` could not rescue it.** `engine.MarkApplied` refused whenever the target's journal held any applied version — which is exactly the state such a target is in. `baseline` adopted a database godwit had never journalled and nothing adopted one it had journalled elsewhere.
 3. **A `migrate` over a target that already records everything succeeded and wrote nothing.** The executor skips a migration whose journal row matches the file's checksum, and the scheduler's recorder returned early on every skip. `godwit targets` said `0 applied` while `godwit target status` listed all of them, for ever.
 
@@ -34,12 +34,12 @@ So the ledger keeps its readers, and gains an obligation: it must be able to be 
 
 **A ledger row records how it got there.** `cp_run_applied.adopted` marks a row the run *found* rather than *applied*. Adopted rows are standing rows for #75's predicate — `Applied`, `History`, the applied count and the order guard all see them, which is the point — and they are **out of scope for `revert`** (#68: a revert undoes what the run applied). `baseline` and `reconcile` write only adopted rows; a revert of either is refused by kind, as before.
 
-**Three ways in, one shape.**
+**Three ways in, one shape.** The RPCs are `BaselineTarget` and `ReconcileTarget` and keep those names; the CLI spelled them `target baseline` and `target reconcile` until [0015](0015-command-names-say-what-they-do.md) merged the two into `target adopt`, and the commands below are written in the current spelling.
 
 | The target has | Command | What it does |
 |---|---|---|
-| the schema, no `godwit` journal | `godwit target baseline <t> --dir … --version N` | writes the journal rows for `≤ N`, then the ledger rows |
-| a `godwit` journal from elsewhere | `godwit target reconcile <t> --dir …` | writes **only** ledger rows, read from the target's journal |
+| the schema, no `godwit` journal | `godwit target adopt <t> --dir … --version N` | writes the journal rows for `≤ N`, then the ledger rows |
+| a `godwit` journal from elsewhere | `godwit target adopt <t> --dir … --from-journal` | writes **only** ledger rows, read from the target's journal |
 | a journal this service partly knows | either | both are idempotent: a row already present on the side that owns it is left alone |
 
 `baseline` stopped refusing a journalled target. It now refuses only when there is nothing left to adopt on *either* side (`ErrAlreadyMigrated`) or when the directory's checksum disagrees with the target's (`ErrHistoryConflict`). The old blanket refusal conflated "godwit already adopted this" with "this database had a life godwit was not part of", and the second is the adoption case. `--version` stays required and explicit, which is what actually keeps `baseline` from being a skip mechanism.
@@ -50,7 +50,7 @@ So the ledger keeps its readers, and gains an obligation: it must be able to be 
 
 ```
 target records migrations the ledger does not: app records 20260101000000_orders, 20260101000001_total;
-run `godwit target reconcile app --dir <migrations>` to adopt what it already has
+run `godwit target adopt app --from-journal --dir <migrations>` to adopt what it already has
 ```
 
 *Rejected: reconciling silently on first contact.* The repair needs the migration bodies — the replay cannot rebuild a migration whose SQL the store does not hold — so it needs a directory, which the planning call may not be carrying the right version of. And a target that has moved under godwit is news, not housekeeping.

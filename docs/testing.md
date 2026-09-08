@@ -93,7 +93,7 @@ Now it installs the same thing, and refuses to finish without counting what is l
 
 ### A target with a long history
 
-One target grown to 1000 migrations, 100 at a time, each a `CREATE TABLE`. `godwit plan` here is the cost of planning *one* new migration against a history of that size — the cost of `Validator.Validate`'s scratch replay, which every `plan`, `migrate`, `verify` and `diff` on the target pays. The last row is the same measurement after `godwit checkpoint` collapsed the thousand into one file and the target recorded it.
+One target grown to 1000 migrations, 100 at a time, each a `CREATE TABLE`. `godwit plan --target` here is the cost of planning *one* new migration against a history of that size — the cost of `Validator.Validate`'s scratch replay, which every `plan`, `migrate`, `verify` and `diff` on the target pays. The last row is the same measurement after `godwit checkpoint` collapsed the thousand into one file and the target recorded it.
 
 | History | `godwit plan` | `godwit target status` | `godwit diff` | `godwit migrate` of the next 100 |
 |---|---:|---:|---:|---:|
@@ -163,7 +163,7 @@ What the remaining 19 are:
 
 The replay is 1.9× faster on the shape a checkpoint helps least — a history that only ever adds, so the checkpoint has to build every table the history built, and all it saves is the per-migration overhead — and 76× faster on the shape it is for, where the body is 430 bytes because the history built and dropped as it went.
 
-**So the checkpoint pays, and `godwit plan` at 1000 migrations is not bounded by the replay.** 6.1 s of a 46 s `plan` is the replay; the rest is the request carrying 2001 files, the store persisting them, and libpg_query parsing every one of them on the way through. Making *that* cheaper is the whole-directory finding below, not the checkpoint's.
+**So the checkpoint pays, and `godwit plan --target` at 1000 migrations is not bounded by the replay.** 6.1 s of a 46 s `plan` is the replay; the rest is the request carrying 2001 files, the store persisting them, and libpg_query parsing every one of them on the way through. Making *that* cheaper is the whole-directory finding below, not the checkpoint's.
 
 The store at 1000 migrations across ten runs: `cp_run_files` 2.88 MB, `cp_plan_files` 2.82 MB, `cp_run_applied` 229 KB, `cp_snapshots` 213 KB. Every run persists the *whole* directory, so those two tables hold 11 000 file bodies for 1000 migrations.
 

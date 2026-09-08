@@ -573,7 +573,7 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 
 ## Version targets
 
-`godwit plan --to <version>` and `godwit migrate --to <version>` stop at a chosen migration: everything at or below that version runs, everything above it is left for a later run. It is how you land a large branch one migration at a time without editing the directory, and how a pipeline applies the expand-side migration today and the contract-side one tomorrow from the same commit.
+`godwit plan --target <name> --to <version>` and `godwit migrate --to <version>` stop at a chosen migration: everything at or below that version runs, everything above it is left for a later run. It is how you land a large branch one migration at a time without editing the directory, and how a pipeline applies the expand-side migration today and the contract-side one tomorrow from the same commit.
 
 **The whole directory is still submitted.** The client sends every file and the version target as a separate field; the service is what cuts the set. Filtering client-side and sending fewer files would produce the same run and a plan that *silently* covers less than the directory — the reviewer has no way to tell an intentional stop from a directory that only holds three migrations. So the migrations above the target stay on the plan, marked `withheld`, and appear in the text output, the markdown pull-request comment, `godwit plan show` and the JSON:
 
@@ -698,11 +698,11 @@ The monitor fingerprints every snapshotted target every `--drift-interval` (5m).
 
 ## Adopting an existing database
 
-Two ways in, depending on what the database already carries. Both write a `succeeded` run holding the files they put on the books, so scratch validation of later runs replays them, and both take a drift snapshot.
+One command, `godwit target adopt`, over two RPCs. Which one it calls depends on where the truth comes from, which is what its two flags name: `--version <N>` you supply, or `--from-journal` read off the target. Both write a `succeeded` run holding the files they put on the books, so scratch validation of later runs replays them, and both take a drift snapshot.
 
-**`BaselineTarget{target, files, version}` — the schema is there, godwit never journalled it.** Every migration with `version <= N` is inserted into the target's `godwit.migrations` with its checksum, without running it, in one transaction under the advisory lock; then a `baseline` run records them in the ledger. The usual first file is a schema dump named like `20260101000000_baseline.up.sql` with an empty-effect down side. `version` is required and explicit: defaulting to the whole directory would silently swallow pending migrations. Both halves are idempotent — a version the target already records is left alone, and one the ledger already stands on is not recorded twice — so a baseline over a partly-adopted target completes the adoption. Refused with `failed_precondition` when there is nothing left to record on either side, and when a file's checksum differs from the one the target recorded for that version (`recorded on the target under different content`).
+**`BaselineTarget{target, files, version}` (`godwit target adopt --version N`) — the schema is there, godwit never journalled it.** Every migration with `version <= N` is inserted into the target's `godwit.migrations` with its checksum, without running it, in one transaction under the advisory lock; then a `baseline` run records them in the ledger. The usual first file is a schema dump named like `20260101000000_baseline.up.sql` with an empty-effect down side. `version` is required and explicit: defaulting to the whole directory would silently swallow pending migrations. Both halves are idempotent — a version the target already records is left alone, and one the ledger already stands on is not recorded twice — so adopting again over a partly-adopted target completes the adoption. Refused with `failed_precondition` when there is nothing left to record on either side, and when a file's checksum differs from the one the target recorded for that version (`recorded on the target under different content`).
 
-**`ReconcileTarget{target, files}` — the target has a `godwit` journal this service did not write.** Another instance migrated it, the store was rebuilt, or the store was restored from a backup older than the target. Reconciling reads `godwit.migrations` and `godwit.repeatables`, compares them with the ledger, and writes a `reconcile` run holding the ledger rows the journal has and the store does not. **It never writes to the target.** No `version`: the target says what it holds.
+**`ReconcileTarget{target, files}` (`godwit target adopt --from-journal`) — the target has a `godwit` journal this service did not write.** Another instance migrated it, the store was rebuilt, or the store was restored from a backup older than the target. It reads `godwit.migrations` and `godwit.repeatables`, compares them with the ledger, and writes a `reconcile` run holding the ledger rows the journal has and the store does not. **It never writes to the target.** No `version`: the target says what it holds.
 
 It refuses, naming what it means, on the three disagreements it will not decide alone:
 
@@ -716,7 +716,7 @@ It refuses, naming what it means, on the three disagreements it will not decide 
 
 ```
 target records migrations the ledger does not: app records 20260101000000_orders, 20260101000001_total;
-run `godwit target reconcile app --dir <migrations>` to adopt what it already has
+run `godwit target adopt app --from-journal --dir <migrations>` to adopt what it already has
 ```
 
 Reverts are not gated: a revert acts on the ledger's own rows and is well defined whatever else the target holds. A target with a stored plan is not gated either — a history change the plan cannot attribute to a run is already `PlanStale{history}`, which reports it better.
@@ -774,7 +774,7 @@ The decision is a pure function of the files and of what the target has applied,
 | everything the checkpoint collapses | recorded without running | already applied |
 | some of them (mid-history) | recorded without running, after the rest have run | the missing ones run from their own files, in order |
 
-The fresh case is Atlas's rule — a new database starts from the checkpoint and skips what is below it — with one addition godwit needs: the collapsed migrations are **recorded** in `godwit.migrations` as the checkpoint runs, so the target's history is the same set of versions an old target has and the next `godwit plan` finds nothing pending below the checkpoint. Recording without running is the same `MarkOnly` path a baseline and already-applied detection use.
+The fresh case is Atlas's rule — a new database starts from the checkpoint and skips what is below it — with one addition godwit needs: the collapsed migrations are **recorded** in `godwit.migrations` as the checkpoint runs, so the target's history is the same set of versions an old target has and the next `godwit plan` finds nothing pending below the checkpoint. Recording without running is the same `MarkOnly` path an adoption at a version and already-applied detection use.
 
 **A target mid-history is not a special case**: the migrations between where it stopped and `through=` are simply pending, they run from their own files as they always did, and the checkpoint is recorded once the target reaches it. It only breaks if those files are gone from the directory, and then godwit refuses by name rather than guessing:
 
@@ -848,7 +848,7 @@ Only what the snapshot sees can be matched: columns of base tables, constraints,
 |---|---|---|
 | The migration has DML (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `COPY`, `TRUNCATE`, `SELECT`, `CALL`, `DO`) | `has DML, must execute` | Run it; data is never inferred from a schema. |
 | The migration creates or alters something the snapshot cannot see (functions, types, triggers, policies, grants, sequences, tablespaces, partitions, identity or generated columns, collations, unlogged or temporary tables, view options…) or has no effect on the scratch schema | `effect not inspectable` | Run it, or baseline it explicitly. |
-| The hand changes match the migration's effect but not as a prefix of the pending set (`S_k` never equals the target) | `effect is present but not as a prefix` and the difference in `drift` | Reorder or split the migrations so the hand-applied ones come first, or `godwit drift accept` and baseline them. |
+| The hand changes match the migration's effect but not as a prefix of the pending set (`S_k` never equals the target) | `effect is present but not as a prefix` and the difference in `drift` | Reorder or split the migrations so the hand-applied ones come first, or `godwit drift accept` the schema change and adopt the migrations with `godwit target adopt`. |
 | An applied migration's body differs from its checksum | `invalid_argument: ... applied with different content` | Restore the file. |
 | `skip_validation` | no note; `drift` falls back to the last snapshot | Validate to detect. |
 
@@ -971,4 +971,4 @@ production because staging never saw it.
 
 ## Actors and provenance
 
-Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `target.reconcile`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`, `plan.create`, `plan.supersede`) after it succeeds; reads are not audited (`Diff` creates and drops a scratch database on the scratch server but writes nothing in the store). `PlanRun{persist}` is the one `read`-scope call that writes: the plan and its `plan.create` row.
+Every token has a name; the name is the **actor** on the access log, on notifications, on `cp_runs.created_by` and on every `cp_audit` row. `CreateRun{source}` is free text stored on the run; the GitHub Action fills it with `<host>/<owner>/<repo>@<sha>[:<dir>]`. Every mutating RPC writes an audit row (`target.register`, `target.baseline`, `target.reconcile`, `run.create`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`, `plan.create`, `plan.supersede`) after it succeeds; reads are not audited (`Diff` creates and drops a scratch database on the scratch server but writes nothing in the store). `PlanRun{persist}` is the one `read`-scope call that writes: the plan and its `plan.create` row. The CLI exposes `persist` as `plan --save`, so the write is asked for rather than implied.

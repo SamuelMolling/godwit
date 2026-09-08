@@ -282,7 +282,7 @@ func (s *Server) checkReconciled(ctx context.Context, target string, obs control
 	if len(missing) == 0 {
 		return nil
 	}
-	refusal := fmt.Errorf("%w: %s records %s; run `godwit target reconcile %s --dir <migrations>` to adopt what it already has",
+	refusal := fmt.Errorf("%w: %s records %s; run `godwit target adopt %s --from-journal --dir <migrations>` to adopt what it already has",
 		errUnreconciled, target, strings.Join(missing, ", "), target)
 	s.Log.Warn("run refused by the reconcile gate", "target", target, "missing", missing)
 

@@ -147,7 +147,7 @@ WHERE r.target = :'target' AND NOT a.held AND a.reverted_by IS NULL
 GROUP BY r.id ORDER BY r.created_at;
 ```
 
-**Action.** For `migration failed validation`: fix the migration. For `replay history`: put the missing extension in the database `--scratch-template` names, or, when the history is legitimately unreplayable, baseline the target (`godwit target baseline <target> --version <newest applied>`, see [adopting an existing database](concepts.md#adopting-an-existing-database)) so replay starts from the baseline run. When the replay is *short* rather than broken — it rebuilds less than the target holds — the ledger is behind the target's journal; see [below](#the-ledger-is-behind-a-target). `--skip-validation` on a single run is the escape hatch; it leaves no trace in the audit trail, so note it in the pull request.
+**Action.** For `migration failed validation`: fix the migration. For `replay history`: put the missing extension in the database `--scratch-template` names, or, when the history is legitimately unreplayable, adopt the target at a version (`godwit target adopt <target> --version <newest applied>`, see [adopting an existing database](concepts.md#adopting-an-existing-database)) so replay starts from the run that adoption wrote. When the replay is *short* rather than broken — it rebuilds less than the target holds — the ledger is behind the target's journal; see [below](#the-ledger-is-behind-a-target). `--skip-validation` on a single run is the escape hatch; it leaves no trace in the audit trail, so note it in the pull request.
 
 Scratch databases are dropped after every validation; a leftover after a crash is harmless. On the scratch server (the store server when `--scratch-dsn` is unset):
 
@@ -236,7 +236,7 @@ godwit drift check <target>        # operator; re-checks now, prints the diff
 godwit drift accept <target>       # operator; new snapshot, open events resolved, audit drift.accept
 ```
 
-Accepting does not create a migration; the next `migrate` still replays history without the manual change, so put the change into a migration file too or validation will not see it.
+It records the current schema as the new reference for the target. It does not change the database; future checks compare against it. It creates no migration either: no migration file describes the change, so the next `migrate` still replays a history without it and the next database built from those files will not have it. Put the change into a migration file too, or validation will not see it.
 
 ## Checksum mismatch
 
@@ -268,11 +268,11 @@ The checksum is the SHA-256 hex of the up file body: `sha256sum migrations/<N>_<
 | `run "x": run is not revertable: ...` | failed_precondition | revert of an older run, of a run that applied nothing, or of one on a busy target | see [reverting a run](#reverting-a-run) |
 | `revert would destroy data: ...` | failed_precondition | the revert plan drops a non-empty table or column | `--allow-data-loss`, or roll forward |
 | `baseline runs cannot be reverted` | failed_precondition | revert of a `kind = baseline` run | drop `godwit.migrations` rows by hand if you really need it |
-| `target already has applied migrations` | failed_precondition | baseline with nothing left to record on either side | nothing to do; the target is already adopted |
+| `target already has applied migrations` | failed_precondition | `target adopt --version` with nothing left to record on either side | nothing to do; the target is already adopted |
 | `<id>: recorded on the target under different content` | failed_precondition | a file's checksum differs from the row the target recorded for that version | restore the file, or fix the target's row; one of the two is wrong |
 | `target records migrations the ledger does not: ...` | failed_precondition | the target's journal is ahead of the control plane's ledger | [the ledger is behind a target](#the-ledger-is-behind-a-target) |
-| `target and ledger disagree on <t>: ...` | failed_precondition | `reconcile` found a divergence it will not decide | [the ledger is behind a target](#the-ledger-is-behind-a-target) |
-| `drift detection is not enabled` / `baselining is not enabled` / `reconciling is not enabled` | unimplemented | server built without the feature wired (tests only) | — |
+| `target and ledger disagree on <t>: ...` | failed_precondition | `target adopt --from-journal` found a divergence it will not decide | [the ledger is behind a target](#the-ledger-is-behind-a-target) |
+| `drift detection is not enabled` / `baselining is not enabled` (`target adopt --version`) / `reconciling is not enabled` (`target adopt --from-journal`) | unimplemented | server built without the feature wired (tests only) | — |
 
 ## Which plan did this run apply
 
@@ -354,17 +354,17 @@ that matters.
 **Symptom.** Any of:
 
 ```
-failed_precondition: target records migrations the ledger does not: app records 20260101000000_orders; run `godwit target reconcile app --dir <migrations>` to adopt what it already has
+failed_precondition: target records migrations the ledger does not: app records 20260101000000_orders; run `godwit target adopt app --from-journal --dir <migrations>` to adopt what it already has
 ```
 
 `godwit targets` reports fewer applied migrations than `godwit target status <t>` lists. A plan shows a migration as pending that the target plainly has. The scratch replay rebuilds less than the target holds.
 
-**Meaning.** The target's own journal — which is the fact about what it has applied — is ahead of `cp_run_applied`. Something applied migrations godwit's store never saw: an earlier tool, a hand `psql`, `godwit apply`, another godwit instance, or this one with a store that was rebuilt or restored from an older backup.
+**Meaning.** The target's own journal — which is the fact about what it has applied — is ahead of `cp_run_applied`. Something applied migrations godwit's store never saw: an earlier tool, a hand `psql`, `godwit up`, another godwit instance, or this one with a store that was rebuilt or restored from an older backup.
 
-**Action.** Reconcile from the directory that built the target. It reads the target and writes only the store:
+**Action.** Adopt from the target's own journal, using the directory that built it. It reads the target and writes only the store:
 
 ```bash
-godwit target reconcile app --dir db/migrations
+godwit target adopt app --from-journal --dir db/migrations
 # target app: adopted 2 migration(s) from its journal (run 6f2c…): 20260101000000_orders, 20260101000001_total
 ```
 
@@ -381,7 +381,7 @@ SELECT a.migration, a.adopted, r.kind FROM cp_run_applied a JOIN cp_runs r ON r.
 WHERE r.target = :'target' AND NOT a.held AND a.reverted_by IS NULL ORDER BY a.migration;
 ```
 
-**When reconcile refuses.** It repairs one direction only, and names what it will not decide:
+**When `--from-journal` refuses.** It repairs one direction only, and names what it will not decide:
 
 | Refusal | What happened | What to do |
 |---|---|---|
@@ -389,7 +389,7 @@ WHERE r.target = :'target' AND NOT a.held AND a.reverted_by IS NULL ORDER BY a.m
 | `recorded on the target and absent from the directory` | the directory does not carry a migration the target ran | check out the branch or tag the target was migrated from; the replay needs the SQL |
 | `standing in the ledger and absent from the target` | the *target* lost history, not the store — a restore from a backup older than the last run, or a hand-emptied journal | this is an incident, not a repair: compare the target's schema with `cp_snapshots`, and decide whether to restore the target further forward or to re-apply |
 
-**After a store restore.** Reconcile every target, not only the noisy one; the drift snapshot is retaken as part of it. Runs the restored store has lost are gone from the history, but the migrations they applied come back as adopted rows, which is what the applied set, the order guard and the replay need. What does not come back is provenance: who ran what, and the directive expansions frozen on those rows — so an adopted `change-type` cannot be reverted, the same as a baselined one.
+**After a store restore.** Adopt every target from its journal, not only the noisy one; the drift snapshot is retaken as part of it. Runs the restored store has lost are gone from the history, but the migrations they applied come back as adopted rows, which is what the applied set, the order guard and the replay need. What does not come back is provenance: who ran what, and the directive expansions frozen on those rows — so an adopted `change-type` cannot be reverted, the same as one adopted at a version.
 
 ## Store unreachable
 

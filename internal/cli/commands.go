@@ -210,9 +210,20 @@ func newPlanCmd() *cobra.Command {
 	remote := &clientFlags{}
 	req := &godwitv1.PlanRunRequest{}
 	var format string
+	var save bool
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Parse migrations and print classified statements with hazards; with --target, store the plan on the service",
+		Short: "Show the statements a migration directory would run, offline or against a live target",
+		Long: "Three forms, in order of what they touch:\n\n" +
+			"  godwit plan --dir db/migrations         offline. Parses the files and prints both sides of every\n" +
+			"                                          migration. No database, no service, nothing written.\n" +
+			"  godwit plan --target app                live. The service works out what is pending on that target\n" +
+			"                                          and replays it on a scratch database to prove it applies.\n" +
+			"                                          Prints the result and stores nothing.\n" +
+			"  godwit plan --target app --save         the same, and stores the plan on the service, so a later\n" +
+			"                                          migrate binds to it and refuses if the target has moved.\n\n" +
+			"--target is a flag here and only a flag: plan never reads it from godwit.yaml, so a bare `godwit plan`\n" +
+			"is the offline form even in a repository whose config names a target.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			write, ok := planFormats[format]
 			if !ok {
@@ -221,14 +232,18 @@ func newPlanCmd() *cobra.Command {
 			if err := checkToVersion(cmd, req.ToVersion, "", req.Target); err != nil {
 				return err
 			}
+			if save && req.Target == "" {
+				return errors.New("--save needs --target: an offline plan is not made against a target, so there is nothing for a later migrate to bind to")
+			}
 			if req.Target != "" {
 				files, err := migrationFiles(flags.dir)
 				if err != nil {
 					return err
 				}
 				req.Files = files
+				req.Persist = save
 
-				return remote.persistPlan(cmd, req, write)
+				return remote.planRun(cmd, req, write)
 			}
 			migs, err := engine.LoadDir(flags.dir)
 			if err != nil {
@@ -253,14 +268,15 @@ func newPlanCmd() *cobra.Command {
 	flags.register(cmd, false)
 	remote.register(cmd)
 	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
-	cmd.Flags().StringVar(&req.Target, "target", "", "target name; plans against the live database and stores the plan on the service")
+	cmd.Flags().StringVar(&req.Target, "target", "", "target name; plans against the live database through the service instead of parsing the directory offline")
+	cmd.Flags().BoolVar(&save, "save", false, "store the plan on the service so a later migrate can bind to it (needs --target)")
 	cmd.Flags().StringVar(&req.Rollout, "rollout", "direct", "rollout policy: direct or expand-contract")
 	cmd.Flags().StringSliceVar(&req.AcknowledgeHazards, "ack", nil, "hazard codes to acknowledge")
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
 	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "plan pending versions older than the newest applied one instead of refusing them")
 	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the plan (e.g. github.com/org/repo@<sha>:db/migrations)")
 	cmd.Flags().Int64Var(&req.ToVersion, "to", 0, "stop at this migration version: pending ones above it are reported as withheld and left for a later plan")
-	configKeys(cmd, "target", "rollout", "allow-out-of-order")
+	configKeys(cmd, "rollout", "allow-out-of-order")
 
 	return cmd
 }
@@ -701,11 +717,14 @@ func directionsOf(m engine.Migration) []engine.Direction {
 	return []engine.Direction{engine.DirectionUp, engine.DirectionDown}
 }
 
-func newApplyCmd() *cobra.Command {
+func newUpCmd() *cobra.Command {
 	flags := &targetFlags{}
 	cmd := &cobra.Command{
-		Use:   "apply",
-		Short: "Apply all pending migrations",
+		Use:   "up",
+		Short: "Apply every pending migration to the database at --dsn, with no service involved",
+		Long: "Same executor, same journal and same crash safety as a service run, without the service: no target to\n" +
+			"register, no plan to bind, no ledger. What it applies is recorded in that database's own journal only.\n\n" +
+			"`up` and `down` are the local pair, against --dsn. `migrate` and `revert` are the service pair, against --target.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			migs, err := engine.LoadDir(flags.dir)
 			if err != nil {
@@ -778,7 +797,7 @@ func newStatusCmd() *cobra.Command {
 	flags := &targetFlags{}
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show applied state of every migration",
+		Short: "Show which migrations the database at --dsn has applied, asked of the database itself",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			migs, err := engine.LoadDir(flags.dir)
 			if err != nil {
@@ -822,7 +841,10 @@ func newDownCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "down",
-		Short: "Revert one applied migration (dev only; production policy is roll-forward)",
+		Short: "Undo one applied migration on the database at --dsn (dev only; production policy is roll-forward)",
+		Long: "Runs one migration's down side against --dsn and removes it from that database's journal.\n\n" +
+			"`up` and `down` are the local pair. The service pair is `migrate` and `revert` — and `revert` undoes\n" +
+			"one whole run read from the ledger, not one version you name, which is why it is the production path.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !yes {
 				return fmt.Errorf("down is destructive; re-run with --yes to confirm")

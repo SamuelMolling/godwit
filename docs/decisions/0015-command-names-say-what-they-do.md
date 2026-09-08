@@ -1,13 +1,20 @@
-# The commands that need explaining — **proposed, not decided**
+# 0015 — Command names that say what they do
 
-> **Status: open.** Not a decision record — the argument that has to be had before one exists.
-> Nothing here binds the code. It lives in `docs/decisions/open/` and carries **no number** on
-> purpose: the numbered records all name the pull requests that shipped them, and a number here
-> would claim a standing this text does not have. It takes one when it is decided, either way.
+> **Status: decided.** The four questions below were argued in `open/cli-command-names.md` and
+> answered by the owner: **all four recommendations taken.** `plan` keeps its name and gains
+> `--save`; `baseline` and `reconcile` become one `target adopt`; `drift accept` is documented
+> rather than renamed; the local `apply` becomes `up`. Nothing was released, so there are no
+> aliases and no deprecation shims — a clean break was the point.
+>
+> Everything below the horizontal rule is the analysis as it was written *before* the decision,
+> preserved unedited, because the evidence is what the decision rests on. The commands it quotes
+> are the ones that existed then. **[What shipped](#what-shipped)** is at the end of this record.
 
 ## The question
 
-Writing [`docs/cli.md`](../../cli.md) (#106) meant defining every command in one sentence. Three
+*The paragraphs from here to the recommendation are the open record as it stood.*
+
+Writing [`docs/cli.md`](../cli.md) (#106) meant defining every command in one sentence. Three
 resisted, and in each case the resistance came from the command rather than from the prose. A
 fourth pair — `revert` and `down` — was suspected and is largely **cleared**; what the check turned
 up instead is a fifth problem nobody had listed, and it is the worst one in the repository.
@@ -436,11 +443,12 @@ load-bearing for any recommendation.
 
 ---
 
-# Recommendation
+# The decision
 
-*Everything above is analysis. This is opinion, separated on purpose. Two renames, two refusals.*
+*Everything above is analysis. This was the recommendation, and the owner took all four of it.
+Two renames, two refusals.*
 
-### 1. `plan` — **take 1b. Add `--save`; drop `target` from `plan`'s `godwit.yaml` keys. Do not rename.**
+### 1. `plan` — **1b, taken. Add `--save`; drop `target` from `plan`'s `godwit.yaml` keys. Do not rename.**
 
 The problem is not the verb. `plan` is the right word for both halves and the whole industry agrees
 — what is wrong is that the durable, audited, DDL-executing half is the *default* and can be
@@ -457,7 +465,7 @@ on a scratch database, so blast radius still changes with a flag rather than wit
 and nobody has found that surprising — what surprises people is the durable artifact, and that is
 exactly what `--save` fences off.
 
-### 2. `baseline`/`reconcile` — **take 2b. One command: `godwit target adopt`, with `--version N` or `--from-journal`.**
+### 2. `baseline`/`reconcile` — **2b, taken. One command: `godwit target adopt`, with `--version N` or `--from-journal`.**
 
 This is the clearest rename in the record. `concepts.md` already found the parent concept and named
 it; the CLI is the only surface that does not have it. The flag names the thing that actually
@@ -467,7 +475,7 @@ same way and both use one verb with two forms; **no tool in the corpus uses two 
 It costs 33 lines across 17 files, touches no RPC, no audit string, no Action input, no Helm
 template and no config key, and it frees `baseline` to mean exactly one thing.
 
-### 3. `drift accept` — **take 3a. Document. Do not rename.**
+### 3. `drift accept` — **3a, taken. Document. Do not rename.**
 
 `accept` is the best word anybody in this space has produced for this operation; Terraform reached
 for *record*, Flyway for *incorporate*, and Atlas did not ship the operation at all. The gap is that
@@ -477,7 +485,7 @@ product, and the output line says `baseline accepted` and stops. Port the UI's o
 both. Two Go lines. **A command whose consequence needs explaining is not misnamed; it is
 under-documented at the point of use.**
 
-### 4. `revert`/`down` — **document only. But rename `godwit apply` to `godwit up`.**
+### 4. `revert`/`down` — **4b, taken. Document only, but rename `godwit apply` to `godwit up`.**
 
 The `revert`/`down` pair is fine and the local/service split behind it is enforced in code, not just
 described: three commands take `--dsn`, everything else takes `--server`, and nothing crosses. What
@@ -508,3 +516,53 @@ ambiguity each rename exists to remove.
 - **On 4b:** a decision to make the Action and the CLI share one vocabulary end to end. Then `apply`
   should mean the service path in both, `migrate` becomes the alias rather than the name, and this
   record's problem 4 reopens as a much larger question about what the Action is.
+
+---
+
+## What shipped
+
+The owner's framing was *"a complete tool that is also simple to operate"*, and it is the tie-breaker
+for the judgement calls the recommendation left open.
+
+**1. `plan` — three forms, named in `--help`.** `--target` now reaches the service without storing
+anything, which is the read-only form the record noticed was missing rather than a mode nobody
+asked for: it is `migrate --dry-run` under the name a reader looks for. `--save` adds the durable
+plan. `target` is gone from `plan`'s `godwit.yaml` keys, so no file switches the mode and
+`--target ""` is retired; `--save` without `--target` is refused by name. The Action's `plan` step
+passes `--save`, which is the one invocation in the repository that needed it.
+
+**2. `target adopt`.** One command over `BaselineTarget` and `ReconcileTarget`, which keep their
+names. `--version N` or `--from-journal`, exactly one required; neither and both are refused with a
+message that states what each flag takes its truth from. `internal/api/plan.go`'s refusal now names
+`godwit target adopt <t> --from-journal`, so the service and the CLI still ship together.
+
+**3. `drift accept` — not renamed, documented at the point of use.** `Short:` lost "bless" and the
+output gained the UI's own sentence, so the four surfaces agree: *records the current schema as the
+new reference for the target; it does not change the database; future checks compare against it*,
+plus the consequence `cli.md` already carried — no migration file describes the change.
+
+**4. `apply` → `up`.** All 14 CLI-meaning occurrences were rewritten; the 66 that mean `migrate`
+(62 `/godwit apply`, 4 `## godwit apply`) were left exactly as they were, which is what the rename
+was for. `up`/`down` is the local pair, `migrate`/`revert` the service pair, and both `--help`
+strings now say so.
+
+**What the sweep turned up that the record had not.**
+
+- **`docs/configuration.md` listed `plan` as taking `--dsn`.** It does not and never did: only
+  `up`, `status` and `down` register that flag. Fixed in passing.
+- **Two of the 14 `godwit apply` occurrences were never the CLI's command.** `decisions/0003` and
+  `decisions/README.md` use it for a *declarative* `apply schema.sql` that godwit refuses to ship —
+  a third meaning again. Renaming those to `up` would have misnamed the hypothetical, so the
+  `godwit` prefix was dropped instead: the refused mode is `apply schema.sql`, and the word `apply`
+  now belongs to the Action alone.
+- **`godwit new` was missing from `docs/cli.md`.** Shipped in #105, never added to the reference
+  written in #106. It has a section now, in the group for writing a migration.
+- **`--save` changed two tests that were not about naming.** Anything asserting that a `CreateRun`
+  binds to a stored plan has to store one first, which is the behaviour change the flag exists to
+  make explicit.
+- **The Action plans without a target too**, which `action-smoke`'s `plan offline` step found after
+  `--save` went onto `scripts/action-run.sh` unconditionally. It is now conditional on `TARGET`, the
+  same condition `remote_args` uses to pass `--target` at all — and that one place is the sharpest
+  evidence for the flag: it makes a case visible that the old CLI could not distinguish.
+
+**Shipped in** #109.

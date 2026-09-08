@@ -575,7 +575,7 @@ func TestChaosPrivilegeLostBetweenPlanAndApply(t *testing.T) {
 	r.addTargetDSN("limited", limited)
 
 	dir := migrationDir(t, migration{v1, "users", "CREATE TABLE users (id bigint PRIMARY KEY);", "DROP TABLE users;"})
-	r.mustCLI("plan", "--target", r.target, "--dir", dir)
+	r.mustCLI("plan", "--target", r.target, "--dir", dir, "--save")
 	execSQL(t, r.appDSN, "REVOKE CREATE ON SCHEMA public FROM godwit_limited")
 
 	id := r.createRun(migration{v1, "users", "CREATE TABLE users (id bigint PRIMARY KEY);", "DROP TABLE users;"})

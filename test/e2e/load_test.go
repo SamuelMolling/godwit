@@ -321,7 +321,7 @@ func measureHistory(t *testing.T, r *rig, phase, dir string, applied int) {
 		t.Fatal(err)
 	}
 
-	plan := timed(func() { r.mustCLI("plan", "--target", r.target, "--dir", next) })
+	plan := timed(func() { r.mustCLI("plan", "--target", r.target, "--dir", next, "--save") })
 	status := timed(func() { r.mustCLI("target", "status", r.target, "--dir", dir) })
 	diff := timed(func() { r.mustCLI("diff", "--target", r.target, "--dir", dir, "--schema", schema, "--dry-run") })
 	report(t, "history/"+phase, "history", applied,

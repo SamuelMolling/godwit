@@ -26,7 +26,7 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 | `cp_runs` | one per run: state, attempts, rollout, phase, `reverts`, timeouts, kind (`migrate`, `baseline`, `reconcile`), `created_by`, `source`, error | runs |
 | `cp_run_files` | every migration file body sent with a run (the source of the bodies a replay and a revert use, narrowed by `cp_run_applied`) | runs × files; the largest table |
 | `cp_run_applied` | one row per migration a run put on the books: order, whether its contract phase is held, whether the run merely `adopted` it from the target's own journal, the directive expansion frozen for it, and the revert that undid it. This is what the applied set and the scratch-validation replay are scoped to; a revert takes the same rows minus the adopted ones | runs × migrations applied |
-| `cp_plans` | one per stored plan: key, rollout, state, observation, drift, directive expansions, the run it is bound to | `godwit plan --target` calls; swept by `--plan-retention` |
+| `cp_plans` | one per stored plan: key, rollout, state, observation, drift, directive expansions, the run it is bound to | `godwit plan --target --save` calls; swept by `--plan-retention` |
 | `cp_plan_files` | the file bodies of a stored plan | plans × files; second largest |
 | `cp_retired_columns` | one per `<c>_old` a completed `change-type` left behind, so `godwit diff` stops proposing to drop it; cleared by the revert or the `drop-column` that removes the column | `change-type` directives |
 | `cp_leases` | one per claimed run | runs (never pruned; tiny) |
@@ -50,7 +50,7 @@ godwit does not back anything up. Before these actions, take a backup or note a 
 - `godwit run confirm` (the contract phase runs the destructive statements you deferred);
 - `godwit revert` (down migrations are typically `DROP`; godwit refuses one that would drop a non-empty table or column unless `--allow-data-loss`);
 - `godwit migrate --ack H002,...` (any acknowledged destructive hazard);
-- `godwit target baseline` (not destructive to data, but rewrites `godwit.migrations`).
+- `godwit target adopt --version` (not destructive to data, but rewrites `godwit.migrations`).
 
 ```sql
 -- on the target, right before the run
@@ -85,7 +85,7 @@ DELETE FROM cp_drift_events WHERE resolved_at < now() - interval '180 days';
 DELETE FROM cp_audit WHERE at < now() - interval '365 days';
 ```
 
-The `NOT EXISTS` is the load-bearing part: a `failed` run that applied three migrations before it stopped still owns their history, so deleting its files takes the replay's bodies with it. Do not delete runs with `kind = 'migrate'` that still have standing rows unless the target has been baselined since: [`BaselineTarget`](concepts.md#adopting-an-existing-database) records the baseline run as the new history root, after which older runs are no longer replayed. Runs of kind `baseline` and `reconcile` are history roots themselves and hold the only copy of the bodies they adopted; never delete them while their rows stand.
+The `NOT EXISTS` is the load-bearing part: a `failed` run that applied three migrations before it stopped still owns their history, so deleting its files takes the replay's bodies with it. Do not delete runs with `kind = 'migrate'` that still have standing rows unless the target has been adopted at a version since: [`BaselineTarget`](concepts.md#adopting-an-existing-database), the RPC behind `godwit target adopt --version`, records its run as the new history root, after which older runs are no longer replayed. Runs of kind `baseline` and `reconcile` — the two an adoption writes — are history roots themselves and hold the only copy of the bodies they adopted; never delete them while their rows stand.
 
 Target (`godwit` schema):
 
@@ -100,9 +100,9 @@ Never delete a `running` or `failed` row from `godwit.runs`: the next attempt re
 
 ## Checkpoints
 
-Reach for one when `godwit plan` has become slow and the log line for a plan shows the replay dominating it. The replay executes every migration the target has applied, on a fresh scratch database, before every plan — so its cost grows with the length of the history, not with the size of the change.
+Reach for one when `godwit plan --target` has become slow and the log line for a plan shows the replay dominating it. The replay executes every migration the target has applied, on a fresh scratch database, before every plan — so its cost grows with the length of the history, not with the size of the change.
 
-**Signals it is time.** A `godwit plan` on a pull request measured in minutes; a directory past a few hundred versioned files; the service logging `plan stored` long after the request came in. If the history is short and slow, a checkpoint will not help — the replay is executing real work, and the checkpoint's body would execute the same amount.
+**Signals it is time.** A `godwit plan --target` on a pull request measured in minutes; a directory past a few hundred versioned files; the service logging `plan stored` long after the request came in. If the history is short and slow, a checkpoint will not help — the replay is executing real work, and the checkpoint's body would execute the same amount.
 
 **How much it buys.** Two savings, and they are different sizes. The first is everything the history did and then undid: tables created and dropped, columns added and renamed, indexes rebuilt, `ALTER`s stacked on one table. A history with churn collapses hard — over 1000 churning migrations the scratch replay goes from 10.6 s to 0.14 s, and in the repository's own test a 24-migration churning history replays in about a quarter of the time, executing one migration instead of 24. The second is the per-migration overhead: the replay pays an advisory lock, a bootstrap, a run row and a `finalize` for every migration it executes, and a checkpoint pays them once for the whole collapsed range however additive it was. A purely additive history collapses into a body of roughly the same number of statements and still gains that: 1000 of them replay in 6.1 s whole and 3.2 s from the checkpoint. What it never buys is time the history spent doing real work: if the history is short and slow, the checkpoint's body executes the same work.
 
@@ -116,7 +116,7 @@ git add db/migrations/*_squash.up.sql && git commit
 
 Then open it as an ordinary pull request: `lint` and `plan` run on it like any migration, and the plan says whether each target will run the checkpoint or record it.
 
-**Before you merge it**, check `godwit targets`: every target's newest applied version must be at or above the checkpoint's `through=`, or the collapsed files must still be in the directory (they are, unless you deleted them). A target parked below the checkpoint with the files gone is refused at plan time, by name, and the way out is to restore the files or `godwit target baseline` it.
+**Before you merge it**, check `godwit targets`: every target's newest applied version must be at or above the checkpoint's `through=`, or the collapsed files must still be in the directory (they are, unless you deleted them). A target parked below the checkpoint with the files gone is refused at plan time, by name, and the way out is to restore the files or `godwit target adopt --version` it.
 
 **After it is merged**, the migrations it collapsed are frozen: they can no longer be reverted on any target ([concepts](concepts.md#checkpoints)), and `godwit revert` says so instead of running their down files. Keep the files in the repository until every target has passed the checkpoint; they are what carries a target that stopped below it.
 

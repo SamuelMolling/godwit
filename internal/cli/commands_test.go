@@ -167,16 +167,16 @@ func TestPlanErrors(t *testing.T) {
 	}
 }
 
-func TestRunApplyAndSkip(t *testing.T) {
+func TestUpAppliesAndSkips(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)
 	dir := goodMigs(t)
 
-	code, out, errOut := runCLI("apply", "--dsn", dsn, "--dir", dir)
+	code, out, errOut := runCLI("up", "--dsn", dsn, "--dir", dir)
 	if code != 0 || !strings.Contains(out, "applied (2 statement(s))") {
 		t.Fatalf("code = %d, out = %s, stderr = %s", code, out, errOut)
 	}
-	code, out, _ = runCLI("apply", "--dsn", dsn, "--dir", dir)
+	code, out, _ = runCLI("up", "--dsn", dsn, "--dir", dir)
 	if code != 0 || !strings.Contains(out, "skipped") {
 		t.Fatalf("re-run: code = %d, out = %s", code, out)
 	}
@@ -186,11 +186,11 @@ func TestRunErrors(t *testing.T) {
 	t.Parallel()
 
 	dir := goodMigs(t)
-	if code, _, errOut := runCLI("apply", "--dsn", "postgres://bad:bad@127.0.0.1:1/x", "--dir", dir); code != 1 ||
+	if code, _, errOut := runCLI("up", "--dsn", "postgres://bad:bad@127.0.0.1:1/x", "--dir", dir); code != 1 ||
 		!strings.Contains(errOut, "connect") {
 		t.Fatalf("bad dsn: code should be 1, stderr = %s", errOut)
 	}
-	if code, _, _ := runCLI("apply", "--dsn", "x", "--dir", filepath.Join(t.TempDir(), "nope")); code != 1 {
+	if code, _, _ := runCLI("up", "--dsn", "x", "--dir", filepath.Join(t.TempDir(), "nope")); code != 1 {
 		t.Fatal("missing dir must fail")
 	}
 
@@ -198,7 +198,7 @@ func TestRunErrors(t *testing.T) {
 		"20260901120000_x.up.sql":   "NOT SQL",
 		"20260901120000_x.down.sql": "SELECT 1;",
 	})
-	if code, _, _ := runCLI("apply", "--dsn", newTestDSN(t), "--dir", bad); code != 1 {
+	if code, _, _ := runCLI("up", "--dsn", newTestDSN(t), "--dir", bad); code != 1 {
 		t.Fatal("bad sql must fail")
 	}
 
@@ -206,7 +206,7 @@ func TestRunErrors(t *testing.T) {
 		"20260901120000_x.up.sql":   "SELECT 1/0;",
 		"20260901120000_x.down.sql": "SELECT 1;",
 	})
-	if code, _, errOut := runCLI("apply", "--dsn", newTestDSN(t), "--dir", failing); code != 1 ||
+	if code, _, errOut := runCLI("up", "--dsn", newTestDSN(t), "--dir", failing); code != 1 ||
 		!strings.Contains(errOut, "statement 0") {
 		t.Fatalf("failing migration: stderr = %s", errOut)
 	}
@@ -217,7 +217,7 @@ func TestStatusCommand(t *testing.T) {
 	dsn := newTestDSN(t)
 	dir := goodMigs(t)
 
-	if code, _, errOut := runCLI("apply", "--dsn", dsn, "--dir", dir); code != 0 {
+	if code, _, errOut := runCLI("up", "--dsn", dsn, "--dir", dir); code != 0 {
 		t.Fatal(errOut)
 	}
 	pending := filepath.Join(dir, "20260901130000_later.up.sql")
@@ -270,7 +270,7 @@ func TestDownCommand(t *testing.T) {
 	dsn := newTestDSN(t)
 	dir := goodMigs(t)
 
-	if code, _, errOut := runCLI("apply", "--dsn", dsn, "--dir", dir); code != 0 {
+	if code, _, errOut := runCLI("up", "--dsn", dsn, "--dir", dir); code != 0 {
 		t.Fatal(errOut)
 	}
 	code, out, errOut := runCLI("down", "--dsn", dsn, "--dir", dir, "--version", "20260901120000", "--yes")
@@ -316,7 +316,7 @@ func TestDownErrors(t *testing.T) {
 		"20260901120000_x.down.sql": "SELECT 1/0;",
 	})
 	dsn := newTestDSN(t)
-	if code, _, errOut := runCLI("apply", "--dsn", dsn, "--dir", failingDown); code != 0 {
+	if code, _, errOut := runCLI("up", "--dsn", dsn, "--dir", failingDown); code != 0 {
 		t.Fatal(errOut)
 	}
 	if code, _, _ := runCLI("down", "--dsn", dsn, "--dir", failingDown, "--version", "20260901120000", "--yes"); code != 1 {
@@ -364,7 +364,7 @@ func TestConfigFileSetsTimeouts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, _, errOut := runCLI("apply", "--config", cfg, "--dsn", newTestDSN(t), "--dir", dir)
+	code, _, errOut := runCLI("up", "--config", cfg, "--dsn", newTestDSN(t), "--dir", dir)
 	if code != 1 || !strings.Contains(errOut, "statement timeout") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}

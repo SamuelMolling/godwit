@@ -292,6 +292,8 @@ case "${COMMAND}" in
   plan)
     args=(${dir_args[@]+"${dir_args[@]}"})
     remote_args
+    # --save only with a target: without one the step parses the directory offline and has nothing to store.
+    if [ -n "${TARGET}" ]; then args+=(--save); fi
     "${godwit}" plan ${args[@]+"${args[@]}"} --format markdown >"${summary}" 2>"${errors}" || status=$?
     cat "${errors}" >&2
     if [ ! -s "${summary}" ]; then

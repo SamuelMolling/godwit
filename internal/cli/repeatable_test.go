@@ -10,7 +10,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
 
-func TestApplyAndStatusRepeatable(t *testing.T) {
+func TestUpAndStatusRepeatable(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)
 	dir := writeMigs(t, map[string]string{
@@ -20,7 +20,7 @@ func TestApplyAndStatusRepeatable(t *testing.T) {
 		"R__stats.down.sql":             "DROP VIEW IF EXISTS stats;",
 	})
 
-	code, out, errOut := runCLI("apply", "--dsn", dsn, "--dir", dir)
+	code, out, errOut := runCLI("up", "--dsn", dsn, "--dir", dir)
 	if code != 0 {
 		t.Fatal(errOut)
 	}
@@ -36,7 +36,7 @@ func TestApplyAndStatusRepeatable(t *testing.T) {
 		t.Fatalf("status = %s", out)
 	}
 
-	if code, out, _ = runCLI("apply", "--dsn", dsn, "--dir", dir); code != 0 || !strings.Contains(out, "R__stats: skipped") {
+	if code, out, _ = runCLI("up", "--dsn", dsn, "--dir", dir); code != 0 || !strings.Contains(out, "R__stats: skipped") {
 		t.Fatalf("second apply = %s", out)
 	}
 }

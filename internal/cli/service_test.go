@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -311,16 +314,16 @@ func TestTargetAddJSONAndError(t *testing.T) {
 	}
 }
 
-func TestTargetBaseline(t *testing.T) {
+func TestTargetAdoptAtVersion(t *testing.T) {
 	t.Parallel()
 	stub := &stubService{}
 	url := startStub(t, stub)
 
-	code, out, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "20260901120000")
+	code, out, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", goodMigs(t), "--version", "20260901120000")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if out != "target app: baselined to version 20260901120000 (run b1)\n" {
+	if out != "target app: adopted through version 20260901120000, nothing executed (run b1)\n" {
 		t.Fatalf("out = %q", out)
 	}
 	b := stub.baselined
@@ -328,32 +331,28 @@ func TestTargetBaseline(t *testing.T) {
 		t.Fatalf("request = %v", b)
 	}
 
-	code, out, _ = runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "1", "--json")
+	code, out, _ = runCLI("target", "adopt", "app", "--server", url, "--dir", goodMigs(t), "--version", "1", "--json")
 	if code != 0 || decodeJSON(t, out)["runId"] != "b1" {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 
-	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", "/nope", "--version", "1"); code != 1 ||
+	if code, _, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", "/nope", "--version", "1"); code != 1 ||
 		!strings.Contains(errOut, "read migration dir") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
-	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t)); code != 1 ||
-		!strings.Contains(errOut, "version") {
-		t.Fatalf("code = %d, stderr = %q", code, errOut)
-	}
 	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target already has applied migrations"))
-	if code, _, errOut := runCLI("target", "baseline", "app", "--server", url, "--dir", goodMigs(t), "--version", "1"); code != 1 ||
+	if code, _, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", goodMigs(t), "--version", "1"); code != 1 ||
 		errOut != "godwit: target already has applied migrations\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
 
-func TestTargetReconcile(t *testing.T) {
+func TestTargetAdoptFromJournal(t *testing.T) {
 	t.Parallel()
 	stub := &stubService{adopted: []string{"20260901120000_users"}}
 	url := startStub(t, stub)
 
-	code, out, errOut := runCLI("target", "reconcile", "app", "--server", url, "--dir", goodMigs(t))
+	code, out, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", goodMigs(t), "--from-journal")
 	if code != 0 || out != "target app: adopted 1 migration(s) from its journal (run c1): 20260901120000_users\n" {
 		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
 	}
@@ -362,18 +361,38 @@ func TestTargetReconcile(t *testing.T) {
 	}
 
 	stub.adopted = nil
-	code, out, _ = runCLI("target", "reconcile", "app", "--server", url, "--dir", goodMigs(t))
-	if code != 0 || out != "target app: already reconciled, nothing to adopt\n" {
+	code, out, _ = runCLI("target", "adopt", "app", "--server", url, "--dir", goodMigs(t), "--from-journal")
+	if code != 0 || out != "target app: nothing to adopt, the ledger already holds every migration its journal records\n" {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
-	if code, _, errOut := runCLI("target", "reconcile", "app", "--server", url, "--dir", "/nope"); code != 1 ||
+	if code, _, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", "/nope", "--from-journal"); code != 1 ||
 		!strings.Contains(errOut, "read migration dir") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target and ledger disagree"))
-	if code, _, errOut := runCLI("target", "reconcile", "app", "--server", url, "--dir", goodMigs(t)); code != 1 ||
+	if code, _, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", goodMigs(t), "--from-journal"); code != 1 ||
 		errOut != "godwit: target and ledger disagree\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestTargetAdoptNeedsOneSource(t *testing.T) {
+	t.Parallel()
+	url := startStub(t, &stubService{})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"neither", nil, "adopt needs a source, --version or --from-journal"},
+		{"both", []string{"--version", "1", "--from-journal"}, "pass --version or --from-journal, not both"},
+	} {
+		args := append([]string{"target", "adopt", "app", "--server", url, "--dir", goodMigs(t)}, tc.args...)
+		code, _, errOut := runCLI(args...)
+		if code != 1 || !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, "godwit journal") {
+			t.Fatalf("%s: code = %d, stderr = %q", tc.name, code, errOut)
+		}
 	}
 }
 
@@ -984,7 +1003,10 @@ func TestDrift(t *testing.T) {
 	}
 
 	code, out, _ = runCLI("drift", "accept", "app", "--server", url)
-	if code != 0 || out != "target app: baseline accepted\n" || stub.accepted != "app" {
+	want := "target app: baseline accepted\n" +
+		"recorded the current schema as the new reference for app; it does not change the database, and future checks compare against it\n" +
+		"no migration file describes this change, so the next database built from those files will not have it\n"
+	if code != 0 || out != want || stub.accepted != "app" {
 		t.Fatalf("code = %d, out = %q, accepted = %q", code, out, stub.accepted)
 	}
 
@@ -1041,12 +1063,12 @@ func storedPlanStub() *stubService {
 	return stub
 }
 
-func TestPlan_RemotePersists(t *testing.T) {
+func TestPlan_RemoteSaves(t *testing.T) {
 	t.Parallel()
 	stub := storedPlanStub()
 	url := startStub(t, stub)
 
-	code, out, errOut := runCLI("plan", "--server", url, "--token", "tok", "--target", "app", "--dir", goodMigs(t),
+	code, out, errOut := runCLI("plan", "--server", url, "--token", "tok", "--target", "app", "--dir", goodMigs(t), "--save",
 		"--rollout", "expand-contract", "--ack", "H003", "--skip-validation", "--allow-out-of-order", "--source", "repo@sha:db")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
@@ -1065,6 +1087,47 @@ func TestPlan_RemotePersists(t *testing.T) {
 	if !p.Persist || p.Target != "app" || p.Rollout != "expand-contract" || !p.SkipValidation || !p.AllowOutOfOrder ||
 		strings.Join(p.AcknowledgeHazards, ",") != "H003" || p.Source != "repo@sha:db" || len(p.Files) != 2 || stub.auth != "Bearer tok" {
 		t.Fatalf("request = %v, auth = %q", p, stub.auth)
+	}
+}
+
+func TestPlan_RemoteWithoutSaveStoresNothing(t *testing.T) {
+	t.Parallel()
+	stub := storedPlanStub()
+	url := startStub(t, stub)
+
+	code, _, errOut := runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t))
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.planned.Persist {
+		t.Fatalf("persist = true without --save")
+	}
+
+	code, _, errOut = runCLI("plan", "--dir", goodMigs(t), "--save")
+	if code != 1 || !strings.Contains(errOut, "--save needs --target") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestPlan_TargetNeverComesFromTheConfigFile(t *testing.T) {
+	stub := storedPlanStub()
+	url := startStub(t, stub)
+	root := t.TempDir()
+	if err := os.Rename(goodMigs(t), filepath.Join(root, "db")); err != nil {
+		t.Fatal(err)
+	}
+	yaml := fmt.Sprintf("dir: db\ntarget: orders\nserver: %s\n", url)
+	if err := os.WriteFile(filepath.Join(root, "godwit.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	code, out, errOut := runCLI("plan")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if stub.planned != nil || !strings.Contains(out, "20260901120000_users (down)") {
+		t.Fatalf("a bare plan reached the service: planned = %v, out = %q", stub.planned, out)
 	}
 }
 

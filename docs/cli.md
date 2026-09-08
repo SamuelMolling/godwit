@@ -5,6 +5,7 @@ What each `godwit` command is *for*, in plain words, with an example you can pas
 | Command | What it does |
 |---|---|
 | **Writing a migration** | |
+| [`godwit new`](#godwit-new) | Writes an empty migration pair with the name and timestamp the loader expects |
 | [`godwit diff`](#godwit-diff) | Writes the next migration for you, from a schema you already have |
 | [`godwit lint`](#godwit-lint) | Reads the SQL files and tells you what will hurt in production |
 | [`godwit plan`](#godwit-plan) | Shows the statements that would run, one by one, before anything runs |
@@ -14,7 +15,7 @@ What each `godwit` command is *for*, in plain words, with an example you can pas
 | [`godwit run confirm`](#godwit-run-confirm) | Releases the second half of a two-phase migration, once you are ready for it |
 | [`godwit revert`](#godwit-revert) | Undoes exactly what one previous `migrate` applied |
 | [`godwit run resume`](#godwit-run-resume) | Retries a migration that stopped, from where it stopped |
-| [`godwit apply`](#godwit-apply) | Applies a migration directory straight to a database, with no service involved |
+| [`godwit up`](#godwit-up) | Applies a migration directory straight to a database, with no service involved |
 | [`godwit down`](#godwit-down) | Undoes one migration on your own machine |
 | **Looking at what happened** | |
 | [`godwit status`](#godwit-status) | Which migrations a database has, asked of the database directly |
@@ -29,10 +30,9 @@ What each `godwit` command is *for*, in plain words, with an example you can pas
 | [`godwit audit`](#godwit-audit) | Who asked godwit to do what, and when |
 | **Managing the databases godwit migrates** | |
 | [`godwit target add`](#godwit-target-add) | Tells the service about a database and where to get its password |
-| [`godwit target baseline`](#godwit-target-baseline) | Adopts a database that already has the schema, without re-running anything |
-| [`godwit target reconcile`](#godwit-target-reconcile) | Adopts a database godwit already migrated outside the service |
+| [`godwit target adopt`](#godwit-target-adopt) | Puts the migrations a database already has on the books, without running them |
 | [`godwit drift check`](#godwit-drift-check) | Shows what changed in a database that godwit did not change |
-| [`godwit drift accept`](#godwit-drift-accept) | Says "that change is fine", and stops the alert |
+| [`godwit drift accept`](#godwit-drift-accept) | Makes the live schema the new reference, and stops the alert |
 | **Operating the service** | |
 | [`godwit serve`](#godwit-serve) | Runs the service itself |
 | [`godwit version`](#godwit-version) | Prints the version and the commit it was built from |
@@ -54,7 +54,9 @@ The same binary is the service and the client, so almost every command means one
 
 ## How the commands are told where to go
 
-Three commands — `apply`, `status`, `down` — talk to a database directly and take `--dsn` (or `GODWIT_DSN`). They need no service at all, and neither do `lint` and `plan` when you give them only a directory.
+Three commands — `up`, `status`, `down` — talk to a database directly and take `--dsn` (or `GODWIT_DSN`). They need no service at all, and neither do `lint`, `new` and `plan` when you give them only a directory.
+
+`up`/`down` is the local pair and `migrate`/`revert` the service pair, which is the split the vocabulary announces: nothing that takes `--dsn` reaches the service, and nothing that takes `--target` opens a connection of its own.
 
 Every command that reaches the service takes `--server` and `--token` (or `GODWIT_SERVER` and `GODWIT_TOKEN`), plus `--json` to get the raw response instead of the table.
 
@@ -80,6 +82,22 @@ It grows as the page goes on, because some of these commands write migrations in
 ---
 
 ## Writing a migration
+
+### `godwit new`
+
+**Writes the empty pair for you, named the way the loader expects.** The loader accepts `<14 digits>_<snake_name>.up.sql` and a matching `.down.sql`, both non-empty, and nothing else; `new` produces exactly that with the current UTC second as the version.
+
+Reach for it whenever you are writing the SQL by hand — it is cheaper than composing a timestamp and finding out at load time that you got it wrong. Do not reach for it when a schema you maintain elsewhere already describes the change; that is [`godwit diff`](#godwit-diff), which fills the files in as well.
+
+```console
+$ godwit new add_status --dir db/migrations
+wrote db/migrations/20260908161500_add_status.up.sql
+wrote db/migrations/20260908161500_add_status.down.sql
+```
+
+Both files hold one placeholder comment. That is deliberate: a migration with no statements is `E002` at [`lint`](#godwit-lint) and an error at [`plan`](#godwit-plan), so a scaffold you forgot to fill in blocks CI instead of shipping as a silent no-op. A name that is not `[a-z0-9_]+` is refused before anything is written, and a version already taken in the directory is stepped over rather than overwritten.
+
+`--repeatable` writes `R__<name>.up.sql` / `.down.sql` instead — no version, re-run whenever the body changes. A repeatable's name is its identity rather than an ordering token, so a name already in the directory is refused instead of stepped over. [Concepts: repeatable migrations](concepts.md#repeatable-migrations).
 
 ### `godwit diff`
 
@@ -138,6 +156,16 @@ The indented lines are the *recipe*: the same change written safely. `--format m
 
 **Shows you the statements that would run.** Every migration in the directory is parsed and printed statement by statement, labelled `tx` (runs inside a transaction with its journal row) or `no-tx` (cannot, so it gets a write-ahead intent and a check afterwards).
 
+It has three forms, in order of what they touch. `--help` lists them in the same order:
+
+| You type | Reaches | Leaves behind |
+|---|---|---|
+| `godwit plan --dir db/migrations` | nothing | nothing |
+| `godwit plan --target app` | the service, the target, a scratch database | nothing |
+| `godwit plan --target app --save` | the same | a stored plan a later `migrate` binds to |
+
+`--target` is a flag here and only a flag: unlike `migrate`, `plan` never reads it from `godwit.yaml`, so a bare `godwit plan` is the offline form even in a repository whose config names a target.
+
 Without `--target` it is entirely offline — no database, no service — and prints both the up and the down side of every file:
 
 ```console
@@ -153,10 +181,12 @@ $ godwit plan --dir db/migrations
 ...
 ```
 
-With `--target` it becomes a different, more useful thing: godwit connects to that database, works out which migrations are actually pending there, replays them on a scratch database to prove they apply, and **stores the result as a plan** with a snapshot of the target. That stored plan is what a later `migrate` binds to.
+With `--target` it becomes a different, more useful thing: godwit connects to that database through the service, works out which migrations are actually pending there, and replays them on a scratch database to prove they apply. It prints what it found and stores nothing — the same work `migrate --dry-run` does, and the two are interchangeable.
+
+Add `--save` and it also **stores the result as a plan**, with a snapshot of the target. That stored plan is the durable half: a later `migrate` binds to it and refuses if the database has moved since, which is what makes the plan a reviewer approved the plan the deploy applies.
 
 ```console
-$ godwit plan --target app --dir db/migrations
+$ godwit plan --target app --dir db/migrations --save
 plan f27eecc1-d479-4255-ae90-b53247e9230f on app (rollout direct, validated on a scratch database)
 key: 4ad4fbb546cb1d6910cacd27e4a8831180649d476ade99808c5e114870708f63
 observed: 0 applied, newest 0, history e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, schema e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, at 2026-09-08T13:19:09Z
@@ -168,7 +198,9 @@ R__order_stats (up): 1 statement(s) [expand, pending]
   [0] tx    CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id
 ```
 
-Reach for the offline form to eyeball a migration you just wrote; reach for the `--target` form on a pull request, so the plan a reviewer reads is the plan the apply is bound to. Do not use it to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper. [Concepts: plans](concepts.md#plans).
+Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [Concepts: plans](concepts.md#plans).
+
+Note what `--target` costs even without `--save`: the scratch replay executes your DDL on the scratch server with the service's credentials, so it is a live operation, not a read of a file. `--save` is what adds the durable artifact and the `plan.create` audit row.
 
 ### `godwit checkpoint`
 
@@ -210,7 +242,7 @@ ALTER SEQUENCE "public"."orders_id_seq" OWNED BY "public"."orders"."id";
 
 **The one that actually changes a production database.** It sends the migration directory to the service, which checks it, queues a run, and executes it on the named target; your terminal streams the run's state and exits when it settles.
 
-Reach for it from CI, or from your shell for a database the service manages. Do not reach for it for your own laptop database — that is [`godwit apply`](#godwit-apply), which needs no service.
+Reach for it from CI, or from your shell for a database the service manages. Do not reach for it for your own laptop database — that is [`godwit up`](#godwit-up), which needs no service.
 
 ```console
 $ godwit migrate --target app --dir db/migrations
@@ -307,14 +339,14 @@ run 9c60b73c-ac42-42ec-9194-498a2c66cbc3: succeeded (attempt 1)
 
 `resume` returns as soon as the run is queued; the service picks it up on its next tick, which is why the example follows it with [`run watch`](#godwit-run-watch). [Runbook: run in `needs_attention`](runbook.md#run-in-needs_attention).
 
-### `godwit apply`
+### `godwit up`
 
 **Applies a migration directory straight to a database.** Same executor, same journal, same crash safety as the service — just no service, no target registration and no plan. You give it a connection string.
 
-Reach for it on your own machine and in tests. Do not reach for it for a database the service manages: what `apply` writes goes into that database's own journal but not into the service's ledger, and the two will disagree until you run [`target reconcile`](#godwit-target-reconcile).
+Reach for it on your own machine and in tests. Do not reach for it for a database the service manages: what `up` writes goes into that database's own journal but not into the service's ledger, and the two will disagree until you run [`target adopt --from-journal`](#godwit-target-adopt).
 
 ```console
-$ godwit apply --dsn postgres://app:app@localhost/app_dev --dir db/migrations
+$ godwit up --dsn postgres://app:app@localhost/app_dev --dir db/migrations
 20260901120000_create_orders: applied (1 statement(s))
 20260901120500_orders_customer_idx: applied (1 statement(s))
 R__order_stats: applied (1 statement(s))
@@ -534,31 +566,30 @@ target app: registered (static)
 
 Per-target settings live on this command too — `--lock-timeout`, `--statement-timeout`, `--search-path`, `--require-plan` — and are listed in [configuration](configuration.md#target-settings). Use `GODWIT_TARGET_DSN` rather than `--dsn` to keep the password out of the process list. [Deployment: registering a target](deployment.md#registering-a-target), [security: credential providers](security.md#credential-providers).
 
-### `godwit target baseline`
+### `godwit target adopt`
 
-**Adopts a database that already has the schema.** You tell godwit the newest migration the database already contains; godwit records everything up to it as applied without running a single statement, and future runs start from the next one.
+**Puts the migrations a database already has on the books, without running them.** godwit records a succeeded run holding those migrations and takes a drift snapshot; not one statement is executed, and future runs start from the next migration.
 
-Reach for it the first time you point godwit at a database that was migrated by something else — Flyway, a shell script, hand-typed DDL. Do not reach for it for a database godwit itself migrated outside the service; that is [`reconcile`](#godwit-target-reconcile), which does not need you to guess a version.
+There is one thing to decide, and the flags name it: **where the truth comes from.** Exactly one of the two is required, and godwit refuses rather than picks.
+
+| Flag | Truth comes from | Use it when |
+|---|---|---|
+| `--version <N>` | you | the database was migrated by something else — Flyway, a shell script, hand-typed DDL — so there is no godwit journal to read |
+| `--from-journal` | the target's own `godwit` journal | godwit migrated this database before, just not through this service |
 
 ```console
-$ godwit target baseline legacy --dir db/migrations --version 20260901120000
-target legacy: baselined to version 20260901120000 (run c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380)
+$ godwit target adopt legacy --dir db/migrations --version 20260901120000
+target legacy: adopted through version 20260901120000, nothing executed (run c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380)
 ```
 
-Getting the version wrong in either direction hurts: too low and godwit will try to re-run migrations the database already has, too high and it will silently skip ones it does not. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database).
-
-### `godwit target reconcile`
-
-**Adopts a database godwit already migrated, but not through the service.** The journal inside the database already says exactly what ran; reconcile copies that into the service's ledger. Nothing is executed and there is no version for you to get wrong.
-
-Reach for it after using [`godwit apply`](#godwit-apply) on a database you later want the service to manage, or when the service's ledger was lost and the databases were not.
-
 ```console
-$ godwit target reconcile dev --dir db/migrations
+$ godwit target adopt dev --dir db/migrations --from-journal
 target dev: adopted 2 migration(s) from its journal (run 3984dd6f-fce0-4a32-9af2-60c746dc92cd): 20260901120000_create_orders, R__order_stats
 ```
 
-[Runbook: the ledger is behind a target](runbook.md#the-ledger-is-behind-a-target).
+The two failure modes are not symmetric, which is the reason to prefer `--from-journal` when you can have it. Getting `--version` wrong hurts in either direction: too low and godwit will try to re-run migrations the database already has, too high and it will silently skip ones it does not. `--from-journal` has no version for you to get wrong, and it refuses on a named disagreement between the journal and the directory rather than guessing.
+
+Reach for `--from-journal` after using [`godwit up`](#godwit-up) on a database you later want the service to manage, or when the service's ledger was lost and the databases were not — `migrate` and `plan --target` refuse such a target by name until you have. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database), [runbook: the ledger is behind a target](runbook.md#the-ledger-is-behind-a-target).
 
 ### `godwit drift check`
 
@@ -581,14 +612,18 @@ It reports, it does not fix: the diff tells you what is there, and it is up to y
 
 ### `godwit drift accept`
 
-**Declares the current schema the new normal.** The fingerprint is replaced with what is live now, and the drift stops being reported.
+**Records the current schema as the new reference for the target.** It does not change the database; future checks compare against it. The same sentence is on the UI's **Accept as baseline** button, and the command now prints it.
 
-Reach for it when you have looked at the diff and decided the change is legitimate — an emergency index you are keeping, an extension someone installed. Do not reach for it to make an alert go away: an accepted drift is a change no migration file describes, so the next database you build from those files will not have it.
+Reach for it when you have looked at the diff and decided the change is legitimate — an emergency index you are keeping, an extension someone installed. Do not reach for it to make an alert go away: an accepted drift is a change no migration file describes, so the next database you build from those files will not have it. When you want the change to travel, write the migration instead.
 
 ```console
 $ godwit drift accept app
 target app: baseline accepted
+recorded the current schema as the new reference for app; it does not change the database, and future checks compare against it
+no migration file describes this change, so the next database built from those files will not have it
 ```
+
+The word *baseline* on that first line and in [`target status`](#godwit-target-status) is the drift reference, and only that. Putting migration history on the books is [`target adopt`](#godwit-target-adopt).
 
 ---
 
