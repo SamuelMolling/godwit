@@ -54,7 +54,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newVersionCmd(), newPlanCmd(), newApplyCmd(), newStatusCmd(), newDownCmd(), newServeCmd(),
 		newTargetCmd(), newTargetsCmd(), newMigrationsCmd(), newMigrateCmd(), newRevertCmd(), newRunCmd(), newRunsCmd(),
 		newPlansCmd(), newAuditCmd(),
-		newDriftCmd(), newLintCmd(), newDiffCmd(), newCheckpointCmd())
+		newDriftCmd(), newLintCmd(), newNewCmd(), newDiffCmd(), newCheckpointCmd())
 
 	return root
 }
