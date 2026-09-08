@@ -818,6 +818,19 @@ The value is a comma-separated list of unquoted schema names, folded to lower ca
 
 The schemas must exist. PostgreSQL silently drops missing ones from a session's effective path, so on a fresh target the first migration should `CREATE SCHEMA IF NOT EXISTS app` — from then on the path resolves fully. `godwit target status` prints the **declared** path and `godwit plan` the **effective** one (`current_schemas`); if they differ, a schema is missing. Scratch validation creates the schemas on the scratch database before setting the path, so the replay puts unqualified objects in the same schema the target does and fingerprints keep matching (which is what already-applied detection compares).
 
+**A target that reaches the journal schema anyway is refused.** Declaring `godwit` is refused above, but a target can arrive there without declaring anything: PostgreSQL's default path is `"$user", public`, godwit creates schema `godwit` on every target it migrates, and a target connected with a role of that name therefore resolves unqualified names *into the journal schema*. `Observe` reads the effective path (`current_schemas`) and the session's `search_path` setting together with `current_user`, and refuses the target when either resolves to the journal schema — before a plan, a run, a diff or an adoption touches it:
+
+```
+the target's search_path reaches godwit's journal schema: element "$user" resolves to schema "godwit"
+under role "godwit", so a migration's unqualified CREATE TABLE would land beside the journal's own
+tables and out of drift's sight; give the target a search_path of its own (--search-path public), or
+connect it with a role not named godwit
+```
+
+The setting is read as well as the effective path because the refusal has to arrive before the first run rather than after it: on a target godwit has not bootstrapped yet the schema does not exist, PostgreSQL drops it from the effective path, and the run that creates it is the same one that would put the migration's tables inside it. Declaring a path is the whole fix, and it holds for every session, because the declared value is pinned on the DSN and `"$user"` is never resolved again.
+
+**Stripping the journal schema out of the observed path is not the fix**, which is why the refusal exists at all: on such a target the tables really are in `godwit`, so a validation replay that put them in `public` would produce a fingerprint the target can never match, and already-applied detection — which compares exactly those fingerprints — would be silently off. Nor can the path be corrected on the way in: godwit pins a path as a connection parameter, one choke point for every session it opens, and it cannot know what to strip until it has connected.
+
 **A scratch session never resolves `"$user"`.** It carries the target's effective path when there is one to mirror, and `public` when there is not — a call that plans without observing the target, and the checkpoint generator, which has no target at all. PostgreSQL's default `"$user", public` is never left to resolve there, because on a scratch role named `godwit` — which is the role the quickstart creates — `"$user"` is the journal schema godwit puts on every scratch database, and an unqualified `CREATE TABLE orders` would replay into it instead of `public`.
 
 The effective path is part of a plan's observation. A plan taken under one path does not bind under another: the diff shows `- search_path <then>` / `+ search_path <now>` and the refusal is `PlanStale{schema}`. Plans stored before the path was recorded carry an empty value and are never stale for this reason alone.

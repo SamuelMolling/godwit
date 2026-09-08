@@ -130,6 +130,8 @@ func newRig(t *testing.T, replicas int) *rig {
 func createDatabase(t *testing.T, name string) string {
 	t.Helper()
 	execSQL(t, adminDSN, "CREATE DATABASE "+name)
+	// The container's only role is named godwit, so a target here would resolve "$user" to the journal schema.
+	execSQL(t, adminDSN, "ALTER DATABASE "+name+" SET search_path TO public")
 	t.Cleanup(func() { execSQL(t, adminDSN, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)") })
 
 	return strings.Replace(adminDSN, "/godwit?", "/"+name+"?", 1)

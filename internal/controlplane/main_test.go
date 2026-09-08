@@ -53,6 +53,10 @@ func newDatabase(t *testing.T, prefix string) string {
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatal(err)
 	}
+	// The container's only role is named godwit, so a target here would resolve "$user" to the journal schema.
+	if _, err := admin.Exec(ctx, "ALTER DATABASE "+name+" SET search_path TO public"); err != nil {
+		t.Fatal(err)
+	}
 
 	return strings.Replace(testDSN, "/godwit?", "/"+name+"?", 1)
 }

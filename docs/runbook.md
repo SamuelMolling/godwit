@@ -272,7 +272,35 @@ The checksum is the SHA-256 hex of the up file body: `sha256sum migrations/<N>_<
 | `<id>: recorded on the target under different content` | failed_precondition | a file's checksum differs from the row the target recorded for that version | restore the file, or fix the target's row; one of the two is wrong |
 | `target records migrations the ledger does not: ...` | failed_precondition | the target's journal is ahead of the control plane's ledger | [the ledger is behind a target](#the-ledger-is-behind-a-target) |
 | `target and ledger disagree on <t>: ...` | failed_precondition | `target adopt --from-journal` found a divergence it will not decide | [the ledger is behind a target](#the-ledger-is-behind-a-target) |
+| `the target's search_path reaches godwit's journal schema: ...` | failed_precondition | the target resolves unqualified names into `godwit`, usually because it connects as a role of that name | [a target that resolves into the journal schema](#a-target-that-resolves-into-the-journal-schema) |
 | `drift detection is not enabled` / `baselining is not enabled` (`target adopt --version`) / `reconciling is not enabled` (`target adopt --from-journal`) | unimplemented | server built without the feature wired (tests only) | — |
+
+## A target that resolves into the journal schema
+
+```
+the target's search_path reaches godwit's journal schema: element "$user" resolves to schema "godwit"
+under role "godwit", so a migration's unqualified CREATE TABLE would land beside the journal's own
+tables and out of drift's sight; give the target a search_path of its own (--search-path public), or
+connect it with a role not named godwit
+```
+
+Every plan, run, diff and `target adopt --from-journal` on that target is refused, and nothing is written on the target or the store. PostgreSQL's default path is `"$user", public` and godwit creates schema `godwit` on every target for its journal, so a target connected with a role named `godwit` — the name the quickstart gives the service's own role — resolves unqualified names into that schema. Declare a path and the refusal is gone; re-registering the target updates it in place:
+
+```bash
+godwit target add app --provider static --dsn "$DSN" --search-path public   # admin
+```
+
+Then look at what earlier runs already left in there. Anything in `godwit` besides the journal's own four tables came from a migration:
+
+```sql
+SELECT table_name FROM information_schema.tables
+ WHERE table_schema = 'godwit'
+   AND table_name NOT IN ('migrations', 'repeatables', 'runs', 'journal');
+```
+
+Move each one where the migrations say it belongs (`ALTER TABLE godwit.orders SET SCHEMA public`), as a migration rather than by hand, so the journal records it; until then `godwit plan` reports it as drift, because the replay now puts it in `public`.
+
+Worse, and worth checking once: a migration whose unqualified `CREATE TABLE` named `migrations`, `repeatables`, `runs` or `journal` did **not** fail if it was written `IF NOT EXISTS` — it silently found the journal's table, and any `ALTER TABLE` after it changed the journal itself. `\d godwit.runs` and its three siblings against a database godwit has never mis-served will show any column a migration added.
 
 ## Which plan did this run apply
 

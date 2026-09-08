@@ -170,8 +170,13 @@ func observe(ctx context.Context, db engine.DB) (Observation, error) {
 	if obs.Definition, obs.Fingerprint, err = engine.Snapshot(ctx, db); err != nil {
 		return Observation{}, err
 	}
-	if err := db.QueryRow(ctx, `SELECT array_to_string(current_schemas(false), ',')`).Scan(&obs.SearchPath); err != nil {
+	var setting, role string
+	if err := db.QueryRow(ctx, `SELECT array_to_string(current_schemas(false), ','), current_setting('search_path'), current_user`).
+		Scan(&obs.SearchPath, &setting, &role); err != nil {
 		return Observation{}, fmt.Errorf("read search path: %w", err)
+	}
+	if element, ok := journalOnPath(obs.SearchPath, setting, role); ok {
+		return Observation{}, journalPathError(element, role)
 	}
 
 	return obs, nil

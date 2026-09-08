@@ -127,6 +127,41 @@ func TestAPISearchPathAppliedAndJournalUntouched(t *testing.T) {
 	}
 }
 
+// A target connected with a role named godwit resolves "$user" to the journal schema, so its unqualified DDL
+// would land beside the journal's own tables; godwit refuses it until the target declares a path of its own.
+func TestAPIRefusesATargetWhosePathReachesTheJournal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
+	targetDSN := newDatabase(t, "tg")
+	cfg, err := pgx.ParseConfig(targetDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetExec(t, targetDSN, "ALTER DATABASE "+pgx.Identifier{cfg.Database}.Sanitize()+" RESET search_path")
+	registerTarget(t, client, targetDSN)
+
+	_, err = client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: "app", Files: shadowFiles()}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), `element "$user"`) ||
+		!strings.Contains(err.Error(), "--search-path public") {
+		t.Fatalf("err = %v", err)
+	}
+
+	registerWithSearchPath(t, client, targetDSN, "public")
+	created, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: "app", Files: shadowFiles()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, client, created.Msg.RunId)
+	var schemas string
+	targetScan(t, targetDSN,
+		`SELECT coalesce(string_agg(table_schema, ',' ORDER BY table_schema), '') FROM information_schema.tables WHERE table_name = 'migrations'`,
+		&schemas)
+	if schemas != "godwit,public" {
+		t.Fatalf("migrations tables = %q, want the migration in public and the journal in godwit", schemas)
+	}
+}
+
 func TestAPIRevertRefusesUnreachableTarget(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

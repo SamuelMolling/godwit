@@ -203,7 +203,7 @@ func TestCreateRun_StaleSchema(t *testing.T) {
 		t.Fatalf("stale = %+v", stale)
 	}
 	for _, want := range []string{
-		"is stale (planned ", " by anonymous, repo@sha)", "reason : schema", "schema : + column godwit.rogue.id",
+		"is stale (planned ", " by anonymous, repo@sha)", "reason : schema", "schema : + column public.rogue.id",
 		"(1 changes not made by any run since the plan)", "files  : unchanged (key " + plan.PlanKey[:8], "fix: push to the pull request (re-plan)",
 	} {
 		if !strings.Contains(err.Error(), want) {
