@@ -26,10 +26,6 @@ func TestEveryStoreMigrationRunsInOneTransaction(t *testing.T) {
 	}
 }
 
-// TestStoreMigrationRollsBackWhenAStatementFails reproduces what a rolling deploy makes possible: the
-// run_order migration backfills cp_runs.seq and then rejects a NULL, and an old replica still serving
-// writes a run in between. The race is injected on the migration's own session, which is the only way a
-// row reaches the table while the migration holds it.
 func TestStoreMigrationRollsBackWhenAStatementFails(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

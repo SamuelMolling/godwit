@@ -123,9 +123,7 @@ func (p Plan) Held() bool {
 	return p.HoldFrom > 0 && p.HoldFrom < len(p.Statements)
 }
 
-// Transactional reports whether PostgreSQL can run the whole plan inside one transaction: no statement
-// it refuses there, no batched backfill that commits as it goes, and no assertion that reads in one of
-// its own.
+// Transactional reports whether PostgreSQL can run every statement of the plan inside one transaction.
 func (p Plan) Transactional() bool {
 	for _, st := range p.Statements {
 		if st.NoTx || st.Batch != nil || st.Assert != nil {

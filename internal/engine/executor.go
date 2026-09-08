@@ -95,10 +95,7 @@ func WithAssertProbe() Option {
 	return func(e *Executor) { e.assertProbe = true }
 }
 
-// WithAtomic applies a plan PostgreSQL can run inside one transaction as one transaction: its statements
-// and the history row recording them commit together, and a failure anywhere leaves the database as it
-// was for the next attempt to apply whole. A plan carrying a statement that cannot run in a transaction
-// (Plan.Transactional) keeps the journalled statement-at-a-time path, which resumes instead.
+// WithAtomic commits a Plan.Transactional plan and its history row together; anything else keeps the journalled path.
 func WithAtomic() Option {
 	return func(e *Executor) { e.atomic = true }
 }
@@ -231,8 +228,6 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	return res, e.finalize(ctx, p, prog.runID, held)
 }
 
-// applyAtomic runs the whole plan and records it in one transaction. It journals nothing: a run that
-// leaves no half-applied statement behind has nothing to resume from.
 func (e *Executor) applyAtomic(ctx context.Context, p Plan, held string) (int, error) {
 	tx, err := e.db.Begin(ctx)
 	if err != nil {
