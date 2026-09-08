@@ -337,6 +337,26 @@ ALTER TABLE cp_runs
 	ADD CONSTRAINT cp_runs_kind_check CHECK (kind IN ('migrate', 'baseline'));
 ALTER TABLE cp_run_applied DROP COLUMN adopted;`,
 	},
+	{
+		Version:  20260905000017,
+		Name:     "run_order",
+		Checksum: "cp-run-order-v1",
+		UpSQL: `
+ALTER TABLE cp_runs ADD COLUMN seq bigint;
+
+UPDATE cp_runs r SET seq = o.n
+FROM (SELECT id, row_number() OVER (ORDER BY created_at, id) AS n FROM cp_runs) o WHERE o.id = r.id;
+
+ALTER TABLE cp_runs ALTER COLUMN seq SET NOT NULL;
+ALTER TABLE cp_runs ALTER COLUMN seq ADD GENERATED ALWAYS AS IDENTITY;
+
+SELECT setval(pg_get_serial_sequence('cp_runs', 'seq'), (SELECT coalesce(max(seq), 0) + 1 FROM cp_runs), false);
+
+CREATE UNIQUE INDEX cp_runs_seq_idx ON cp_runs (seq);`,
+		DownSQL: `
+DROP INDEX cp_runs_seq_idx;
+ALTER TABLE cp_runs DROP COLUMN seq;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

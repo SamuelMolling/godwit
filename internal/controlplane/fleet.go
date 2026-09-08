@@ -124,7 +124,7 @@ func (s *Store) standingLedger(ctx context.Context, targets []string) ([]ledgerR
 		JOIN cp_runs r ON r.id = a.run_id
 		LEFT JOIN cp_run_files u ON u.run_id = a.run_id AND u.name = a.migration || '.up.sql'
 		WHERE r.target = ANY($1) AND `+standingRow+`
-		ORDER BY r.target, a.migration, r.created_at DESC`,
+		ORDER BY r.target, a.migration, r.seq DESC`,
 		targets, engine.DirectiveMarker+" "+engine.DirectiveCheckpoint)
 	if err != nil {
 		return nil, fmt.Errorf("list standing migrations: %w", err)

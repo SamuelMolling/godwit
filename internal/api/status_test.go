@@ -190,9 +190,9 @@ func TestListTargets(t *testing.T) {
 
 func runRow() *pgxmock.Rows {
 	return pgxmock.NewRows([]string{
-		"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce",
+		"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce",
 		"created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions",
-	}).AddRow("r1", "app", controlplane.StateNeedsAttention, "boom", 3, controlplane.RolloutDirect, controlplane.PhaseExpand,
+	}).AddRow("r1", int64(1), "app", controlplane.StateNeedsAttention, "boom", 3, controlplane.RolloutDirect, controlplane.PhaseExpand,
 		"", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), "ci", "", "", 0, (*time.Time)(nil),
 		(*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{})
 }

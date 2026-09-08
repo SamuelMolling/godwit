@@ -54,9 +54,9 @@ func TestLedgerStoreErrors(t *testing.T) {
 func expectRunRow(mock pgxmock.PgxPoolIface) {
 	const id, state = "r1", StateSucceeded
 	mock.ExpectQuery("FROM cp_runs WHERE id").WithArgs(id).WillReturnRows(pgxmock.NewRows([]string{
-		"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce",
+		"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce",
 		"created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions",
-	}).AddRow(id, "app", state, "", 1, RolloutDirect, PhaseExpand, "", KindMigrate, "", "",
+	}).AddRow(id, int64(1), "app", state, "", 1, RolloutDirect, PhaseExpand, "", KindMigrate, "", "",
 		time.Now(), nil, "ci", "", "", 0, nil, nil, map[string]Expansion{}))
 }
 

@@ -146,7 +146,7 @@ func (s *Store) History(ctx context.Context, target string) ([]HistoryRun, error
 		JOIN cp_run_files u ON u.run_id = a.run_id AND u.name = a.migration || '.up.sql'
 		LEFT JOIN cp_run_files d ON d.run_id = a.run_id AND d.name = a.migration || '.down.sql'
 		WHERE r.target = $1 AND `+standingRow+`
-		ORDER BY r.created_at, a.run_id, a.seq`, target)
+		ORDER BY r.seq, a.seq`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list history: %w", err)
 	}
@@ -175,7 +175,7 @@ func (s *Store) ListDriftEvents(ctx context.Context, target string) ([]DriftEven
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, target, diff, detected_at, resolved_at FROM cp_drift_events
 		WHERE $1 = '' OR target = $1
-		ORDER BY detected_at DESC LIMIT 100`, target)
+		ORDER BY detected_at DESC, id DESC LIMIT 100`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list drift events: %w", err)
 	}

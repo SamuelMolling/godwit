@@ -78,7 +78,9 @@ const (
 
 // Run is one migration run tracked by the control plane.
 type Run struct {
-	ID         string
+	ID string
+	// Seq is the run's creation order on the control plane, unique across runs; created_at is not.
+	Seq        int64
 	Target     string
 	State      string
 	Error      string
@@ -219,7 +221,7 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.name, t.provider, t.config,
-			(SELECT count(DISTINCT left(a.migration, 14)) FROM cp_run_applied a JOIN cp_runs r ON r.id = a.run_id
+			(SELECT count(DISTINCT `+appliedEntry+`) FROM cp_run_applied a JOIN cp_runs r ON r.id = a.run_id
 			 WHERE r.target = t.name AND `+standingRow+`),
 			(SELECT count(*) FROM cp_runs r WHERE r.target = t.name AND r.state IN ('needs_attention', 'awaiting_contract')),
 			(SELECT count(*) FROM cp_plans p WHERE p.target = t.name AND p.state = 'ready' AND p.created_at >= $1),
@@ -252,7 +254,7 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 
 func (s *Store) lastRuns(ctx context.Context) (map[string]*Run, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+runColumns+` FROM (SELECT DISTINCT ON (target) * FROM cp_runs ORDER BY target, created_at DESC) r`)
+		`SELECT `+runColumns+` FROM (SELECT DISTINCT ON (target) * FROM cp_runs ORDER BY target, seq DESC) r`)
 	if err != nil {
 		return nil, fmt.Errorf("list last runs: %w", err)
 	}
@@ -348,7 +350,7 @@ func (s *Store) RetiredColumns(ctx context.Context, target string) ([]RetiredCol
 // AwaitingContract returns the target's run stopped between its phases, if it has one.
 func (s *Store) AwaitingContract(ctx context.Context, target string) (Run, bool, error) {
 	r, err := scanRun(s.pool.QueryRow(ctx,
-		`SELECT `+runColumns+` FROM cp_runs WHERE target = $1 AND state = 'awaiting_contract' ORDER BY created_at LIMIT 1`, target))
+		`SELECT `+runColumns+` FROM cp_runs WHERE target = $1 AND state = 'awaiting_contract' ORDER BY seq LIMIT 1`, target))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, false, nil
 	}
@@ -439,8 +441,8 @@ func (s *Store) checkRevertable(ctx context.Context, orig Run, force bool) error
 	if err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM cp_runs r WHERE r.target = $1 AND r.id <> $2 AND r.state IN ('queued', 'running')),
 		       (SELECT r.id::text FROM cp_runs r WHERE r.target = $1 AND r.id <> $2 AND r.reverts IS NULL
-			         AND r.state <> 'reverted' AND r.created_at > $3 ORDER BY r.created_at DESC LIMIT 1)`,
-		orig.Target, orig.ID, orig.CreatedAt).Scan(&busy, &newer); err != nil {
+			         AND r.state <> 'reverted' AND r.seq > $3 ORDER BY r.seq DESC LIMIT 1)`,
+		orig.Target, orig.ID, orig.Seq).Scan(&busy, &newer); err != nil {
 		return fmt.Errorf("check revertable: %w", err)
 	}
 	if busy {
@@ -458,8 +460,8 @@ func (s *Store) Newer(ctx context.Context, orig Run) (bool, error) {
 	var newer bool
 	if err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM cp_runs r WHERE r.target = $1 AND r.id <> $2 AND r.reverts IS NULL
-		                AND r.state <> 'reverted' AND r.created_at > $3)`,
-		orig.Target, orig.ID, orig.CreatedAt).Scan(&newer); err != nil {
+		                AND r.state <> 'reverted' AND r.seq > $3)`,
+		orig.Target, orig.ID, orig.Seq).Scan(&newer); err != nil {
 		return false, fmt.Errorf("check newer runs: %w", err)
 	}
 
@@ -472,7 +474,7 @@ func (s *Store) RevertTarget(ctx context.Context, target string) (Run, error) {
 		SELECT `+runColumns+` FROM cp_runs r
 		WHERE r.target = $1 AND r.reverts IS NULL AND r.kind = 'migrate'
 		  AND r.state IN ('succeeded', 'awaiting_contract', 'failed', 'needs_attention')
-		ORDER BY r.created_at DESC LIMIT 1`, target))
+		ORDER BY r.seq DESC LIMIT 1`, target))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, fmt.Errorf("target %q has no revertable run: %w", target, ErrNotFound)
 	}
@@ -483,13 +485,13 @@ func (s *Store) RevertTarget(ctx context.Context, target string) (Run, error) {
 	return r, nil
 }
 
-const runColumns = `id, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
+const runColumns = `id, seq, target, state, coalesce(error, ''), attempts, rollout, phase, coalesce(reverts::text, ''), kind,
 	coalesce(lock_timeout, ''), coalesce(statement_timeout, ''), created_at, finished_at, created_by, source, coalesce(plan_id::text, ''),
 	retries, not_before, progress, expansions`
 
 func (r *Run) fields() []any {
 	return []any{
-		&r.ID, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
+		&r.ID, &r.Seq, &r.Target, &r.State, &r.Error, &r.Attempts, &r.Rollout, &r.Phase, &r.Reverts, &r.Kind,
 		&r.Timeouts.Lock, &r.Timeouts.Statement, &r.CreatedAt, &r.FinishedAt, &r.Provenance.CreatedBy, &r.Provenance.Source, &r.PlanID,
 		&r.Retries, &r.NotBefore, &r.Progress, &r.Expansions,
 	}
@@ -505,7 +507,7 @@ func scanRun(row pgx.Row) (Run, error) {
 // LastRun returns the most recently created run for target; ok is false when it never had one.
 func (s *Store) LastRun(ctx context.Context, target string) (r Run, ok bool, err error) {
 	r, err = scanRun(s.pool.QueryRow(ctx,
-		`SELECT `+runColumns+` FROM cp_runs WHERE target = $1 ORDER BY created_at DESC LIMIT 1`, target))
+		`SELECT `+runColumns+` FROM cp_runs WHERE target = $1 ORDER BY seq DESC LIMIT 1`, target))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, false, nil
 	}
@@ -535,7 +537,7 @@ func (s *Store) ListRuns(ctx context.Context, target string) ([]Run, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+runColumns+` FROM cp_runs
 		 WHERE $1 = '' OR target = $1
-		 ORDER BY created_at DESC LIMIT 100`, target)
+		 ORDER BY seq DESC LIMIT 100`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
@@ -580,6 +582,10 @@ const standingRow = `NOT a.held AND a.reverted_by IS NULL`
 
 // versionedMigration matches a ledger migration id that carries a version; repeatables are named R__<name>.
 const versionedMigration = `a.migration ~ '^[0-9]{14}_'`
+
+// appliedEntry keys a ledger row the way the target counts it: by version, or by whole name for a
+// repeatable, which carries no version and whose name two truncations to 14 characters would collide.
+const appliedEntry = `CASE WHEN ` + versionedMigration + ` THEN left(a.migration, 14) ELSE a.migration END`
 
 // Applied returns what a target's runs actually applied and no revert undid, whether or not the run
 // that applied it went on to succeed: their versions ascending, and the content last recorded under
@@ -627,7 +633,7 @@ func (s *Store) appliedRepeatables(ctx context.Context, target string) (map[stri
 		JOIN cp_runs r ON r.id = a.run_id
 		JOIN cp_run_files f ON f.run_id = a.run_id AND f.name = a.migration || '.up.sql'
 		WHERE r.target = $1 AND `+standingRow+` AND a.migration LIKE 'R\_\_%'
-		ORDER BY a.migration, r.created_at DESC`, target)
+		ORDER BY a.migration, r.seq DESC`, target)
 	if err != nil {
 		return nil, fmt.Errorf("list applied repeatables: %w", err)
 	}
@@ -663,7 +669,7 @@ func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Ru
 				SELECT 1 FROM cp_runs r2
 				JOIN cp_leases l2 ON l2.run_id = r2.id
 				WHERE r2.target = r.target AND r2.id <> r.id AND l2.expires_at > now())
-			ORDER BY r.created_at
+			ORDER BY r.seq
 			FOR UPDATE OF r SKIP LOCKED
 			LIMIT 1
 		), lease AS (

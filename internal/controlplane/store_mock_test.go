@@ -26,10 +26,10 @@ func TestListRunsRowError(t *testing.T) {
 	t.Parallel()
 	mock, s := newMockStore(t)
 
-	mock.ExpectQuery("SELECT id, target, state").WithArgs("").
+	mock.ExpectQuery("SELECT id, seq, target, state").WithArgs("").
 		WillReturnRows(pgxmock.NewRows(
-			[]string{"id", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
-			AddRow("r1", "app", StateQueued, "", 0, RolloutDirect, PhaseExpand, "", KindMigrate, "", "", now(), nilTime(), "anonymous", "", "", 0, nilTime(), (*RunProgress)(nil), map[string]Expansion{}).RowError(0, errBoom))
+			[]string{"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
+			AddRow("r1", int64(1), "app", StateQueued, "", 0, RolloutDirect, PhaseExpand, "", KindMigrate, "", "", now(), nilTime(), "anonymous", "", "", 0, nilTime(), (*RunProgress)(nil), map[string]Expansion{}).RowError(0, errBoom))
 
 	if _, err := s.ListRuns(context.Background(), ""); err == nil ||
 		!strings.Contains(err.Error(), "read runs") {
