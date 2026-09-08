@@ -279,7 +279,7 @@ func (s *sourceFlags) djangoSource(managePy, bin string) (schemasource.Source, s
 }
 
 func writeDiff(dir, name string, m *godwitv1.DiffResponse) ([]string, error) {
-	prefix := filepath.Join(dir, diffNow().UTC().Format("20060102150405")+"_"+name)
+	prefix := filepath.Join(dir, diffNow().UTC().Format(versionLayout)+"_"+name)
 	files := []string{prefix + ".up.sql", prefix + ".down.sql"}
 	for i, body := range []string{m.UpSql, m.DownSql} {
 		if err := os.WriteFile(files[i], []byte(body+"\n"), 0o644); err != nil {

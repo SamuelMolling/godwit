@@ -35,6 +35,19 @@ db/migrations/
 
 File names must match `<14-digit timestamp>_<snake_name>.{up,down}.sql`, or `R__<snake_name>.{up,down}.sql` for a **repeatable** migration. Both sides are required and must not be empty; a version with two different names, or an unexpected file, fails the load. Entries starting with `.` are ignored.
 
+`godwit new` writes the pair rather than leaving you to compose the timestamp:
+
+```bash
+godwit new add_status --dir db/migrations
+```
+
+```
+wrote db/migrations/20260908143012_add_status.up.sql
+wrote db/migrations/20260908143012_add_status.down.sql
+```
+
+The version is the current UTC second, advanced to the next free one when the directory already holds a migration for it — so two calls in the same second produce two ordered versions and neither overwrites the other. `--repeatable` writes `R__<name>.{up,down}.sql` instead; that name is the migration's identity, so a name already in the directory is refused rather than stepped over. `<name>` must be snake_case (`[a-z0-9_]+`), the only thing the loader accepts, and is checked before anything is written. Both files start with a placeholder comment, because an empty side fails the load — and a migration with no statements is `E002`, so a pair you forgot to fill in is blocked by `godwit lint` instead of applied as a no-op.
+
 A repeatable has no version: it runs after the versioned files of the same run, in name order, whenever its content differs from what the target last recorded under that name, and is skipped when it does not. Use it for objects the file describes in full — a view, a function, a trigger body — and write both sides so they can run more than once:
 
 ```sql
