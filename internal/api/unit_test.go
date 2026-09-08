@@ -276,11 +276,28 @@ func TestCheckHazards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, nil); err == nil || !strings.Contains(err.Error(), "H002") {
+	none := controlplane.AppliedSet{}
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, none, nil); err == nil || !strings.Contains(err.Error(), "H002") {
 		t.Fatalf("err = %v", err)
 	}
-	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, []string{"H002"}); err != nil {
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, none, []string{"H002"}); err != nil {
 		t.Fatalf("acked: %v", err)
+	}
+	held := controlplane.AppliedSet{Versions: []int64{1}}
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{p}, held, nil); err != nil {
+		t.Fatalf("applied: %v", err)
+	}
+	mark := p
+	mark.MarkOnly = true
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{mark}, none, nil); err != nil {
+		t.Fatalf("mark-only: %v", err)
+	}
+	down, err := engine.BuildPlan(engine.Migration{Version: 1, Name: "d", UpSQL: "SELECT 1;", DownSQL: "DROP TABLE x;"}, engine.DirectionDown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewServer(nil, nil, nil, creds.Keyring{}).checkHazards([]engine.Plan{down}, held, nil); err == nil || !strings.Contains(err.Error(), "H002") {
+		t.Fatalf("down: %v", err)
 	}
 }
 
@@ -481,6 +498,9 @@ func TestPlanRunUnit(t *testing.T) {
 	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files[:1]})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("bad files: %v", err)
 	}
+	expectTarget(mock)
+	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}).AddRow(int64(1)))
+	expectNoRepeatables(mock)
 	if _, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files})); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), "H003") {
 		t.Fatalf("hazard gate: %v", err)

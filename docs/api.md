@@ -70,7 +70,7 @@ call RegisterTarget '{"name":"app","provider":"vault","vaultPath":"secret/data/a
 
 ### CreateRun — pipeline
 
-Admits and queues a run. `files` are `{name, body}` pairs named `<version>_<name>.up.sql` / `.down.sql`; both sides of every version are required. Admission, in order: version target (`toVersion`) → target exists → hazard gate (`acknowledgeHazards`) → out-of-order guard (`allowOutOfOrder`) → scratch validation (`skipValidation`). `rollout` is `direct` (default) or `expand-contract`. `source` is free text stored on the run.
+Admits and queues a run. `files` are `{name, body}` pairs named `<version>_<name>.up.sql` / `.down.sql`; both sides of every version are required. Admission, in order: version target (`toVersion`) → target exists → out-of-order guard (`allowOutOfOrder`) → hazard gate (`acknowledgeHazards`, on the pending migrations only) → scratch validation (`skipValidation`). `rollout` is `direct` (default) or `expand-contract`. `source` is free text stored on the run.
 
 `toVersion` stops the run at a migration: only versions at or below it are admitted, validated and applied, and the rest are reported as `withheld` ([concepts](concepts.md#version-targets)). Send the whole directory anyway — the service is what cuts it, so the plan records what it is not doing. Repeatables are withheld whenever a pending versioned migration is. Refused: a version the set does not hold (`invalid_argument`), one below the newest applied on the target (`failed_precondition`; `toVersion` never reverts), one that selects nothing while migrations above it are pending (`failed_precondition`), and `toVersion` with `planId` (`invalid_argument`).
 
