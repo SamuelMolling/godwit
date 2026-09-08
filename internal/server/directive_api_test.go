@@ -33,8 +33,8 @@ func changeTypeFiles(directive, down string) []*godwitv1.MigrationFile {
 	}
 }
 
-func directiveSet(directive, down string) []*godwitv1.MigrationFile {
-	return append(usersFiles(), changeTypeFiles(directive, down)...)
+func directiveSet(directive string) []*godwitv1.MigrationFile {
+	return append(usersFiles(), changeTypeFiles(directive, "-- godwit: revert\n")...)
 }
 
 func targetConn(t *testing.T, dsn string) *pgx.Conn {
@@ -131,7 +131,7 @@ func directiveServiceStore(t *testing.T) (godwitv1connect.GodwitServiceClient, s
 func TestPlanRunExpandsChangeType(t *testing.T) {
 	t.Parallel()
 	client, _ := directiveService(t)
-	msg := planWith(t, client, directiveSet("change-type public.users.age bigint", "-- godwit: revert\n"))
+	msg := planWith(t, client, directiveSet("change-type public.users.age bigint"))
 
 	var pm *godwitv1.PlannedMigration
 	for _, m := range msg.Migrations {
@@ -160,11 +160,16 @@ func TestPlanRunExpandsChangeType(t *testing.T) {
 			}
 		}
 	}
-	if expand != 6 || contract != 6 || batches != 1 {
+	if expand != 7 || contract != 6 || batches != 1 {
 		t.Fatalf("expand %d contract %d batches %d: %+v", expand, contract, batches, pm.Statements)
 	}
 	if !strings.Contains(pm.Statements[3].Sql, "$1::bigint") {
 		t.Fatalf("backfill does not cast the cursor: %s", pm.Statements[3].Sql)
+	}
+	closing := pm.Statements[6]
+	if closing.Assert == nil || closing.Assert.Op != "=" || closing.Assert.Value != "0" ||
+		closing.Sql != "SELECT count(*) FROM public.users WHERE age_new IS DISTINCT FROM age::bigint" {
+		t.Fatalf("the expand phase must end by counting what is left: %+v", closing)
 	}
 	if !strings.Contains(strings.Join(pm.Notes, "\n"), "leaves public.users.age_old for rollback") {
 		t.Fatalf("notes = %v", pm.Notes)
@@ -178,7 +183,7 @@ func TestCreateRunAppliesTheStoredExpansion(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	client, targetDSN := directiveService(t)
-	files := directiveSet("change-type public.users.age bigint batch=5000 pause=150ms", "-- godwit: revert\n")
+	files := directiveSet("change-type public.users.age bigint batch=5000 pause=150ms")
 	planWith(t, client, files)
 	runID := startRun(t, client, files)
 
@@ -216,6 +221,41 @@ func TestCreateRunAppliesTheStoredExpansion(t *testing.T) {
 	}
 	assertChecksum(t, targetDSN, files)
 	assertNoSync(t, targetDSN)
+}
+
+// TestConfirmRolloutRechecksTheChangeTypeCount parks the run, then puts the two columns out of sync behind
+// the trigger's back. The confirm re-evaluates the closing count and stops there, so the rename never runs.
+func TestConfirmRolloutRechecksTheChangeTypeCount(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	client, targetDSN := directiveService(t)
+	files := directiveSet("change-type public.users.age bigint")
+	planWith(t, client, files)
+	runID := startRun(t, client, files)
+	waitState(t, client, runID, godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT)
+
+	conn := targetConn(t, targetDSN)
+	for _, sql := range []string{
+		`ALTER TABLE public.users DISABLE TRIGGER users_age_sync`,
+		`UPDATE public.users SET age = age + 1 WHERE id <= 3`,
+	} {
+		if _, err := conn.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := client.ConfirmRollout(ctx, connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: runID})); err != nil {
+		t.Fatal(err)
+	}
+	failed := waitState(t, client, runID, godwitv1.RunState_RUN_STATE_FAILED)
+	if !strings.Contains(failed.Error, "returned 3, want = 0") {
+		t.Fatalf("run = %+v", failed)
+	}
+	if got := columnType(t, targetDSN, "age"); got != "integer" {
+		t.Fatalf("age = %s, want the swap refused", got)
+	}
+	if columnType(t, targetDSN, "age_old") != "" {
+		t.Fatal("the rename must not have run")
+	}
 }
 
 // insertDuringBackfill waits for the sync trigger and writes a row while the backfill is still running;
@@ -330,7 +370,7 @@ func TestPlanRunRefusesWhileAwaitingContract(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	client, _ := directiveService(t)
-	files := directiveSet("change-type public.users.age bigint", "-- godwit: revert\n")
+	files := directiveSet("change-type public.users.age bigint")
 	planWith(t, client, files)
 	runID := startRun(t, client, files)
 	waitState(t, client, runID, godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT)

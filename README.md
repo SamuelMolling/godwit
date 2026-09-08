@@ -23,7 +23,7 @@ Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behin
 
 ```
 $ godwit plan --target app --dir db/migrations --rollout expand-contract
-20260901121000_customer_id_text (up): 13 statement(s) [expand, pending]   directive, expand 7 / contract 6
+20260901121000_customer_id_text (up): 14 statement(s) [expand, pending]   directive, expand 8 / contract 6
   -- godwit: change-type orders.customer_id text using='customer_id::text'
   -- godwit: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
   -- godwit expanded: change-type orders.customer_id text
@@ -32,15 +32,17 @@ $ godwit plan --target app --dir db/migrations --rollout expand-contract
   [2] tx    CREATE TRIGGER orders_customer_id_sync BEFORE INSERT OR UPDATE ON public.orders …   [expand]
   [3] batch WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint AND …)   [expand]
         batch over id (int), 5000 rows per transaction
-  -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
-  [6] assert SELECT count(*) FROM orders WHERE customer_id IS NULL   [expand]
+  [6] assert SELECT count(*) FROM public.orders WHERE customer_id_new IS DISTINCT FROM customer_id::text   [expand]
         the result must be = 0
-  [9] tx    ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old   [contract]
-  [10] tx    ALTER TABLE public.orders RENAME COLUMN customer_id_new TO customer_id   [contract]
+  -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
+  [7] assert SELECT count(*) FROM orders WHERE customer_id IS NULL   [expand]
+        the result must be = 0
+  [10] tx    ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old   [contract]
+  [11] tx    ALTER TABLE public.orders RENAME COLUMN customer_id_new TO customer_id   [contract]
   note: leaves public.orders.customer_id_old for rollback; drop it with `-- godwit: drop-column public.orders.customer_id_old`
 ```
 
-(An excerpt: the run has thirteen statements.) The trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, the assertion is the last statement of the expand phase so a bad backfill never becomes the irreversible swap, and the rename waits in `awaiting_contract` until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
+(An excerpt: the run has fourteen statements.) The trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, statement 6 is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
 
 **The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `/godwit apply` bound to the reviewed plan, `/godwit confirm` for the contract phase, and a `godwit/applied` commit status that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
 

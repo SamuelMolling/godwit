@@ -295,7 +295,7 @@ The query is single-quoted, `''` is a literal quote inside it, and the compariso
 
 **Where it runs.** Where you wrote it. Ahead of the migration's own SQL it is a **precondition** — the shape that guards a `DROP TABLE legacy` with `assert 'SELECT count(*) FROM legacy' = 0`, which is allowed precisely because an assertion generates no contract block of its own. After a `change-type` or a `backfill` it is the last statement of the **expand** phase, so a bad backfill can never become the irreversible swap: the generated contract block is always a suffix, so an assertion is always ahead of it. A run whose assertion does not hold fails before `awaiting_contract`, and there is then nothing to confirm. (Under `expand-contract` a hand-written destructive statement still moves its whole migration into the contract phase, assertion included — so the precondition above is checked when the human confirms, which is where it belongs.)
 
-**A resume re-checks it.** The executor walks past an assertion again even when the journal says it is done — including the walk `ConfirmRollout` makes over the expand phase before it applies the contract statements. A condition that held an hour ago is not a condition that holds now, and re-running a `SELECT` costs nothing. The consequence is worth stating: an assertion whose subject the same migration changes must be written to stay true after the change, or placed after it.
+**A resume re-checks it.** The executor walks past an assertion again even when the journal says it is done — including the walk `ConfirmRollout` makes over the expand phase before it applies the contract statements. A condition that held an hour ago is not a condition that holds now, and re-running a `SELECT` costs nothing. The consequence is worth stating: an assertion whose subject the same migration changes must be written to stay true after the change, or placed after it. The one exception is a resume that has already begun the **contract** phase: there the columns an expansion's own assertion names have been renamed away, so it is past asking rather than re-asked, and the run finishes the statements it has left.
 
 **What it refuses.** Offline, through libpg_query, exactly like every other directive value: anything that is not a single `SELECT` (`UPDATE`, `DELETE`, `CREATE`, a `DO` block), a `SELECT INTO`, a locking clause (`FOR UPDATE` takes row locks), a data-modifying CTE, and a query returning more than one column or a bare `*`. At run time the query executes in a **read-only transaction**, which is what stops a `VOLATILE` function that writes — volatility lives in the catalog and the offline check cannot see it. The value must be a single row of `smallint`/`integer`/`bigint` (for an integer comparison) or `boolean`; `sum()` returns `numeric`, so cast it. No rows, more than one row, or `NULL` fails the assertion by name.
 
@@ -326,6 +326,7 @@ WITH b AS (SELECT id AS godwit_key FROM public.users
 UPDATE public.users AS t SET age_new = age::bigint FROM b WHERE t.id = b.godwit_key RETURNING b.godwit_key;
 ALTER TABLE public.users ADD CONSTRAINT users_age_new_not_null CHECK (age_new IS NOT NULL) NOT VALID;
 ALTER TABLE public.users VALIDATE CONSTRAINT users_age_new_not_null;
+SELECT count(*) FROM public.users WHERE age_new IS DISTINCT FROM age::bigint;
 -- contract
 DROP TRIGGER users_age_sync ON public.users;
 DROP FUNCTION public.users_age_sync();
@@ -340,6 +341,21 @@ write that lands during the backfill sets both columns and the backfill's `IS DI
 The `UPDATE` is one plan statement with a `BatchSpec`, not N unrolled ones: the executor loops over it, commits the
 cursor with the rows, and resumes from the cursor after a crash. `$1::bigint` is explicit because a key narrower
 than `bigint` would otherwise refuse the `int8` the executor binds.
+
+**One predicate, three consumers.** `<c>_new IS DISTINCT FROM <expr>` is what the batches select, what the
+trigger's assignment makes false for every row it is handed, and what the closing `SELECT count(*)` asks about, so
+the three cannot disagree about what "converged" means. That count is a generated [assertion](#assertions), `= 0`,
+and it is the **last statement of the expand phase** — the statement the run has to pass before `awaiting_contract`
+and, because a resumed run re-evaluates an assertion it walks past, the statement `/godwit confirm` has to pass
+again before the rename. The rename is the irreversible half of a `change-type`, so nothing else in the expansion
+is worth checking: a `using=` that does not converge — one whose value depends on something outside the row that
+moved while the batches ran — used to leave the batches' own rows behind, report `succeeded` and then swap the
+column anyway. It now fails the run with `assertion failed: … returned <n>, want = 0`, with `<c>` untouched and
+the old column still there.
+
+Once the contract phase *has* begun, the assertion is past asking rather than re-asked: the swap renames the
+columns it names, so a run that died between two contract statements resumes into what is left instead of failing
+on a schema that no longer answers the question.
 
 #### `backfill` keeps its rows in sync while it runs
 

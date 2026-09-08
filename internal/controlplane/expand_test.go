@@ -80,8 +80,11 @@ func TestExpandChangeType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := exp.Contract(); got != 6 {
+	if got := exp.Contract(); got != 7 {
 		t.Fatalf("contract starts at %d, phases %v", got, exp.Phase)
+	}
+	if exp.Asserts[6] == nil || exp.Asserts[6].String() != "= 0" {
+		t.Fatalf("closing assertion %+v", exp.Asserts[6])
 	}
 	for _, want := range []string{
 		`ALTER TABLE public.users ADD COLUMN age_new bigint;`,
@@ -89,12 +92,16 @@ func TestExpandChangeType(t *testing.T) {
 		`CREATE TRIGGER users_age_sync BEFORE INSERT OR UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.users_age_sync();`,
 		`WHERE id > $1::bigint AND (age_new IS DISTINCT FROM age::bigint) ORDER BY id LIMIT 5000`,
 		`ALTER TABLE public.users ADD CONSTRAINT users_age_new_not_null CHECK (age_new IS NOT NULL) NOT VALID;`,
+		`SELECT count(*) FROM public.users WHERE age_new IS DISTINCT FROM age::bigint;`,
 		`ALTER TABLE public.users RENAME COLUMN age TO age_old;`,
 		`ALTER TABLE public.users RENAME COLUMN age_new TO age;`,
 	} {
 		if !strings.Contains(exp.UpSQL, want) {
 			t.Fatalf("expansion is missing %q:\n%s", want, exp.UpSQL)
 		}
+	}
+	if !strings.Contains(strings.Join(exp.Notes, "\n"), "counts what is left before the expand phase ends") {
+		t.Fatalf("notes = %v", exp.Notes)
 	}
 	if len(exp.Retired) != 1 || exp.Retired[0].String() != "public.users.age_old" {
 		t.Fatalf("retired = %+v", exp.Retired)
@@ -110,6 +117,53 @@ func TestExpandChangeType(t *testing.T) {
 	}
 	if typ != "bigint" || rows != 25 {
 		t.Fatalf("age is %s over %d migrated rows", typ, rows)
+	}
+}
+
+// TestExpandChangeTypeFailsWhenTheUsingDoesNotConverge moves what the expression depends on after the
+// first batch, so the rows that batch wrote no longer agree with it and the cursor never looks at them
+// again. That is the shape the swap used to make irreversible.
+func TestExpandChangeTypeFailsWhenTheUsingDoesNotConverge(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newScratch(t,
+		`CREATE TABLE public.knob (v integer NOT NULL)`,
+		`INSERT INTO public.knob VALUES (0)`,
+		`CREATE FUNCTION public.knob() RETURNS integer LANGUAGE sql STABLE AS $$ SELECT v FROM public.knob $$`,
+		`CREATE TABLE public.drifty (id bigint PRIMARY KEY, age integer)`,
+		`INSERT INTO public.drifty SELECT g, g FROM generate_series(1, 30) g`)
+	up := "-- godwit: change-type drifty.age bigint using='(age + knob())::bigint' batch=10\n"
+	down := "SELECT 1;\n"
+	exp, err := expandOne(t, conn, up, down)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ExpandPlan(engine.Plan{Migration: directiveMigration(t, up, down), Direction: engine.DirectionUp}, exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var turned bool
+	hook := func(point engine.HookPoint, _ int) {
+		if point != engine.HookAfterBatch || turned {
+			return
+		}
+		turned = true
+		if _, err := conn.Exec(ctx, `UPDATE public.knob SET v = 1`); err != nil {
+			t.Error(err)
+		}
+	}
+	_, err = applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithHook(hook))
+	if !errors.Is(err, engine.ErrAssertFailed) || !strings.Contains(err.Error(), "returned 10, want = 0") {
+		t.Fatalf("a change-type whose expression never converges must fail: %v", err)
+	}
+	var typ string
+	if err := conn.QueryRow(ctx,
+		`SELECT format_type(atttypid, atttypmod) FROM pg_attribute
+		 WHERE attrelid = 'public.drifty'::regclass AND attname = 'age'`).Scan(&typ); err != nil {
+		t.Fatal(err)
+	}
+	if typ != "integer" {
+		t.Fatalf("age = %s, want the swap never reached", typ)
 	}
 }
 
