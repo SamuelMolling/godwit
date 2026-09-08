@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -41,6 +42,30 @@ func TestParseSearchPath(t *testing.T) {
 			}
 			if err != nil || got != tc.want {
 				t.Fatalf("got = %q, err = %v", got, err)
+			}
+		})
+	}
+}
+
+func TestJournalOnPath(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, effective, setting, role, want string
+	}{
+		{name: "a role of its own", effective: "public", setting: `"$user", public`, role: "app"},
+		{name: "quoted is a different schema", effective: "public", setting: `"GODWIT", public`, role: "app"},
+		{name: "nothing set", role: "app"},
+		{name: "the journal is on the effective path", effective: "godwit,public", setting: `"$user", public`, role: "godwit", want: "godwit"},
+		{name: "the role resolves to it before the journal exists", effective: "public", setting: `"$user", public`, role: "godwit", want: "$user"},
+		{name: "named outright before the schema exists", effective: "public", setting: "godwit, public", role: "app", want: "godwit"},
+		{name: "unquoted folds like an identifier", effective: "public", setting: "GODWIT, public", role: "app", want: "godwit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := journalOnPath(tc.effective, tc.setting, tc.role)
+			if ok != (tc.want != "") || got != tc.want {
+				t.Fatalf("element = %q, ok = %t, want %q", got, ok, tc.want)
 			}
 		})
 	}
@@ -183,6 +208,40 @@ func TestValidateMirrorsTheTargetSearchPath(t *testing.T) {
 	}
 	if !strings.Contains(val.Base, "column app.migrations.note text") {
 		t.Fatalf("base = %q", val.Base)
+	}
+}
+
+// A target whose own role is named godwit resolves "$user" to the journal schema, so its unqualified DDL
+// lands beside the journal's own tables; the observation refuses before anything is planned against it.
+func TestObserveRefusesAPathThatReachesTheJournal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	sched, targetDSN := newScheduler(t, s, Config{Holder: "h"})
+	cfg, err := pgx.ParseConfig(targetDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execDSN(t, targetDSN, "ALTER DATABASE "+pgx.Identifier{cfg.Database}.Sanitize()+" RESET search_path")
+	insp := NewInspector(sched)
+
+	_, err = insp.Observe(ctx, "app")
+	if !errors.Is(err, ErrJournalOnSearchPath) || !strings.Contains(err.Error(), `element "$user"`) ||
+		!strings.Contains(err.Error(), "--search-path public") {
+		t.Fatalf("before the journal is bootstrapped: %v", err)
+	}
+
+	execDSN(t, targetDSN, "CREATE SCHEMA "+JournalSchema)
+	if _, err := insp.Observe(ctx, "app"); !errors.Is(err, ErrJournalOnSearchPath) || !strings.Contains(err.Error(), `element "godwit"`) {
+		t.Fatalf("with the journal bootstrapped: %v", err)
+	}
+
+	if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": targetDSN, ConfigSearchPath: "public"}); err != nil {
+		t.Fatal(err)
+	}
+	obs, err := insp.Observe(ctx, "app")
+	if err != nil || obs.SearchPath != "public" {
+		t.Fatalf("with a declared path = %+v, err = %v", obs, err)
 	}
 }
 

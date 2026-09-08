@@ -136,7 +136,9 @@ jobs:
             sleep 1
           done
           curl -fs "${GODWIT_SERVER}/readyz"
-          "${RUNNER_TEMP}/godwit" target add app --token smoke-admin --provider static \
+          # The server's own role is named godwit, so without a path of its own the target would
+          # resolve "$user" to the journal schema.
+          "${RUNNER_TEMP}/godwit" target add app --token smoke-admin --provider static --search-path public \
             --dsn 'postgres://godwit@127.0.0.1:5432/app?sslmode=disable'
           mkdir -p "${RUNNER_TEMP}/diff"
 
@@ -234,7 +236,7 @@ jobs:
         run: |
           set -euo pipefail
           docker exec "${POSTGRES_ID}" psql -U godwit -c 'CREATE DATABASE two'
-          "${RUNNER_TEMP}/godwit" target add two --token smoke-admin --provider static \
+          "${RUNNER_TEMP}/godwit" target add two --token smoke-admin --provider static --search-path public \
             --dsn 'postgres://godwit@127.0.0.1:5432/two?sslmode=disable'
 
       - name: plan the migration carrying a directive

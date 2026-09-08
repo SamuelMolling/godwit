@@ -258,7 +258,7 @@ func TestPGEngineObserve(t *testing.T) {
 	waitState(t, s, id, StateSucceeded)
 	after, err := PGEngine{}.Observe(ctx, dsn)
 	if err != nil || len(after.Applied) != 1 || after.Applied[0].Version != 20260901120000 || after.Fingerprint == obs.Fingerprint ||
-		!strings.Contains(after.Definition, "godwit.t.id") || after.HistoryHash() == obs.HistoryHash() || after.SearchPath != "godwit,public" {
+		!strings.Contains(after.Definition, "public.t.id") || after.HistoryHash() == obs.HistoryHash() || after.SearchPath != "public" {
 		t.Fatalf("after run = %+v, err = %v", after, err)
 	}
 
