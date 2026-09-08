@@ -547,11 +547,6 @@ func (a admission) expanded(spec runSpec) []engine.Plan {
 
 // admit refuses unacknowledged hazards, out-of-order versions and plans that fail on the scratch database.
 func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool, searchPath string) (admission, error) {
-	if err := s.checkHazards(plans, acked); err != nil {
-		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
-
-		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
-	}
 	if _, _, err := s.store.Target(ctx, target); err != nil {
 		return admission{}, rpcErr(err)
 	}
@@ -565,6 +560,11 @@ func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, 
 	plans, err = engine.ShapeCheckpoint(plans, applied.Newest())
 	if err != nil {
 		s.Log.Warn("run refused by the checkpoint gate", "target", target, "error", err.Error())
+
+		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if err := s.checkHazards(plans, applied, acked); err != nil {
+		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
 
 		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
@@ -821,14 +821,18 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }
 
-// checkHazards refuses plans carrying hazard codes the author did not accept.
-func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
+// checkHazards refuses hazard codes the author did not accept, reading only the plans this admission
+// would execute: a target's own history can never refuse a run over it.
+func (s *Server) checkHazards(plans []engine.Plan, applied controlplane.AppliedSet, acked []string) error {
 	ackSet := map[string]bool{}
 	for _, code := range acked {
 		ackSet[code] = true
 	}
 	var pending []string
 	for _, p := range plans {
+		if !runsBody(p, applied) {
+			continue
+		}
 		for _, st := range p.Statements {
 			for _, h := range st.Hazards {
 				s.Metrics.Hazard(h.Code, ackSet[h.Code])
@@ -844,6 +848,19 @@ func (s *Server) checkHazards(plans []engine.Plan, acked []string) error {
 	}
 
 	return nil
+}
+
+// runsBody reports whether the executor would run the plan's statements rather than only record it. A
+// down plan undoes what the target holds, so for it being applied is what makes it run.
+func runsBody(p engine.Plan, applied controlplane.AppliedSet) bool {
+	if p.MarkOnly {
+		return false
+	}
+	if p.Direction == engine.DirectionDown {
+		return true
+	}
+
+	return !applied.Has(p.Migration)
 }
 
 // checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it

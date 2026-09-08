@@ -261,7 +261,7 @@ The checksum is the SHA-256 hex of the up file body: `sha256sum migrations/<N>_<
 | Message | Code | Cause | Fix |
 |---|---|---|---|
 | `target "x": not found` | not_found | not registered | `godwit target add` (admin) |
-| `unacknowledged hazards (...)` | failed_precondition | H001–H010 on the planned side | rewrite in the safe form or `--ack CODE` |
+| `unacknowledged hazards (...)` | failed_precondition | H001–H010 in a pending migration (an applied one contributes none) | rewrite in the safe form or `--ack CODE` |
 | `out-of-order migrations ...: newest applied version on x is N` | failed_precondition | a new file older than the newest applied version | `--allow-out-of-order` if intended |
 | `run "x": run is not failed or parked` | failed_precondition | `resume` on a run in another state | nothing to do |
 | `run "x": run is not awaiting contract` | failed_precondition | `confirm` on a run in another state | nothing to do |
