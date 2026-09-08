@@ -298,6 +298,13 @@ resources:
   limits:
     memory: 512Mi
 
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  failureThreshold: 60
+
 livenessProbe:
   httpGet:
     path: /healthz

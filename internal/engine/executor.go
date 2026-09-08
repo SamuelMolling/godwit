@@ -68,6 +68,7 @@ type Executor struct {
 	observe     func(StatementEvent)
 	newID       func() string
 	assertProbe bool
+	atomic      bool
 }
 
 // Option customizes an Executor.
@@ -92,6 +93,11 @@ func WithIDGenerator(fn func() string) Option {
 // target's schema but holds none of its rows.
 func WithAssertProbe() Option {
 	return func(e *Executor) { e.assertProbe = true }
+}
+
+// WithAtomic commits a Plan.Transactional plan and its history row together; anything else keeps the journalled path.
+func WithAtomic() Option {
+	return func(e *Executor) { e.atomic = true }
 }
 
 // New builds an Executor over db.
@@ -182,6 +188,11 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	if len(p.Statements) == 0 && awaitsExpansion(p.Migration, p.Direction) {
 		return res, fmt.Errorf("%s (%s): its godwit directives were never expanded", res.Migration, p.Direction)
 	}
+	if e.atomic && p.Transactional() && !p.Held() {
+		res.Applied, err = e.applyAtomic(ctx, p, held)
+
+		return res, err
+	}
 
 	prog, err := openRun(ctx, e.db, p, e.newID())
 	if err != nil {
@@ -215,6 +226,51 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 
 	return res, e.finalize(ctx, p, prog.runID, held)
+}
+
+func (e *Executor) applyAtomic(ctx context.Context, p Plan, held string) (int, error) {
+	tx, err := e.db.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, set := range e.timeoutSQL("SET LOCAL") {
+		if _, err := tx.Exec(ctx, set); err != nil {
+			return 0, fmt.Errorf("set timeouts: %w", err)
+		}
+	}
+	runID := e.newID()
+	if err := insertRun(ctx, tx, p, runID); err != nil {
+		return 0, err
+	}
+	applied := 0
+	for i := range p.Statements {
+		if err := e.execIn(ctx, tx, p.Migration.ID(), i, p.Statements[i]); err != nil {
+			return applied, fmt.Errorf("statement %d of %s (%s): %w", i, p.Migration.ID(), p.Direction, err)
+		}
+		applied++
+	}
+	if err := closeRun(ctx, tx, p, runID, held); err != nil {
+		return applied, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return applied, fmt.Errorf("commit: %w", err)
+	}
+
+	return applied, nil
+}
+
+func (e *Executor) execIn(ctx context.Context, tx DB, migration string, idx int, st Statement) error {
+	e.hook(HookBeforeStatement, idx)
+	start := time.Now()
+	_, err := tx.Exec(ctx, st.SQL)
+	if err != nil {
+		err = fmt.Errorf("exec: %w", err)
+	}
+	e.observe(StatementEvent{Migration: migration, Index: idx, Statement: st, Duration: time.Since(start), Err: err})
+
+	return err
 }
 
 // contractFrom is the index of the plan's first contract statement, or its length when it has one phase.
@@ -384,6 +440,17 @@ func (e *Executor) finalize(ctx context.Context, p Plan, runID, held string) err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := closeRun(ctx, tx, p, runID, held); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit finalize: %w", err)
+	}
+
+	return nil
+}
+
+func closeRun(ctx context.Context, tx DB, p Plan, runID, held string) error {
 	if err := record(ctx, tx, p); err != nil {
 		return err
 	}
@@ -393,9 +460,6 @@ func (e *Executor) finalize(ctx context.Context, p Plan, runID, held string) err
 	if _, err := tx.Exec(ctx,
 		`UPDATE godwit.runs SET state = 'succeeded', finished_at = now() WHERE id = $1`, runID); err != nil {
 		return fmt.Errorf("close run: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit finalize: %w", err)
 	}
 
 	return nil

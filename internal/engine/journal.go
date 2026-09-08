@@ -126,11 +126,8 @@ func openRun(ctx context.Context, db DB, p Plan, newID string) (runProgress, err
 		 ORDER BY started_at DESC LIMIT 1`,
 		k.version, k.repeatable, string(p.Direction), k.checksum).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := db.Exec(ctx,
-			`INSERT INTO godwit.runs (id, version, repeatable, checksum, direction, state, stmt_count)
-			 VALUES ($1, $2, $3, $4, $5, 'running', $6)`,
-			newID, k.version, k.repeatable, k.checksum, string(p.Direction), len(p.Statements)); err != nil {
-			return runProgress{}, fmt.Errorf("insert run: %w", err)
+		if err := insertRun(ctx, db, p, newID); err != nil {
+			return runProgress{}, err
 		}
 
 		return newProgress(newID), nil
@@ -140,6 +137,18 @@ func openRun(ctx context.Context, db DB, p Plan, newID string) (runProgress, err
 	}
 
 	return loadProgress(ctx, db, p, id)
+}
+
+func insertRun(ctx context.Context, db DB, p Plan, id string) error {
+	k := keyOf(p.Migration)
+	if _, err := db.Exec(ctx,
+		`INSERT INTO godwit.runs (id, version, repeatable, checksum, direction, state, stmt_count)
+		 VALUES ($1, $2, $3, $4, $5, 'running', $6)`,
+		id, k.version, k.repeatable, k.checksum, string(p.Direction), len(p.Statements)); err != nil {
+		return fmt.Errorf("insert run: %w", err)
+	}
+
+	return nil
 }
 
 func loadProgress(ctx context.Context, db DB, p Plan, runID string) (runProgress, error) {

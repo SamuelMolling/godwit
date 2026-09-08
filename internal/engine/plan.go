@@ -123,6 +123,17 @@ func (p Plan) Held() bool {
 	return p.HoldFrom > 0 && p.HoldFrom < len(p.Statements)
 }
 
+// Transactional reports whether PostgreSQL can run every statement of the plan inside one transaction.
+func (p Plan) Transactional() bool {
+	for _, st := range p.Statements {
+		if st.NoTx || st.Batch != nil || st.Assert != nil {
+			return false
+		}
+	}
+
+	return true
+}
+
 // Opaque names why the plan's effect cannot be read back from a schema snapshot, or "" when it can.
 func (p Plan) Opaque() string {
 	for _, st := range p.Statements {
