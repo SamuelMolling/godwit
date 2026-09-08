@@ -389,7 +389,9 @@ func pauseOf(d engine.Directive) time.Duration {
 }
 
 // changeType expands the lock-safe type change: a new column kept in sync by a trigger, a batched
-// backfill, and a contract phase that swaps the two.
+// backfill, a closing count of the rows still pending, and a contract phase that swaps the two. One
+// predicate carries all three — the batches select it, the trigger falsifies it for every row it is
+// handed, and the assertion counts it — so an expression that does not converge cannot become a swap.
 func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	col, err := resolveColumn(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -423,12 +425,13 @@ func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Dire
 	sync := col.Table + "_" + col.Column + "_sync"
 	constraint := col.Table + "_" + newCol + "_not_null"
 	notNull := col.NotNull || d.Opts["not-null"] == "true"
+	pending := engine.Ident(newCol) + " IS DISTINCT FROM " + expr
 	b := built{
 		expand: []step{
 			{sql: fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", col.rel(), engine.Ident(newCol), newType)},
 			{sql: syncFunction(col, sync, newCol, expr)},
 			{sql: syncTrigger(col, sync)},
-			{sql: backfillSQL(col, spec, newCol+" = "+expr, engine.Ident(newCol)+" IS DISTINCT FROM "+expr), batch: spec},
+			{sql: backfillSQL(col, spec, newCol+" = "+expr, pending), batch: spec},
 		},
 		contract: []step{
 			{sql: fmt.Sprintf("DROP TRIGGER %s ON %s", engine.Ident(sync), col.rel())},
@@ -452,6 +455,11 @@ func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Dire
 			step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", col.rel(), engine.Ident(col.Column))},
 			step{sql: fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", col.rel(), engine.Ident(constraint))})
 	}
+	// Last of the expand phase, so the contract phase's rename is reached only over a column that converged.
+	b.expand = append(b.expand, step{
+		sql:    fmt.Sprintf("SELECT count(*) FROM %s WHERE %s", col.rel(), pending),
+		assert: &engine.AssertSpec{Op: "=", Kind: engine.AssertInt, Value: "0"},
+	})
 	if col.Default != "" {
 		b.expand = slices.Insert(b.expand, 1, step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s",
 			col.rel(), engine.Ident(newCol), col.Default)})
@@ -459,8 +467,12 @@ func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Dire
 			col.Default, col.rel(), engine.Ident(newCol)))
 	}
 	x.retire(&b, d, col, newCol, oldCol)
-	b.notes = append(b.notes, fmt.Sprintf("backfills %s.%s in batches of %d over %s",
-		col.rel(), engine.Ident(newCol), spec.Size, spec.Key))
+	b.notes = append(b.notes,
+		fmt.Sprintf("backfills %s.%s in batches of %d over %s",
+			col.rel(), engine.Ident(newCol), spec.Size, spec.Key),
+		fmt.Sprintf("counts what is left before the expand phase ends, and again when the contract phase is "+
+			"confirmed: the swap happens only over a %s.%s every row of %s agrees with",
+			col.rel(), engine.Ident(newCol), col.rel()))
 
 	return b, nil
 }

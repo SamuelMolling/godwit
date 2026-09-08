@@ -383,6 +383,52 @@ func TestAssertResumesWhenItStillHolds(t *testing.T) {
 	}
 }
 
+// TestAssertIsPastAskingOnceTheContractPhaseBegan resumes a run that died between two contract statements.
+// An expansion's own assertion names the columns its swap renames, so re-asking there would fail on a
+// schema that has already moved; the resume runs what is left instead.
+func TestAssertIsPastAskingOnceTheContractPhaseBegan(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := setupAssert(t)()
+	body := []string{
+		"SELECT count(*) FROM orders WHERE total IS NULL",
+		"CREATE TABLE marker (id int)",
+		"INSERT INTO marker SELECT id FROM later",
+	}
+	p := Plan{
+		Migration: Migration{Version: 1, Name: "swap", Checksum: "c"},
+		Direction: DirectionUp,
+		Statements: []Statement{
+			{SQL: body[0], Hash: hashSQL(body[0]), Phase: PhaseExpand, Assert: &AssertSpec{Op: "=", Kind: AssertInt, Value: "1"}},
+			{SQL: body[1], Hash: hashSQL(body[1]), Phase: PhaseContract},
+			{SQL: body[2], Hash: hashSQL(body[2]), Phase: PhaseContract},
+		},
+		HoldFrom: 1,
+	}
+	if _, err := New(conn, Options{}).Up(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	p.HoldFrom = 0
+	_, err := New(conn, Options{}).Up(ctx, p)
+	wantErr(t, err, "later")
+
+	for _, sql := range []string{
+		"CREATE TABLE later (id int)",
+		"INSERT INTO later (id) VALUES (1)",
+		"INSERT INTO orders (id, total) VALUES (4, NULL)",
+	} {
+		if _, err := conn.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := New(conn, Options{}).Up(ctx, p); err != nil {
+		t.Fatalf("the contract phase must finish rather than re-ask the assertion: %v", err)
+	}
+	if n := scalarInt(t, conn, "SELECT count(*) FROM marker"); n != 1 {
+		t.Fatalf("marker rows = %d", n)
+	}
+}
+
 func assertMockPlan() Plan {
 	sql := "SELECT count(*) FROM t"
 

@@ -192,10 +192,12 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	if p.Held() {
 		last = p.HoldFrom
 	}
+	recheck := prog.lastDone < contractFrom(p)
 	for i := range last {
 		// An assertion is re-evaluated whenever the executor walks past it: a condition that held before
-		// the crash, or before the confirm, is not a condition that holds now.
-		if i <= prog.lastDone && p.Statements[i].Assert == nil {
+		// the crash, or before the confirm, is not a condition that holds now. Once the contract phase has
+		// begun it is past asking instead: a change-type's own assertion names the column its swap renames.
+		if i <= prog.lastDone && (p.Statements[i].Assert == nil || !recheck) {
 			continue
 		}
 		if err := e.execStatement(ctx, prog, res.Migration, i, p.Statements[i]); err != nil {
@@ -213,6 +215,17 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 
 	return res, e.finalize(ctx, p, prog.runID, held)
+}
+
+// contractFrom is the index of the plan's first contract statement, or its length when it has one phase.
+func contractFrom(p Plan) int {
+	for i, st := range p.Statements {
+		if st.Phase == PhaseContract {
+			return i
+		}
+	}
+
+	return len(p.Statements)
 }
 
 func (e *Executor) mark(ctx context.Context, p Plan) error {
