@@ -31,6 +31,7 @@ binds the code, and they carry no number until a decision is taken, in either di
 | Question | Proposes |
 |---|---|
 | [Renaming columns and tables](open/renaming-columns-and-tables.md) | teach the safe path and fix `godwit diff`; do not build a `rename-column` directive |
+| [The commands that need explaining](open/cli-command-names.md) | `plan --save`, one `target adopt`, `apply` → `up`; document `drift accept` rather than rename it |
 
 ## Standing constraints these records assume
 
