@@ -38,6 +38,17 @@ func ParseSearchPath(value string) (string, error) {
 	return strings.Join(out, ","), nil
 }
 
+// scratchSearchPath is what a scratch session resolves unqualified names against: the target's own effective
+// path when there is one, and never PostgreSQL's default `"$user", public` — `"$user"` resolves to the journal
+// schema whenever the scratch role is named after it, and godwit creates that schema on every scratch database.
+func scratchSearchPath(observed string) string {
+	if observed == "" {
+		return "public"
+	}
+
+	return observed
+}
+
 // dsnWithSearchPath pins the search path as a connection parameter, so every session godwit opens on the target carries it.
 func dsnWithSearchPath(dsn, searchPath string) string {
 	if searchPath == "" {

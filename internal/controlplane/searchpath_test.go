@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
 func TestParseSearchPath(t *testing.T) {
@@ -124,6 +125,64 @@ func TestSchedulerAppliesTargetSearchPath(t *testing.T) {
 	}
 	if columns != 0 {
 		t.Fatal("the migration reached godwit.migrations")
+	}
+}
+
+// The quickstart's scratch role is named godwit, so an unpinned "$user" resolves to the journal schema the
+// replay's own bootstrap creates, and the history lands there instead of public.
+func TestValidateReplaysUnqualifiedDDLIntoPublic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, pool := newStore(t)
+	sched, _ := newScheduler(t, s, Config{Holder: "h"})
+	id := "77777777-0000-0000-0000-000000000002"
+	queueRun(t, s, id, map[string]string{
+		"20260901120000_orders.up.sql":   "CREATE TABLE orders (id bigint PRIMARY KEY);",
+		"20260901120000_orders.down.sql": "DROP TABLE orders;",
+	})
+	sched.Tick(ctx)
+	waitState(t, s, id, StateSucceeded)
+
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "unqualified" })
+	plans, err := buildPlans([]engine.Migration{{
+		Version: 20260901120001, Name: "status", Checksum: "c",
+		UpSQL:   "ALTER TABLE public.orders ADD COLUMN status text;",
+		DownSQL: "ALTER TABLE public.orders DROP COLUMN status;",
+	}}, engine.DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	val, err := v.Validate(ctx, "app", plans, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(val.Base, "column public.orders.id bigint") {
+		t.Fatalf("base = %q", val.Base)
+	}
+}
+
+// Pinning must not win over the target's own path: a declared one is still mirrored, which is what keeps the
+// replay's fingerprints comparable with the target's.
+func TestValidateMirrorsTheTargetSearchPath(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, pool := newStore(t)
+	registerSearchPathTarget(t, s, "app,public")
+	sched := NewScheduler(s, map[string]creds.Provider{"plain": plainProvider{}}, PGEngine{}, Policies(), Config{Holder: "h"}, testLog)
+	id := "77777777-0000-0000-0000-000000000003"
+	if err := s.CreateRun(ctx, id, "app", RolloutDirect, searchPathFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	sched.Tick(ctx)
+	waitState(t, s, id, StateSucceeded)
+
+	v := NewValidator(NewScratch(pool, ""), s, func() string { return "mirrored" })
+	val, err := v.Validate(ctx, "app", nil, "app,public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(val.Base, "column app.migrations.note text") {
+		t.Fatalf("base = %q", val.Base)
 	}
 }
 

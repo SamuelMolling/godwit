@@ -17,10 +17,6 @@ import (
 // ErrCheckpoint marks a checkpoint godwit refuses to generate.
 var ErrCheckpoint = errors.New("checkpoint")
 
-// checkpointSearchPath is pinned because generation has no target whose search_path it could mirror, and
-// an unpinned "$user" resolves to the journal schema whenever the scratch role shares its name.
-const checkpointSearchPath = "public"
-
 // Checkpoint is a generated checkpoint file: the schema a prefix of the migration directory produces.
 type Checkpoint struct {
 	Version int64
@@ -63,7 +59,7 @@ func (c *Checkpointer) Generate(ctx context.Context, files map[string]string, at
 	if err != nil {
 		return Checkpoint{}, err
 	}
-	factory := &scratchFactory{scratch: c.scratch, newID: c.newID, searchPath: checkpointSearchPath}
+	factory := &scratchFactory{scratch: c.scratch, newID: c.newID}
 	replayed, done, err := c.replay(ctx, factory, collapsed)
 	if err != nil {
 		return Checkpoint{}, err
@@ -124,7 +120,7 @@ func (c *Checkpointer) replay(ctx context.Context, factory *scratchFactory, coll
 		return replayedSchema{}, nil, err
 	}
 	done := func() { _ = scratch.Close(context.WithoutCancel(ctx)) }
-	conn, err := connectScratch(ctx, c.scratch.connConfig(name, checkpointSearchPath))
+	conn, err := connectScratch(ctx, c.scratch.connConfig(name, ""))
 	if err != nil {
 		done()
 
@@ -173,7 +169,7 @@ func (c *Checkpointer) verify(ctx context.Context, factory *scratchFactory, ddl,
 		return err
 	}
 	defer func() { _ = scratch.Close(context.WithoutCancel(ctx)) }()
-	conn, err := connectScratch(ctx, c.scratch.connConfig(name, checkpointSearchPath))
+	conn, err := connectScratch(ctx, c.scratch.connConfig(name, ""))
 	if err != nil {
 		return fmt.Errorf("connect scratch database: %w", err)
 	}

@@ -45,13 +45,12 @@ func (s *Scratch) drop(ctx context.Context, name string) {
 		"DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
 }
 
-// connConfig points a copy of the scratch credentials at one scratch database.
+// connConfig points a copy of the scratch credentials at one scratch database, with a search path that is
+// always pinned: the session must never resolve unqualified names from the scratch role's own name.
 func (s *Scratch) connConfig(name, searchPath string) *pgx.ConnConfig {
 	cfg := s.pool.Config().ConnConfig.Copy()
 	cfg.Database = name
-	if searchPath != "" {
-		cfg.RuntimeParams["search_path"] = searchPath
-	}
+	cfg.RuntimeParams["search_path"] = scratchSearchPath(searchPath)
 
 	return cfg
 }
