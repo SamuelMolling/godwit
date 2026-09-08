@@ -35,7 +35,7 @@ A plan is persisted with an **observation** of the target at plan time, and `Cre
 ## Consequences to live with
 
 - **`cp_plan_files` is the second-largest table in the store.** Every pull-request plan stores its file bodies. `--plan-retention` (default 90 days) sweeps `bound` and `superseded` plans on the drift ticker; `ready` plans and plans of unfinished runs are never swept. After a sweep, `run.plan_id` is `NULL` and the `run.create` audit entry is the durable answer to "which plan did this run apply".
-- **Two `godwit plan` commands share a name.** With a target configured, `godwit plan` talks to the service and stores a plan; without one it parses files offline. `godwit.yaml`'s `target` key therefore silently switches the mode, and only `--target ""` restores the offline form. Documented in `configuration.md`; not fixed, because both forms are wanted.
+- **Two `godwit plan` commands share a name.** With a target configured, `godwit plan` talked to the service and stored a plan; without one it parsed files offline. `godwit.yaml`'s `target` key therefore silently switched the mode, and only `--target ""` restored the offline form. Documented in `configuration.md` and left alone here, because both forms are wanted. **Settled by [0015](0015-command-names-say-what-they-do.md):** the name stays and both forms stay, but storing needs `--save` and `target` no longer reaches `plan` from the config file, so nothing switches the mode by itself and `--target ""` is retired.
 - **Recipes are hints, never a reason to refuse.** A hazard carries ready-to-copy SQL built from the parsed AST (#40); a deparse failure renders as a comment inside the recipe rather than failing the plan.
 
 ## Refused or deferred

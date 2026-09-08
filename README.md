@@ -42,7 +42,7 @@ $ godwit plan --target app --dir db/migrations --rollout expand-contract
 
 (An excerpt: the run has thirteen statements.) The trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, the assertion is the last statement of the expand phase so a bad backfill never becomes the irreversible swap, and the rename waits in `awaiting_contract` until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
 
-**The plan is a contract, and it applies before the merge.** `godwit plan` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `/godwit apply` bound to the reviewed plan, `/godwit confirm` for the contract phase, and a `godwit/applied` commit status that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
+**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `/godwit apply` bound to the reviewed plan, `/godwit confirm` for the contract phase, and a `godwit/applied` commit status that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
 
 ## Quickstart
 
@@ -63,12 +63,12 @@ godwit serve --store-dsn postgres://godwit:godwit@localhost/godwit_store &
 export GODWIT_SERVER=http://localhost:8474 GODWIT_TOKEN=s3cret
 godwit target add app --provider static --dsn postgres://app:app@localhost/app
 godwit lint --dir db/migrations                     # hazards, parse errors, malformed directives
-godwit plan --target app --dir db/migrations        # what would run, against the live target
+godwit plan --target app --dir db/migrations        # what would run, against the live target (--save stores it)
 godwit migrate --target app --dir db/migrations     # streams the run; exit 0 when applied
 godwit target status app --dir db/migrations
 ```
 
-That single-server form executes submitted SQL on the store server as the store role, which is why it needs `CREATEDB` and why `serve` warns about it on every start. Anywhere a token is shared, add `--scratch-dsn` pointing at a PostgreSQL that holds nothing ([security](docs/security.md#the-scratch-database)). The full walkthrough — the local `apply`/`status`/`down` loop with no service at all, writing a migration from an ORM schema, and the first CI step — is [docs/getting-started.md](docs/getting-started.md).
+That single-server form executes submitted SQL on the store server as the store role, which is why it needs `CREATEDB` and why `serve` warns about it on every start. Anywhere a token is shared, add `--scratch-dsn` pointing at a PostgreSQL that holds nothing ([security](docs/security.md#the-scratch-database)). The full walkthrough — the local `up`/`status`/`down` loop with no service at all, writing a migration from an ORM schema, and the first CI step — is [docs/getting-started.md](docs/getting-started.md).
 
 ## What's inside
 
@@ -88,7 +88,7 @@ That single-server form executes submitted SQL on the store server as the store 
 | Repeatables and checkpoints | `R__` files re-applied whenever their content changes; `godwit checkpoint` collapses old history into one file the replay runs instead — [concepts](docs/concepts.md#repeatable-migrations), [checkpoints](docs/concepts.md#checkpoints) |
 | Fleet view | `godwit migrations`: which target has which migration, keyed by version **and** checksum, so the same version meaning two things in staging and production is loud — [concepts](docs/concepts.md#the-fleet-view) |
 | Drift and baseline | a schema fingerprint after every successful run, a periodic monitor, events and accept — [concepts](docs/concepts.md#drift) |
-| Adopting an existing database | `target baseline` for a schema godwit never journalled, `target reconcile` for one whose journal it did not write — [deployment](docs/deployment.md#adopting-an-existing-database) |
+| Adopting an existing database | `target adopt --version` for a schema godwit never journalled, `target adopt --from-journal` for one whose journal it did not write — [deployment](docs/deployment.md#adopting-an-existing-database) |
 | Migrations from a schema | `godwit diff` writes the next up/down pair from a DDL file or from Prisma, GORM, Django, Alembic, Rails, Drizzle or any command, all rendered client-side — [concepts](docs/concepts.md#generating-migrations-from-a-schema) |
 | ORM drift gate | `godwit lint --server <url> --target <t>` fails (`E005`) when the committed SQL no longer expresses the ORM schema — [concepts](docs/concepts.md#keeping-the-generated-sql-and-the-orm-schema-together) |
 | API, CLI and UI | connect (gRPC + JSON) with scoped bearer tokens (`read`, `pipeline`, `operator`, `admin`); the same binary is the CLI; `serve --ui` adds an operator UI at `/ui` — [API](docs/api.md), [configuration](docs/configuration.md), [operations](docs/operations.md#web-ui) |

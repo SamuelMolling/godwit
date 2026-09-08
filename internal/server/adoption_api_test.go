@@ -65,7 +65,7 @@ func TestAdoptADatabaseThatAlreadyHasHistory(t *testing.T) {
 	_, err := client.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: next, Persist: true}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), "app records 20260101000000_orders, 20260101000001_total") ||
-		!strings.Contains(err.Error(), "godwit target reconcile app") {
+		!strings.Contains(err.Error(), "godwit target adopt app --from-journal") {
 		t.Fatalf("plan before adoption: %v", err)
 	}
 

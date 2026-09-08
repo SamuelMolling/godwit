@@ -56,7 +56,7 @@ The replay is the validator's own (`Validator.Replay` shares `historyOf` + `repl
 |---|---|---|
 | Parsing `.prisma` in Go | refused | The datamodel language has generators, preview features, `@@map`, native type attributes and per-provider rendering. Reimplementing its SQL renderer would be wrong the day Prisma changes, and no maintained Go parser exists. |
 | Asking users to keep a checked-in dump | refused | The whole point is that they do not. |
-| A declarative `godwit apply schema.sql` | refused | What runs is always a versioned file that went through the gate. `godwit diff` writes the file; it does not replace the history. |
+| A declarative `apply schema.sql` mode | refused | What runs is always a versioned file that went through the gate. `godwit diff` writes the file; it does not replace the history. |
 | `E005` on a transport failure | refused | A service that is down is an operational problem, not a finding about the migrations. The command fails; no finding is raised. |
 | `W002` shelling out to the ORM | refused | With no server configured the check is skipped and says so. A broken `schema_source` block, however, is a command error even offline — the block is either usable or it is not, and reporting `W002` against a source that cannot be constructed would hide a config mistake until someone happens to run with a server. |
 | Registering the whole `clientFlags` set on `lint` | refused | It would add `--json` next to `lint`'s existing `--format json`, which would mean nothing. Only `--server` and `--token` are registered. |

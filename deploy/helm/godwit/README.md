@@ -132,7 +132,7 @@ The Job needs an `admin` token, the only scope `RegisterTarget` accepts. Keep it
 
 By default the Job is a Helm `post-install,post-upgrade` hook. `targets.helmHook: false` drops those annotations for a deployment tool that drives the Job itself; `targets.annotations` adds its own (`argocd.argoproj.io/hook: Sync`, `hook-delete-policy: BeforeHookCreation`). The service may still be rolling out when the Job starts — `targets.backoffLimit` covers that, and the registration does not touch the target database, so a retry costs nothing.
 
-Registration is not adoption. A database that already has a schema still needs `godwit target baseline` or `godwit target reconcile` before its first plan ([deployment](../../../docs/deployment.md#adopting-an-existing-database)); the chart does not do that for you, because getting it wrong writes history.
+Registration is not adoption. A database that already has a schema still needs `godwit target adopt` — `--version` or `--from-journal` — before its first plan ([deployment](../../../docs/deployment.md#adopting-an-existing-database)); the chart does not do that for you, because getting it wrong writes history.
 
 ## Credential providers
 

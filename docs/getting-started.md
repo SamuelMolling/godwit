@@ -91,7 +91,7 @@ godwit plan --dir db/migrations
 
 `tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([concepts: hazards](concepts.md#hazards)).
 
-Lint the directory the way a pull request gate does, and apply against a local database. Create two: `app_dev` for this loop, and `app` for the service to manage from section 2 onwards. Keep them apart — what `godwit apply` writes goes into the target's own journal and not into the service's ledger, so a database you have already migrated by hand is not a database to register as a target.
+Lint the directory the way a pull request gate does, and apply against a local database. Create two: `app_dev` for this loop, and `app` for the service to manage from section 2 onwards. Keep them apart — what `godwit up` writes goes into the target's own journal and not into the service's ledger, so a database you have already migrated by hand is not a database to register as a target.
 
 ```bash
 psql -U postgres -c "CREATE ROLE app LOGIN PASSWORD 'app'" \
@@ -100,7 +100,7 @@ psql -U postgres -c "CREATE ROLE app LOGIN PASSWORD 'app'" \
 
 ```bash
 godwit lint --dir db/migrations                       # exit 1 on unacknowledged hazards, parse errors, empty files
-godwit apply --dsn postgres://app:app@localhost/app_dev --dir db/migrations
+godwit up --dsn postgres://app:app@localhost/app_dev --dir db/migrations
 godwit status --dsn postgres://app:app@localhost/app_dev --dir db/migrations
 godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --version 20260901120500 --yes
 ```
@@ -108,7 +108,7 @@ godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --ver
 ```
 $ godwit lint --dir db/migrations
 0 finding(s), 0 blocking
-$ godwit apply --dsn postgres://app:app@localhost/app_dev --dir db/migrations
+$ godwit up --dsn postgres://app:app@localhost/app_dev --dir db/migrations
 20260901120000_create_orders: applied (1 statement(s))
 20260901120500_orders_customer_idx: applied (1 statement(s))
 R__order_stats: applied (1 statement(s))
@@ -170,7 +170,7 @@ godwit target add app --provider static --dsn postgres://app:app@localhost/app -
 
 `target add` needs the `admin` scope; the `kubernetes` and `vault` providers avoid storing a DSN at all ([security: providers](security.md#credential-providers)).
 
-The `app` database here is empty, so the next section just runs. **A real first target rarely is**: a database that already has a schema, or a `godwit` journal written by something else, has to be adopted before the first plan — one `godwit target baseline` or one `godwit target reconcile`. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database) is the section to read before pointing this at anything that exists.
+The `app` database here is empty, so the next section just runs. **A real first target rarely is**: a database that already has a schema, or a `godwit` journal written by something else, has to be adopted before the first plan — one `godwit target adopt`, with `--version` or `--from-journal`. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database) is the section to read before pointing this at anything that exists.
 
 ## 3. First run
 
@@ -200,7 +200,7 @@ Hazards are reported for the direction being planned; a normal `migrate` plans t
 To land a branch one migration at a time, stop the run at a version instead of editing the directory. With two new files in the directory, `20260904181500_orders_source` and `20260904182000_orders_channel`:
 
 ```
-$ godwit plan --target app --dir db/migrations --to 20260904181500
+$ godwit plan --target app --dir db/migrations --to 20260904181500 --save
 plan e6d08852-34ff-42a9-a327-b4e193c80640 on app (rollout direct, validated on a scratch database)
 key: bc051b2c60b53c2d31ffa945f98c369c08da213b3c4a890ff8ccab7b8731ae53
 observed: 5 applied, newest 20260904181000, history 369a12ef…, schema ec575f3f…, at 2026-09-04T18:03:08Z
@@ -254,12 +254,12 @@ With `serve --ui`, the same answers are pages: `/ui/` is the run list and the ne
 Two commands instead of one, so what a reviewer approved is what runs. `plan` stores the admitted plan on the service against an observation of the live target; `migrate` binds to it:
 
 ```bash
-godwit plan --target app --dir db/migrations      # on the pull request
+godwit plan --target app --dir db/migrations --save   # on the pull request; --save is what stores it
 godwit migrate --target app --dir db/migrations   # after review; binds the stored plan
 ```
 
 ```
-$ godwit plan --target app --dir db/migrations
+$ godwit plan --target app --dir db/migrations --save
 plan 48779753-1d13-4637-a290-6639adaca3dc on app (rollout direct, validated on a scratch database)
 key: 7fa0a893cf922112cc5365a626276bfdf770708ea117a7d854d70ab8df6c783b
 observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-04T18:00:14Z
@@ -420,7 +420,7 @@ Then `godwit lint`, `godwit plan` and `godwit migrate` work bare. The token stay
 
 Two consequences of this particular file worth knowing before you write it:
 
-- `target` reaches `plan` too, and `plan --target` is a service command. With `target: app` in the file, a bare `godwit plan` no longer parses the directory offline — it plans against the live target and stores a plan, like section 3c. `godwit plan --target ""` forces the offline form back.
+- `target` reaches `migrate`, `revert`, `runs`, `run confirm` and `diff`, but **not** `plan`: `plan --target` is a service command, and a flag that changes what a command connects to does not arrive from a file. A bare `godwit plan` parses the directory offline whatever the file says; spell `--target app --save` when you want the stored plan of section 3c.
 - `rollout: expand-contract` applies to every run, including the ones CI makes, so a destructive migration will stop at `awaiting_contract` and wait for `godwit run confirm` (or `/godwit confirm` on the pull request, below).
 
 ## 5. CI

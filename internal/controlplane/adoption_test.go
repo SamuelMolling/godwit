@@ -15,7 +15,7 @@ import (
 )
 
 // appliedOutside puts migrations into a target's own journal the way another tool, another godwit
-// instance, or `godwit apply` does: the target records them and this control plane never saw it.
+// instance, or `godwit up` does: the target records them and this control plane never saw it.
 func appliedOutside(t *testing.T, dsn string, files map[string]string) []engine.Migration {
 	t.Helper()
 	ctx := context.Background()

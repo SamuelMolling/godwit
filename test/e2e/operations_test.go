@@ -30,7 +30,7 @@ func TestLockTimeoutRetriesThenSucceeds(t *testing.T) {
 
 	addX := migration{v2, "add_x", "ALTER TABLE t ADD COLUMN x int;", "ALTER TABLE t DROP COLUMN x;"}
 	dir := migrationDir(t, addX)
-	r.mustCLI("plan", "--target", r.target, "--dir", dir)
+	r.mustCLI("plan", "--target", r.target, "--dir", dir, "--save")
 	first, err := r.client().CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{Target: r.target, Files: files(addX), LockTimeout: "500ms"}))
 	if err != nil || first.Msg.PlanId == "" || first.Msg.Reattached {
 		t.Fatalf("first = %+v, err = %v", first, err)
@@ -208,43 +208,43 @@ func TestHazardGateAndValidation(t *testing.T) {
 	}
 }
 
-func TestBaselineExistingDatabase(t *testing.T) {
+func TestAdoptExistingDatabaseAtAVersion(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, 1)
 	r.addTarget("app")
 	execSQL(t, r.appDSN, usersTable.up)
 	dir := migrationDir(t, usersTable, migration{v2, "plan", "ALTER TABLE users ADD COLUMN plan text;", "ALTER TABLE users DROP COLUMN plan;"})
 
-	out := r.mustCLI("target", "baseline", "app", "--dir", dir, "--version", "20260901120000")
-	expectContains(t, out, "baselined to version 20260901120000")
+	out := r.mustCLI("target", "adopt", "app", "--dir", dir, "--version", "20260901120000")
+	expectContains(t, out, "adopted through version 20260901120000, nothing executed")
 	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 1 {
-		t.Fatalf("applied versions after baseline = %d, want 1", n)
+		t.Fatalf("applied versions after adoption = %d, want 1", n)
 	}
 	if columnExists(t, r.appDSN, "users", "plan") {
-		t.Fatal("baseline must not execute migrations")
+		t.Fatal("adoption must not execute migrations")
 	}
 	run := r.latestRun()
 	if run.Kind != "baseline" || run.State != godwitv1.RunState_RUN_STATE_SUCCEEDED {
-		t.Fatalf("baseline run = %+v", run)
+		t.Fatalf("adoption run = %+v", run)
 	}
 	expectContains(t, r.mustCLI("runs", "--target", "app"), "baseline")
 
 	expectContains(t, r.mustMigrate(dir), "succeeded")
 	if !columnExists(t, r.appDSN, "users", "plan") {
-		t.Fatal("migration after baseline must apply the newer version")
+		t.Fatal("migration after adoption must apply the newer version")
 	}
 	if n := query[int](t, r.appDSN, `SELECT count(*) FROM godwit.migrations`); n != 2 {
 		t.Fatalf("applied versions after migrate = %d, want 2", n)
 	}
 
-	code, _, errOut := r.cli("target", "baseline", "app", "--dir", dir, "--version", "20260901120000")
+	code, _, errOut := r.cli("target", "adopt", "app", "--dir", dir, "--version", "20260901120000")
 	if code != 1 {
-		t.Fatalf("second baseline exit = %d, want 1", code)
+		t.Fatalf("second adoption exit = %d, want 1", code)
 	}
 	expectContains(t, errOut, "already has applied migrations")
 	code, _, errOut = r.cli("revert", run.Id)
 	if code != 1 {
-		t.Fatalf("revert baseline exit = %d, want 1", code)
+		t.Fatalf("revert of an adoption run exit = %d, want 1", code)
 	}
 	expectContains(t, errOut, "baseline runs cannot be reverted")
 }
@@ -310,7 +310,7 @@ func TestDryRunPlansWithoutQueueing(t *testing.T) {
 
 // A database migrated by a godwit whose store is gone: the ledger is rebuilt from the target's own
 // journal, and the next migration lands on top.
-func TestReconcileAfterALostLedger(t *testing.T) {
+func TestAdoptFromJournalAfterALostLedger(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, 1)
 	r.addTarget("app")
@@ -323,17 +323,17 @@ func TestReconcileAfterALostLedger(t *testing.T) {
 		t.Fatalf("the target keeps its journal whatever the store lost: %d", n)
 	}
 
-	code, _, errOut := r.cli("plan", "--target", "app", "--dir", dir)
+	code, _, errOut := r.cli("plan", "--target", "app", "--dir", dir, "--save")
 	if code != 1 {
-		t.Fatalf("plan on an unreconciled target exit = %d, want 1", code)
+		t.Fatalf("plan on an unadopted target exit = %d, want 1", code)
 	}
 	expectContains(t, errOut, "records migrations the ledger does not")
-	expectContains(t, errOut, "godwit target reconcile app")
+	expectContains(t, errOut, "godwit target adopt app --from-journal")
 
-	out := r.mustCLI("target", "reconcile", "app", "--dir", dir)
+	out := r.mustCLI("target", "adopt", "app", "--dir", dir, "--from-journal")
 	expectContains(t, out, "adopted 1 migration(s) from its journal")
 	expectContains(t, out, "20260901120000_users")
-	expectContains(t, r.mustCLI("target", "reconcile", "app", "--dir", dir), "already reconciled")
+	expectContains(t, r.mustCLI("target", "adopt", "app", "--dir", dir, "--from-journal"), "nothing to adopt")
 
 	expectContains(t, r.mustMigrate(dir), "succeeded")
 	if !columnExists(t, r.appDSN, "users", "plan") {

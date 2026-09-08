@@ -8,18 +8,18 @@ Project file for the CLI. Looked up from the working directory upward until a di
 
 | Key | Type | Default | Env override | Used by |
 |---|---|---|---|---|
-| `dir` | path | `migrations` | `GODWIT_DIR` | `plan`, `apply`, `status`, `down`, `lint`, `migrate`, `diff`, `target baseline`, `target status` |
-| `target` | string | — | `GODWIT_TARGET` | `plan`, `plans`, `lint`, `diff`, `migrate`, `revert`, `run confirm --latest` |
+| `dir` | path | `migrations` | `GODWIT_DIR` | `plan`, `up`, `status`, `down`, `new`, `lint`, `migrate`, `diff`, `target adopt`, `target status` |
+| `target` | string | — | `GODWIT_TARGET` | `plans`, `lint`, `diff`, `migrate`, `revert`, `run confirm --latest` (**not** `plan`) |
 | `rollout` | `direct` \| `expand-contract` | `direct` | `GODWIT_ROLLOUT` | `plan`, `migrate` |
 | `server` | URL | — | `GODWIT_SERVER` | every service command (`target`, `targets`, `plan`, `plans`, `lint`, `diff`, `migrate`, `revert`, `run`, `runs`, `drift`, `audit`) |
-| `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `apply`, `status`, `down` only |
-| `statement_timeout` | Go duration | `0` (disabled) | `GODWIT_STATEMENT_TIMEOUT` | `apply`, `status`, `down` only |
+| `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `up`, `status`, `down` only |
+| `statement_timeout` | Go duration | `0` (disabled) | `GODWIT_STATEMENT_TIMEOUT` | `up`, `status`, `down` only |
 | `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `plan`, `migrate` |
 | `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff`, `lint` |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
 
-`target` reaches `plan` as well as `migrate`, and `plan --target` is a service command: once `godwit.yaml` names a target, a bare `godwit plan` no longer parses the directory offline — it plans against the live target and stores a plan on the service. `godwit plan --target ""` forces the offline form back.
+`target` deliberately does **not** reach `plan`. `plan --target` is a service command that replays your DDL on a scratch database, and a flag that changes what a command connects to does not arrive from a file nobody read: a bare `godwit plan` parses the directory offline whatever `godwit.yaml` says. Spell `--target` when you mean the live form, and add `--save` when you want it stored.
 
 ```yaml
 dir: db/migrations
@@ -64,7 +64,7 @@ schema_source:
 |---|---|---|
 | `GODWIT_SERVER` | `--server` | service base URL. `http://` is dialled as cleartext HTTP/2 (h2c); `https://` is dialled over TLS against the system root store, negotiating HTTP/2 and falling back to HTTP/1.1, which carries every RPC |
 | `GODWIT_TOKEN` | `--token` | bearer token sent as `Authorization: Bearer <secret>` |
-| `GODWIT_DSN` | `--dsn` | target DSN for the local commands (`plan`, `apply`, `status`, `down`), so the password need not be a process argument |
+| `GODWIT_DSN` | `--dsn` | target DSN for the local commands (`up`, `status`, `down`), so the password need not be a process argument |
 | `GODWIT_TARGET_DSN` | `target add --dsn` | DSN of a `static` target being registered, for the same reason |
 
 Every service command also accepts `--json` (print the raw protojson response instead of the human line).
@@ -195,9 +195,9 @@ Global: `--config <path>`. Every service command: `--server`, `--token`, `--json
 |---|---|---|
 | `godwit version` | | prints `<version> (<commit>)`; `dev (none)` from a plain `go build`, `main (<full commit>)` in the published image |
 | `godwit new <name>` | `--dir` (read and written to), `--repeatable` | writes `<timestamp>_<name>.up.sql` and `.down.sql`, the timestamp being the current UTC second and the next free one when the directory already holds a migration for it, so nothing is overwritten; `--repeatable` writes `R__<name>.{up,down}.sql`, whose name is its identity and is refused when taken. `<name>` must be snake_case (`[a-z0-9_]+`) and is checked before anything is written. Both sides hold a placeholder comment: an empty file fails the load, and a migration with no statements is `E002`, so an unfilled pair is blocked at lint |
-| `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline; with `--target` it becomes a service command (below) |
+| `godwit plan` | `--dir`, `--format text\|markdown\|json` | plans both sides of every migration offline; with `--target` it becomes a service command (below), and `--target` never comes from `godwit.yaml` |
 | `godwit lint` | `--dir`, `--ack H001,...`, `--format text\|markdown\|json`, `--base <git ref>`, `--server`, `--token`, `--target`, `--no-schema-check` | with `--base`, only migrations added since the ref are checked and versioned files modified since it are `E003` (never an `R__` file); with `--server` and `--target` it also checks the committed migrations against `schema_source` (`E005`, below); blocking findings exit 1 |
-| `godwit apply` | `--dsn` (required), `--dir`, `--lock-timeout`, `--statement-timeout` | runs the executor directly against a database; on a database with no history a checkpoint in the directory runs and the versions it collapses are recorded ([concepts](concepts.md#checkpoints)) |
+| `godwit up` | `--dsn` (required), `--dir`, `--lock-timeout`, `--statement-timeout` | runs the executor directly against a database; on a database with no history a checkpoint in the directory runs and the versions it collapses are recorded ([concepts](concepts.md#checkpoints)). Local pair with `down`, as `migrate`/`revert` are the service pair |
 | `godwit status` | `--dsn` (required), `--dir`, timeouts as above | `applied <ts>`, `pending`, `applied <ts> (checksum drift!)` per versioned migration, `unchanged since <ts>` or `pending` per repeatable; bootstraps the `godwit` schema |
 | `godwit down` | `--dsn` (required), `--dir`, `--version` (required), `--yes` | applies one versioned migration's down side; refuses without `--yes`; repeatables have no version and are reverted with the run that applied them; a checkpoint has no inverse and is refused by name |
 
@@ -208,12 +208,11 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | Command | Flags | Scope |
 |---|---|---|
 | `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path` | admin |
-| `godwit target baseline <name>` | `--dir`, `--version` (required) | operator |
-| `godwit target reconcile <name>` | `--dir` | operator |
+| `godwit target adopt <name>` | `--dir`, exactly one of `--version <N>` or `--from-journal` | operator; records the migrations the database already has as a succeeded run without executing them. `--version` takes your word for the newest one present; `--from-journal` reads the target's own `godwit` journal and needs no version. Neither flag, or both, is refused |
 | `godwit target status <name>` | `--dir` (skipped when the directory does not exist, unless set explicitly) | read |
 | `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them. The applied count is versioned migrations only; `target status` also lists the repeatables, so its `applied (N)` is the larger number |
 | `godwit migrations` | `--target` (repeatable), `--from`, `--to`, `--not-everywhere`, `--in`, `--not-in` | read; one row per migration and content with a column per target, so a version standing on two targets under different checksums is two rows and reads `differs`. `--in staging --not-in production` is what is ahead in staging ([concepts](concepts.md#the-fleet-view)) |
-| `godwit plan --target <name>` | `--dir`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--to <version>`, `--source`, `--format text\|markdown\|json` | read; plans against the live target, stores the plan and prints its id, key, observation and drift |
+| `godwit plan --target <name>` | `--dir`, `--save`, `--rollout`, `--ack`, `--skip-validation`, `--allow-out-of-order`, `--to <version>`, `--source`, `--format text\|markdown\|json` | read; plans against the live target and prints the result. Without `--save` nothing is stored — it is `migrate --dry-run` under another name. With `--save` the plan is stored and its id, key, observation and drift are printed, and a later `migrate` binds to it. `--save` without `--target` is refused |
 | `godwit plan show <plan-id>` | `--format text\|markdown\|json` | read; statements, hazards and recipes, observation, drift, state, run id, superseded-by |
 | `godwit plans` | `--target`, `--limit` | read; newest first |
 | `godwit checkpoint` | `--name <snake_case>` (required), `--dir` (read and written to), `--at <version>`, `--dry-run` | read; collapses the versioned migrations at or below `--at` (the newest by default) into `<timestamp>_<name>.up.sql`, a file carrying the schema they produce and no down side ([concepts](concepts.md#checkpoints)). The service replays them on a scratch database and refuses unless the generated body reproduces the same schema fingerprint; `--dry-run` prints it without writing |
@@ -226,7 +225,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 | `godwit run confirm [run-id]` | `--latest`, `--target`, `--allow-none`, `--no-wait` | pipeline (`--latest` also lists runs: read); streams the contract phase and exits with it, 1 on `failed` / `needs_attention`. `--no-wait` returns as soon as the phase is queued |
 | `godwit runs` | `--target` | read |
 | `godwit drift check <target>` | | operator |
-| `godwit drift accept <target>` | | operator |
+| `godwit drift accept <target>` | | operator; records the live schema as the new drift reference. It does not change the database; future checks compare against it, and no migration file describes the change |
 | `godwit audit` | `--target`, `--run`, `--limit` | read |
 
 ### Target settings

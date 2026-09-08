@@ -24,78 +24,84 @@ func newTargetCmd() *cobra.Command {
 		Use:   "target",
 		Short: "Manage targets on the service",
 	}
-	cmd.AddCommand(newTargetAddCmd(), newTargetBaselineCmd(), newTargetReconcileCmd(), newTargetStatusCmd())
+	cmd.AddCommand(newTargetAddCmd(), newTargetAdoptCmd(), newTargetStatusCmd())
 
 	return cmd
 }
 
-func newTargetBaselineCmd() *cobra.Command {
+const adoptSources = "--version <N> is the newest migration you say the database already has, and godwit takes your word for it; " +
+	"--from-journal reads the target's own godwit journal instead, which is there only if godwit migrated this database before"
+
+func newTargetAdoptCmd() *cobra.Command {
 	flags := &clientFlags{}
-	req := &godwitv1.BaselineTargetRequest{}
 	var dir string
+	var version int64
+	var fromJournal bool
 	cmd := &cobra.Command{
-		Use:   "baseline <name>",
-		Short: "Mark migrations up to a version as applied on an existing database without running them",
-		Args:  cobra.ExactArgs(1),
+		Use:   "adopt <name>",
+		Short: "Put the migrations a database already has on the books, without running them",
+		Long: "Nothing is executed either way: godwit records a succeeded run holding those migrations and takes a\n" +
+			"drift snapshot. What differs is where the truth comes from, and you have to say which.\n\n" +
+			"  --version <N>   you name the newest migration the database already contains. For a database migrated\n" +
+			"                  by something else — Flyway, a shell script, hand-typed DDL — which has no godwit\n" +
+			"                  journal to read. Getting the version wrong hurts in both directions: too low and godwit\n" +
+			"                  re-runs migrations the database has, too high and it skips ones it does not.\n" +
+			"  --from-journal  godwit reads the target's own journal. For a database godwit itself migrated outside\n" +
+			"                  this service — `godwit up`, or a service whose ledger was lost. There is no version for\n" +
+			"                  you to get wrong, and it refuses rather than guesses when journal and directory disagree.",
+		Args: cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			req.Target = args[0]
+			if err := adoptSource(cmd.Flags().Changed("version"), fromJournal); err != nil {
+				return err
+			}
 			files, err := migrationFiles(dir)
 			if err != nil {
 				return err
 			}
-			req.Files = files
-			resp, err := client.BaselineTarget(cmd.Context(), connect.NewRequest(req))
+			if fromJournal {
+				resp, err := client.ReconcileTarget(cmd.Context(),
+					connect.NewRequest(&godwitv1.ReconcileTargetRequest{Target: args[0], Files: files}))
+				if err != nil {
+					return err
+				}
+				flags.print(cmd, resp.Msg, adoptedFromJournalLine(args[0], resp.Msg))
+
+				return nil
+			}
+			resp, err := client.BaselineTarget(cmd.Context(),
+				connect.NewRequest(&godwitv1.BaselineTargetRequest{Target: args[0], Version: version, Files: files}))
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, fmt.Sprintf("target %s: baselined to version %d (run %s)", req.Target, req.Version, resp.Msg.RunId))
+			flags.print(cmd, resp.Msg,
+				fmt.Sprintf("target %s: adopted through version %d, nothing executed (run %s)", args[0], version, resp.Msg.RunId))
 
 			return nil
 		}),
 	}
 	flags.register(cmd)
 	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
-	cmd.Flags().Int64Var(&req.Version, "version", 0, "highest migration version already present in the database")
-	_ = cmd.MarkFlagRequired("version")
+	cmd.Flags().Int64Var(&version, "version", 0, "highest migration version already present in the database")
+	cmd.Flags().BoolVar(&fromJournal, "from-journal", false, "take the versions from the target's own godwit journal instead of --version")
 	configKeys(cmd, "dir")
 
 	return cmd
 }
 
-func newTargetReconcileCmd() *cobra.Command {
-	flags := &clientFlags{}
-	req := &godwitv1.ReconcileTargetRequest{}
-	var dir string
-	cmd := &cobra.Command{
-		Use:   "reconcile <name>",
-		Short: "Adopt into the ledger what the target's own journal already records",
-		Args:  cobra.ExactArgs(1),
-		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			req.Target = args[0]
-			files, err := migrationFiles(dir)
-			if err != nil {
-				return err
-			}
-			req.Files = files
-			resp, err := client.ReconcileTarget(cmd.Context(), connect.NewRequest(req))
-			if err != nil {
-				return err
-			}
-			flags.print(cmd, resp.Msg, reconcileLine(req.Target, resp.Msg))
-
-			return nil
-		}),
+func adoptSource(versionGiven, fromJournal bool) error {
+	switch {
+	case versionGiven && fromJournal:
+		return errors.New("pass --version or --from-journal, not both; they are two sources for the same fact: " + adoptSources)
+	case !versionGiven && !fromJournal:
+		return errors.New("adopt needs a source, --version or --from-journal: " + adoptSources)
 	}
-	flags.register(cmd)
-	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory")
-	configKeys(cmd, "dir")
 
-	return cmd
+	return nil
 }
 
-func reconcileLine(target string, resp *godwitv1.ReconcileTargetResponse) string {
+func adoptedFromJournalLine(target string, resp *godwitv1.ReconcileTargetResponse) string {
 	if len(resp.Adopted) == 0 {
-		return fmt.Sprintf("target %s: already reconciled, nothing to adopt", target)
+		return fmt.Sprintf("target %s: nothing to adopt, the ledger already holds every migration its journal records", target)
 	}
 
 	return fmt.Sprintf("target %s: adopted %d migration(s) from its journal (run %s): %s",
@@ -234,12 +240,11 @@ func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitSe
 	return nil
 }
 
-func (f *clientFlags) persistPlan(cmd *cobra.Command, req *godwitv1.PlanRunRequest, write func(io.Writer, planReport)) error {
+func (f *clientFlags) planRun(cmd *cobra.Command, req *godwitv1.PlanRunRequest, write func(io.Writer, planReport)) error {
 	client, err := f.client()
 	if err != nil {
 		return err
 	}
-	req.Persist = true
 	res, err := client.PlanRun(cmd.Context(), connect.NewRequest(req))
 	if err != nil {
 		return apiError(err)
@@ -703,14 +708,20 @@ func newDriftAcceptCmd() *cobra.Command {
 	flags := &clientFlags{}
 	cmd := &cobra.Command{
 		Use:   "accept <target>",
-		Short: "Bless the live schema as the new baseline",
-		Args:  cobra.ExactArgs(1),
+		Short: "Record the live schema as the new drift reference for a target",
+		Long: "Records the current schema as the new reference for the target. It does not change the database;\n" +
+			"future checks compare against it.\n\n" +
+			"An accepted drift is a change no migration file describes, so the next database you build from those\n" +
+			"files will not have it. Write the migration instead when you want the change to travel.",
+		Args: cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
 			resp, err := client.AcceptBaseline(cmd.Context(), connect.NewRequest(&godwitv1.AcceptBaselineRequest{Target: args[0]}))
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, fmt.Sprintf("target %s: baseline accepted", args[0]))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("target %s: baseline accepted\n"+
+				"recorded the current schema as the new reference for %s; it does not change the database, and future checks compare against it\n"+
+				"no migration file describes this change, so the next database built from those files will not have it", args[0], args[0]))
 
 			return nil
 		}),

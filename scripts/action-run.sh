@@ -292,7 +292,7 @@ case "${COMMAND}" in
   plan)
     args=(${dir_args[@]+"${dir_args[@]}"})
     remote_args
-    "${godwit}" plan ${args[@]+"${args[@]}"} --format markdown >"${summary}" 2>"${errors}" || status=$?
+    "${godwit}" plan ${args[@]+"${args[@]}"} --save --format markdown >"${summary}" 2>"${errors}" || status=$?
     cat "${errors}" >&2
     if [ ! -s "${summary}" ]; then
       refused plan refused

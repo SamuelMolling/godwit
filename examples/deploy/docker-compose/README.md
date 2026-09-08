@@ -66,7 +66,7 @@ Then, from the host:
 export GODWIT_SERVER=http://localhost:8474 GODWIT_TOKEN=<the admin secret>
 godwit targets
 godwit target add app --provider static --dsn 'postgres://app:app@app-db:5432/app?sslmode=disable'
-godwit plan --target app --dir db/migrations
+godwit plan --target app --dir db/migrations --save
 godwit migrate --target app --dir db/migrations
 ```
 

@@ -140,7 +140,7 @@ echo "==> drift detection: a manual out-of-band ALTER TABLE"
 docker compose exec -T target-db psql -U app -d app -c "CREATE TABLE rogue_manual (id int);" > /dev/null
 rpc CheckDrift '{"target": "app"}' 18475
 echo
-echo "==> blessing the manual change as the new baseline"
+echo "==> recording the manual change as the new reference (AcceptBaseline; the CLI spells it godwit drift accept)"
 rpc AcceptBaseline '{"target": "app"}' 18475
 rpc CheckDrift '{"target": "app"}' 18475
 echo
@@ -205,7 +205,7 @@ echo "==> migrate refuses: the plan is stale, and says exactly what moved"
 rpc CreateRun "{\"target\": \"app\", \"files\": $PLAN_FILES}" 18475
 echo
 
-echo "==> the change is blessed as the new baseline; the same migrate now re-plans and binds"
+echo "==> the change is now the reference; the same migrate re-plans and binds"
 rpc AcceptBaseline '{"target": "app"}' 18475
 PC_ID=$(rpc CreateRun "{\"target\": \"app\", \"files\": $PLAN_FILES}" 18475 | field runId)
 for _ in $(seq 1 30); do
@@ -259,7 +259,7 @@ docker compose exec -T godwit-2 /godwit run get "$TO_ID" --server http://localho
 curl -s localhost:18475/metrics | grep -E '^godwit_(statement_failures|run_retries)_total'
 
 echo
-echo "==> baseline: adopting a database that already has a schema, without replaying it"
+echo "==> adopt at a version: a database that already has a schema, put on the books without replaying it (BaselineTarget; the CLI spells it godwit target adopt --version)"
 docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE legacy;" > /dev/null
 docker compose exec -T target-db psql -U app -d legacy \
   -c "CREATE TABLE orders (id bigint PRIMARY KEY, total numeric);" > /dev/null
@@ -287,10 +287,10 @@ for _ in $(seq 1 30); do
 done
 echo "state: $STATE"
 docker compose exec -T target-db psql -U app -d legacy -c "\d orders"
-echo "==> a second baseline is refused: nothing is left to record on either side"
+echo "==> a second adoption is refused: nothing is left to record on either side"
 rpc BaselineTarget "{\"target\": \"legacy\", \"version\": 1, \"files\": $BASELINE_FILES}" 18475
 echo
-echo "==> reconcile: the target's own journal is the truth, and a lost ledger is rebuilt from it"
+echo "==> adopt from the journal: the target's own journal is the truth, and a lost ledger is rebuilt from it (ReconcileTarget; the CLI spells it godwit target adopt --from-journal)"
 docker compose exec -T target-db psql -U app -d app -c "CREATE DATABASE adopted;" > /dev/null
 rpc RegisterTarget '{
   "name": "adopted",

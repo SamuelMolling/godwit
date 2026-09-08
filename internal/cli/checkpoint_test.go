@@ -168,7 +168,7 @@ func TestPlanPrintsACheckpointWithoutADown(t *testing.T) {
 func TestApplyRunsTheCheckpointOnAFreshDatabase(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)
-	code, out, errOut := runCLI("apply", "--dsn", dsn, "--dir", offlineCheckpointDir(t))
+	code, out, errOut := runCLI("up", "--dsn", dsn, "--dir", offlineCheckpointDir(t))
 	if code != 0 {
 		t.Fatalf("code = %d, out = %s, stderr = %s", code, out, errOut)
 	}
@@ -181,7 +181,7 @@ func TestApplyReportsAnUnreadableHistory(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)
 	execCLIDSN(t, dsn, "CREATE SCHEMA godwit; CREATE TABLE godwit.migrations (x int)")
-	code, _, errOut := runCLI("apply", "--dsn", dsn, "--dir", offlineCheckpointDir(t))
+	code, _, errOut := runCLI("up", "--dsn", dsn, "--dir", offlineCheckpointDir(t))
 	if code != 1 || !strings.Contains(errOut, "list applied") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
