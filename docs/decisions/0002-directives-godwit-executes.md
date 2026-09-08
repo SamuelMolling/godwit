@@ -1,6 +1,6 @@
 # 0002 — `-- godwit:` directives: the migration declares intent, godwit writes the lock-safe SQL
 
-Shipped in #51 (per-statement hold), #52 (batched statements), #53 (grammar and lint), #56 (`change-type`, `backfill`), #57 (the simple operations), #59 (expand once), #69 (dependent objects), #89 (`backfill` keeps its rows in sync). Backfill progress became visible in #70.
+Shipped in #51 (per-statement hold), #52 (batched statements), #53 (grammar and lint), #56 (`change-type`, `backfill`), #57 (the simple operations), #59 (expand once), #69 (dependent objects), #89 (`backfill` keeps its rows in sync), #112 (`change-type` counts what is left). Backfill progress became visible in #70.
 
 ## The open question
 
@@ -55,7 +55,7 @@ The load rig ran a `backfill` while another session wrote to the same table. The
 
 **A crash leaves the trigger, deliberately.** The journal resumes at the statement the run stopped on, so a resume neither re-creates the trigger nor skips the rows written while the run was dead — the trigger was still installed, keeping them in sync. *Rejected: dropping it when a run fails.* A run in `needs_attention` is one a human may resume; dropping the trigger under it would reintroduce this exact bug. A run abandoned rather than resumed leaves `<t>_backfill_sync` behind, and the plan's notes name it and the two statements that remove it. A leftover on the scratch is refused at plan time; a leftover on the live target cannot be seen from the scratch, so the `CREATE` fails loudly instead.
 
-## `change-type` closes its own backfill the same way
+## `change-type` closes its own backfill the same way (#112)
 
 #89 left the asymmetry it created: `backfill` had a trigger *and* a closing count, `change-type` had only the trigger. The gap it left is narrow and expensive — an expression that does not converge. `using=` is refused when it calls a `VOLATILE` function, but a `STABLE` one whose value depends on something outside the row can still move between the batch that wrote a row and any later read of it, and the cursor never looks at that row again. The batches ended, nothing complained, and the contract phase renamed the columns: a wrong value became the column, irreversibly.
 
@@ -124,5 +124,5 @@ The frozen expansion is deliberately **not** re-attached to the applied plan, te
 
 - **The UI does not render backfill progress** — that was written as if true. It was not: `Run.progress` carried the right shape but never moved during a backfill, because `Executor.execStatement` reports once, *after* the statement returns, and a batched statement is one statement. Measured against a real service: 200 000 rows, 40 seconds of polling, the same value every time, naming the `CREATE TRIGGER` before the loop. #70 added `StatementEvent.Partial`, an emit after every committed batch, and a one-second throttle in the scheduler, then rendered it. The estimate is `pg_class.reltuples` and the pages say so — `~200,000`, `≈41%`, never a bare number, and no rate or ETA, because deriving one honestly needs a start time `Run.created_at` is not.
 - **`$1` is not bare.** The rendered batch uses `$1::bigint` (or the key's own cast) because the executor binds a typed value per `KeyKind`; a key narrower than `bigint` would otherwise refuse it. A missing cast fails loudly rather than a sentinel silently skipping rows.
-- **The `change-type` expansion is 7 expand and 6 contract statements**, not the 5/6 sketched: it carries the column's `DEFAULT` (#69) and closes the expand phase by counting what is left.
+- **The `change-type` expansion is 7 expand and 6 contract statements**, not the 5/6 sketched: it carries the column's `DEFAULT` (#69) and closes the expand phase by counting what is left (#112).
 - **`add-column` never puts the default inline.** `ADD COLUMN c type DEFAULT <expr>` is metadata-only in PostgreSQL 11+ *only* for a non-volatile expression; a `now()` default rewrites the table under `ACCESS EXCLUSIVE`. The column is added nullable, `SET DEFAULT` follows as its own metadata-only statement, and existing rows are filled by the batched update. `not-null` without `default=` is refused rather than guessed at.
