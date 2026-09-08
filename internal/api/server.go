@@ -821,8 +821,7 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
 }
 
-// checkHazards refuses hazard codes the author did not accept, reading only the plans this admission
-// would execute: a target's own history can never refuse a run over it.
+// checkHazards reads only the plans this admission would execute, so a target's own history never refuses a run over it.
 func (s *Server) checkHazards(plans []engine.Plan, applied controlplane.AppliedSet, acked []string) error {
 	ackSet := map[string]bool{}
 	for _, code := range acked {
@@ -850,8 +849,7 @@ func (s *Server) checkHazards(plans []engine.Plan, applied controlplane.AppliedS
 	return nil
 }
 
-// runsBody reports whether the executor would run the plan's statements rather than only record it. A
-// down plan undoes what the target holds, so for it being applied is what makes it run.
+// runsBody inverts for a down plan: it undoes what the target holds, so being applied is what makes it run.
 func runsBody(p engine.Plan, applied controlplane.AppliedSet) bool {
 	if p.MarkOnly {
 		return false
