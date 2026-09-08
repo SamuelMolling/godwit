@@ -818,6 +818,8 @@ The value is a comma-separated list of unquoted schema names, folded to lower ca
 
 The schemas must exist. PostgreSQL silently drops missing ones from a session's effective path, so on a fresh target the first migration should `CREATE SCHEMA IF NOT EXISTS app` — from then on the path resolves fully. `godwit target status` prints the **declared** path and `godwit plan` the **effective** one (`current_schemas`); if they differ, a schema is missing. Scratch validation creates the schemas on the scratch database before setting the path, so the replay puts unqualified objects in the same schema the target does and fingerprints keep matching (which is what already-applied detection compares).
 
+**A scratch session never resolves `"$user"`.** It carries the target's effective path when there is one to mirror, and `public` when there is not — a call that plans without observing the target, and the checkpoint generator, which has no target at all. PostgreSQL's default `"$user", public` is never left to resolve there, because on a scratch role named `godwit` — which is the role the quickstart creates — `"$user"` is the journal schema godwit puts on every scratch database, and an unqualified `CREATE TABLE orders` would replay into it instead of `public`.
+
 The effective path is part of a plan's observation. A plan taken under one path does not bind under another: the diff shows `- search_path <then>` / `+ search_path <now>` and the refusal is `PlanStale{schema}`. Plans stored before the path was recorded carry an empty value and are never stale for this reason alone.
 
 ## Plans
