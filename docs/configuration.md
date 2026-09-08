@@ -185,6 +185,8 @@ A procedure missing from the table is denied to everyone. With tokens configured
 
 ## CLI reference
 
+Flags, scopes and exit codes for every command. What each command is *for*, and an example of it running, is the [command reference](cli.md).
+
 Global: `--config <path>`. Every service command: `--server`, `--token`, `--json`. Exit code is 0 on success and 1 on any error (refusal, failed run, connection error); `lint` exits 1 on blocking findings; `migrate` exits 3 when the service refuses the run because its stored plan is stale or a plan is required.
 
 ### Local (no service)
