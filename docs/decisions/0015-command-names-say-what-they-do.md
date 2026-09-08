@@ -560,5 +560,9 @@ strings now say so.
 - **`--save` changed two tests that were not about naming.** Anything asserting that a `CreateRun`
   binds to a stored plan has to store one first, which is the behaviour change the flag exists to
   make explicit.
+- **The Action plans without a target too**, which `action-smoke`'s `plan offline` step found after
+  `--save` went onto `scripts/action-run.sh` unconditionally. It is now conditional on `TARGET`, the
+  same condition `remote_args` uses to pass `--target` at all — and that one place is the sharpest
+  evidence for the flag: it makes a case visible that the old CLI could not distinguish.
 
 **Shipped in** #109.
