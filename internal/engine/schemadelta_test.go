@@ -101,7 +101,7 @@ func TestSchemaChangesReadsATypeChange(t *testing.T) {
 		t.Fatalf("table = %+v", tbl)
 	}
 	age := attrOf(t, tbl, "age")
-	if age.Op != OpUpdate || len(age.Old) != 1 || age.Old[0] != "integer" || age.New[0] != "character varying" {
+	if age.Op != OpUpdate || len(age.Old) != 1 || age.Old[0] != "integer" || age.New[0] != "character varying(20)" {
 		t.Fatalf("age = %+v", age)
 	}
 	if got := attrOf(t, tbl, "age_old"); got.Op != OpCreate || got.New[1] != "NULL" {
@@ -130,12 +130,37 @@ func TestSchemaChangesReadsDestroysAndDefaults(t *testing.T) {
 	if got := attrOf(t, b, "note"); got.Op != OpDestroy || got.Old[0] != "text" {
 		t.Fatalf("note = %+v", got)
 	}
-	// A default appearing gives the two sides a different number of properties, so the whole value is shown.
 	if got := attrOf(t, b, "id"); got.Op != OpUpdate || len(got.Old) != 2 || len(got.New) != 3 || got.New[2] != "DEFAULT 1" {
 		t.Fatalf("id = %+v", got)
 	}
 	if v := changeOf(t, changes, KindView, "v"); v.Op != OpDestroy {
 		t.Fatalf("v = %+v", v)
+	}
+}
+
+func TestSchemaChangesCarriesTheTypeModifier(t *testing.T) {
+	t.Parallel()
+	conn := newTestDB(t)()
+
+	changes := snapshotAround(t, conn, `
+		CREATE TYPE mood AS ENUM ('sad', 'ok');
+		CREATE TYPE feeling AS ENUM ('up', 'down');
+		CREATE TABLE t (a numeric, b timestamptz, c text, d mood, e text);`,
+		`ALTER TABLE t ALTER COLUMN a TYPE numeric(10,2);
+		 ALTER TABLE t ALTER COLUMN b TYPE timestamptz(3);
+		 ALTER TABLE t ALTER COLUMN c TYPE varchar(64);
+		 ALTER TABLE t ALTER COLUMN d TYPE feeling USING 'up'::feeling;
+		 ALTER TABLE t ALTER COLUMN e TYPE text[] USING ARRAY[e];`)
+
+	tbl := changeOf(t, changes, KindTable, "t")
+	for name, want := range map[string]string{
+		"a": "numeric(10,2)", "b": "timestamp(3) with time zone", "c": "character varying(64)",
+		"d": "feeling", "e": "text[]",
+	} {
+		got := attrOf(t, tbl, name)
+		if got.Op != OpUpdate || len(got.New) != 1 || got.New[0] != want {
+			t.Fatalf("%s = %+v, want %s", name, got, want)
+		}
 	}
 }
 
@@ -165,14 +190,13 @@ func TestSchemaChangesReadsSequencesAndEnums(t *testing.T) {
 func TestSchemaChangesIgnoresWhatItCannotRead(t *testing.T) {
 	t.Parallel()
 
-	if got := SchemaChanges("godwit-schema-v2", "godwit-schema-v2"); len(got) != 0 {
+	if got := SchemaChanges("godwit-schema-v3", "godwit-schema-v3"); len(got) != 0 {
 		t.Fatalf("two identical snapshots change nothing: %+v", got)
 	}
-	if got := SchemaChanges("", "godwit-schema-v2\nfuture public.thing something"); len(got) != 0 {
+	if got := SchemaChanges("", "godwit-schema-v3\nfuture public.thing something"); len(got) != 0 {
 		t.Fatalf("a kind this version does not know is dropped: %+v", got)
 	}
-	// A reference with no qualifier is what a snapshot of a search_path-less object would carry.
-	got := SchemaChanges("", "godwit-schema-v2\ntable widgets\ncolumn widgets.id integer null=NO default=<none>")
+	got := SchemaChanges("", "godwit-schema-v3\ntable widgets\ncolumn widgets.id integer null=NO default=<none>")
 	if len(got) != 1 || got[0].Schema != "" || got[0].Ref() != "widgets" {
 		t.Fatalf("unqualified = %+v", got)
 	}
@@ -182,7 +206,7 @@ func TestSchemaChangesOrdersWhatItReports(t *testing.T) {
 	t.Parallel()
 
 	got := SchemaChanges("", strings.Join([]string{
-		"godwit-schema-v2",
+		"godwit-schema-v3",
 		"matview b.mv deadbeef",
 		"index z.i CREATE INDEX i ON z.t (a)",
 		"index a.i CREATE INDEX i ON a.t (a)",
@@ -202,8 +226,8 @@ func TestSchemaChangesOrdersWhatItReports(t *testing.T) {
 func TestSchemaChangesFallsBackToTheWholeValue(t *testing.T) {
 	t.Parallel()
 
-	before := "godwit-schema-v2\ntable public.t\ncolumn public.t.a integer null=YES default=<none>"
-	after := "godwit-schema-v2\ntable public.t\ncolumn public.t.a bigint null=NO default=1"
+	before := "godwit-schema-v3\ntable public.t\ncolumn public.t.a integer null=YES default=<none>"
+	after := "godwit-schema-v3\ntable public.t\ncolumn public.t.a bigint null=NO default=1"
 	got := SchemaChanges(before, after)
 	if len(got) != 1 {
 		t.Fatalf("changes = %+v", got)

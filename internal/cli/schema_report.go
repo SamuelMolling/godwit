@@ -52,7 +52,6 @@ func (ph *placedHazards) place(changes []engine.ObjectChange, h engine.Hazard) {
 	ph.loose = append(ph.loose, h)
 }
 
-// namesObject: SQL that left the schema out means whatever the search_path resolved it to.
 func namesObject(ref string, c engine.ObjectChange) bool {
 	if ref == "" {
 		return false
@@ -93,7 +92,6 @@ func schemaBlock(c engine.ObjectChange, ph placedHazards, indent string, pal pal
 	return append(out, indent+"  }")
 }
 
-// shown drops the hash a snapshot records a view's body as; it says less than the line above it.
 func shown(c engine.ObjectChange) []engine.AttrChange {
 	if c.Kind != engine.KindView && c.Kind != engine.KindMatView {
 		return c.Attrs
@@ -148,7 +146,6 @@ func (p planItem) describable() bool {
 	return len(p.changes) > 0
 }
 
-// undescribed keeps a body a snapshot cannot see from reading as a migration that does nothing.
 func (p planItem) undescribed() string {
 	if p.effect != "" {
 		return ""

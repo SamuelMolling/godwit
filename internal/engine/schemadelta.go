@@ -125,7 +125,6 @@ func sequence(out map[objectKey]*object, ref, body string) {
 	}
 }
 
-// split takes the last dotted part as the name: an identifier may hold dots, a snapshot line does not quote.
 func split(ref string) (string, string) {
 	i := strings.LastIndex(ref, ".")
 	if i < 0 {
@@ -145,12 +144,10 @@ func at(out map[objectKey]*object, k objectKey) *object {
 	return o
 }
 
-// put keys by kind as well as name: a constraint may carry the name of a column beside it.
 func (o *object) put(kind, name string, order int, parts []string) {
 	o.attrs[kind+"\x00"+name] = attrValue{name: name, order: order, parts: parts}
 }
 
-// columnParts splits the body so a type change does not drag the nullability and the default along with it.
 func columnParts(body string) []string {
 	typ, rest, _ := strings.Cut(body, " null=")
 	null, def, _ := strings.Cut(rest, " default=")
@@ -256,7 +253,6 @@ func twoSided(from, to *object) ([]AttrChange, int) {
 	return sorted(out), unchanged
 }
 
-// differing falls back to the whole value when the two sides do not describe the same properties.
 func differing(was, now []string) ([]string, []string) {
 	if len(was) != len(now) {
 		return was, now

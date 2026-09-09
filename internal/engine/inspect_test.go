@@ -15,7 +15,7 @@ func TestSnapshotAndDiff(t *testing.T) {
 	conn := connect()
 
 	if _, err := conn.Exec(ctx, `
-		CREATE TABLE users (id bigint PRIMARY KEY, email text NOT NULL DEFAULT '');
+		CREATE TABLE users (id bigint PRIMARY KEY, email text NOT NULL DEFAULT '', code varchar(20), rate numeric(10,2));
 		CREATE INDEX idx_users_email ON users (email);
 		CREATE VIEW active AS SELECT id FROM users;
 		CREATE SCHEMA godwit;
@@ -30,6 +30,9 @@ func TestSnapshotAndDiff(t *testing.T) {
 	def, fp := first.Definition, first.Fingerprint
 	for _, want := range []string{
 		"column public.users.id bigint null=NO",
+		"column public.users.email text null=NO default=''::text",
+		"column public.users.code character varying(20) null=YES default=<none>",
+		"column public.users.rate numeric(10,2) null=YES default=<none>",
 		"constraint public.users.users_pkey PRIMARY KEY (id)",
 		"index public.idx_users_email",
 		"view public.active",
@@ -225,5 +228,8 @@ func TestSchemaFormat(t *testing.T) {
 
 	if !SameFormat(SchemaFormat+"\ntable public.a") || SameFormat("table public.a") || SameFormat("") {
 		t.Fatal("the marker is what tells a snapshot's format apart")
+	}
+	if SameFormat("godwit-schema-v2\ncolumn public.a.b character varying null=YES default=<none>") {
+		t.Fatal("a baseline that recorded a type without its modifier cannot be compared with one that does")
 	}
 }

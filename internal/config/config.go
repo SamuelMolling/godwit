@@ -44,7 +44,6 @@ type Config struct {
 	Plan             *PlanSection  `yaml:"plan"`
 }
 
-// Plan report formats.
 const (
 	// PlanFormatSchema describes what the migrations do to the database.
 	PlanFormatSchema = "schema"

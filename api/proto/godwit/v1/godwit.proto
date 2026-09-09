@@ -177,33 +177,26 @@ message PlannedHazard {
   string code = 1;
   string detail = 2;
   string recipe = 3;
-  // The schema-qualified object the hazard is about, empty when the statement did not name one.
+  // What the hazard is about; either is empty when the statement did not name it.
   string object = 4;
-  // The column or constraint inside that object, empty when the hazard is about the object itself.
   string attribute = 5;
 }
 
-// SchemaAttribute is one column, constraint or property a SchemaChange touches. Old and New carry only
-// the properties that moved, so a type change reads as a type change and not as the whole column.
+// SchemaAttribute is one column, constraint or property a SchemaChange touches; old and new carry only the properties that moved, and op is "create", "update" or "destroy".
 message SchemaAttribute {
-  // "create", "update" or "destroy".
   string op = 1;
   string name = 2;
   repeated string old = 3;
   repeated string new = 4;
 }
 
-// SchemaChange is one object a migration creates, changes or destroys, read from the schema snapshots
-// taken around it on the scratch database. Absent when the plan was not validated.
+// SchemaChange is one object a migration creates, changes or destroys: op as above, kind one of "table", "index", "sequence", "enum", "view" or "materialized view", and unchanged the attributes it left alone.
 message SchemaChange {
-  // "create", "update" or "destroy".
   string op = 1;
-  // "table", "index", "sequence", "enum", "view" or "materialized view".
   string kind = 2;
   string schema = 3;
   string name = 4;
   repeated SchemaAttribute attributes = 5;
-  // Attributes of the object the migration left alone, counted rather than listed.
   int32 unchanged = 6;
 }
 
@@ -273,8 +266,7 @@ message PlannedMigration {
   int64 collapses_through = 16;
   // The executor would not run these statements, so their hazards are not gated and --ack does nothing to them.
   bool skipped = 17;
-  // What the migration does to the schema, one entry per object. Empty when nothing replayed it on a
-  // scratch database, and when its effect is one a schema snapshot cannot see.
+  // What the migration does to the schema; empty without a scratch replay, or when a snapshot cannot see it.
   repeated SchemaChange changes = 18;
 }
 

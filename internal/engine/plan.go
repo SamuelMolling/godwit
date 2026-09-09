@@ -249,7 +249,6 @@ func (st *Statement) hazard(code, detail, recipe string) *Hazard {
 	return &st.Hazards[len(st.Hazards)-1]
 }
 
-// on records nothing for an object the statement left PostgreSQL to name: no report could match it back.
 func (h *Hazard) on(schema, name, attribute string) {
 	if name == "" {
 		return

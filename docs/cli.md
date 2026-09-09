@@ -238,7 +238,7 @@ A hazard is not a footnote here: it goes on the attribute that causes it, the wa
 ```console
   # 20260910120000_widen_age
   ~ table "public"."widgets" {
-      ~ age     = integer -> character varying # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)
+      ~ age     = integer -> character varying(20) # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)
       + age_old = integer NULL
         # (4 unchanged attributes hidden)
     }
@@ -247,7 +247,7 @@ A hazard is not a footnote here: it goes on the attribute that causes it, the wa
       ...
 ```
 
-The type is the one PostgreSQL reports in `information_schema` (`character varying`, not `varchar(20)`): the delta is read from godwit's own schema snapshots, which record the type without its modifier. On a terminal `+` is green, `-` red and `~` yellow (see [colour](#colour)). The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`, which also carries the delta under `changes`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
+The type carries its modifier — `character varying(20)`, `numeric(10,2)`, `timestamp(3) with time zone` — under PostgreSQL's own canonical name for it, the one `\d` prints. On a terminal `+` is green, `-` red and `~` yellow (see [colour](#colour)). The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`, which also carries the delta under `changes`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
 
 A migration whose effect a schema snapshot cannot see — a seed, a `GRANT`, a function body — has no block; it says so on its own line and falls back to its statements.
 

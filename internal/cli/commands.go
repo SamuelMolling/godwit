@@ -317,7 +317,6 @@ func (p planItem) skipReason() string {
 	return "the run would not execute its body"
 }
 
-// phases names none at all when the run does not stop: under direct, both halves run anyway.
 func (p planItem) phases(pauses bool) []string {
 	var out []string
 	if !pauses {
@@ -472,7 +471,6 @@ type planReport struct {
 	format    string
 }
 
-// schema is what was asked for; describes adds the schema delta that is the only thing able to answer it.
 func (r planReport) schema() bool {
 	return r.format != config.PlanFormatStatements
 }

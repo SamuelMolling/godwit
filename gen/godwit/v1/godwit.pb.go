@@ -1216,9 +1216,8 @@ type PlannedHazard struct {
 	Code   string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	Detail string                 `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
 	Recipe string                 `protobuf:"bytes,3,opt,name=recipe,proto3" json:"recipe,omitempty"`
-	// The schema-qualified object the hazard is about, empty when the statement did not name one.
-	Object string `protobuf:"bytes,4,opt,name=object,proto3" json:"object,omitempty"`
-	// The column or constraint inside that object, empty when the hazard is about the object itself.
+	// What the hazard is about; either is empty when the statement did not name it.
+	Object        string `protobuf:"bytes,4,opt,name=object,proto3" json:"object,omitempty"`
 	Attribute     string `protobuf:"bytes,5,opt,name=attribute,proto3" json:"attribute,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1289,15 +1288,13 @@ func (x *PlannedHazard) GetAttribute() string {
 	return ""
 }
 
-// SchemaAttribute is one column, constraint or property a SchemaChange touches. Old and New carry only
-// the properties that moved, so a type change reads as a type change and not as the whole column.
+// SchemaAttribute is one column, constraint or property a SchemaChange touches; old and new carry only the properties that moved, and op is "create", "update" or "destroy".
 type SchemaAttribute struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// "create", "update" or "destroy".
-	Op            string   `protobuf:"bytes,1,opt,name=op,proto3" json:"op,omitempty"`
-	Name          string   `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Old           []string `protobuf:"bytes,3,rep,name=old,proto3" json:"old,omitempty"`
-	New           []string `protobuf:"bytes,4,rep,name=new,proto3" json:"new,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Op            string                 `protobuf:"bytes,1,opt,name=op,proto3" json:"op,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Old           []string               `protobuf:"bytes,3,rep,name=old,proto3" json:"old,omitempty"`
+	New           []string               `protobuf:"bytes,4,rep,name=new,proto3" json:"new,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1360,19 +1357,15 @@ func (x *SchemaAttribute) GetNew() []string {
 	return nil
 }
 
-// SchemaChange is one object a migration creates, changes or destroys, read from the schema snapshots
-// taken around it on the scratch database. Absent when the plan was not validated.
+// SchemaChange is one object a migration creates, changes or destroys: op as above, kind one of "table", "index", "sequence", "enum", "view" or "materialized view", and unchanged the attributes it left alone.
 type SchemaChange struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// "create", "update" or "destroy".
-	Op string `protobuf:"bytes,1,opt,name=op,proto3" json:"op,omitempty"`
-	// "table", "index", "sequence", "enum", "view" or "materialized view".
-	Kind       string             `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	Schema     string             `protobuf:"bytes,3,opt,name=schema,proto3" json:"schema,omitempty"`
-	Name       string             `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
-	Attributes []*SchemaAttribute `protobuf:"bytes,5,rep,name=attributes,proto3" json:"attributes,omitempty"`
-	// Attributes of the object the migration left alone, counted rather than listed.
-	Unchanged     int32 `protobuf:"varint,6,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Op            string                 `protobuf:"bytes,1,opt,name=op,proto3" json:"op,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Schema        string                 `protobuf:"bytes,3,opt,name=schema,proto3" json:"schema,omitempty"`
+	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	Attributes    []*SchemaAttribute     `protobuf:"bytes,5,rep,name=attributes,proto3" json:"attributes,omitempty"`
+	Unchanged     int32                  `protobuf:"varint,6,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1706,8 +1699,7 @@ type PlannedMigration struct {
 	CollapsesThrough int64 `protobuf:"varint,16,opt,name=collapses_through,json=collapsesThrough,proto3" json:"collapses_through,omitempty"`
 	// The executor would not run these statements, so their hazards are not gated and --ack does nothing to them.
 	Skipped bool `protobuf:"varint,17,opt,name=skipped,proto3" json:"skipped,omitempty"`
-	// What the migration does to the schema, one entry per object. Empty when nothing replayed it on a
-	// scratch database, and when its effect is one a schema snapshot cannot see.
+	// What the migration does to the schema; empty without a scratch replay, or when a snapshot cannot see it.
 	Changes       []*SchemaChange `protobuf:"bytes,18,rep,name=changes,proto3" json:"changes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

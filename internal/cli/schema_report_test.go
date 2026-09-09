@@ -29,7 +29,7 @@ func widenAge() planReport {
 			changes: []engine.ObjectChange{{
 				Op: engine.OpUpdate, Kind: engine.KindTable, Schema: "public", Name: "widgets", Unchanged: 4,
 				Attrs: []engine.AttrChange{
-					{Op: engine.OpUpdate, Name: "age", Old: []string{"integer"}, New: []string{"character varying"}},
+					{Op: engine.OpUpdate, Name: "age", Old: []string{"integer"}, New: []string{"character varying(20)"}},
 					{Op: engine.OpCreate, Name: "age_old", New: []string{"integer", "NULL"}},
 				},
 			}},
@@ -44,7 +44,7 @@ func TestSchemaTextPutsTheHazardOnTheAttributeThatCausesIt(t *testing.T) {
 	want := "godwit will perform the following actions:\n" +
 		"\n  # 20260910120000_widen_age\n" +
 		"  ~ table \"public\".\"widgets\" {\n" +
-		"      ~ age     = integer -> character varying" +
+		"      ~ age     = integer -> character varying(20)" +
 		" # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)\n" +
 		"      + age_old = integer NULL\n" +
 		"        # (4 unchanged attributes hidden)\n" +
@@ -64,7 +64,7 @@ func TestSchemaMarkdownFencesTheBlockAndCollapsesTheRecipe(t *testing.T) {
 	writePlanMarkdown(&b, widenAge())
 	for _, want := range []string{
 		"\n```diff\n~ table \"public\".\"widgets\" {\n" +
-			"    ~ age     = integer -> character varying" +
+			"    ~ age     = integer -> character varying(20)" +
 			" # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)\n" +
 			"    + age_old = integer NULL\n      # (4 unchanged attributes hidden)\n  }\n```\n",
 		"<details><summary>H004 recipe</summary>\n\n```sql\n-- godwit: change-type public.widgets.age varchar(20)\n```",
@@ -118,7 +118,6 @@ func TestSchemaBlocksCoverEveryObjectKind(t *testing.T) {
 	for _, want := range []string{
 		"  - table \"public\".\"old\" {\n      - id = bigint NOT NULL\n    }\n",
 		"  + index \"public\".\"widgets_kind_idx\" {\n      + definition = CREATE INDEX widgets_kind_idx ON public.widgets USING btree (kind)\n    }\n",
-		// A snapshot records a view by the hash of its body, which is not what a reader wants to be shown.
 		"  ~ materialized view \"mv\" {\n      ~ definition = (changed)\n    }\n",
 		"  + view \"public\".\"stats\"\n",
 		"Plan: 2 to add, 1 to change, 1 to destroy.\n",
@@ -239,7 +238,7 @@ func TestPlanCarriesTheSchemaChangeOverTheWire(t *testing.T) {
 			Changes: []*godwitv1.SchemaChange{{
 				Op: engine.OpUpdate, Kind: engine.KindTable, Schema: "public", Name: "widgets", Unchanged: 4,
 				Attributes: []*godwitv1.SchemaAttribute{
-					{Op: engine.OpUpdate, Name: "age", Old: []string{"integer"}, New: []string{"character varying"}},
+					{Op: engine.OpUpdate, Name: "age", Old: []string{"integer"}, New: []string{"character varying(20)"}},
 				},
 			}},
 		}},
@@ -249,7 +248,7 @@ func TestPlanCarriesTheSchemaChangeOverTheWire(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "  ~ table \"public\".\"widgets\" {\n      ~ age = integer -> character varying" +
+	want := "  ~ table \"public\".\"widgets\" {\n      ~ age = integer -> character varying(20)" +
 		" # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)\n" +
 		"        # (4 unchanged attributes hidden)\n    }\n"
 	if !strings.Contains(out, want) {

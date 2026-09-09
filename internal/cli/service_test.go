@@ -486,7 +486,6 @@ func dryRunStub() *stubService {
 	}}
 }
 
-// Kept as a literal so a reworded verdict has to be re-read rather than silently agreed with.
 const twoHalvesProse = "This runs in two halves. Now, godwit applies only what adds: new columns, indexes" +
 	" and constraints, which the application it is already running does not have to know about. Nothing is" +
 	" renamed and nothing is dropped yet. When you confirm, godwit runs the rest: the renames, and the drops" +
