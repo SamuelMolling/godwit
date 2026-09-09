@@ -53,7 +53,8 @@ jobs:
 
   # `godwit apply` as a comment or review on the pull request applies the stored plan from the
   # pull request head; `godwit confirm` runs the contract phase it held back; `godwit revert`
-  # runs the down files of that run when the pull request is abandoned. The commander must hold
+  # runs the down files of that run when the pull request is abandoned. The command has to be the
+  # whole comment: prose around it means nothing fires. The commander must hold
   # write or admin permission on this repository (allowed-associations only narrows further), and
   # apply and confirm additionally need an approving review standing on the exact head commit.
   # Other events end the job as skipped.

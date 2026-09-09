@@ -188,7 +188,7 @@ A `pull_request` event re-plans on every push, which covers the usual case: the 
           target: orders
 ```
 
-**A re-plan from a comment changes what a later `apply` does.** `apply` binds by plan key, not by plan id, so the newest stored plan with that key is the one it runs; the comment therefore reaches past the pull request's own content into what the next apply will execute. It is authorised like `apply` — `allowed-associations` and write or admin permission on the repository ([who may command an apply](#who-may-command-an-apply)) — and it is refused when the pull request is closed, when the checked-out commit is not the head, or when a `godwit plan <sha>` names a commit the head has moved past. It does **not** need an approving review: `require-approval` anchors the apply to a reviewed commit, and a plan applies nothing. `--rollout` is part of the plan key, so `godwit plan --rollout expand-contract` stores the plan under a different key from the one an `apply` step left on the default rollout looks for; the two have to agree, as they already do between the `plan` and `apply` steps of a workflow.
+**A re-plan from a comment changes what a later `apply` does.** `apply` binds by plan key, not by plan id, so the newest stored plan with that key is the one it runs; the comment therefore reaches past the pull request's own content into what the next apply will execute. It is commanded like `apply` ([what counts as commanding](#what-counts-as-commanding)) and authorised like it — `allowed-associations` and write or admin permission on the repository ([who may command an apply](#who-may-command-an-apply)) — and it is refused when the pull request is closed, when the checked-out commit is not the head, or when a `godwit plan <sha>` names a commit the head has moved past. It does **not** need an approving review: `require-approval` anchors the apply to a reviewed commit, and a plan applies nothing. `--rollout` is part of the plan key, so `godwit plan --rollout expand-contract` stores the plan under a different key from the one an `apply` step left on the default rollout looks for; the two have to agree, as they already do between the `plan` and `apply` steps of a workflow.
 
 ### Pull request: apply
 
@@ -216,15 +216,33 @@ jobs:
           target: orders
 ```
 
-Once the review is done, a collaborator comments `godwit apply` (the whole comment, or one line of it; also accepted as the body of a review). With `apply-on: comment,approve` an approving review applies as well. `/godwit apply`, which earlier versions of this page documented, is still accepted for every command; `godwit apply` is the form to write and the one the reports and statuses print. The step:
+Once the review is done, a collaborator comments `godwit apply` — the **whole comment**, nothing else in it; also accepted as the body of a review. With `apply-on: comment,approve` an approving review applies as well. `/godwit apply`, which earlier versions of this page documented, is still accepted for every command; `godwit apply` is the form to write and the one the reports and statuses print. The step:
 
-1. Reads the event. The command is a whole line of the comment, outside any fenced code block, so a pasted log or a quoted reply carrying `godwit apply` does not fire; the line may name the commit the commenter was reading (`godwit apply <sha>`), and then that sha must be the head. A comment that is not the command, a review that does not apply, an edited comment or a comment on an issue end the step with `skipped=true` and exit 0. The command line also takes the flags that command has ([below](#flags-on-a-command-comment)).
+1. Reads the event. The command has to be the entire comment ([what counts as commanding](#what-counts-as-commanding)), so prose around it — a log pasted above it, a sentence explaining it to a teammate, a thank-you below it — means nothing fires. It may name the commit the commenter was reading (`godwit apply <sha>`), and then that sha must be the head. A comment that is not the command, a review that does not apply, an edited comment or a comment on an issue end the step with `skipped=true` and exit 0. The command takes the flags that command has ([below](#flags-on-a-command-comment)).
 2. Authorises the commander — `allowed-associations`, then the real permission lookup and the approval anchor described [below](#who-may-command-an-apply). Every refusal exits 1 and says which check failed.
 3. Reads the pull request through the API: it must be open, and the checked-out commit must be its head, so the job has to check out `refs/pull/<n>/head` (the default checkout of `issue_comment` is the default branch). This catches a mis-configured checkout. It does **not** catch a push that raced the job: both sides of that comparison move together, which is what the approval anchor in step 2 is for.
 4. Sets the commit status `godwit/applied` to `pending` on the head, then runs `godwit migrate` from the pull request files with the same `dir`, `target` and `rollout` as the plan step, so it binds to the stored plan ([concepts: plans](concepts.md#plans)) and refuses when the target moved since (exit 3, `stale=true`).
 5. Posts the `## godwit apply` report on the pull request and sets the status: `success` ("applied by run …; merge when the review is done"), `pending` when the run stopped at `awaiting_contract` ("expand applied; comment godwit confirm to run the contract phase", output `phase=awaiting-contract`), or `failure` with the reason (stale plan → re-plan then command again; SQL error → the run's error is in the comment). The status links to the comment.
 
 The status is per commit, so a push after the apply leaves the new head without one. Branch protection on the base branch should require the `godwit/applied` status and **"Require branches to be up to date before merging"**: the first makes the apply the gate of the merge, the second makes GitHub re-run the pull request workflow (re-plan) when the base moves, so the plan stored last is the one computed on the exact set the pull request applies. The `source` recorded on the run is `github.com/<owner>/<repo>@<head sha>[:<dir>]`, which `godwit runs`, `godwit audit` and `revert` use.
+
+### What counts as commanding
+
+**The command must be the entire comment.** A comment is trimmed of surrounding whitespace, any backticks wrapping the whole of it are stripped, and what is left must be the command and its arguments — nothing before it, nothing after it, no second line. Anything else names nothing: the step ends `skipped=true` and exits 0.
+
+| Comment | |
+|---|---|
+| `godwit apply` | commands |
+| `` `godwit apply` `` , ```` ```godwit apply``` ```` | commands — GitHub's copy and quote-reply wrap a command in backticks |
+| `godwit apply <sha> --ack H001` | commands; this rule is about surrounding content, not arguments |
+| `To deploy, comment:` ⏎ `godwit apply` | silence |
+| `godwit apply` ⏎ `thanks!` | silence |
+| a pasted log or a fenced block containing `godwit apply` | silence |
+| `please godwit apply` | silence |
+
+This is [Atlantis's rule](https://github.com/runatlantis/atlantis/blob/main/server/events/comment_parser.go) — its parser ignores any comment with a second non-empty line — and godwit takes it for the same reason. Without the `/` prefix, `godwit apply` on its own line is exactly how someone explains the tool to a teammate, and the person explaining is usually someone whose permission would let the apply through. Requiring the whole comment costs the commander nothing and takes that footgun away. It also removes the need for a fenced-code-block rule: a real fenced block spans lines, so it is already silence.
+
+**A review body obeys the same rule.** The parser is the same one, deliberately: two grammars is what this page used to have and it is not worth having again for a convenience. Approving *and* saying something is a normal thing to do, but it already has its own path — `apply-on: approve` makes the approving review itself the trigger and never reads the body ([who may command an apply](#who-may-command-an-apply)), so prose and an apply coexist there. When the body is the command, it has to be only the command. The failure mode of getting this wrong is inaction: nothing applies, and the reviewer comments again.
 
 ### Flags on a command comment
 
@@ -239,7 +257,7 @@ A commanded line may carry the flags its command takes, after the optional sha:
 
 `--ack` on a comment is the escape hatch for a hazard someone has decided to accept on this one run — the main path stays editing the migration to use the recipe the report prints beside the statement, and the `ack` input stays the place for a code the repository always accepts. The comment's codes are **added** to the `ack` input; `--allow-data-loss` and `--force` set the corresponding input for that run.
 
-A line that opens with the command and then carries something the command does not take — an unknown flag, a flag belonging to another command, a hazard code that is not one, `--ack` with nothing after it — **fails the job** with the reason. It does not quietly apply without what was asked for, and it is not the same as a comment that never named the command, which still ends `skipped=true` and exit 0.
+A comment that *is* the command and then carries something the command does not take — an unknown flag, a flag belonging to another command, a hazard code that is not one, `--ack` with nothing after it — **fails the job** with the reason. It does not quietly apply without what was asked for. That is not the same as a comment which never commanded at all — one with prose around it, or one that names no command — and those still end `skipped=true` and exit 0, even when the text inside them would have been a refusal on its own.
 
 A caller's workflow that filters events before the Action runs has to let the flags through: a job that matches the comment with an exact `== 'godwit apply'` on the first line refuses `godwit apply --ack H001` before godwit ever sees it. Match loosely (`contains(..., 'godwit apply')`) instead, and leave the parsing and the refusals to the Action. `contains` rather than `startsWith` is also what lets `/godwit apply` — the form earlier versions of this page documented, still accepted — reach the Action.
 

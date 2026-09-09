@@ -21,7 +21,7 @@ func TestCommentParse(t *testing.T) {
 	t.Parallel()
 
 	code, out, errOut := runCLI("comment", "parse", "--command", "revert", "--body-file",
-		bodyFile(t, "please:\n\ngodwit revert 0123456 --ack H002,H009 --allow-data-loss --force\n"))
+		bodyFile(t, "godwit revert 0123456 --ack H002,H009 --allow-data-loss --force\n"))
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -34,7 +34,8 @@ func TestCommentParse(t *testing.T) {
 func TestCommentParseSilence(t *testing.T) {
 	t.Parallel()
 
-	code, out, errOut := runCLI("comment", "parse", "--command", "apply", "--body-file", bodyFile(t, "looks good"))
+	code, out, errOut := runCLI("comment", "parse", "--command", "apply", "--body-file",
+		bodyFile(t, "To deploy, comment:\n\ngodwit apply"))
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}

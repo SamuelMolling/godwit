@@ -3,6 +3,7 @@ package comment
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -47,6 +48,8 @@ var valuedFlags = map[string]valued{
 	"--rollout": {"rollout policy", "want --rollout direct or --rollout expand-contract"},
 }
 
+var multiLine = regexp.MustCompile(`.*\r?\n[^\r\n]+`)
+
 var known = func() map[string]bool {
 	all := map[string]bool{}
 	for _, g := range grammars {
@@ -58,37 +61,28 @@ var known = func() map[string]bool {
 	return all
 }()
 
-// Parse returns the first godwit command a whole line of body names outside a fenced code block, or nil for none; want narrows to one command, "" accepts any.
+// Parse returns the command when the whole comment is one, or nil when body carries anything else; want narrows to one command, "" accepts any.
 func Parse(body, want string) (*Command, error) {
 	if _, ok := grammars[want]; want != "" && !ok {
 		return nil, fmt.Errorf("'%s' is not a comment command (want plan, apply, confirm or revert)", want)
 	}
-	fenced := false
-	for line := range strings.SplitSeq(body, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
-			fenced = !fenced
-
-			continue
-		}
-		if fenced {
-			continue
-		}
-		words := invocation(line)
-		if len(words) == 0 {
-			continue
-		}
-		if _, ok := grammars[words[0]]; !ok {
-			continue
-		}
-		if want != "" && words[0] != want {
-			continue
-		}
-
-		return arguments(words[0], words[1:])
+	// Atlantis's rule (server/events/comment_parser.go): the command is the whole comment, its backticks stripped.
+	whole := strings.Trim(strings.TrimSpace(body), "`")
+	if multiLine.MatchString(whole) {
+		return nil, nil
+	}
+	words := invocation(strings.TrimSpace(whole))
+	if len(words) == 0 {
+		return nil, nil
+	}
+	if _, ok := grammars[words[0]]; !ok {
+		return nil, nil
+	}
+	if want != "" && words[0] != want {
+		return nil, nil
 	}
 
-	return nil, nil
+	return arguments(words[0], words[1:])
 }
 
 func invocation(line string) []string {

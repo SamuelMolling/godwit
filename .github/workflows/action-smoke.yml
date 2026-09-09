@@ -493,7 +493,21 @@ jobs:
           comment created ',"pull_request":{"url":"x"}' '~~~\ngodwit apply\n~~~' OWNER
           context; expect rc=0; expect skipped=true
           comment created ',"pull_request":{"url":"x"}' "log:\n\`\`\`\ngodwit apply\n\`\`\`\ngodwit apply" OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' 'To deploy, comment:\ngodwit apply' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' 'godwit apply\nthanks' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' 'godwit apply\n\nthanks' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' 'note:\ngodwit apply --unknown' OWNER
+          context; expect rc=0; expect skipped=true
+          comment created ',"pull_request":{"url":"x"}' 'godwit apply\n\n' OWNER
           context; expect rc=0; expect skipped=false
+          comment created ',"pull_request":{"url":"x"}' "\`godwit apply\`" OWNER
+          context; expect rc=0; expect skipped=false
+          comment created ',"pull_request":{"url":"x"}' "\`\`\`godwit apply --ack H001\`\`\`" OWNER
+          context; expect rc=0; expect skipped=false; expect ack=H001
 
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' MEMBER
           GH_STUB_PERMISSION="read" context; expect rc=1; says "has permission 'read'"
@@ -568,6 +582,12 @@ jobs:
           APPLY_ON=comment,approve context; expect rc=0; expect skipped=false
           review commented 'godwit apply' MEMBER
           context; expect rc=0; expect skipped=false
+          review commented 'Nice. Once CI is green:\ngodwit apply' MEMBER
+          context; expect rc=0; expect skipped=true
+          review approved 'Nice. Once CI is green:\ngodwit apply' MEMBER
+          context; expect rc=0; expect skipped=true
+          review approved 'Nice. Once CI is green:\ngodwit apply' MEMBER
+          APPLY_ON=approve context; expect rc=0; expect skipped=false
           review approved '' NONE
           APPLY_ON=approve context; expect rc=1
           review changes_requested '' OWNER
@@ -797,8 +817,8 @@ jobs:
           grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=nothing to apply -f target_url=${runs}" "${GH_STUB_LOG}"
           grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=2 to apply -f target_url=${comment}$" "${GH_STUB_LOG}"
           grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/plan " "${GH_STUB_LOG}" | grep -qx 6
-          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 31
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 37
+          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 34
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 40
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
           grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews$" "${GH_STUB_LOG}"
