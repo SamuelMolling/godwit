@@ -14,8 +14,8 @@ func withheldStub() *stubService {
 			{Version: 20260901120000, Name: "users", Checksum: "c1", Phase: "expand", Statements: []*godwitv1.PlannedStatement{
 				{Sql: "CREATE TABLE users (id int)"},
 			}},
-			{Version: 20260901120001, Name: "drop_a", Checksum: "c2", Withheld: true},
-			{Name: "v", Repeatable: true, Checksum: "c3", Withheld: true},
+			{Version: 20260901120001, Name: "drop_a", Checksum: "c2", Withheld: true, Skipped: true},
+			{Name: "v", Repeatable: true, Checksum: "c3", Withheld: true, Skipped: true},
 		},
 	}}
 }
@@ -32,13 +32,17 @@ func TestPlanWithAVersionTargetNamesWhatItWithheld(t *testing.T) {
 	if stub.planned.ToVersion != 20260901120000 {
 		t.Fatalf("to_version = %d", stub.planned.ToVersion)
 	}
-	want := "plan p1 on app (rollout direct, validated on a scratch database)\n" +
-		"key: k1\n" +
+	want := "1 migration will be applied to app.\n" +
 		"withheld: 2 migration(s) in the directory this plan does not cover (20260901120001_drop_a, R__v)\n" +
-		"20260901120000_users (up): 1 statement(s) [expand, pending]\n" +
-		"  [0] tx    CREATE TABLE users (id int)\n" +
-		"20260901120001_drop_a (up): 0 statement(s) [withheld]\n" +
-		"R__v (up): 0 statement(s) [withheld]\n"
+		"\n20260901120000_users  1 statement, expand phase\n" +
+		"  [0] tx\n" +
+		"      CREATE TABLE users (id int);\n" +
+		"\nnot executed by this run (2):\n" +
+		"  20260901120001_drop_a  held back by --to\n" +
+		"  R__v  held back by --to\n" +
+		"\nplan details:\n" +
+		"  target: app\n  rollout: direct\n  validation: validated on a scratch database\n  plan: p1\n  key: k1\n" +
+		"\nPlan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}

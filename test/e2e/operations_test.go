@@ -287,10 +287,13 @@ func TestDryRunPlansWithoutQueueing(t *testing.T) {
 		migration{v2, "name", "ALTER TABLE users ADD COLUMN name text;", "ALTER TABLE users DROP COLUMN name;"},
 		migration{v3, "drop_id", "ALTER TABLE users DROP COLUMN id;", "ALTER TABLE users ADD COLUMN id int;"})
 	out := r.mustMigrate(dir, "--dry-run", "--rollout", "expand-contract", "--ack", "H003", "--format", "markdown")
-	expectContains(t, out, "## godwit dry run", "Target `app`, rollout `expand-contract`, validated on a scratch database.",
-		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users", "| expand | applied |",
-		"| `20260901120001_name` | up | 0 | tx | `ALTER TABLE users ADD COLUMN name text` |  | expand | pending |",
-		"| `20260901120002_drop_id` | up | 0 | tx | `ALTER TABLE users DROP COLUMN id` | H003", "| contract | pending |")
+	expectContains(t, out, "## godwit dry run",
+		"**2 migrations will be applied to `app`.** The expand phase runs on apply, then the run stops at `awaiting_contract`",
+		"### `20260901120001_name`\n\n1 statement, expand phase\n\n`[0]` tx\n\n```sql\nALTER TABLE users ADD COLUMN name text;\n```\n",
+		"### `20260901120002_drop_id`\n\n1 statement, contract phase\n\n`[0]` tx\n\n```sql\nALTER TABLE users DROP COLUMN id;\n```\n\n**H003",
+		"| `20260901120000_users` | already in the target's history |",
+		"validation: validated on a scratch database",
+		"\nPlan: 2 to apply, 0 to revert, 1 hazard(s) to acknowledge\n")
 	if columnExists(t, r.appDSN, "users", "name") {
 		t.Fatal("dry run must not touch the target")
 	}

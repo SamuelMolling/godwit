@@ -27,14 +27,14 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	var b strings.Builder
 	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct", items: []planItem{hazardItem("users", true)}})
 	got := b.String()
-	if strings.Contains(got, "acknowledge them with") {
+	if strings.Contains(got, "must be acknowledged before this runs") {
 		t.Fatalf("an applied migration's hazard must not be presented as acknowledgeable:\n%s", got)
 	}
-	if !strings.Contains(got, "✅ no hazards") {
+	if !strings.HasSuffix(got, "\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n") {
 		t.Fatalf("footer must agree with the gate:\n%s", got)
 	}
-	if !strings.Contains(got, "H001: CREATE INDEX without CONCURRENTLY blocks writes on t") {
-		t.Fatalf("the hazard is still true of that statement and must stay in its row:\n%s", got)
+	if !strings.Contains(got, "| H001: CREATE INDEX without CONCURRENTLY blocks writes on t |") {
+		t.Fatalf("the hazard is still true of that statement and must stay beside it:\n%s", got)
 	}
 	if !strings.Contains(got, "1 hazard(s) on statements this run would not execute") {
 		t.Fatalf("the uncounted hazards must be named:\n%s", got)
@@ -46,11 +46,45 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 		items: []planItem{hazardItem("users", true), hazardItem("orders", false)},
 	})
 	got = b.String()
-	if !strings.Contains(got, "⚠️ 1 hazard(s); acknowledge them with `--ack`") {
+	if !strings.Contains(got, "1 hazard must be acknowledged before this runs; use `--ack H001`.\n") ||
+		!strings.HasSuffix(got, "\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n") {
 		t.Fatalf("the pending hazard must still be gated:\n%s", got)
 	}
 	if !strings.Contains(got, "1 hazard(s) on statements this run would not execute") {
 		t.Fatalf("mixed plan must separate the two:\n%s", got)
+	}
+}
+
+func TestPlanTextKeepsTheHazardsItWillNotExecute(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	writePlanText(&b, planReport{live: true, target: "app", rollout: "direct", items: []planItem{hazardItem("users", true)}})
+	for _, want := range []string{
+		"  20260901120000_users  already in the target's history\n",
+		"    hazard H001: CREATE INDEX without CONCURRENTLY blocks writes on t\n",
+		"  1 hazard(s) on statements this run would not execute",
+		"\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n",
+	} {
+		if !strings.Contains(b.String(), want) {
+			t.Fatalf("text missing %q:\n%s", want, b.String())
+		}
+	}
+}
+
+func TestSkipReasonNamesWhyTheBodyStaysUnrun(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		item planItem
+		want string
+	}{
+		{planItem{note: "collapsed by a checkpoint"}, "collapsed by a checkpoint"},
+		{planItem{}, "the run would not execute its body"},
+	} {
+		if got := tc.item.skipReason(); got != tc.want {
+			t.Fatalf("skipReason = %q, want %q", got, tc.want)
+		}
 	}
 }
 

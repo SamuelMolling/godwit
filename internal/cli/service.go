@@ -370,24 +370,36 @@ func newRevertCmd() *cobra.Command {
 // revertPlanText is the plan godwit prints before it runs anything, and all a --dry-run prints.
 func revertPlanText(m *godwitv1.RevertRunResponse) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "revert of run %s on %s: %d migration(s), reverse order of application",
-		m.Reverts, m.Target, len(m.Migrations))
-	if m.Forced {
-		b.WriteString("; forced past a newer run")
+	fmt.Fprintf(&b, "%s will be reverted on %s, newest first", count(len(m.Migrations), "migration"), m.Target)
+	if m.Reverts != "" {
+		b.WriteString(", undoing run " + m.Reverts)
 	}
+	if m.Forced {
+		b.WriteString(", forced past a newer run")
+	}
+	b.WriteString(".")
+	hazards := 0
 	for _, pm := range m.Migrations {
-		fmt.Fprintf(&b, "\n  %s (down): %d statement(s)", migrationID(pm), len(pm.Statements))
+		fmt.Fprintf(&b, "\n\n%s (down)  %s", migrationID(pm), count(len(pm.Statements), "statement"))
 		for i, st := range pm.Statements {
 			mode := "tx"
 			if st.NoTx {
-				mode = "no_tx"
+				mode = "no-tx"
 			}
-			fmt.Fprintf(&b, "\n    [%d] %-5s %s", i, mode, firstLine(st.Sql))
+			fmt.Fprintf(&b, "\n  [%d] %s", i, mode)
+			for _, l := range strings.Split(st.Sql, "\n") {
+				b.WriteString("\n      " + l)
+			}
+			for _, h := range st.Hazards {
+				hazards++
+				fmt.Fprintf(&b, "\n      hazard %s: %s", h.Code, h.Detail)
+			}
 		}
 	}
 	for _, l := range m.DataLoss {
-		fmt.Fprintf(&b, "\n  data loss: %s drops %s %s holding %d row(s)", l.Migration, l.Kind, l.Object, l.Rows)
+		fmt.Fprintf(&b, "\n\ndata loss: %s drops %s %s holding %d row(s)", l.Migration, l.Kind, l.Object, l.Rows)
 	}
+	fmt.Fprintf(&b, "\n\nPlan: 0 to apply, %d to revert, %d hazard(s) to acknowledge", len(m.Migrations), hazards)
 
 	return b.String()
 }

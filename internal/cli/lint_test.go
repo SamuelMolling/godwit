@@ -59,6 +59,15 @@ func TestLintMarkdown(t *testing.T) {
 	if code != 0 || out != "## godwit lint\n\n✅ no unacknowledged hazards\n" {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
+
+	noRecipe := writeMigs(t, map[string]string{
+		"20260901120000_i.up.sql":   "CREATE INDEX CONCURRENTLY i ON t (v);",
+		"20260901120000_i.down.sql": "SELECT 1;",
+	})
+	code, out, _ = runCLI("lint", "--dir", noRecipe, "--format", "markdown")
+	if code != 0 || strings.Contains(out, "<details>") {
+		t.Fatalf("a finding without a recipe must not open a details block: code = %d, out = %q", code, out)
+	}
 }
 
 func TestLintJSON(t *testing.T) {

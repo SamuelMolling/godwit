@@ -23,23 +23,32 @@ Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behin
 
 ```
 $ godwit plan --target app --dir db/migrations --rollout expand-contract
-20260901121000_customer_id_text (up): 14 statement(s) [expand, pending]   directive, expand 8 / contract 6
+1 migration will be applied to app. The expand phase runs on apply, then the run stops at awaiting_contract and the contract phase waits for a confirm (/godwit confirm on a pull request).
+
+20260901121000_customer_id_text  14 statements, expand then contract phases, written by a directive
   -- godwit: change-type orders.customer_id text using='customer_id::text'
   -- godwit: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
-  -- godwit expanded: change-type orders.customer_id text
-  [0] tx    ALTER TABLE public.orders ADD COLUMN customer_id_new text   [expand]
-  [1] tx    CREATE FUNCTION public.orders_customer_id_sync() RETURNS trigger LANGUAGE plpgsql AS …   [expand]
-  [2] tx    CREATE TRIGGER orders_customer_id_sync BEFORE INSERT OR UPDATE ON public.orders …   [expand]
-  [3] batch WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint AND …)   [expand]
-        batch over id (int), 5000 rows per transaction
-  [6] assert SELECT count(*) FROM public.orders WHERE customer_id_new IS DISTINCT FROM customer_id::text   [expand]
-        the result must be = 0
-  -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
-  [7] assert SELECT count(*) FROM orders WHERE customer_id IS NULL   [expand]
-        the result must be = 0
-  [10] tx    ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old   [contract]
-  [11] tx    ALTER TABLE public.orders RENAME COLUMN customer_id_new TO customer_id   [contract]
+  [0] tx
+      -- godwit expanded: change-type orders.customer_id text
+      ALTER TABLE public.orders ADD COLUMN customer_id_new text;
+  [1] tx
+      CREATE FUNCTION public.orders_customer_id_sync() RETURNS trigger LANGUAGE plpgsql AS …;
+  [2] tx
+      CREATE TRIGGER orders_customer_id_sync BEFORE INSERT OR UPDATE ON public.orders …;
+  [3] batch over id (int), 5000 rows per transaction
+      WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint AND …);
+  [6] assert, the result must be = 0
+      SELECT count(*) FROM public.orders WHERE customer_id_new IS DISTINCT FROM customer_id::text;
+  [7] assert, the result must be = 0
+      -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
+      SELECT count(*) FROM orders WHERE customer_id IS NULL;
+  [10] tx, contract phase
+      ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old;
+  [11] tx, contract phase
+      ALTER TABLE public.orders RENAME COLUMN customer_id_new TO customer_id;
   note: leaves public.orders.customer_id_old for rollback; drop it with `-- godwit: drop-column public.orders.customer_id_old`
+
+Plan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
 
 (An excerpt: the run has fourteen statements.) The trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, statement 6 is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).

@@ -591,14 +591,15 @@ jobs:
           grep -q '^## godwit lint$' "${LINT_SUMMARY}"
           grep -q 'no unacknowledged hazards' "${LINT_SUMMARY}"
           grep -q '^## godwit plan$' "${PLAN_SUMMARY}"
-          grep -q 'H001: CREATE INDEX without CONCURRENTLY' "${PLAN_SUMMARY}"
+          grep -q '^\*\*H001\*\* CREATE INDEX without CONCURRENTLY' "${PLAN_SUMMARY}"
           test -z "${PLAN_ID}"
           test "${GATE_OUTCOME}" = "failure"
           test -z "${GATE_SKIPPED}"
 
           test -n "${STORED_ID}"
           test -n "${STORED_KEY}"
-          grep -q "^## godwit plan ${STORED_ID}$" "${STORED_SUMMARY}"
+          grep -q '^## godwit plan$' "${STORED_SUMMARY}"
+          grep -q "^plan: ${STORED_ID}$" "${STORED_SUMMARY}"
           grep -q "^key: ${STORED_KEY}$" "${STORED_SUMMARY}"
           grep -q '^observed: 0 applied' "${STORED_SUMMARY}"
 
