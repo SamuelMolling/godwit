@@ -70,7 +70,7 @@ inputs:
     description: "On push events, post the migrate outcome, or a failed verify, on the pull request(s) merged by the commit (needs pull-requests: write)"
     default: "true"
   github-token:
-    description: "Token used to read the pull request, its reviews and the commander's repository permission, post the comment and set the godwit/applied status"
+    description: "Token used to read the pull request, its reviews and the commander's repository permission, post the comment and set the godwit/plan and godwit/applied statuses"
     default: ${{ github.token }}
   go-version:
     description: "Go version used to build godwit (cgo: libpg_query)"
@@ -86,6 +86,12 @@ outputs:
   plan-key:
     description: "Key of the plan stored by plan"
     value: ${{ steps.godwit.outputs.plan-key }}
+  plan-verdict:
+    description: "What plan (or migrate with dry-run) decided, in the words the godwit/plan status carries: 'nothing to apply', '2 to apply, 1 hazard to acknowledge', 'offline plan; no target was consulted'"
+    value: ${{ steps.godwit.outputs.plan-verdict }}
+  plan-hazards:
+    description: "Number of hazards on what the planned run would execute (empty for an offline plan, which gates nothing)"
+    value: ${{ steps.godwit.outputs.plan-hazards }}
   stale:
     description: "true when apply or migrate was refused because the stored plan is stale or required (exit 3)"
     value: ${{ steps.godwit.outputs.stale }}
@@ -102,7 +108,7 @@ outputs:
     description: "Pull request apply or revert acted on (or the pull request of a pull_request event)"
     value: ${{ steps.context.outputs.pr-number }}
   head-sha:
-    description: "Head commit of that pull request; apply sets the godwit/applied status on it"
+    description: "Head commit of that pull request; plan and apply set their commit status on it"
     value: ${{ steps.context.outputs.head-sha }}
   skipped:
     description: "true when the event did not carry a command for apply, confirm or revert (nothing ran)"
@@ -194,6 +200,8 @@ runs:
         STALE: ${{ steps.godwit.outputs.stale }}
         PHASE: ${{ steps.godwit.outputs.phase }}
         RUN_ID: ${{ steps.godwit.outputs.run-id }}
+        PLAN_VERDICT: ${{ steps.godwit.outputs.plan-verdict }}
+        PLAN_HAZARDS: ${{ steps.godwit.outputs.plan-hazards }}
         EVENT_NAME: ${{ github.event_name }}
         REPOSITORY: ${{ github.repository }}
         SHA: ${{ github.sha }}
