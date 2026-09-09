@@ -79,8 +79,8 @@ func TestPlanMarkdownRendersTheExpansion(t *testing.T) {
 	writePlanMarkdown(&b, expandedReport())
 	out := b.String()
 	for _, want := range []string{
-		"### `20260901130000_age`\n\n4 statements, expand then contract phases, written by a directive\n" +
-			"\n```sql\n-- godwit: change-type users.age bigint\n```\n",
+		"```diff\n+ 20260901130000_age  4 statements, expand then contract phases, written by a directive\n```\n",
+		"### `20260901130000_age`\n\n```sql\n-- godwit: change-type users.age bigint\n```\n",
 		"`[0]` tx\n\n```sql\nALTER TABLE public.users ADD COLUMN age_new bigint;\n```\n",
 		"`[2]` tx, contract phase\n\n```sql\nALTER TABLE public.users RENAME COLUMN age TO age_old;\n```\n",
 		"\nnote: leaves public.users.age_old for rollback\n",

@@ -594,13 +594,16 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 **The whole directory is still submitted.** The client sends every file and the version target as a separate field; the service is what cuts the set. Filtering client-side and sending fewer files would produce the same run and a plan that *silently* covers less than the directory — the reviewer has no way to tell an intentional stop from a directory that only holds three migrations. So the migrations above the target stay on the plan, marked `withheld`, and appear in the text output, the markdown pull-request comment, `godwit plan show` and the JSON:
 
 ```
-plan 3f2a… on app (rollout direct, validated on a scratch database)
-key: 9c1b…
+1 migration will be applied to app.
 withheld: 2 migration(s) in the directory this plan does not cover (20260901120100_b, R__v)
-20260901120000_a (up): 1 statement(s) [expand, pending]
-  [0] tx    CREATE TABLE a (id int)
-20260901120100_b (up): 0 statement(s) [withheld]
-R__v (up): 0 statement(s) [withheld]
+
++ 20260901120000_a  1 statement, expand phase
+  [0] tx
+      CREATE TABLE a (id int);
+
+not executed by this run (2):
+  20260901120100_b  held back by --to
+  R__v  held back by --to
 ```
 
 A withheld migration is not part of the pending set: it is not planned, not validated, not expanded, not hazard-gated and not in the run's files. It is a name on the report and nothing else.

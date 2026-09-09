@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Env: COMMAND MODE DRY_RUN APPLY_ON ALLOWED_ASSOCIATIONS REQUIRE_APPROVAL EVENT_NAME EVENT_PATH REPOSITORY GH_TOKEN GITHUB_SHA GITHUB_OUTPUT RUN_URL
+# Env: COMMAND MODE DRY_RUN APPLY_ON ALLOWED_ASSOCIATIONS REQUIRE_APPROVAL ACK EVENT_NAME EVENT_PATH REPOSITORY GH_TOKEN GITHUB_SHA GITHUB_OUTPUT RUN_URL
+ACK="${ACK:-}"
 out() { printf '%s=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT}"; }
 emit() {
   out skipped "$1"
@@ -101,9 +102,75 @@ done
 
 want="/godwit ${COMMAND}"
 command_sha=""
+command_ack=""
+command_data_loss=""
+command_force=""
+sha() { hex "$1" && [ "${#1}" -ge 7 ] && [ "${#1}" -le 40 ]; }
+# Only the flags the command itself takes: confirm takes none, and a flag godwit would ignore must not read
+# as an accepted one.
+takes() {
+  case "${COMMAND}:$1" in
+    apply:--ack|revert:--ack|revert:--allow-data-loss|revert:--force) return 0 ;;
+  esac
+  refuse "${want} does not take ${1}$(usage)" 2
+}
+usage() {
+  case "${COMMAND}" in
+    apply) echo " (want '${want}', '${want} <sha>' or '${want} --ack H001,H003')" ;;
+    revert) echo " (want '${want}', '${want} --ack H001', '${want} --allow-data-loss' or '${want} --force')" ;;
+    *) echo " (want '${want}' or '${want} <sha>')" ;;
+  esac
+}
+acked() {
+  local code
+  for code in ${1//,/ }; do
+    case "${code}" in
+      [A-Z][0-9][0-9][0-9]) ;;
+      *) refuse "${want} --ack '${code:-}' is not a hazard code (want --ack H001 or --ack H001,H003)" 2 ;;
+    esac
+  done
+  command_ack="$1"
+}
+# A comment that names the command runs it or is refused: applying while quietly dropping what it asked for
+# is worse than not applying.
+arguments() {
+  local words=("$@") word i=0
+  if [ "${#words[@]}" -gt 0 ] && sha "${words[0]}"; then
+    command_sha="${words[0]}"
+    i=1
+  fi
+  while [ "${i}" -lt "${#words[@]}" ]; do
+    word="${words[${i}]}"
+    case "${word}" in
+      --ack)
+        takes --ack
+        i=$((i + 1))
+        if [ "${i}" -ge "${#words[@]}" ]; then
+          refuse "${want} --ack names no hazard code (want --ack H001 or --ack H001,H003)" 2
+        fi
+        acked "${words[${i}]}"
+        ;;
+      --ack=*)
+        takes --ack
+        acked "${word#--ack=}"
+        ;;
+      --allow-data-loss)
+        takes --allow-data-loss
+        command_data_loss=true
+        ;;
+      --force)
+        takes --force
+        command_force=true
+        ;;
+      *) refuse "${want} does not understand '${word}'$(usage)" 2 ;;
+    esac
+    i=$((i + 1))
+  done
+}
 # A whole line outside a fenced block, so a pasted log carrying the command does not fire.
 commanded() {
   local line rest fenced=0
+  local -a words
   while IFS= read -r line; do
     line="${line%$'\r'}"
     line="${line#"${line%%[![:space:]]*}"}"
@@ -116,18 +183,15 @@ commanded() {
     esac
     if [ "${fenced}" -eq 1 ]; then continue; fi
     if [ "${line}" = "${want}" ]; then
-      command_sha=""
-
       return 0
     fi
     case "${line}" in
       "${want} "*)
         rest="${line#"${want} "}"
-        if hex "${rest}" && [ "${#rest}" -ge 7 ] && [ "${#rest}" -le 40 ]; then
-          command_sha="${rest}"
+        read -r -a words <<<"${rest}"
+        arguments ${words[@]+"${words[@]}"}
 
-          return 0
-        fi
+        return 0
         ;;
     esac
   done <<<"$1"
@@ -264,5 +328,10 @@ case "${COMMAND}" in
     ;;
 esac
 
+ack="${ACK}"
+if [ -n "${command_ack}" ]; then ack="${ACK:+${ACK},}${command_ack}"; fi
+out ack "${ack}"
+out allow-data-loss "${command_data_loss}"
+out force "${command_force}"
 echo "godwit: ${want} on pull request #${number} at ${head}"
 emit false "${number}" "${head}"

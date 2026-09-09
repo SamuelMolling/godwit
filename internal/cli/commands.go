@@ -70,14 +70,12 @@ type planItem struct {
 	skipped        bool
 }
 
-func (r planReport) hazardGate() (gated int, codes []string, ungated int) {
+func (r planReport) hazardGate() (gated int, codes []string) {
 	for _, p := range r.items {
+		if p.skipped {
+			continue
+		}
 		for _, st := range p.Statements {
-			if p.skipped {
-				ungated += len(st.Hazards)
-
-				continue
-			}
 			for _, h := range st.Hazards {
 				gated++
 				if !slices.Contains(codes, h.Code) {
@@ -87,11 +85,7 @@ func (r planReport) hazardGate() (gated int, codes []string, ungated int) {
 		}
 	}
 
-	return gated, codes, ungated
-}
-
-func ungatedLine(n int) string {
-	return fmt.Sprintf("%d hazard(s) on statements this run would not execute; `--ack` does not apply to them", n)
+	return gated, codes
 }
 
 func (r planReport) counts() (apply, revert int) {
@@ -136,14 +130,18 @@ func (r planReport) pauses() bool {
 
 func (r planReport) verdict(m markup) string {
 	if !r.live {
-		return m.bold("Offline plan.") + " Both sides of every migration in the directory, as written; no database was" +
+		return m.glyph("ℹ️") + m.bold("Offline plan.") + " Both sides of every migration in the directory, as written; no database was" +
 			" consulted, so nothing here says what is pending."
 	}
 	apply, _ := r.counts()
 	if apply == 0 {
-		return m.bold("Nothing to apply.") + fmt.Sprintf(" %s already has every migration this plan covers.", m.code(r.target))
+		return m.glyph("✅") + m.bold("Nothing to apply.") + " " + r.stateLine(m)
 	}
-	line := m.bold(fmt.Sprintf("%s will be applied to %s.", count(apply, "migration"), m.code(r.target)))
+	mark := "🚀"
+	if gated, _ := r.hazardGate(); gated > 0 {
+		mark = "⚠️"
+	}
+	line := m.glyph(mark) + m.bold(fmt.Sprintf("%s will be applied to %s.", count(apply, "migration"), m.code(r.target)))
 	if r.pauses() {
 		line += fmt.Sprintf(" The expand phase runs on apply, then the run stops at %s and the contract phase"+
 			" waits for a confirm (%s on a pull request).", m.code("awaiting_contract"), m.code("/godwit confirm"))
@@ -152,13 +150,59 @@ func (r planReport) verdict(m markup) string {
 	return line
 }
 
+func (r planReport) state() (applied int, newest int64) {
+	if o := r.observed; o != nil {
+		return int(o.AppliedCount), o.NewestApplied
+	}
+	for _, p := range r.items {
+		if !p.applied || p.withheld {
+			continue
+		}
+		applied++
+		if !p.Migration.Repeatable {
+			newest = max(newest, p.Migration.Version)
+		}
+	}
+
+	return applied, newest
+}
+
+func (r planReport) stateLine(m markup) string {
+	applied, newest := r.state()
+	if newest == 0 {
+		return fmt.Sprintf("%s already has every migration this plan covers.", m.code(r.target))
+	}
+
+	return fmt.Sprintf("%s is at %d (%s).", m.code(r.target), newest, count(applied, "migration"))
+}
+
+func (r planReport) notices(m markup) []string {
+	if !r.live {
+		return nil
+	}
+	var out []string
+	if !r.validated {
+		out = append(out, m.glyph("⚠️")+m.bold("Not validated.")+" These statements were never replayed on a scratch"+
+			" database, so nothing has proved they apply.")
+	}
+	if o := r.observed; o != nil {
+		if l := ignoredLine(o.IgnoredTables, m); l != "" {
+			out = append(out, l)
+		}
+	}
+
+	return out
+}
+
 func (r planReport) footerLines(m markup) []string {
-	gated, codes, _ := r.hazardGate()
+	gated, codes := r.hazardGate()
 	apply, revert := r.counts()
 	var out []string
 	if gated > 0 {
-		out = append(out, fmt.Sprintf("%s must be acknowledged before this runs; use %s.",
-			count(gated, "hazard"), m.code("--ack "+strings.Join(codes, ","))))
+		ack := "--ack " + strings.Join(codes, ",")
+		out = append(out, fmt.Sprintf("%s%s on what this run would execute: take the recipe printed beside the statement,"+
+			" or accept the risk with %s (%s on a pull request).",
+			m.glyph("⚠️"), count(gated, "hazard"), m.code(ack), m.code("/godwit apply "+ack)))
 	}
 
 	return append(out, fmt.Sprintf("Plan: %d to apply, %d to revert, %d hazard(s) to acknowledge", apply, revert, gated))
@@ -168,18 +212,22 @@ func (r planReport) details() []string {
 	if !r.live {
 		return nil
 	}
-	lines := []string{"target: " + r.target, "rollout: " + r.rollout, "validation: " + validatedLabel(r.validated)}
+	lines := []string{"target: " + r.target, "rollout: " + r.rollout}
 	if r.planID != "" {
 		lines = append(lines, "plan: "+r.planID)
 	}
+	if r.stored != nil {
+		lines = append(lines, r.stored.lines()...)
+	}
 
-	return append(lines, r.contract()...)
+	return lines
 }
 
+// notRun leaves out what the target already has: there is nothing left to do about it.
 func (r planReport) notRun() []planItem {
 	out := make([]planItem, 0, len(r.items))
 	for _, p := range r.items {
-		if p.skipped {
+		if p.skipped && !p.inHistory() {
 			out = append(out, p)
 		}
 	}
@@ -187,30 +235,21 @@ func (r planReport) notRun() []planItem {
 	return out
 }
 
+func (p planItem) inHistory() bool {
+	return p.applied && !p.Migration.Repeatable && !p.withheld
+}
+
 func (p planItem) skipReason() string {
 	switch {
 	case p.withheld:
 		return "held back by --to"
-	case p.applied && p.Migration.Repeatable:
-		return "unchanged since it was last applied"
 	case p.applied:
-		return "already in the target's history"
+		return "unchanged since it was last applied"
 	case p.note != "":
 		return p.note
 	}
 
 	return "the run would not execute its body"
-}
-
-func (p planItem) hazardText() string {
-	var out []string
-	for _, st := range p.Statements {
-		for _, h := range st.Hazards {
-			out = append(out, h.Code+": "+h.Detail)
-		}
-	}
-
-	return strings.Join(out, "; ")
 }
 
 func (p planItem) phases() []string {
@@ -260,15 +299,23 @@ func statementFacts(i int, p planItem, st engine.Statement, m markup) string {
 	return s
 }
 
-type markup struct{ bold, code func(string) string }
+type markup struct{ bold, code, glyph func(string) string }
 
 func plain(s string) string {
 	return s
 }
 
+func none(string) string {
+	return ""
+}
+
+func lead(s string) string {
+	return s + " "
+}
+
 var (
-	terminal = markup{plain, plain}
-	markdown = markup{func(s string) string { return "**" + s + "**" }, func(s string) string { return "`" + s + "`" }}
+	terminal = markup{plain, plain, none}
+	markdown = markup{func(s string) string { return "**" + s + "**" }, func(s string) string { return "`" + s + "`" }, lead}
 )
 
 func were(n int) string {
@@ -342,32 +389,14 @@ type planReport struct {
 	items     []planItem
 }
 
-func (r planReport) contract() []string {
-	if r.planID == "" {
-		return nil
-	}
-	lines := []string{"key: " + r.planKey}
-	if r.stored != nil {
-		lines = append(lines, r.stored.lines()...)
-	}
-	if o := r.observed; o != nil {
-		lines = append(lines, fmt.Sprintf("observed: %d applied, newest %d, history %s, schema %s, at %s",
-			o.AppliedCount, o.NewestApplied, o.HistoryHash, o.SchemaFingerprint, o.At))
-		if l := ignoredLine(o.IgnoredTables); l != "" {
-			lines = append(lines, l)
-		}
-	}
-
-	return lines
-}
-
-func ignoredLine(tables []string) string {
+func ignoredLine(tables []string, m markup) string {
 	if len(tables) == 0 {
 		return ""
 	}
 
-	return fmt.Sprintf("ignored: %s left behind by a previous migration tool, kept out of the schema and its drift; "+
-		"set %s=false on the target to count them", strings.Join(tables, ", "), controlplane.ConfigIgnoreAdopted)
+	return fmt.Sprintf("%s%s %s. godwit keeps them out of the schema and its drift; drop what nothing reads any more,"+
+		" or set %s on the target to count them.", m.glyph("⚠️"), m.bold("Left behind by another migration tool:"),
+		strings.Join(tables, ", "), m.code(controlplane.ConfigIgnoreAdopted+"=false"))
 }
 
 // withheldLine names what a version target left out, so the plan and the pull-request comment cannot be read as the whole set.
@@ -385,14 +414,14 @@ func (r planReport) withheldLine() string {
 	return fmt.Sprintf("withheld: %d migration(s) in the directory this plan does not cover (%s)", len(ids), strings.Join(ids, ", "))
 }
 
-func (r planReport) driftBlock(heading, indent, open, close string) string {
+func (r planReport) driftBlock(heading, indent, open, close string, pal palette) string {
 	if r.drift == "" {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString(heading + "\n" + open)
 	for _, l := range strings.Split(r.drift, "\n") {
-		b.WriteString(indent + l + "\n")
+		b.WriteString(indent + pal.diff(l) + "\n")
 	}
 	b.WriteString(close)
 
@@ -499,29 +528,27 @@ func checkToVersion(cmd *cobra.Command, to int64, planID, target string) error {
 }
 
 func writePlanText(w io.Writer, r planReport) {
+	pal := colors(w)
 	fmt.Fprintln(w, r.verdict(terminal))
 	if l := r.withheldLine(); l != "" {
+		fmt.Fprintln(w, l)
+	}
+	for _, l := range r.notices(terminal) {
 		fmt.Fprintln(w, l)
 	}
 	for _, p := range r.items {
 		if p.skipped {
 			continue
 		}
-		writeMigrationText(w, p)
+		writeMigrationText(w, p, pal)
 	}
 	if rows := r.notRun(); len(rows) > 0 {
 		fmt.Fprintf(w, "\nnot executed by this run (%d):\n", len(rows))
 		for _, p := range rows {
 			fmt.Fprintf(w, "  %s  %s\n", p.Migration.ID(), p.skipReason())
-			if h := p.hazardText(); h != "" {
-				fmt.Fprintln(w, "    hazard "+h)
-			}
-		}
-		if _, _, ungated := r.hazardGate(); ungated > 0 {
-			fmt.Fprintln(w, "  "+ungatedLine(ungated))
 		}
 	}
-	if b := r.driftBlock("\nchanges outside migrations:", "  ", "", ""); b != "" {
+	if b := r.driftBlock("\nchanges outside migrations:", "  ", "", "", pal); b != "" {
 		fmt.Fprint(w, b)
 	}
 	if lines := r.details(); len(lines) > 0 {
@@ -544,15 +571,15 @@ func downSuffix(d engine.Direction) string {
 	return ""
 }
 
-func writeMigrationText(w io.Writer, p planItem) {
-	fmt.Fprintf(w, "\n%s%s  %s\n", p.Migration.ID(), downSuffix(p.Direction), p.summary())
+func writeMigrationText(w io.Writer, p planItem, pal palette) {
+	fmt.Fprintf(w, "\n%s\n", pal.change(p.Direction, p.Migration.ID()+downSuffix(p.Direction)+"  "+p.summary()))
 	for _, d := range p.directives {
 		fmt.Fprintln(w, "  "+d)
 	}
-	writeIndented(w, "  ", p.effect)
+	writeIndented(w, "  ", p.effect, pal)
 	for i, st := range p.Statements {
 		fmt.Fprintln(w, "  "+statementFacts(i, p, st, terminal))
-		writeIndented(w, "      ", st.SQL+";")
+		writeIndented(w, "      ", st.SQL+";", mono)
 		for _, h := range st.Hazards {
 			fmt.Fprintf(w, "      hazard %s: %s\n", h.Code, h.Detail)
 			writeRecipeText(w, "        ", h.Recipe)
@@ -563,12 +590,12 @@ func writeMigrationText(w io.Writer, p planItem) {
 	}
 }
 
-func writeIndented(w io.Writer, indent, body string) {
+func writeIndented(w io.Writer, indent, body string, pal palette) {
 	if body == "" {
 		return
 	}
 	for _, l := range strings.Split(body, "\n") {
-		fmt.Fprintln(w, indent+l)
+		fmt.Fprintln(w, indent+pal.diff(l))
 	}
 }
 
@@ -593,6 +620,10 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	if l := r.withheldLine(); l != "" {
 		fmt.Fprintf(w, "\n**%s**\n", l)
 	}
+	for _, l := range r.notices(markdown) {
+		fmt.Fprintf(w, "\n%s\n", l)
+	}
+	fmt.Fprint(w, r.changeList())
 	fmt.Fprint(w, r.driftDetails())
 	for _, p := range r.items {
 		if p.skipped {
@@ -605,10 +636,29 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	for _, l := range r.footerLines(markdown) {
 		fmt.Fprintf(w, "\n%s\n", l)
 	}
+	if r.planKey != "" {
+		fmt.Fprintf(w, "\n<!-- godwit-plan-key: %s -->\n", r.planKey)
+	}
+}
+
+// changeList holds one-line summaries only: a SQL comment opens with --, which a diff fence renders as a deletion.
+func (r planReport) changeList() string {
+	var b strings.Builder
+	for _, p := range r.items {
+		if p.skipped {
+			continue
+		}
+		fmt.Fprintf(&b, "%s\n", mono.change(p.Direction, p.Migration.ID()+downSuffix(p.Direction)+"  "+p.summary()))
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+
+	return "\n```diff\n" + b.String() + "```\n"
 }
 
 func writeMigrationMarkdown(w io.Writer, p planItem) {
-	fmt.Fprintf(w, "\n### `%s`%s\n\n%s\n", p.Migration.ID(), downSuffix(p.Direction), p.summary())
+	fmt.Fprintf(w, "\n### `%s`%s\n", p.Migration.ID(), downSuffix(p.Direction))
 	for _, d := range p.directives {
 		fmt.Fprintf(w, "\n```sql\n%s\n```\n", d)
 	}
@@ -646,12 +696,9 @@ func (r planReport) notRunDetails() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n<details><summary>%s this run will not execute</summary>\n\n", count(len(rows), "migration"))
-	b.WriteString("| Migration | Not executed because | Hazards |\n|---|---|---|\n")
+	b.WriteString("| Migration | Not executed because |\n|---|---|\n")
 	for _, p := range rows {
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", p.Migration.ID(), p.skipReason(), markdownCell(p.hazardText()))
-	}
-	if _, _, ungated := r.hazardGate(); ungated > 0 {
-		fmt.Fprintf(&b, "\n%s\n", ungatedLine(ungated))
+		fmt.Fprintf(&b, "| `%s` | %s |\n", p.Migration.ID(), p.skipReason())
 	}
 	b.WriteString("\n</details>\n")
 
@@ -673,18 +720,6 @@ func (r planReport) kind() string {
 	}
 
 	return "plan"
-}
-
-func validatedLabel(validated bool) string {
-	if validated {
-		return "validated on a scratch database"
-	}
-
-	return "not validated"
-}
-
-func markdownCell(s string) string {
-	return strings.ReplaceAll(s, "|", "\\|")
 }
 
 type planJSON struct {

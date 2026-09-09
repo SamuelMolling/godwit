@@ -68,6 +68,10 @@ To stop repeating `--target` and `--dir`, put them in a `godwit.yaml` next to yo
 
 Exit codes are the same everywhere: `0` succeeded, `1` anything went wrong — a refusal, a failed run, an unreachable server. `lint` also exits `1` when it found something blocking, and `migrate` exits `3` when the service refuses the run because the reviewed plan no longer matches the database.
 
+### Colour
+
+A plan lists what would change, one line per migration, marked `+` for a side the run would apply and `-` for one it would revert; `diff` and the drift block mark schema objects the same way. On a terminal those lines are green and red. `GODWIT_COLOR` is `auto` (colour when stdout is a terminal), `always` or `never`, and any non-empty `NO_COLOR` turns colour off unless `GODWIT_COLOR=always` says otherwise. The marks are the meaning and the colour only repeats it, so a pipe, a log with the escapes stripped and a colour-blind reader all get the same report. Markdown carries no escapes: the change list goes in a ` ```diff ` fence and the forge paints it.
+
 The examples below all run against one directory:
 
 ```
@@ -199,28 +203,27 @@ Add `--save` and it also **stores the result as a plan**, with a snapshot of the
 $ godwit plan --target app --dir db/migrations --save
 3 migrations will be applied to app.
 
-20260901120000_create_orders  1 statement, expand phase
++ 20260901120000_create_orders  1 statement, expand phase
   [0] tx
       CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 
-20260901120500_orders_customer_idx  1 statement, expand phase
++ 20260901120500_orders_customer_idx  1 statement, expand phase
   [0] no-tx
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 
-R__order_stats  1 statement, expand phase
++ R__order_stats  1 statement, expand phase
   [0] tx
       CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
 
 plan details:
   target: app
   rollout: direct
-  validation: validated on a scratch database
   plan: f27eecc1-d479-4255-ae90-b53247e9230f
-  key: 4ad4fbb546cb1d6910cacd27e4a8831180649d476ade99808c5e114870708f63
-  observed: 0 applied, newest 0, history e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, schema e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, at 2026-09-08T13:19:09Z
 
 Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
+
+A `+` marks a migration the run would apply and a `-` one it would revert; on a terminal they are green and red (see [colour](#colour)). The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
 
 Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [Concepts: plans](concepts.md#plans).
 
@@ -283,25 +286,26 @@ The first line tells you which reviewed plan this run is bound to. When no plan 
 $ godwit migrate --target app --dir db/migrations --dry-run
 3 migrations will be applied to app.
 
-20260901120000_create_orders  1 statement, expand phase
++ 20260901120000_create_orders  1 statement, expand phase
   [0] tx
       CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 
-20260901120500_orders_customer_idx  1 statement, expand phase
++ 20260901120500_orders_customer_idx  1 statement, expand phase
   [0] no-tx
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 
-R__order_stats  1 statement, expand phase
++ R__order_stats  1 statement, expand phase
   [0] tx
       CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
 
 plan details:
   target: app
   rollout: direct
-  validation: validated on a scratch database
 
 Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
+
+`--skip-validation`, or a service started with `--skip-validation`, adds a `Not validated.` line above the plan: nothing replayed the SQL anywhere, so nothing has proved it applies.
 
 When a statement fails, the run stops and so does the command, with a non-zero exit:
 
@@ -558,17 +562,24 @@ Reach for it to answer "what exactly was approved?" long after the pull request 
 
 ```console
 $ godwit plan show f27eecc1-d479-4255-ae90-b53247e9230f
-plan f27eecc1-d479-4255-ae90-b53247e9230f on app (rollout direct, validated on a scratch database)
-key: 4ad4fbb546cb1d6910cacd27e4a8831180649d476ade99808c5e114870708f63
-state: bound (run 7071c5ac-93e5-43de-9322-960a47d47f00)
-by: admin at 2026-09-08T13:19:09Z
-observed: 0 applied, newest 0, history e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, schema e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, at 2026-09-08T13:19:09Z
-20260901120000_create_orders (up): 1 statement(s) [expand, pending]
-  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
+3 migrations will be applied to app.
+
++ 20260901120000_create_orders  1 statement, expand phase
+  [0] tx
+      CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 ...
+
+plan details:
+  target: app
+  rollout: direct
+  plan: f27eecc1-d479-4255-ae90-b53247e9230f
+  state: bound (run 7071c5ac-93e5-43de-9322-960a47d47f00)
+  by: admin at 2026-09-08T13:19:09Z
+
+Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
 
-The `observed:` line is the snapshot: how many migrations the target had, and fingerprints of its history and its schema. When a `migrate` is refused as stale, this is the line it disagreed with.
+The snapshot the plan was made against — how many migrations the target had, and the fingerprints of its history and its schema — is what a stale `migrate` disagreed with. It is machine identity, so `--format json` is where to read it: `plan_key` and `observed`.
 
 ### `godwit audit`
 

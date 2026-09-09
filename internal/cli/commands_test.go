@@ -38,11 +38,13 @@ func TestPlanCommand(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Offline plan. Both sides of every migration in the directory",
-		"\n20260901120000_users  2 statements\n  [0] tx\n      CREATE TABLE users (id int);\n",
-		"\n20260901120000_users (down)  1 statement\n",
+		"\n+ 20260901120000_users  2 statements\n  [0] tx\n      CREATE TABLE users (id int);\n",
+		"\n- 20260901120000_users (down)  1 statement\n",
 		"      hazard H001: CREATE INDEX without CONCURRENTLY blocks writes on users\n        -- or let godwit run it: -- godwit: add-index users (id) name=idx_users\n        CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n",
 		"      hazard H002: DROP TABLE is destructive\n        -- expand then contract: ship the application version that no longer uses users",
-		"\n2 hazards must be acknowledged before this runs; use --ack H001,H002.\nPlan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
+		"\n2 hazards on what this run would execute: take the recipe printed beside the statement, or accept the risk" +
+			" with --ack H001,H002 (/godwit apply --ack H001,H002 on a pull request).\n" +
+			"Plan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
@@ -75,17 +77,19 @@ func TestPlanMarkdown(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	for _, want := range []string{
-		"## godwit plan\n\n**Offline plan.**",
-		"### `20260901120000_users`\n\n2 statements\n\n`[0]` tx\n\n```sql\nCREATE TABLE users (\n  id int,\n  " +
+		"## godwit plan\n\n\u2139\ufe0f **Offline plan.**",
+		"\n```diff\n+ 20260901120000_users  2 statements\n- 20260901120000_users (down)  1 statement\n```\n",
+		"### `20260901120000_users`\n\n`[0]` tx\n\n```sql\nCREATE TABLE users (\n  id int,\n  " +
 			strings.Repeat("a", 120) + " int\n);\n```\n",
 		"`[1]` tx\n\n```sql\nCREATE INDEX idx_users ON users (id) WHERE id > 0 OR id | 1 = 1;\n```\n\n" +
 			"**H001** CREATE INDEX without CONCURRENTLY blocks writes on users\n\n```sql\n" +
 			"-- or let godwit run it: -- godwit: add-index users (id) name=idx_users where='id > 0 OR (id | 1) = 1'\n" +
 			"CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id) WHERE id > 0 OR (id | 1) = 1;\n```\n",
-		"### `20260901120000_users` (down)\n\n1 statement\n\n`[0]` tx\n\n```sql\nDROP TABLE users;\n```\n\n" +
+		"### `20260901120000_users` (down)\n\n`[0]` tx\n\n```sql\nDROP TABLE users;\n```\n\n" +
 			"**H002** DROP TABLE is destructive\n\n```sql\n-- expand then contract: ship the application version that no" +
 			" longer uses users, then run this DROP TABLE as a contract migration (rollout: expand-contract)\n```\n",
-		"\n2 hazards must be acknowledged before this runs; use `--ack H001,H002`.\n\n" +
+		"\n\u26a0\ufe0f 2 hazards on what this run would execute: take the recipe printed beside the statement, or accept" +
+			" the risk with `--ack H001,H002` (`/godwit apply --ack H001,H002` on a pull request).\n\n" +
 			"Plan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -118,22 +122,23 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 		observed: &planObservation{HistoryHash: "h1", SchemaFingerprint: "f1", AppliedCount: 2, NewestApplied: 20260901120000, At: "2026-09-01T10:00:00Z"},
 	})
 	want := "## godwit plan\n\n" +
-		"**Nothing to apply.** `app` already has every migration this plan covers.\n\n" +
+		"✅ **Nothing to apply.** `app` is at 20260901120000 (2 migrations).\n\n" +
 		"<details><summary>1 change on this database was not made by a migration</summary>\n\n" +
 		"```diff\n+ column public.rogue.id integer null=YES default=<none>\n```\n\n</details>\n\n" +
 		"<details><summary>plan details</summary>\n\n```\n" +
-		"target: app\nrollout: direct\nvalidation: validated on a scratch database\nplan: p1\nkey: k1\n" +
-		"observed: 2 applied, newest 20260901120000, history h1, schema f1, at 2026-09-01T10:00:00Z\n" +
+		"target: app\nrollout: direct\nplan: p1\n" +
 		"```\n\n</details>\n\n" +
-		"Plan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n"
+		"Plan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
+		"<!-- godwit-plan-key: k1 -->\n"
 	if b.String() != want {
 		t.Fatalf("markdown = %q, want %q", b.String(), want)
 	}
 
 	b.Reset()
 	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct"})
-	want = "## godwit dry run\n\n**Nothing to apply.** `app` already has every migration this plan covers.\n\n" +
-		"<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: direct\nvalidation: not validated\n```\n\n" +
+	want = "## godwit dry run\n\n✅ **Nothing to apply.** `app` already has every migration this plan covers.\n\n" +
+		"⚠️ **Not validated.** These statements were never replayed on a scratch database, so nothing has proved they apply.\n\n" +
+		"<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: direct\n```\n\n" +
 		"</details>\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n"
 	if got := b.String(); got != want {
 		t.Fatalf("markdown = %q, want %q", got, want)
