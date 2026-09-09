@@ -154,16 +154,17 @@ func newTargetAddCmd() *cobra.Command {
 func newMigrateCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.CreateRunRequest{}
-	var dir, format string
+	report := &reportFlags{}
+	var dir string
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Send a migration directory to the service and watch the run",
 		Args:  cobra.NoArgs,
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, _ []string) error {
-			write, ok := planFormats[format]
-			if !ok {
-				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			write, err := report.writer()
+			if err != nil {
+				return err
 			}
 			if req.Target == "" && req.PlanId == "" {
 				return errors.New("--target (or target in godwit.yaml) is required")
@@ -206,10 +207,10 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&req.SkipValidation, "skip-validation", false, "skip the scratch-database validation")
 	cmd.Flags().BoolVar(&req.AllowOutOfOrder, "allow-out-of-order", false, "apply pending versions older than the newest applied one instead of refusing them")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "run the admission checks on the service and print the plan without queueing a run")
-	cmd.Flags().StringVar(&format, "format", "text", "dry-run output format: text, markdown or json")
 	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the run (e.g. github.com/org/repo@<sha>:db/migrations)")
 	cmd.Flags().StringVar(&req.PlanId, "plan", "", "bind this stored plan by id; the plan supplies target, rollout and files unless given explicitly")
 	cmd.Flags().Int64Var(&req.ToVersion, "to", 0, "stop at this migration version: pending ones above it are reported as withheld and left for a later run")
+	report.register(cmd, "dry-run")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
@@ -284,18 +285,33 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 				st.Assert = &engine.AssertSpec{Op: a.Op, Kind: a.Kind, Value: a.Value}
 			}
 			for _, h := range ps.Hazards {
-				st.Hazards = append(st.Hazards, engine.Hazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
+				st.Hazards = append(st.Hazards, engine.Hazard{
+					Code: h.Code, Detail: h.Detail, Recipe: h.Recipe, Object: h.Object, Attribute: h.Attribute,
+				})
 			}
 			p.Statements = append(p.Statements, st)
 		}
 		r.items = append(r.items, planItem{
 			Plan: p, applied: pm.Applied, phase: pm.Phase, alreadyApplied: pm.AlreadyApplied, effect: pm.Effect, note: pm.Note,
 			directives: pm.Directives, expanded: pm.Expanded, notes: pm.Notes, withheld: pm.Withheld,
-			skipped: pm.Skipped,
+			skipped: pm.Skipped, changes: changesFromProto(pm.Changes),
 		})
 	}
 
 	return r
+}
+
+func changesFromProto(in []*godwitv1.SchemaChange) []engine.ObjectChange {
+	out := make([]engine.ObjectChange, 0, len(in))
+	for _, c := range in {
+		oc := engine.ObjectChange{Op: c.Op, Kind: c.Kind, Schema: c.Schema, Name: c.Name, Unchanged: int(c.Unchanged)}
+		for _, a := range c.Attributes {
+			oc.Attrs = append(oc.Attrs, engine.AttrChange{Op: a.Op, Name: a.Name, Old: a.Old, New: a.New})
+		}
+		out = append(out, oc)
+	}
+
+	return out
 }
 
 func parsePause(v string) time.Duration {
@@ -382,11 +398,7 @@ func revertPlanText(m *godwitv1.RevertRunResponse, pal palette) string {
 	for _, pm := range m.Migrations {
 		fmt.Fprintf(&b, "\n\n%s", pal.change(engine.DirectionDown, migrationID(pm)+" (down)  "+count(len(pm.Statements), "statement")))
 		for i, st := range pm.Statements {
-			mode := "tx"
-			if st.NoTx {
-				mode = "no-tx"
-			}
-			fmt.Fprintf(&b, "\n  [%d] %s", i, mode)
+			fmt.Fprintf(&b, "\n  %s", statementFacts(i, planItem{}, engine.Statement{NoTx: st.NoTx}, terminal, false))
 			for _, l := range strings.Split(st.Sql, "\n") {
 				b.WriteString("\n      " + l)
 			}

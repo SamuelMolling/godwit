@@ -46,7 +46,7 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 		items: []planItem{hazardItem("users", true), hazardItem("orders", false)},
 	})
 	got = b.String()
-	if !strings.Contains(got, "⚠️ 1 hazard on what this run would execute: take the recipe printed beside the statement,"+
+	if !strings.Contains(got, "⚠️ 1 hazard on what this run would execute: take the recipe printed with it,"+
 		" or accept the risk with `--ack H001` (`godwit apply --ack H001` on a pull request).\n") ||
 		!strings.HasSuffix(got, "\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n\n"+
 			"<!-- godwit-plan-verdict: 1 to apply, 1 hazard to acknowledge -->\n<!-- godwit-plan-hazards: 1 -->\n") {

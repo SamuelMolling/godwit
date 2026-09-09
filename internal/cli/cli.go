@@ -92,6 +92,7 @@ func applyConfig(cmd *cobra.Command, path string) error {
 		"lock-timeout":       cfg.LockTimeout.String(),
 		"statement-timeout":  cfg.StatementTimeout.String(),
 		"allow-out-of-order": strconv.FormatBool(cfg.AllowOutOfOrder),
+		"plan-format":        cfg.PlanFormat(),
 	}
 	for name := range strings.SplitSeq(keys, ",") {
 		if fl := cmd.Flags().Lookup(name); fl != nil && !fl.Changed && values[name] != "" {

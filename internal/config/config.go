@@ -41,6 +41,31 @@ type Config struct {
 	StatementTimeout time.Duration `yaml:"statement_timeout"`
 	AllowOutOfOrder  bool          `yaml:"allow_out_of_order"`
 	SchemaSource     *SchemaSource `yaml:"schema_source"`
+	Plan             *PlanSection  `yaml:"plan"`
+}
+
+// Plan report formats.
+const (
+	// PlanFormatSchema describes what the migrations do to the database.
+	PlanFormatSchema = "schema"
+	// PlanFormatStatements lists the SQL the run would execute.
+	PlanFormatStatements = "statements"
+)
+
+var planFormats = []string{PlanFormatSchema, PlanFormatStatements}
+
+// PlanSection holds the settings of the plan report.
+type PlanSection struct {
+	Format string `yaml:"format"`
+}
+
+// PlanFormat is the report format this project asked for, or godwit's own default.
+func (c Config) PlanFormat() string {
+	if c.Plan != nil && c.Plan.Format != "" {
+		return c.Plan.Format
+	}
+
+	return PlanFormatSchema
 }
 
 // SchemaSource says how the desired schema of this directory is rendered to DDL.
@@ -154,6 +179,12 @@ func (c *Config) applyEnv() error {
 		}
 		*e.dst = d
 	}
+	if v := os.Getenv("GODWIT_PLAN_FORMAT"); v != "" {
+		if c.Plan == nil {
+			c.Plan = &PlanSection{}
+		}
+		c.Plan.Format = v
+	}
 	if v := os.Getenv("GODWIT_ALLOW_OUT_OF_ORDER"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -186,6 +217,9 @@ func (c *Config) applySourceEnv() {
 }
 
 func (c *Config) validate() error {
+	if p := c.Plan; p != nil && p.Format != "" && !slices.Contains(planFormats, p.Format) {
+		return fmt.Errorf("plan.format %q is not one of %s", p.Format, strings.Join(planFormats, ", "))
+	}
 	if c.SchemaSource == nil {
 		return nil
 	}

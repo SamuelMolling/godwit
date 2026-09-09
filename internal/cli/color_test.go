@@ -101,7 +101,7 @@ func TestMarkdownIsNeverColoured(t *testing.T) {
 	if strings.Contains(b.String(), "\x1b[") {
 		t.Fatalf("a forge paints the diff fence itself; escapes would be posted as text:\n%s", b.String())
 	}
-	if !strings.Contains(b.String(), "```diff\n+ 20260901120000_orders  1 statement, expand phase\n```\n") {
+	if !strings.Contains(b.String(), "```diff\n+ 20260901120000_orders  1 statement\n```\n") {
 		t.Fatalf("the change list is what the fence paints:\n%s", b.String())
 	}
 }

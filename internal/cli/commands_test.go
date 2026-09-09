@@ -38,11 +38,11 @@ func TestPlanCommand(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Offline plan. Both sides of every migration in the directory",
-		"\n+ 20260901120000_users  2 statements\n  [0] tx\n      CREATE TABLE users (id int);\n",
+		"\n+ 20260901120000_users  2 statements\n  statement 0, runs inside a transaction\n      CREATE TABLE users (id int);\n",
 		"\n- 20260901120000_users (down)  1 statement\n",
 		"      hazard H001: CREATE INDEX without CONCURRENTLY blocks writes on users\n        -- or let godwit run it: -- godwit: add-index users (id) name=idx_users\n        CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n",
 		"      hazard H002: DROP TABLE is destructive\n        -- expand then contract: ship the application version that no longer uses users",
-		"\n2 hazards on what this run would execute: take the recipe printed beside the statement, or accept the risk" +
+		"\n2 hazards on what this run would execute: take the recipe printed with it, or accept the risk" +
 			" with --ack H001,H002 (godwit apply --ack H001,H002 on a pull request).\n" +
 			"Plan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
 	} {
@@ -60,7 +60,7 @@ func TestPlanNoTxMarker(t *testing.T) {
 		"20260901120000_i.down.sql": "DROP INDEX i;",
 	})
 	code, out, _ := runCLI("plan", "--dir", dir)
-	if code != 0 || !strings.Contains(out, "no-tx") {
+	if code != 0 || !strings.Contains(out, "runs outside a transaction") {
 		t.Fatalf("code = %d, out = %s", code, out)
 	}
 }
@@ -79,16 +79,16 @@ func TestPlanMarkdown(t *testing.T) {
 	for _, want := range []string{
 		"## godwit plan\n\n\u2139\ufe0f **Offline plan.**",
 		"\n```diff\n+ 20260901120000_users  2 statements\n- 20260901120000_users (down)  1 statement\n```\n",
-		"### `20260901120000_users`\n\n`[0]` tx\n\n```sql\nCREATE TABLE users (\n  id int,\n  " +
+		"### `20260901120000_users`\n\n`statement 0`, runs inside a transaction\n\n```sql\nCREATE TABLE users (\n  id int,\n  " +
 			strings.Repeat("a", 120) + " int\n);\n```\n",
-		"`[1]` tx\n\n```sql\nCREATE INDEX idx_users ON users (id) WHERE id > 0 OR id | 1 = 1;\n```\n\n" +
+		"`statement 1`, runs inside a transaction\n\n```sql\nCREATE INDEX idx_users ON users (id) WHERE id > 0 OR id | 1 = 1;\n```\n\n" +
 			"**H001** CREATE INDEX without CONCURRENTLY blocks writes on users\n\n```sql\n" +
 			"-- or let godwit run it: -- godwit: add-index users (id) name=idx_users where='id > 0 OR (id | 1) = 1'\n" +
 			"CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id) WHERE id > 0 OR (id | 1) = 1;\n```\n",
-		"### `20260901120000_users` (down)\n\n`[0]` tx\n\n```sql\nDROP TABLE users;\n```\n\n" +
+		"### `20260901120000_users` (down)\n\n`statement 0`, runs inside a transaction\n\n```sql\nDROP TABLE users;\n```\n\n" +
 			"**H002** DROP TABLE is destructive\n\n```sql\n-- expand then contract: ship the application version that no" +
 			" longer uses users, then run this DROP TABLE as a contract migration (rollout: expand-contract)\n```\n",
-		"\n\u26a0\ufe0f 2 hazards on what this run would execute: take the recipe printed beside the statement, or accept" +
+		"\n\u26a0\ufe0f 2 hazards on what this run would execute: take the recipe printed with it, or accept" +
 			" the risk with `--ack H001,H002` (`godwit apply --ack H001,H002` on a pull request).\n\n" +
 			"Plan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
 	} {
@@ -102,7 +102,7 @@ func TestPlanMarkdown(t *testing.T) {
 		"20260901120000_i.down.sql": "SELECT 1;",
 	})
 	code, out, _ = runCLI("plan", "--dir", safe, "--format", "markdown")
-	if code != 0 || !strings.Contains(out, "`[0]` no-tx\n") ||
+	if code != 0 || !strings.Contains(out, "`statement 0`, runs outside a transaction\n") ||
 		!strings.HasSuffix(out, "\nPlan: 1 to apply, 1 to revert, 0 hazard(s) to acknowledge\n\n"+
 			"<!-- godwit-plan-verdict: offline plan; no target was consulted -->\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
@@ -141,7 +141,7 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 	b.Reset()
 	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct"})
 	want = "## godwit dry run\n\n✅ **Nothing to apply.** `app` already has every migration this plan covers.\n\n" +
-		"⚠️ **Not validated.** These statements were never replayed on a scratch database, so nothing has proved they apply.\n\n" +
+		"⚠️ **Not validated.** These statements were never replayed on a scratch database, so nothing has proved they apply. Nothing read the schema they leave behind either, so what follows is the SQL the run would execute rather than what it does to the database.\n\n" +
 		"<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: direct\n```\n\n" +
 		"</details>\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
 		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"

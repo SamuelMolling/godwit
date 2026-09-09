@@ -41,6 +41,7 @@ type Validation struct {
 	Base         string
 	Effects      [][]string
 	Fingerprints []string
+	Changes      [][]engine.ObjectChange
 	// Expansions is the SQL godwit generated per migration id, empty when no plan carried a directive.
 	Expansions map[string]Expansion
 	// Plans is the validated set: every directive migration replaced by its expansion.
@@ -315,6 +316,7 @@ func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []en
 			return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
 		}
 		val.Effects = append(val.Effects, engine.DiffSchemas(def, next.Definition))
+		val.Changes = append(val.Changes, engine.SchemaChanges(def, next.Definition))
 		val.Fingerprints = append(val.Fingerprints, next.Fingerprint)
 		def = next.Definition
 	}

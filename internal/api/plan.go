@@ -53,8 +53,12 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	if err := checkRollout(spec.rollout, adm.expanded(spec)); err != nil {
 		return nil, err
 	}
-	migs := withWithheld(controlplane.BuildPlanMigrations(spec.rollout, adm.expanded(spec), adm.applied, adm.expansions), spec, adm.applied)
-	out := &godwitv1.PlanRunResponse{Target: m.Target, Rollout: spec.rollout, Validated: adm.validated, Migrations: migrationsToProto(migs)}
+	migs := controlplane.BuildPlanMigrations(spec.rollout, adm.expanded(spec), adm.applied, adm.expansions)
+	controlplane.AttachChanges(migs, adm.validation)
+	out := &godwitv1.PlanRunResponse{
+		Target: m.Target, Rollout: spec.rollout, Validated: adm.validated,
+		Migrations: migrationsToProto(withWithheld(migs, spec, adm.applied)),
+	}
 	if !m.Persist {
 		s.Log.Info("run planned", "target", m.Target, "rollout", spec.rollout, "files", len(spec.files),
 			"acked", m.AcknowledgeHazards, "validated", adm.validated, "allow_out_of_order", m.AllowOutOfOrder,
@@ -103,6 +107,7 @@ func observed(p controlplane.Plan, obs controlplane.Observation) controlplane.Pl
 func planMigrations(spec runSpec, adm admission, obs controlplane.Observation) (migs []controlplane.PlanMigration, drift string, detected bool) {
 	plans := adm.expanded(spec)
 	migs = controlplane.BuildPlanMigrations(spec.rollout, plans, adm.applied, adm.expansions)
+	controlplane.AttachChanges(migs, adm.validation)
 	if adm.validation == nil {
 		return withWithheld(migs, spec, adm.applied), "", false
 	}
@@ -145,6 +150,7 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 			Checkpoint: m.Checkpoint, CollapsesThrough: m.Through, Skipped: m.Skipped,
 		}
 		pm.Statements = statementsToProto(m.Statements)
+		pm.Changes = changesToProto(m.Changes)
 		out = append(out, pm)
 	}
 
@@ -162,9 +168,26 @@ func statementsToProto(sts []controlplane.PlanStatement) []*godwitv1.PlannedStat
 			ps.Assert = &godwitv1.PlannedAssert{Op: st.Assert.Op, Kind: st.Assert.Kind, Value: st.Assert.Value}
 		}
 		for _, h := range st.Hazards {
-			ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
+			ps.Hazards = append(ps.Hazards, &godwitv1.PlannedHazard{
+				Code: h.Code, Detail: h.Detail, Recipe: h.Recipe, Object: h.Object, Attribute: h.Attribute,
+			})
 		}
 		out = append(out, ps)
+	}
+
+	return out
+}
+
+func changesToProto(changes []engine.ObjectChange) []*godwitv1.SchemaChange {
+	out := make([]*godwitv1.SchemaChange, 0, len(changes))
+	for _, c := range changes {
+		sc := &godwitv1.SchemaChange{
+			Op: c.Op, Kind: c.Kind, Schema: c.Schema, Name: c.Name, Unchanged: int32(c.Unchanged),
+		}
+		for _, a := range c.Attrs {
+			sc.Attributes = append(sc.Attributes, &godwitv1.SchemaAttribute{Op: a.Op, Name: a.Name, Old: a.Old, New: a.New})
+		}
+		out = append(out, sc)
 	}
 
 	return out

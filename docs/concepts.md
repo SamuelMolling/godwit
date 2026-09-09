@@ -597,8 +597,8 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 1 migration will be applied to app.
 withheld: 2 migration(s) in the directory this plan does not cover (20260901120100_b, R__v)
 
-+ 20260901120000_a  1 statement, expand phase
-  [0] tx
++ 20260901120000_a  1 statement
+  statement 0, runs inside a transaction
       CREATE TABLE a (id int);
 
 not executed by this run (2):
@@ -639,7 +639,7 @@ There is no `to_version` key in `godwit.yaml`. A standing version target would t
 
 | Policy | Behaviour |
 |---|---|
-| `direct` (default) | every plan runs in the expand phase; the run ends `succeeded` |
+| `direct` (default) | every plan runs in the expand phase; the run ends `succeeded`. The plan report names no phase here: nothing is held, so there is no second half to distinguish from the first. |
 | `expand-contract` | statements up to the first contract statement run now; that statement and everything after it are held; the run ends `awaiting_contract` (or `succeeded` when nothing was held). `ConfirmRollout` re-queues it with `phase = contract`; the executor skips the already-applied plans and runs the rest. |
 
 The split is by statement, and a migration whose statements carry no phase of their own has a single phase. A statement belongs to the contract phase when it says so (`Statement.Phase`, which only a directive expansion sets today) or, failing that, when its migration carries a contract hazard — so a hand-written migration mixing `ADD COLUMN` and `DROP COLUMN` still lands in the contract phase whole, and only an expansion splits a migration down the middle.

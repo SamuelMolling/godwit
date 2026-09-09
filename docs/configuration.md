@@ -15,6 +15,7 @@ Project file for the CLI. Looked up from the working directory upward until a di
 | `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `up`, `status`, `down` only |
 | `statement_timeout` | Go duration | `0` (disabled) | `GODWIT_STATEMENT_TIMEOUT` | `up`, `status`, `down` only |
 | `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `plan`, `migrate` |
+| `plan.format` | `schema` \| `statements` | `schema` | `GODWIT_PLAN_FORMAT` | `plan`, `plan show`, `migrate --dry-run` (flag: `--plan-format`) |
 | `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff`, `lint` |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
@@ -29,7 +30,22 @@ allow_out_of_order: false
 server: http://godwit.godwit.svc:8474
 lock_timeout: 5s
 statement_timeout: 0
+plan:
+  format: schema
 ```
+
+### `plan`
+
+```yaml
+plan:
+  format: schema      # schema | statements
+```
+
+`schema` (the default) describes what the migrations do to the database: one block per table, index, sequence, enum or view, `+` for created, `-` for destroyed and `~` for changed, with the hazard each change carries written on the line that causes it. It needs the schema delta the scratch replay produces, so a report with none — an offline `godwit plan --dir`, a `--skip-validation` run, a service with no validator — falls back to the statement listing whole and says why.
+
+`statements` is the SQL the run would execute, in order, with the transaction mode and the hazard recipes. Reach for it when you are auditing the exact statements or reading a run that failed on one.
+
+Neither changes `--format json`: the JSON is the API contract and carries both the statements and, when there is one, the schema delta under `changes`.
 
 ### `schema_source`
 
