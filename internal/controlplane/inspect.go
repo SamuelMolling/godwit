@@ -74,7 +74,7 @@ func (i *Inspector) Observe(ctx context.Context, name string) (Observation, erro
 		return Observation{}, err
 	}
 
-	return i.sched.engine.Observe(ctx, tg.dsn)
+	return i.sched.engine.Observe(ctx, tg.dsn, tg.scope)
 }
 
 // DataLoss reports which of the drops would destroy data the target still holds.

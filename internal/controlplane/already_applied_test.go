@@ -87,13 +87,13 @@ func TestValidateSnapshotFails(t *testing.T) {
 
 	calls := 0
 	failOn := 1
-	snapshotScratch = func(ctx context.Context, db engine.DB) (string, string, error) {
+	snapshotScratch = func(ctx context.Context, db engine.DB, scope engine.SnapshotScope) (engine.Schema, error) {
 		calls++
 		if calls == failOn {
-			return "", "", errBoom
+			return engine.Schema{}, errBoom
 		}
 
-		return orig(ctx, db)
+		return orig(ctx, db, scope)
 	}
 	v := NewValidator(NewScratch(pool, ""), s, func() string { return "snapfail" })
 	plans, err := buildPlans([]engine.Migration{{Version: 1, Name: "t", Checksum: "c", UpSQL: upBody, DownSQL: "DROP TABLE t;"}}, engine.DirectionUp)
@@ -210,7 +210,7 @@ func TestDetectNoPrefixIsDrift(t *testing.T) {
 
 type observeFails struct{ Engine }
 
-func (observeFails) Observe(context.Context, string) (Observation, error) {
+func (observeFails) Observe(context.Context, string, engine.SnapshotScope) (Observation, error) {
 	return Observation{}, errBoom
 }
 
@@ -234,7 +234,7 @@ func TestSchedulerMarkOnlyFromPlan(t *testing.T) {
 	if _, err := tg.Exec(ctx, upBody); err != nil {
 		t.Fatal(err)
 	}
-	obs, err := PGEngine{}.Observe(ctx, targetDSN)
+	obs, err := PGEngine{}.Observe(ctx, targetDSN, engine.IgnoreAdopted)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,10 +23,11 @@ func TestSnapshotAndDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	def, fp, err := Snapshot(ctx, conn)
+	first, err := Snapshot(ctx, conn, IgnoreAdopted)
 	if err != nil {
 		t.Fatal(err)
 	}
+	def, fp := first.Definition, first.Fingerprint
 	for _, want := range []string{
 		"column public.users.id bigint null=NO",
 		"constraint public.users.users_pkey PRIMARY KEY (id)",
@@ -41,20 +42,20 @@ func TestSnapshotAndDiff(t *testing.T) {
 		t.Fatal("godwit's own schema must be excluded")
 	}
 
-	_, fp2, err := Snapshot(ctx, conn)
-	if err != nil || fp2 != fp {
-		t.Fatalf("fingerprint unstable: %s vs %s (err %v)", fp, fp2, err)
+	again, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil || again.Fingerprint != fp {
+		t.Fatalf("fingerprint unstable: %s vs %s (err %v)", fp, again.Fingerprint, err)
 	}
 
 	// A manual change flips the fingerprint and shows up in the diff.
 	if _, err := conn.Exec(ctx, `ALTER TABLE users ADD COLUMN sneaky text`); err != nil {
 		t.Fatal(err)
 	}
-	live, fp3, err := Snapshot(ctx, conn)
-	if err != nil || fp3 == fp {
+	changed, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil || changed.Fingerprint == fp {
 		t.Fatalf("fingerprint must change (err %v)", err)
 	}
-	diff := DiffSchemas(def, live)
+	diff := DiffSchemas(def, changed.Definition)
 	if len(diff) != 1 || !strings.HasPrefix(diff[0], "+ column public.users.sneaky") {
 		t.Fatalf("diff = %v", diff)
 	}
@@ -62,11 +63,11 @@ func TestSnapshotAndDiff(t *testing.T) {
 	if _, err := conn.Exec(ctx, `ALTER TABLE users DROP COLUMN sneaky; DROP INDEX idx_users_email`); err != nil {
 		t.Fatal(err)
 	}
-	live2, _, err := Snapshot(ctx, conn)
+	live2, err := Snapshot(ctx, conn, IgnoreAdopted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	diff = DiffSchemas(def, live2)
+	diff = DiffSchemas(def, live2.Definition)
 	if len(diff) != 1 || !strings.HasPrefix(diff[0], "- index public.idx_users_email") {
 		t.Fatalf("diff = %v", diff)
 	}
@@ -90,19 +91,33 @@ func TestSnapshotQueryErrors(t *testing.T) {
 	t.Parallel()
 
 	mock, _ := newMockExec(t)
-	mock.ExpectQuery("information_schema.columns").WillReturnError(errBoom)
-	if _, _, err := Snapshot(context.Background(), mock); err == nil ||
-		!strings.Contains(err.Error(), "inspect columns") {
+	expectNoExtensionObjects(mock)
+	mock.ExpectQuery("pg_class").WillReturnError(errBoom)
+	if _, err := Snapshot(context.Background(), mock, KeepAdopted); err == nil ||
+		!strings.Contains(err.Error(), "inspect tables") {
 		t.Fatalf("err = %v", err)
 	}
 
 	mock2, _ := newMockExec(t)
-	mock2.ExpectQuery("information_schema.columns").
-		WillReturnRows(pgxmock.NewRows([]string{"line"}).AddRow("x").RowError(0, errBoom))
-	if _, _, err := Snapshot(context.Background(), mock2); err == nil ||
-		!strings.Contains(err.Error(), "read columns") {
+	expectNoExtensionObjects(mock2)
+	mock2.ExpectQuery("pg_class").
+		WillReturnRows(pgxmock.NewRows([]string{"owner", "line"}).AddRow("x", "y").RowError(0, errBoom))
+	if _, err := Snapshot(context.Background(), mock2, KeepAdopted); err == nil ||
+		!strings.Contains(err.Error(), "read tables") {
 		t.Fatalf("err = %v", err)
 	}
+
+	mock3, _ := newMockExec(t)
+	mock3.ExpectQuery("pg_depend").WillReturnRows(
+		pgxmock.NewRows([]string{"name"}).AddRow("public.x").RowError(0, errBoom))
+	if _, err := Snapshot(context.Background(), mock3, KeepAdopted); err == nil ||
+		!strings.Contains(err.Error(), "read extension objects") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func expectNoExtensionObjects(mock pgxmock.PgxConnIface) {
+	mock.ExpectQuery("pg_depend").WillReturnRows(pgxmock.NewRows([]string{"name"}))
 }
 
 func TestListApplied(t *testing.T) {
@@ -130,4 +145,91 @@ func TestListApplied(t *testing.T) {
 	mock.ExpectQuery("to_regclass").WillReturnError(errBoom)
 	_, err = ListApplied(ctx, mock)
 	wantErr(t, err, "probe godwit schema")
+}
+
+// A table with no columns, a sequence, an enum and a materialized view were all invisible: the snapshot only
+// ever asked for columns, constraints, indexes and plain views.
+func TestSnapshotSeesTablesSequencesEnumsAndMatviews(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+
+	if _, err := conn.Exec(ctx, `
+		CREATE TABLE marker ();
+		CREATE TABLE rows_here (id bigserial PRIMARY KEY, tag text);
+		CREATE SEQUENCE ticket_no START 100 INCREMENT 5;
+		CREATE TYPE mood AS ENUM ('ok', 'bad');
+		CREATE VIEW plain AS SELECT id FROM rows_here;
+		CREATE MATERIALIZED VIEW cached AS SELECT id FROM rows_here`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"table public.marker",
+		"sequence public.ticket_no bigint increment=5",
+		"type public.mood enum (ok, bad)",
+		"matview public.cached",
+		"view public.plain",
+	} {
+		if !strings.Contains(before.Definition, want) {
+			t.Fatalf("snapshot missing %q:\n%s", want, before.Definition)
+		}
+	}
+	// The sequence bigserial created is the column's line already, and the index behind a primary key is the
+	// constraint's; reporting either twice makes one change two diff lines.
+	for _, unwanted := range []string{"sequence public.rows_here_id_seq", "index public.rows_here_pkey"} {
+		if strings.Contains(before.Definition, unwanted) {
+			t.Fatalf("snapshot carries %q twice:\n%s", unwanted, before.Definition)
+		}
+	}
+
+	if _, err := conn.Exec(ctx, `ALTER TYPE mood ADD VALUE 'great'`); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := DiffSchemas(before.Definition, after.Definition)
+	if len(diff) != 2 || diff[0] != "- type public.mood enum (ok, bad)" ||
+		diff[1] != "+ type public.mood enum (ok, bad, great)" {
+		t.Fatalf("a hand-run ALTER TYPE must show: %v", diff)
+	}
+}
+
+// An extension's own objects are the extension's to manage; on a database that uses one they would otherwise
+// be most of the schema.
+func TestSnapshotLeavesExtensionObjectsOut(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+
+	if _, err := conn.Exec(ctx, `CREATE TABLE mine (id int)`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `CREATE EXTENSION citext`); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := DiffSchemas(before.Definition, after.Definition); len(diff) != 0 {
+		t.Fatalf("extension objects reached the snapshot: %v", diff)
+	}
+}
+
+func TestSchemaFormat(t *testing.T) {
+	t.Parallel()
+
+	if !SameFormat(SchemaFormat+"\ntable public.a") || SameFormat("table public.a") || SameFormat("") {
+		t.Fatal("the marker is what tells a snapshot's format apart")
+	}
 }

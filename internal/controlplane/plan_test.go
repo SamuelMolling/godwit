@@ -118,20 +118,25 @@ func TestStaleDiff(t *testing.T) {
 	t.Parallel()
 	a, b, c := mig(1, "a", "SELECT 1;"), mig(2, "b", "SELECT 2;"), mig(3, "c", "SELECT 3;")
 	at := time.Date(2026, 9, 1, 10, 30, 0, 0, time.UTC)
-	p := Plan{Applied: []engine.Applied{applied(a, at), applied(b, at)}, SchemaFingerprint: "f1", SchemaDefinition: "table a\n"}
+	p := Plan{Applied: []engine.Applied{applied(a, at), applied(b, at)}, SchemaFingerprint: "f1", SchemaDefinition: engine.SchemaFormat + "\ntable a"}
 
 	same := StaleDiff(p, Observation{Applied: p.Applied, Fingerprint: "f1"})
 	if len(same.Added)+len(same.Removed)+len(same.Schema) != 0 || !same.Explained("f1", "f1") || same.Reason() != StaleSchema {
 		t.Fatalf("diff = %+v", same)
 	}
 
-	d := StaleDiff(p, Observation{Applied: []engine.Applied{applied(c, at), applied(a, at)}, Fingerprint: "f2", Definition: "table a\ntable c\n"})
+	d := StaleDiff(p, Observation{Applied: []engine.Applied{applied(c, at), applied(a, at)}, Fingerprint: "f2", Definition: engine.SchemaFormat + "\ntable a\ntable c"})
 	if len(d.Added) != 1 || d.Added[0].Version != 3 || d.Added[0].Name != "c" || !d.Added[0].At.Equal(at) ||
 		len(d.Removed) != 1 || d.Removed[0].Version != 2 || len(d.Schema) != 1 || d.Schema[0] != "+ table c" {
 		t.Fatalf("diff = %+v", d)
 	}
 	if d.Explained("f2", "f2") || d.Reason() != StaleHistory {
 		t.Fatal("removals are never explained")
+	}
+
+	old := StaleDiff(Plan{SchemaFingerprint: "f1", SchemaDefinition: "table a"}, Observation{Fingerprint: "f2", Definition: engine.SchemaFormat + "\ntable a"})
+	if len(old.Schema) != 1 || !strings.Contains(old.Schema[0], "before godwit changed what a snapshot describes") {
+		t.Fatalf("a definition from an older format cannot be diffed: %+v", old.Schema)
 	}
 
 	dd := mig(4, "d", "SELECT 4;")
@@ -256,13 +261,13 @@ func TestPGEngineObserve(t *testing.T) {
 	queueRun(t, s, id, goodFiles())
 	sched.Tick(ctx)
 	waitState(t, s, id, StateSucceeded)
-	after, err := PGEngine{}.Observe(ctx, dsn)
+	after, err := PGEngine{}.Observe(ctx, dsn, engine.IgnoreAdopted)
 	if err != nil || len(after.Applied) != 1 || after.Applied[0].Version != 20260901120000 || after.Fingerprint == obs.Fingerprint ||
 		!strings.Contains(after.Definition, "public.t.id") || after.HistoryHash() == obs.HistoryHash() || after.SearchPath != "public" {
 		t.Fatalf("after run = %+v, err = %v", after, err)
 	}
 
-	if _, err := (PGEngine{}).Observe(ctx, "postgres://nobody@127.0.0.1:1/x"); err == nil || !strings.Contains(err.Error(), "connect target") {
+	if _, err := (PGEngine{}).Observe(ctx, "postgres://nobody@127.0.0.1:1/x", engine.IgnoreAdopted); err == nil || !strings.Contains(err.Error(), "connect target") {
 		t.Fatalf("unreachable err = %v", err)
 	}
 	if _, err := insp.Observe(ctx, "ghost"); !errors.Is(err, ErrNotFound) {
@@ -277,6 +282,12 @@ func expectNoGodwitTables(mock pgxmock.PgxConnIface) {
 	}
 }
 
+func expectNoExcludedObjects(mock pgxmock.PgxConnIface) {
+	mock.ExpectQuery("pg_depend").WillReturnRows(pgxmock.NewRows([]string{"name"}))
+	mock.ExpectQuery("array_agg").WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"table_schema", "table_name", "columns"}))
+}
+
 func TestObserveQueryErrors(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -286,28 +297,29 @@ func TestObserveQueryErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectQuery("SELECT to_regclass").WithArgs("godwit.migrations").WillReturnError(errBoom)
-	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "probe godwit schema") {
+	if _, err := observe(ctx, mock, engine.IgnoreAdopted); err == nil || !strings.Contains(err.Error(), "probe godwit schema") {
 		t.Fatalf("err = %v", err)
 	}
 
 	mock.ExpectQuery("SELECT to_regclass").WithArgs("godwit.migrations").WillReturnRows(pgxmock.NewRows([]string{"present"}).AddRow(false))
 	mock.ExpectQuery("SELECT to_regclass").WithArgs("godwit.repeatables").WillReturnError(errBoom)
-	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "probe godwit schema") {
+	if _, err := observe(ctx, mock, engine.IgnoreAdopted); err == nil || !strings.Contains(err.Error(), "probe godwit schema") {
 		t.Fatalf("err = %v", err)
 	}
 
 	expectNoGodwitTables(mock)
-	mock.ExpectQuery("SELECT c.table_schema").WillReturnError(errBoom)
-	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "boom") {
+	mock.ExpectQuery("pg_depend").WillReturnError(errBoom)
+	if _, err := observe(ctx, mock, engine.IgnoreAdopted); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v", err)
 	}
 
 	expectNoGodwitTables(mock)
-	for range 4 {
-		mock.ExpectQuery("SELECT").WillReturnRows(pgxmock.NewRows([]string{"line"}))
+	expectNoExcludedObjects(mock)
+	for range 8 {
+		mock.ExpectQuery("SELECT").WillReturnRows(pgxmock.NewRows([]string{"owner", "line"}))
 	}
 	mock.ExpectQuery("current_schemas").WillReturnError(errBoom)
-	if _, err := observe(ctx, mock); err == nil || !strings.Contains(err.Error(), "read search path") {
+	if _, err := observe(ctx, mock, engine.IgnoreAdopted); err == nil || !strings.Contains(err.Error(), "read search path") {
 		t.Fatalf("err = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

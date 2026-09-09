@@ -515,7 +515,9 @@ func TestCheckpointScratchFailures(t *testing.T) {
 	t.Run("snapshot", func(t *testing.T) {
 		c, _ := newCheckpointer(t)
 		orig := snapshotScratch
-		snapshotScratch = func(context.Context, engine.DB) (string, string, error) { return "", "", errBoom }
+		snapshotScratch = func(context.Context, engine.DB, engine.SnapshotScope) (engine.Schema, error) {
+			return engine.Schema{}, errBoom
+		}
 		defer func() { snapshotScratch = orig }()
 		if _, err := c.Generate(ctx, files, 0, "squash", time.Now()); err == nil ||
 			!strings.Contains(err.Error(), "snapshot scratch database") {
@@ -586,7 +588,9 @@ func TestCheckpointVerifyScratchFailures(t *testing.T) {
 	connectScratch = orig
 
 	snap := snapshotScratch
-	snapshotScratch = func(context.Context, engine.DB) (string, string, error) { return "", "", errBoom }
+	snapshotScratch = func(context.Context, engine.DB, engine.SnapshotScope) (engine.Schema, error) {
+		return engine.Schema{}, errBoom
+	}
 	defer func() { snapshotScratch = snap }()
 	if err := c.verify(ctx, factory, "SELECT 1;", ""); err == nil || !strings.Contains(err.Error(), "snapshot scratch database") {
 		t.Fatalf("snapshot = %v", err)

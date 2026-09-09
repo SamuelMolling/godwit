@@ -189,7 +189,7 @@ func TestValidateReplaysRepeatables(t *testing.T) {
 	sched.Tick(ctx)
 	waitState(t, s, "eeeeeeee-0000-0000-0000-000000000001", StateSucceeded)
 
-	live, err := PGEngine{}.Observe(ctx, dsn)
+	live, err := PGEngine{}.Observe(ctx, dsn, engine.IgnoreAdopted)
 	if err != nil {
 		t.Fatal(err)
 	}

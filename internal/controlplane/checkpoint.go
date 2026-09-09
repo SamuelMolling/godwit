@@ -152,12 +152,12 @@ func (c *Checkpointer) applyCollapsed(ctx context.Context, conn engine.DB, colla
 			return "", fmt.Errorf("%w: %s: %w", ErrMigrationFiles, m.ID(), err)
 		}
 	}
-	def, _, err := snapshotScratch(ctx, conn)
+	schema, err := snapshotScratch(ctx, conn, engine.IgnoreAdopted)
 	if err != nil {
 		return "", fmt.Errorf("snapshot scratch database: %w", err)
 	}
 
-	return def, nil
+	return schema.Definition, nil
 }
 
 // verify refuses a checkpoint whose DDL does not reproduce the schema the migrations produced; the
@@ -182,11 +182,11 @@ func (c *Checkpointer) verify(ctx context.Context, factory *scratchFactory, ddl,
 	if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithAssertProbe()); err != nil {
 		return fmt.Errorf("%w: the generated schema does not apply: %w", ErrCheckpoint, err)
 	}
-	got, _, err := snapshotScratch(ctx, conn)
+	got, err := snapshotScratch(ctx, conn, engine.IgnoreAdopted)
 	if err != nil {
 		return fmt.Errorf("snapshot scratch database: %w", err)
 	}
-	if diff := engine.DiffSchemas(want, got); len(diff) > 0 {
+	if diff := engine.DiffSchemas(want, got.Definition); len(diff) > 0 {
 		return fmt.Errorf("%w: the generated schema is not the one the migrations produce:\n%s",
 			ErrCheckpoint, strings.Join(diff, "\n"))
 	}

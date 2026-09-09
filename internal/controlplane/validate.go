@@ -28,6 +28,7 @@ type Validator struct {
 	scratch *Scratch
 	store   *Store
 	newID   func() string
+	scope   engine.SnapshotScope
 }
 
 // NewValidator wires a Validator over the scratch connection.
@@ -252,16 +253,18 @@ func recordUnexpanded(plans []engine.Plan) []engine.Plan {
 	return plans
 }
 
-// expander applies the target's keep_old default over the service's; a directive can still override it.
+// expander applies the target's keep_old default over the service's and takes its snapshot scope, so the
+// scratch schema the plan is compared against leaves out the same adopted tables the target's does.
 func (v *Validator) expander(ctx context.Context, target string) (*Validator, error) {
 	_, config, err := v.store.Target(ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	if config[ConfigKeepOld] == "" {
-		return v, nil
-	}
 	next := *v
+	next.scope = SnapshotScopeOf(config)
+	if config[ConfigKeepOld] == "" {
+		return &next, nil
+	}
 	x := *v.Expander
 	x.KeepOld = config[ConfigKeepOld] != "false"
 	next.Expander = &x
@@ -294,11 +297,12 @@ func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) er
 // validateEach applies the plans in order, expanding each directive migration against the catalog the
 // ones before it left behind, and snapshots the schema after every step.
 func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan, replayed map[string]bool) (Validation, error) {
-	def, fp, err := snapshotScratch(ctx, conn)
+	base, err := snapshotScratch(ctx, conn, v.scope)
 	if err != nil {
 		return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
 	}
-	val := Validation{Base: def, Fingerprints: []string{fp}, Expansions: map[string]Expansion{}, Plans: slices.Clone(plans)}
+	def := base.Definition
+	val := Validation{Base: def, Fingerprints: []string{base.Fingerprint}, Expansions: map[string]Expansion{}, Plans: slices.Clone(plans)}
 	for i, p := range val.Plans {
 		if p, err = v.expandPlan(ctx, conn, p, val.Expansions, replayed); err != nil {
 			return Validation{}, err
@@ -307,13 +311,13 @@ func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []en
 		if _, err := applyPlans(ctx, conn, engine.Options{}, []engine.Plan{p}, nil, engine.WithAssertProbe()); err != nil {
 			return Validation{}, fmt.Errorf("%w: %w", ErrValidationFailed, err)
 		}
-		next, nextFP, err := snapshotScratch(ctx, conn)
+		next, err := snapshotScratch(ctx, conn, v.scope)
 		if err != nil {
 			return Validation{}, fmt.Errorf("snapshot scratch database: %w", err)
 		}
-		val.Effects = append(val.Effects, engine.DiffSchemas(def, next))
-		val.Fingerprints = append(val.Fingerprints, nextFP)
-		def = next
+		val.Effects = append(val.Effects, engine.DiffSchemas(def, next.Definition))
+		val.Fingerprints = append(val.Fingerprints, next.Fingerprint)
+		def = next.Definition
 	}
 
 	return val, nil

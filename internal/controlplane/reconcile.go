@@ -131,11 +131,11 @@ func NewReconciler(sched *Scheduler) *Reconciler {
 // Reconcile adopts into run runID every migration target's journal records that the ledger does not,
 // taking each body from migs, and reports what it found.
 func (r *Reconciler) Reconcile(ctx context.Context, runID, target string, migs []engine.Migration, p Provenance) (Divergence, error) {
-	dsn, err := r.sched.targetDSN(ctx, target)
+	tg, err := r.sched.target(ctx, target)
 	if err != nil {
 		return Divergence{}, err
 	}
-	obs, err := r.sched.engine.Observe(ctx, dsn)
+	obs, err := r.sched.engine.Observe(ctx, tg.dsn, tg.scope)
 	if err != nil {
 		return Divergence{}, err
 	}

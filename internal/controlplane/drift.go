@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -27,7 +28,7 @@ type DriftMonitor struct {
 	PlanRetention time.Duration
 
 	store    *Store
-	dsn      func(ctx context.Context, target string) (string, error)
+	target   func(ctx context.Context, name string) (resolvedTarget, error)
 	engine   Engine
 	notifier notify.Notifier
 	interval time.Duration
@@ -43,7 +44,7 @@ func NewDriftMonitor(store *Store, sched *Scheduler, eng Engine, notifier notify
 	return &DriftMonitor{
 		Metrics:  sched.Metrics,
 		store:    store,
-		dsn:      sched.targetDSN,
+		target:   sched.target,
 		engine:   eng,
 		notifier: notifier,
 		interval: interval,
@@ -96,22 +97,31 @@ func (m *DriftMonitor) sweepPlans(ctx context.Context) {
 	}
 }
 
+// ErrBaselineFormat marks a baseline taken before godwit changed what a schema snapshot describes.
+var ErrBaselineFormat = errors.New("drift baseline predates the schema format")
+
 // Check compares one target now and records the outcome.
 func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) {
 	expected, err := m.store.SnapshotFor(ctx, target)
 	if err != nil {
 		return Drift{}, err
 	}
-	dsn, err := m.dsn(ctx, target)
+	// Comparing across formats would report the upgrade as drift on every target, and re-baselining here would
+	// swallow whatever drift the target really had. Neither is godwit's to decide: it says so and stops.
+	if !engine.SameFormat(expected.Definition) {
+		return Drift{}, fmt.Errorf("%w: run `godwit drift accept %s` once the target's schema is what you expect it to be",
+			ErrBaselineFormat, target)
+	}
+	tg, err := m.target(ctx, target)
 	if err != nil {
 		return Drift{}, err
 	}
-	liveDef, liveFP, err := m.engine.Snapshot(ctx, dsn)
+	live, err := m.engine.Snapshot(ctx, tg.dsn, tg.scope)
 	if err != nil {
 		return Drift{}, err
 	}
 
-	if liveFP == expected.Fingerprint {
+	if live.Fingerprint == expected.Fingerprint {
 		resolved, err := m.store.ResolveDrift(ctx, target)
 		if err != nil {
 			return Drift{}, err
@@ -128,7 +138,7 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 	m.Metrics.DriftChecked(target, metrics.DriftDrifted)
 	m.log.Info("drift checked", "target", target, "result", metrics.DriftDrifted)
 
-	diff := strings.Join(engine.DiffSchemas(expected.Definition, liveDef), "\n")
+	diff := strings.Join(engine.DiffSchemas(expected.Definition, live.Definition), "\n")
 	created, err := m.store.RecordDrift(ctx, target, expected.Fingerprint, diff)
 	if err != nil {
 		return Drift{}, err
@@ -143,17 +153,17 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 
 // AcceptBaseline records the live schema as the expected state and resolves open drift.
 func (m *DriftMonitor) AcceptBaseline(ctx context.Context, target string) error {
-	dsn, err := m.dsn(ctx, target)
+	tg, err := m.target(ctx, target)
 	if err != nil {
 		return err
 	}
-	def, fp, err := m.engine.Snapshot(ctx, dsn)
+	schema, err := m.engine.Snapshot(ctx, tg.dsn, tg.scope)
 	if err != nil {
 		return fmt.Errorf("snapshot live schema: %w", err)
 	}
 	m.Metrics.DriftChecked(target, metrics.DriftAccepted)
 	m.log.Info("baseline accepted", "target", target)
-	if err := m.store.SaveSnapshot(ctx, target, fp, def, ""); err != nil {
+	if err := m.store.SaveSnapshot(ctx, target, schema.Fingerprint, schema.Definition, ""); err != nil {
 		return err
 	}
 	notify.Emit(ctx, m.notifier, m.log, driftEvent(target, notify.DriftAccepted, ""))

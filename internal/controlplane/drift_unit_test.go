@@ -295,11 +295,11 @@ type barrierEngine struct {
 	ready *sync.WaitGroup
 }
 
-func (e barrierEngine) Snapshot(ctx context.Context, dsn string) (string, string, error) {
+func (e barrierEngine) Snapshot(ctx context.Context, dsn string, scope engine.SnapshotScope) (engine.Schema, error) {
 	e.ready.Done()
 	e.ready.Wait()
 
-	return e.Engine.Snapshot(ctx, dsn)
+	return e.Engine.Snapshot(ctx, dsn, scope)
 }
 
 func TestDriftMonitorsRaceRecordOnce(t *testing.T) {
@@ -341,11 +341,11 @@ type acceptBetween struct {
 	once   sync.Once
 }
 
-func (e *acceptBetween) Snapshot(ctx context.Context, dsn string) (string, string, error) {
-	def, fp, err := e.Engine.Snapshot(ctx, dsn)
+func (e *acceptBetween) Snapshot(ctx context.Context, dsn string, scope engine.SnapshotScope) (engine.Schema, error) {
+	schema, err := e.Engine.Snapshot(ctx, dsn, scope)
 	e.once.Do(e.accept)
 
-	return def, fp, err
+	return schema, err
 }
 
 func TestDriftCheckIgnoresBaselineAcceptedMidCheck(t *testing.T) {
