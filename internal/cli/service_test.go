@@ -545,7 +545,8 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 		"```\n\n</details>\n" +
 		"\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the statement, or accept" +
 		" the risk with `--ack H003` (`/godwit apply --ack H003` on a pull request).\n" +
-		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
+		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n" +
+		"\n<!-- godwit-plan-verdict: 1 to apply, 1 hazard to acknowledge -->\n<!-- godwit-plan-hazards: 1 -->\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}

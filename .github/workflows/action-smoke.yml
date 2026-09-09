@@ -152,6 +152,17 @@ jobs:
           schema: testdata/action/schema.sql
           dry-run: "true"
 
+      - name: plan without acknowledging H001
+        id: unacked
+        continue-on-error: true
+        uses: ./
+        with:
+          command: plan
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-read
+          comment: "false"
+
       - name: plan on the service
         id: stored
         uses: ./
@@ -208,6 +219,17 @@ jobs:
           target: app
           token: smoke-read
           ack: H001
+
+      - name: dry run on the target that has everything
+        id: dryrun
+        uses: ./
+        with:
+          command: migrate
+          dir: testdata/action/migrations
+          target: app
+          token: smoke-pipe
+          dry-run: "true"
+          comment: "false"
 
       - name: revert the run of the pull request
         id: revert
@@ -564,6 +586,16 @@ jobs:
           LINT_SUMMARY: ${{ steps.lint.outputs.summary-path }}
           PLAN_SUMMARY: ${{ steps.plan.outputs.summary-path }}
           PLAN_ID: ${{ steps.plan.outputs.plan-id }}
+          PLAN_VERDICT: ${{ steps.plan.outputs.plan-verdict }}
+          PLAN_HAZARDS: ${{ steps.plan.outputs.plan-hazards }}
+          UNACKED_OUTCOME: ${{ steps.unacked.outcome }}
+          UNACKED_VERDICT: ${{ steps.unacked.outputs.plan-verdict }}
+          UNACKED_SUMMARY: ${{ steps.unacked.outputs.summary-path }}
+          STORED_VERDICT: ${{ steps.stored.outputs.plan-verdict }}
+          STORED_HAZARDS: ${{ steps.stored.outputs.plan-hazards }}
+          DRYRUN_VERDICT: ${{ steps.dryrun.outputs.plan-verdict }}
+          DRYRUN_HAZARDS: ${{ steps.dryrun.outputs.plan-hazards }}
+          TWOPLAN_VERDICT: ${{ steps.twoplan.outputs.plan-verdict }}
           GATE_OUTCOME: ${{ steps.gate.outcome }}
           GATE_SKIPPED: ${{ steps.gate.outputs.skipped }}
           STORED_ID: ${{ steps.stored.outputs.plan-id }}
@@ -619,8 +651,19 @@ jobs:
           grep -q '^## godwit plan$' "${PLAN_SUMMARY}"
           grep -q '^\*\*H001\*\* CREATE INDEX without CONCURRENTLY' "${PLAN_SUMMARY}"
           test -z "${PLAN_ID}"
+          test "${PLAN_VERDICT}" = "offline plan; no target was consulted"
+          test -z "${PLAN_HAZARDS}"
           test "${GATE_OUTCOME}" = "failure"
           test -z "${GATE_SKIPPED}"
+
+          test "${UNACKED_OUTCOME}" = "failure"
+          test -z "${UNACKED_VERDICT}"
+          grep -q 'unacknowledged hazards' "${UNACKED_SUMMARY}"
+          test "${STORED_VERDICT}" = "2 to apply, 1 hazard to acknowledge"
+          test "${STORED_HAZARDS}" = "1"
+          test "${DRYRUN_VERDICT}" = "nothing to apply"
+          test "${DRYRUN_HAZARDS}" = "0"
+          test "${TWOPLAN_VERDICT}" = "2 to apply"
 
           test -n "${STORED_ID}"
           test -n "${STORED_KEY}"
@@ -705,7 +748,16 @@ jobs:
           grep -q "^api --method POST ${statuses}pending -f context=godwit/applied -f description=expand applied; comment /godwit confirm to run the contract phase -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
           grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=confirming the contract phase of ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
           grep -q "^api --method POST ${statuses}success -f context=godwit/applied -f description=contract applied by run ${CONTRACT_RUN:0:8}; merge when the review is done -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 29
+          runs="https://github.com/${GITHUB_REPOSITORY}/actions/runs/"
+          comment="https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1"
+          grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=offline plan; no target was consulted -f target_url=${comment}$" "${GH_STUB_LOG}"
+          grep -q "^api --method POST ${statuses}failure -f context=godwit/plan -f description=plan refused; the report says why -f target_url=${runs}" "${GH_STUB_LOG}"
+          grep -c "^api --method POST ${statuses}pending -f context=godwit/plan -f description=2 to apply, 1 hazard to acknowledge -f target_url=${comment}$" "${GH_STUB_LOG}" | grep -qx 2
+          grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=nothing to apply -f target_url=${runs}" "${GH_STUB_LOG}"
+          grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=2 to apply -f target_url=${comment}$" "${GH_STUB_LOG}"
+          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/plan " "${GH_STUB_LOG}" | grep -qx 6
+          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 29
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 35
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
           grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews$" "${GH_STUB_LOG}"

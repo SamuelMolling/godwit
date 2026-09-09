@@ -208,6 +208,29 @@ func (r planReport) footerLines(m markup) []string {
 	return append(out, fmt.Sprintf("Plan: %d to apply, %d to revert, %d hazard(s) to acknowledge", apply, revert, gated))
 }
 
+// statusVerdict is the whole of a commit status description, which GitHub cuts at 140 characters.
+func (r planReport) statusVerdict() string {
+	if !r.live {
+		return "offline plan; no target was consulted"
+	}
+	apply, revert := r.counts()
+	var parts []string
+	if apply > 0 {
+		parts = append(parts, fmt.Sprintf("%d to apply", apply))
+	}
+	if revert > 0 {
+		parts = append(parts, fmt.Sprintf("%d to revert", revert))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "nothing to apply")
+	}
+	if gated, _ := r.hazardGate(); gated > 0 {
+		parts = append(parts, count(gated, "hazard")+" to acknowledge")
+	}
+
+	return strings.Join(parts, ", ")
+}
+
 func (r planReport) details() []string {
 	if !r.live {
 		return nil
@@ -636,8 +659,14 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	for _, l := range r.footerLines(markdown) {
 		fmt.Fprintf(w, "\n%s\n", l)
 	}
+	fmt.Fprintln(w)
 	if r.planKey != "" {
-		fmt.Fprintf(w, "\n<!-- godwit-plan-key: %s -->\n", r.planKey)
+		fmt.Fprintf(w, "<!-- godwit-plan-key: %s -->\n", r.planKey)
+	}
+	fmt.Fprintf(w, "<!-- godwit-plan-verdict: %s -->\n", r.statusVerdict())
+	if r.live {
+		gated, _ := r.hazardGate()
+		fmt.Fprintf(w, "<!-- godwit-plan-hazards: %d -->\n", gated)
 	}
 }
 

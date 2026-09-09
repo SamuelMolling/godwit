@@ -13,6 +13,8 @@ blocking=""
 run_id=""
 plan_id=""
 plan_key=""
+plan_verdict=""
+plan_hazards=""
 stale=false
 pending=""
 changed=""
@@ -46,6 +48,10 @@ refused() {
     sed 's/^godwit: //' "${errors}"
     printf '```\n'
   } >"${summary}"
+}
+
+marker() {
+  sed -n 's/^<!-- godwit-plan-'"$1"': \(.*\) -->$/\1/p' "${summary}" | head -n 1
 }
 
 run_summary() {
@@ -300,7 +306,9 @@ case "${COMMAND}" in
       refused plan refused
     fi
     plan_id="$(sed -n 's/^plan: \(.*\)$/\1/p' "${summary}" | head -n 1)"
-    plan_key="$(sed -n 's/^<!-- godwit-plan-key: \(.*\) -->$/\1/p' "${summary}" | head -n 1)"
+    plan_key="$(marker key)"
+    plan_verdict="$(marker verdict)"
+    plan_hazards="$(marker hazards)"
     ;;
   migrate)
     if [ "${DRY_RUN}" = "true" ]; then
@@ -311,6 +319,8 @@ case "${COMMAND}" in
       if [ ! -s "${summary}" ]; then
         refused "dry run" refused
       fi
+      plan_verdict="$(marker verdict)"
+      plan_hazards="$(marker hazards)"
     else
       cmd_migrate migrate "push to the pull request to re-plan" "" \
         "expand applied; run \`godwit run confirm --latest --target ${TARGET:-<target>}\` to run the contract phase"
@@ -349,6 +359,8 @@ out() { printf '%s=%s\n' "$1" "${2%%$'\n'*}"; }
   out run-id "${run_id}"
   out plan-id "${plan_id}"
   out plan-key "${plan_key}"
+  out plan-verdict "${plan_verdict}"
+  out plan-hazards "${plan_hazards}"
   out stale "${stale}"
   out phase "${phase}"
   out pending "${pending}"

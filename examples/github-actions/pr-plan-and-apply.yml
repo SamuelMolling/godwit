@@ -13,7 +13,7 @@ on:
 permissions:
   contents: read
   pull-requests: write   # the sticky comment
-  statuses: write        # the godwit/applied commit status on the pull request head
+  statuses: write        # the godwit/plan and godwit/applied commit statuses on the pull request head
 
 # Branch protection on main: require the godwit/applied status and "Require branches to be up to
 # date before merging". The status is set on the head commit, so a push after the apply drops it

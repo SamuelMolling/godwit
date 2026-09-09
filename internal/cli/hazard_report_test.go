@@ -30,8 +30,9 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	if strings.Contains(got, "on what this run would execute") {
 		t.Fatalf("an applied migration's hazard must not be presented as acknowledgeable:\n%s", got)
 	}
-	if !strings.HasSuffix(got, "\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n") {
-		t.Fatalf("footer must agree with the gate:\n%s", got)
+	if !strings.HasSuffix(got, "\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n"+
+		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n") {
+		t.Fatalf("footer and status verdict must agree with the gate:\n%s", got)
 	}
 	for _, gone := range []string{"H001", "CREATE INDEX without CONCURRENTLY", "this run will not execute", "already in the target"} {
 		if strings.Contains(got, gone) {
@@ -47,7 +48,8 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	got = b.String()
 	if !strings.Contains(got, "⚠️ 1 hazard on what this run would execute: take the recipe printed beside the statement,"+
 		" or accept the risk with `--ack H001` (`/godwit apply --ack H001` on a pull request).\n") ||
-		!strings.HasSuffix(got, "\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n") {
+		!strings.HasSuffix(got, "\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n\n"+
+			"<!-- godwit-plan-verdict: 1 to apply, 1 hazard to acknowledge -->\n<!-- godwit-plan-hazards: 1 -->\n") {
 		t.Fatalf("the pending hazard must still be gated:\n%s", got)
 	}
 	if strings.Count(got, "H001") != 3 {
@@ -172,7 +174,29 @@ func TestPlanDetailsDropTheMachineIdentity(t *testing.T) {
 
 	b.Reset()
 	writePlanMarkdown(&b, r)
-	if !strings.HasSuffix(b.String(), "\n<!-- godwit-plan-key: k1 -->\n") {
-		t.Fatalf("the key stays where the Action reads it, out of sight:\n%s", b.String())
+	if !strings.HasSuffix(b.String(), "\n<!-- godwit-plan-key: k1 -->\n"+
+		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n") {
+		t.Fatalf("the key and the verdict stay where the Action reads them, out of sight:\n%s", b.String())
+	}
+}
+
+func TestStatusVerdictIsWhatFitsInACommitStatus(t *testing.T) {
+	t.Parallel()
+
+	down := hazardItem("orders", false)
+	down.Direction = engine.DirectionDown
+	down.Statements[0].Hazards = nil
+	for _, tc := range []struct {
+		report planReport
+		want   string
+	}{
+		{planReport{}, "offline plan; no target was consulted"},
+		{planReport{live: true}, "nothing to apply"},
+		{planReport{live: true, items: []planItem{hazardItem("users", false), down}}, "1 to apply, 1 to revert, 1 hazard to acknowledge"},
+		{planReport{live: true, items: []planItem{down}}, "1 to revert"},
+	} {
+		if got := tc.report.statusVerdict(); got != tc.want {
+			t.Fatalf("statusVerdict = %q, want %q", got, tc.want)
+		}
 	}
 }

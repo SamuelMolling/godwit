@@ -103,13 +103,17 @@ func TestPlanMarkdown(t *testing.T) {
 	})
 	code, out, _ = runCLI("plan", "--dir", safe, "--format", "markdown")
 	if code != 0 || !strings.Contains(out, "`[0]` no-tx\n") ||
-		!strings.HasSuffix(out, "\nPlan: 1 to apply, 1 to revert, 0 hazard(s) to acknowledge\n") {
+		!strings.HasSuffix(out, "\nPlan: 1 to apply, 1 to revert, 0 hazard(s) to acknowledge\n\n"+
+			"<!-- godwit-plan-verdict: offline plan; no target was consulted -->\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 
 	code, out, _ = runCLI("plan", "--dir", t.TempDir(), "--format", "markdown")
-	if code != 0 || !strings.HasSuffix(out, "\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n") {
+	if code != 0 || !strings.Contains(out, "\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
+	}
+	if strings.Contains(out, "godwit-plan-hazards") {
+		t.Fatalf("an offline plan gates nothing, so it must not claim a hazard count:\n%s", out)
 	}
 }
 
@@ -129,7 +133,7 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 		"target: app\nrollout: direct\nplan: p1\n" +
 		"```\n\n</details>\n\n" +
 		"Plan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
-		"<!-- godwit-plan-key: k1 -->\n"
+		"<!-- godwit-plan-key: k1 -->\n<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"
 	if b.String() != want {
 		t.Fatalf("markdown = %q, want %q", b.String(), want)
 	}
@@ -139,7 +143,8 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 	want = "## godwit dry run\n\n✅ **Nothing to apply.** `app` already has every migration this plan covers.\n\n" +
 		"⚠️ **Not validated.** These statements were never replayed on a scratch database, so nothing has proved they apply.\n\n" +
 		"<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: direct\n```\n\n" +
-		"</details>\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n"
+		"</details>\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
+		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"
 	if got := b.String(); got != want {
 		t.Fatalf("markdown = %q, want %q", got, want)
 	}

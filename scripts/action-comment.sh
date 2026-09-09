@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Env: GH_TOKEN SUMMARY COMMAND DRY_RUN COMMENT COMMENT_ON_PUSH EVENT_NAME REPOSITORY SHA PR_NUMBER HEAD_SHA STATUS STALE PHASE RUN_ID RUN_URL SKIPPED RUNNER_TEMP
+# Env: GH_TOKEN SUMMARY COMMAND DRY_RUN COMMENT COMMENT_ON_PUSH EVENT_NAME REPOSITORY SHA PR_NUMBER HEAD_SHA STATUS STALE PHASE RUN_ID PLAN_VERDICT PLAN_HAZARDS RUN_URL SKIPPED RUNNER_TEMP
 if [ "${SKIPPED:-false}" = "true" ]; then
   exit 0
 fi
-case "${COMMENT}:${COMMAND}" in
-  true:*|*:apply|*:confirm|*:revert) ;;
+kind="${COMMAND}"
+if [ "${COMMAND}" = "migrate" ] && [ "${DRY_RUN}" = "true" ]; then kind=plan; fi
+case "${COMMENT}:${kind}" in
+  true:*|*:apply|*:confirm|*:revert|*:plan) ;;
   *) exit 0 ;;
 esac
 
@@ -87,13 +89,24 @@ for number in ${numbers}; do
   fi
 done
 
-case "${COMMAND}" in
-  apply|confirm|revert) ;;
+case "${kind}" in
+  apply|confirm|revert|plan) ;;
   *) exit 0 ;;
 esac
 
 short="${RUN_ID:0:8}"
-case "${COMMAND}:${STATUS}:${STALE}" in
+context=godwit/applied
+case "${kind}:${STATUS}:${STALE}" in
+  plan:0:*)
+    if [ -z "${PLAN_VERDICT:-}" ]; then
+      exit 0
+    fi
+    context=godwit/plan
+    description="${PLAN_VERDICT}"
+    # A hazard on what the apply would run is not a broken plan, but it is not a green light either.
+    if [ "${PLAN_HAZARDS:-0}" = "0" ]; then state=success; else state=pending; fi
+    ;;
+  plan:*) context=godwit/plan; state=failure; description="plan refused; the report says why" ;;
   apply:0:*)
     if [ "${PHASE:-}" = "awaiting-contract" ]; then
       state=pending
@@ -122,4 +135,5 @@ case "${COMMAND}:${STATUS}:${STALE}" in
     ;;
   revert:*) state=failure; description="revert failed${RUN_ID:+ (run ${short})}; see the pull request comment" ;;
 esac
-STATE="${state}" DESCRIPTION="${description}" TARGET_URL="${comment_url:-${RUN_URL}}" SHA="${HEAD_SHA}" "$(dirname "$0")/action-status.sh"
+STATE="${state}" DESCRIPTION="${description}" TARGET_URL="${comment_url:-${RUN_URL}}" SHA="${HEAD_SHA}" CONTEXT="${context}" \
+  "$(dirname "$0")/action-status.sh"
