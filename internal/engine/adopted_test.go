@@ -12,8 +12,6 @@ const golangMigrateTable = `
 	CREATE TABLE public.schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL);
 	INSERT INTO public.schema_migrations VALUES (20260902165420, false)`
 
-// The bookkeeping table golang-migrate left on an adopted database is not schema the plan should keep
-// reporting: it is out of the snapshot, out of its fingerprint and out of every diff taken from it.
 func TestSnapshotLeavesTheAdoptedToolsBookkeepingOut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -63,8 +61,6 @@ func TestSnapshotLeavesTheAdoptedToolsBookkeepingOut(t *testing.T) {
 	}
 }
 
-// The name alone never buys the exemption: a table godwit's own migrations could plausibly own stays in the
-// snapshot, and so stays visible to drift.
 func TestDetectAdoptedMatchesOnColumnsNotOnName(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

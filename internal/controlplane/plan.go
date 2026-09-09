@@ -41,8 +41,7 @@ type Observation struct {
 	Fingerprint string
 	SearchPath  string
 	At          time.Time
-	// Ignored is what the snapshot left out: bookkeeping tables of the migration tool this target was adopted from.
-	Ignored []engine.Adopted
+	Ignored     []engine.Adopted
 }
 
 // HistoryHash hashes the observed history, ascending by version then by repeatable name.
@@ -97,8 +96,7 @@ type PlanMigration struct {
 	Note           string `json:"note,omitempty"`
 	Withheld       bool   `json:"withheld,omitempty"`
 
-	// Skipped is the hazard gate's own verdict: the executor would not run this body. Stored inverted so a
-	// plan written before the field existed keeps counting every hazard rather than none.
+	// Stored inverted: a plan written before the field existed keeps counting every hazard rather than none.
 	Skipped bool `json:"skipped,omitempty"`
 
 	// Checkpoint marks the migration that carries the whole schema of everything through Through.
@@ -260,9 +258,7 @@ type AppliedSet struct {
 	Repeatables map[string]string
 }
 
-// RunsBody reports whether the executor would run the plan's statements. It inverts for a down plan: that
-// undoes what the target holds, so being applied is what makes it run. The hazard gate and every report of
-// what a run would do read this one predicate, so they cannot disagree.
+// RunsBody reports whether the executor would run the plan's statements; a down plan runs because the target holds it.
 func RunsBody(p engine.Plan, applied AppliedSet) bool {
 	if p.MarkOnly {
 		return false

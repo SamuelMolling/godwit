@@ -499,8 +499,7 @@ type RegisterTargetRequest struct {
 	// search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
 	// Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
 	SearchPath string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
-	// Whether the schema snapshot leaves out the bookkeeping tables of the migration tool this database was
-	// adopted from (godwit's own default, true). False puts them back into the schema and so back into drift.
+	// Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
 	IgnoreAdoptedTables *bool `protobuf:"varint,12,opt,name=ignore_adopted_tables,json=ignoreAdoptedTables,proto3,oneof" json:"ignore_adopted_tables,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache

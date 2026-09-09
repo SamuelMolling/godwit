@@ -147,8 +147,6 @@ func TestListApplied(t *testing.T) {
 	wantErr(t, err, "probe godwit schema")
 }
 
-// A table with no columns, a sequence, an enum and a materialized view were all invisible: the snapshot only
-// ever asked for columns, constraints, indexes and plain views.
 func TestSnapshotSeesTablesSequencesEnumsAndMatviews(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -178,8 +176,6 @@ func TestSnapshotSeesTablesSequencesEnumsAndMatviews(t *testing.T) {
 			t.Fatalf("snapshot missing %q:\n%s", want, before.Definition)
 		}
 	}
-	// The sequence bigserial created is the column's line already, and the index behind a primary key is the
-	// constraint's; reporting either twice makes one change two diff lines.
 	for _, unwanted := range []string{"sequence public.rows_here_id_seq", "index public.rows_here_pkey"} {
 		if strings.Contains(before.Definition, unwanted) {
 			t.Fatalf("snapshot carries %q twice:\n%s", unwanted, before.Definition)
@@ -200,8 +196,6 @@ func TestSnapshotSeesTablesSequencesEnumsAndMatviews(t *testing.T) {
 	}
 }
 
-// An extension's own objects are the extension's to manage; on a database that uses one they would otherwise
-// be most of the schema.
 func TestSnapshotLeavesExtensionObjectsOut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

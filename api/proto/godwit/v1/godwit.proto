@@ -89,8 +89,7 @@ message RegisterTargetRequest {
   // search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
   // Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
   string search_path = 10;
-  // Whether the schema snapshot leaves out the bookkeeping tables of the migration tool this database was
-  // adopted from (godwit's own default, true). False puts them back into the schema and so back into drift.
+  // Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
   optional bool ignore_adopted_tables = 12;
 }
 

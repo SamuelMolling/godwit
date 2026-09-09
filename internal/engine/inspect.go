@@ -101,9 +101,7 @@ const (
 	KeepAdopted   SnapshotScope = true
 )
 
-// SchemaFormat is the first line of every definition. Bump it whenever Snapshot changes what it emits: a
-// stored definition carrying an older marker was taken by a godwit that looked at a different set of objects,
-// and comparing the two would report the upgrade itself as drift on every target at once.
+// SchemaFormat is the first line of every definition; bump it whenever Snapshot changes what it emits.
 const SchemaFormat = "godwit-schema-v2"
 
 // SameFormat reports whether a stored definition was taken by this version of Snapshot.
@@ -115,16 +113,11 @@ func SameFormat(definition string) bool {
 type Schema struct {
 	Definition  string
 	Fingerprint string
-	// Ignored is the adopted bookkeeping tables this snapshot excluded, empty under KeepAdopted.
-	Ignored []Adopted
+	Ignored     []Adopted
 }
 
-// ownTables is godwit's journal, invisible to drift.
 var ownTables = []string{"godwit.migrations", "godwit.repeatables", "godwit.runs", "godwit.journal"}
 
-// Each query returns the object the exclusion list speaks about and the line it contributes: the table a
-// column, constraint or index hangs off, or the object itself. Deciding what is out of scope once, over that
-// key, is what keeps eight queries from carrying eight copies of the same three exclusions.
 var snapshotQueries = []struct {
 	kind string
 	sql  string
@@ -186,9 +179,7 @@ var snapshotQueries = []struct {
 		WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`},
 }
 
-// Snapshot renders a canonical description of the schema plus its sha256 fingerprint. Out of both: godwit's
-// journal, everything an extension owns, and under IgnoreAdopted the bookkeeping tables of the migration tool
-// this database was adopted from.
+// Snapshot renders a canonical description of the schema plus its sha256 fingerprint.
 func Snapshot(ctx context.Context, db DB, scope SnapshotScope) (Schema, error) {
 	var out Schema
 	excluded := map[string]bool{}
@@ -237,8 +228,6 @@ func Snapshot(ctx context.Context, db DB, scope SnapshotScope) (Schema, error) {
 	return out, nil
 }
 
-// extensionOwned lists the relations and types an extension created, schema-qualified: they are the
-// extension's to manage, and on a database using PostGIS or TimescaleDB they would be most of the schema.
 func extensionOwned(ctx context.Context, db DB) ([]string, error) {
 	rows, err := db.Query(ctx, `
 		SELECT n.nspname || '.' || c.relname

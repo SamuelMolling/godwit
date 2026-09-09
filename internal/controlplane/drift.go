@@ -106,8 +106,6 @@ func (m *DriftMonitor) Check(ctx context.Context, target string) (Drift, error) 
 	if err != nil {
 		return Drift{}, err
 	}
-	// Comparing across formats would report the upgrade as drift on every target, and re-baselining here would
-	// swallow whatever drift the target really had. Neither is godwit's to decide: it says so and stops.
 	if !engine.SameFormat(expected.Definition) {
 		return Drift{}, fmt.Errorf("%w: run `godwit drift accept %s` once the target's schema is what you expect it to be",
 			ErrBaselineFormat, target)

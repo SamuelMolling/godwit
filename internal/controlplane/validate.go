@@ -253,8 +253,7 @@ func recordUnexpanded(plans []engine.Plan) []engine.Plan {
 	return plans
 }
 
-// expander applies the target's keep_old default over the service's and takes its snapshot scope, so the
-// scratch schema the plan is compared against leaves out the same adopted tables the target's does.
+// expander applies the target's keep_old default over the service's; a directive can still override it.
 func (v *Validator) expander(ctx context.Context, target string) (*Validator, error) {
 	_, config, err := v.store.Target(ctx, target)
 	if err != nil {

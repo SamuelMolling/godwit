@@ -9,8 +9,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// Every report of a plan reads Skipped, and the hazard gate reads RunsBody; they are the same answer or
-// the pull-request comment can tell someone to acknowledge a hazard nothing would run.
 func TestPlanMigrationsCarryTheGatesVerdict(t *testing.T) {
 	t.Parallel()
 	a, b := mig(1, "a", "CREATE TABLE a (id int);"), mig(2, "b", "CREATE TABLE b (id int);")
@@ -62,9 +60,6 @@ func TestSnapshotScopeOf(t *testing.T) {
 	}
 }
 
-// A baseline taken before the snapshot changed shape cannot be compared with one taken after. Reporting the
-// difference would call the upgrade drift on every target at once; re-baselining here would swallow whatever
-// drift the target really had. It says so instead.
 func TestDriftRefusesABaselineFromAnOlderSchemaFormat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

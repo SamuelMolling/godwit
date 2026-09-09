@@ -15,9 +15,6 @@ const golangMigrateJournal = `
 	CREATE TABLE public.schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL);
 	INSERT INTO public.schema_migrations VALUES (20260902165420, false)`
 
-// The state of the migration tool a database was adopted from is not drift, and a hazard on a migration the
-// target already holds is not something to acknowledge. Both were reported on every plan of an adopted
-// database, forever.
 func TestPlanOfAnAdoptedDatabase(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -49,7 +46,6 @@ func TestPlanOfAnAdoptedDatabase(t *testing.T) {
 	}
 }
 
-// The exemption is a default, not a rule: a target told to keep those tables sees them again.
 func TestAdoptedTablesAreKeptWhenTheTargetSaysSo(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -76,8 +72,6 @@ func TestAdoptedTablesAreKeptWhenTheTargetSaysSo(t *testing.T) {
 	}
 }
 
-// The first plan after the upgrade compares the target with a baseline the old snapshot took. Rather than
-// call the format change drift, the plan reports none and the drift monitor asks for a fresh baseline.
 func TestPlanRunIgnoresABaselineFromAnOlderSchemaFormat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

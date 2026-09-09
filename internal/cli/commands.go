@@ -69,7 +69,6 @@ type planItem struct {
 	skipped        bool
 }
 
-// gatedHazards counts the hazards --ack would act on: the ones on a body the executor would run.
 func (r planReport) gatedHazards() (gated, ungated int) {
 	for _, p := range r.items {
 		for _, st := range p.Statements {
@@ -200,7 +199,6 @@ func (r planReport) contract() []string {
 	return lines
 }
 
-// ignoredLine names what the snapshot stopped looking at, and the setting that undoes it.
 func ignoredLine(tables []string) string {
 	if len(tables) == 0 {
 		return ""

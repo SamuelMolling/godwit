@@ -21,8 +21,6 @@ func hazardItem(id string, skipped bool) planItem {
 	}
 }
 
-// On a target that holds every migration, nothing runs and `--ack` changes nothing: the footer must not
-// ask for it, and it must still say the hazard is there.
 func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	t.Parallel()
 
@@ -56,7 +54,6 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	}
 }
 
-// A drift signal godwit stops emitting has to be visible as a decision, with the knob that undoes it.
 func TestPlanReportNamesTheIgnoredBookkeepingTables(t *testing.T) {
 	t.Parallel()
 

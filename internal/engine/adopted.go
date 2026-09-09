@@ -9,13 +9,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AdoptedTable is the bookkeeping table one other migration tool keeps its own state in. A database godwit
-// adopts still carries it, and no godwit migration creates it, so it would read as schema drift forever.
+// AdoptedTable is the bookkeeping table one other migration tool keeps its own state in.
 type AdoptedTable struct {
-	Tool string
-	Name string
-	// Required must all be present, Known bounds what else may be: a table carrying a column the tool never
-	// creates is somebody's own table that happens to share the name, and stays visible.
+	Tool     string
+	Name     string
 	Required []string
 	Known    []string
 }
@@ -93,8 +90,7 @@ func (a Adopted) String() string {
 	return a.Qualified() + " (" + a.Tool + ")"
 }
 
-// DetectAdopted lists the bookkeeping tables of other migration tools this database carries. A table is only
-// recognised when its columns match the tool's, so a table that merely shares the name is not one of them.
+// DetectAdopted lists the bookkeeping tables of other migration tools this database carries, matched by columns.
 func DetectAdopted(ctx context.Context, db DB) ([]Adopted, error) {
 	names := make([]string, 0, len(AdoptedTables))
 	for _, t := range AdoptedTables {

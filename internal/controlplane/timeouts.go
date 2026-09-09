@@ -16,8 +16,7 @@ const (
 	ConfigIgnoreAdopted    = "ignore_adopted_tables"
 )
 
-// SnapshotScopeOf reads the target's ignore_adopted_tables setting; only "false" puts the bookkeeping tables
-// of the tool this target was adopted from back into its schema snapshots, and so back into its drift.
+// SnapshotScopeOf reads the target's ignore_adopted_tables setting; only "false" keeps the adopted tables.
 func SnapshotScopeOf(config map[string]string) engine.SnapshotScope {
 	if config[ConfigIgnoreAdopted] == "false" {
 		return engine.KeepAdopted
