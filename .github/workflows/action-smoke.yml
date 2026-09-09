@@ -705,7 +705,7 @@ jobs:
           grep -q "^api --method POST ${statuses}pending -f context=godwit/applied -f description=expand applied; comment /godwit confirm to run the contract phase -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
           grep -c "^api --method POST ${statuses}pending -f context=godwit/applied -f description=confirming the contract phase of ${HEAD_SHA:0:7} from pull request #${PR_NUMBER} -f target_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/" "${GH_STUB_LOG}" | grep -qx 2
           grep -q "^api --method POST ${statuses}success -f context=godwit/applied -f description=contract applied by run ${CONTRACT_RUN:0:8}; merge when the review is done -f target_url=https://github.com/${GITHUB_REPOSITORY}/pull/7#issuecomment-1$" "${GH_STUB_LOG}"
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 24
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 29
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
           grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews$" "${GH_STUB_LOG}"
