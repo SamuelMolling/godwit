@@ -15,13 +15,18 @@ const (
 
 // Object kinds a schema change describes.
 const (
-	KindTable    = "table"
-	KindIndex    = "index"
-	KindSequence = "sequence"
-	KindEnum     = "enum"
-	KindView     = "view"
-	KindMatView  = "materialized view"
+	KindTable     = "table"
+	KindIndex     = "index"
+	KindSequence  = "sequence"
+	KindEnum      = "enum"
+	KindView      = "view"
+	KindMatView   = "materialized view"
+	KindFunction  = "function"
+	KindProcedure = "procedure"
 )
+
+// BodyAttr is the attribute a function or procedure keeps its body under, as a digest rather than the source.
+const BodyAttr = "body"
 
 // AttrChange is one column, constraint or property of an object the change touches.
 type AttrChange struct {
@@ -86,6 +91,13 @@ func readSnapshotLine(out map[objectKey]*object, kind, rest string) {
 	case "constraint":
 		owner, name := split(ref)
 		at(out, tableKey(owner)).put("constraint", name, 1, []string{body})
+	case "trigger":
+		owner, name := split(ref)
+		at(out, tableKey(owner)).put("trigger", name, 2, []string{body})
+	case "function":
+		routine(out, KindFunction, rest)
+	case "procedure":
+		routine(out, KindProcedure, rest)
 	case "index":
 		single(out, KindIndex, ref, "definition", body)
 	case "sequence":
@@ -110,6 +122,23 @@ func single(out map[objectKey]*object, kind, ref, name, body string) {
 	o := at(out, objectKey{kind, schema, obj})
 	o.present = true
 	o.put("", name, 0, []string{body})
+}
+
+// routine keys on the argument list so overloads differ, and reads returns last: it is the value with spaces.
+func routine(out map[objectKey]*object, kind, rest string) {
+	ident, body, _ := strings.Cut(rest, ") ")
+	head, args, _ := strings.Cut(ident, "(")
+	schema, name := split(head)
+	o := at(out, objectKey{kind, schema, name + "(" + args + ")"})
+	o.present = true
+	props, returns, ok := strings.Cut(body, " returns=")
+	for i, part := range strings.Fields(props) {
+		prop, value, _ := strings.Cut(part, "=")
+		o.put("", prop, i, []string{value})
+	}
+	if ok {
+		o.put("", "returns", len(strings.Fields(props)), []string{returns})
+	}
 }
 
 func sequence(out map[objectKey]*object, ref, body string) {
@@ -162,7 +191,9 @@ func columnParts(body string) []string {
 	return parts
 }
 
-var kindRank = []string{KindTable, KindIndex, KindSequence, KindEnum, KindView, KindMatView}
+var kindRank = []string{
+	KindTable, KindIndex, KindSequence, KindEnum, KindView, KindMatView, KindFunction, KindProcedure,
+}
 
 // SchemaChanges is what a migration did to the schema, read from the snapshots taken around it.
 func SchemaChanges(before, after string) []ObjectChange {

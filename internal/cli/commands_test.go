@@ -129,11 +129,9 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 		"✅ **Nothing to apply.** `app` is at 20260901120000 (2 migrations).\n\n" +
 		"<details><summary>1 change on this database was not made by a migration</summary>\n\n" +
 		"```diff\n+ column public.rogue.id integer null=YES default=<none>\n```\n\n</details>\n\n" +
-		"<details><summary>plan details</summary>\n\n```\n" +
-		"target: app\nrollout: direct\nplan: p1\n" +
-		"```\n\n</details>\n\n" +
 		"Plan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
-		"<!-- godwit-plan-key: k1 -->\n<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"
+		"<!-- godwit-plan-id: p1 -->\n<!-- godwit-plan-key: k1 -->\n" +
+		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"
 	if b.String() != want {
 		t.Fatalf("markdown = %q, want %q", b.String(), want)
 	}
@@ -142,8 +140,7 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct"})
 	want = "## godwit dry run\n\n✅ **Nothing to apply.** `app` already has every migration this plan covers.\n\n" +
 		"⚠️ **Not validated.** These statements were never replayed on a scratch database, so nothing has proved they apply. Nothing read the schema they leave behind either, so what follows is the SQL the run would execute rather than what it does to the database.\n\n" +
-		"<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: direct\n```\n\n" +
-		"</details>\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
+		"Plan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n\n" +
 		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"
 	if got := b.String(); got != want {
 		t.Fatalf("markdown = %q, want %q", got, want)

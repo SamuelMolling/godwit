@@ -199,6 +199,60 @@ func TestSnapshotSeesTablesSequencesEnumsAndMatviews(t *testing.T) {
 	}
 }
 
+func TestSnapshotSeesFunctionsProceduresAndTriggers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	conn := newTestDB(t)()
+
+	if _, err := conn.Exec(ctx, `
+		CREATE TABLE widgets (id bigint PRIMARY KEY, at timestamptz);
+		CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN new.at := now(); RETURN new; END $$;
+		CREATE FUNCTION label(id integer) RETURNS text LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT 'a' $$;
+		CREATE FUNCTION label(id bigint) RETURNS text LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT 'b' $$;
+		CREATE PROCEDURE sweep() LANGUAGE plpgsql AS $$ BEGIN DELETE FROM widgets; END $$;
+		CREATE TRIGGER touch_widgets BEFORE UPDATE ON widgets FOR EACH ROW EXECUTE FUNCTION touch()`); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"function public.touch() language=plpgsql volatility=volatile security=invoker strict=false" +
+			" parallel=unsafe body=",
+		"function public.label(id integer) language=sql volatility=immutable security=invoker strict=true",
+		"function public.label(id bigint) language=sql",
+		" returns=text",
+		"procedure public.sweep() language=plpgsql",
+		"trigger public.widgets.touch_widgets CREATE TRIGGER touch_widgets BEFORE UPDATE ON public.widgets",
+	} {
+		if !strings.Contains(before.Definition, want) {
+			t.Fatalf("snapshot missing %q:\n%s", want, before.Definition)
+		}
+	}
+	if strings.Contains(before.Definition, "procedure public.sweep() language=plpgsql volatility=volatile"+
+		" security=invoker strict=false parallel=unsafe body=") == false {
+		t.Fatalf("a procedure carries the same properties minus its result:\n%s", before.Definition)
+	}
+
+	if _, err := conn.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN new.at := '2000-01-01'; RETURN new; END $$;
+		DROP TRIGGER touch_widgets ON widgets`); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Snapshot(ctx, conn, IgnoreAdopted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := DiffSchemas(before.Definition, after.Definition)
+	if len(diff) != 3 {
+		t.Fatalf("a hand-edited body and a dropped trigger are three lines: %v", diff)
+	}
+	if !strings.HasPrefix(diff[0], "- function public.touch()") || !strings.HasPrefix(diff[1], "- trigger public.widgets.touch_widgets") {
+		t.Fatalf("drift must name both: %v", diff)
+	}
+}
+
 func TestSnapshotLeavesExtensionObjectsOut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

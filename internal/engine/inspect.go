@@ -102,7 +102,7 @@ const (
 )
 
 // SchemaFormat is the first line of every definition; bump it whenever Snapshot changes what it emits.
-const SchemaFormat = "godwit-schema-v3"
+const SchemaFormat = "godwit-schema-v4"
 
 // SameFormat reports whether a stored definition was taken by this version of Snapshot.
 func SameFormat(definition string) bool {
@@ -182,6 +182,41 @@ var snapshotQueries = []struct {
 		SELECT schemaname || '.' || matviewname, schemaname || '.' || matviewname || ' ' || md5(definition)
 		FROM pg_matviews
 		WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`},
+	{"function", routineQuery("f", " || ' returns=' || pg_get_function_result(p.oid)")},
+	{"procedure", routineQuery("p", "")},
+	// An internal trigger is a foreign key's enforcement, which the constraint line already carries.
+	{"trigger", `
+		SELECT n.nspname || '.' || c.relname,
+		       n.nspname || '.' || c.relname || '.' || t.tgname || ' ' || pg_get_triggerdef(t.oid)
+		FROM pg_trigger t
+		JOIN pg_class c ON c.oid = t.tgrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE NOT t.tgisinternal
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		  AND NOT EXISTS (
+		    SELECT 1 FROM pg_depend d
+		    WHERE d.classid = 'pg_trigger'::regclass AND d.objid = t.oid AND d.deptype = 'e')`},
+}
+
+// routineQuery reads pg_proc for one prokind; the body is an md5 because a snapshot line holds one object.
+func routineQuery(prokind, result string) string {
+	return `
+		SELECT n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
+		       n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' ||
+		       ' language=' || l.lanname ||
+		       ' volatility=' || CASE p.provolatile WHEN 'i' THEN 'immutable' WHEN 's' THEN 'stable' ELSE 'volatile' END ||
+		       ' security=' || CASE WHEN p.prosecdef THEN 'definer' ELSE 'invoker' END ||
+		       ' strict=' || p.proisstrict ||
+		       ' parallel=' || CASE p.proparallel WHEN 's' THEN 'safe' WHEN 'r' THEN 'restricted' ELSE 'unsafe' END ||
+		       ' body=' || md5(coalesce(p.prosrc, ''))` + result + `
+		FROM pg_proc p
+		JOIN pg_namespace n ON n.oid = p.pronamespace
+		JOIN pg_language l ON l.oid = p.prolang
+		WHERE p.prokind = '` + prokind + `'
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+		  AND NOT EXISTS (
+		    SELECT 1 FROM pg_depend d
+		    WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')`
 }
 
 // Snapshot renders a canonical description of the schema plus its sha256 fingerprint.

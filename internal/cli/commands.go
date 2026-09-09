@@ -273,11 +273,12 @@ func (r planReport) statusVerdict() string {
 	return strings.Join(parts, ", ")
 }
 
-func (r planReport) details() []string {
+// identityLines is what a terminal reader has nowhere else to read; markdown keeps the id in an HTML comment.
+func (r planReport) identityLines() []string {
 	if !r.live {
 		return nil
 	}
-	lines := []string{"target: " + r.target, "rollout: " + r.rollout}
+	var lines []string
 	if r.planID != "" {
 		lines = append(lines, "plan: "+r.planID)
 	}
@@ -671,7 +672,13 @@ func writePlanText(w io.Writer, r planReport) {
 	if b := r.driftBlock("\nchanges outside migrations:", "  ", "", "", pal); b != "" {
 		fmt.Fprint(w, b)
 	}
-	if lines := r.details(); len(lines) > 0 {
+	if lines := r.strategy(terminal); len(lines) > 0 {
+		fmt.Fprintf(w, "\n%s:\n", strategyHeading)
+		for _, l := range lines {
+			fmt.Fprintln(w, "  "+l)
+		}
+	}
+	if lines := r.identityLines(); len(lines) > 0 {
 		fmt.Fprintln(w, "\nplan details:")
 		for _, l := range lines {
 			fmt.Fprintln(w, "  "+l)
@@ -705,7 +712,7 @@ func writeMigrationText(w io.Writer, r planReport, p planItem, pal palette) {
 	} else {
 		writeIndented(w, "  ", p.effect, pal)
 		if l := p.undescribed(); r.describes() && l != "" {
-			fmt.Fprintln(w, l)
+			fmt.Fprintln(w, "  "+l)
 		}
 		writeStatementsText(w, r, p)
 	}
@@ -770,11 +777,15 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 		writeMigrationMarkdown(w, r, p)
 	}
 	fmt.Fprint(w, r.notRunDetails())
+	fmt.Fprint(w, r.strategyMarkdown())
 	fmt.Fprint(w, r.detailsMarkdown())
 	for _, l := range r.footerLines(markdown) {
 		fmt.Fprintf(w, "\n%s\n", l)
 	}
 	fmt.Fprintln(w)
+	if r.planID != "" {
+		fmt.Fprintf(w, "<!-- godwit-plan-id: %s -->\n", r.planID)
+	}
 	if r.planKey != "" {
 		fmt.Fprintf(w, "<!-- godwit-plan-key: %s -->\n", r.planKey)
 	}
@@ -813,7 +824,7 @@ func writeMigrationMarkdown(w io.Writer, r planReport, p planItem) {
 			fmt.Fprintf(w, "\n```diff\n%s\n```\n", p.effect)
 		}
 		if l := p.undescribed(); r.describes() && l != "" {
-			fmt.Fprintf(w, "\n%s\n", strings.TrimSpace(l))
+			fmt.Fprintf(w, "\n%s\n", l)
 		}
 		writeStatementsMarkdown(w, r, p)
 	}
@@ -860,13 +871,23 @@ func (r planReport) notRunDetails() string {
 	return b.String()
 }
 
-func (r planReport) detailsMarkdown() string {
-	lines := r.details()
+func (r planReport) strategyMarkdown() string {
+	lines := r.strategy(markdown)
 	if len(lines) == 0 {
 		return ""
 	}
 
-	return "\n<details><summary>plan details</summary>\n\n```\n" + strings.Join(lines, "\n") + "\n```\n\n</details>\n"
+	return "\n<details><summary>" + strategyHeading + ": transactions, locks, and what a failure leaves behind" +
+		"</summary>\n\n" + strings.Join(lines, "\n\n") + "\n\n</details>\n"
+}
+
+func (r planReport) detailsMarkdown() string {
+	if !r.live || r.stored == nil {
+		return ""
+	}
+
+	return "\n<details><summary>plan details</summary>\n\n```\n" + strings.Join(r.stored.lines(), "\n") +
+		"\n```\n\n</details>\n"
 }
 
 func (r planReport) kind() string {

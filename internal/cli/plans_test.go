@@ -84,7 +84,7 @@ func TestPlanShow(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "\nplan details:\n" +
-		"  target: app\n  rollout: expand-contract\n  plan: p1\n" +
+		"  plan: p1\n" +
 		"  state: bound (run r1)\n" +
 		"  by: ci at 2026-09-01T12:00:00Z, source repo@sha:db, acked H003, out-of-order allowed\n"
 	if !strings.Contains(out, want) || !strings.Contains(out, "hazard H003: DROP COLUMN is destructive") || stub.planGot != "p1" {

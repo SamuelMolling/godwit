@@ -63,41 +63,73 @@ func namesObject(ref string, c engine.ObjectChange) bool {
 	return ref == c.Name
 }
 
-func schemaBlock(c engine.ObjectChange, ph placedHazards, indent string, pal palette) []string {
-	var out []string
+// blockLine has no marker when op is empty, and pad is the column its marker, or its text, starts at.
+type blockLine struct {
+	op   string
+	pad  int
+	text string
+}
+
+func schemaBlock(c engine.ObjectChange, ph placedHazards) []blockLine {
+	var out []blockLine
 	for _, h := range ph.onObject[c.Ref()] {
-		out = append(out, indent+hazardNote(h))
+		out = append(out, blockLine{pad: 2, text: hazardNote(h)})
 	}
-	head := indent + opGlyph[c.Op] + " " + c.Kind + " " + quoteObject(c)
+	head := c.Kind + " " + quoteObject(c)
 	attrs := shown(c)
 	if len(attrs) == 0 && c.Unchanged == 0 {
-		return append(out, pal.op(c.Op, head))
+		return append(out, blockLine{op: c.Op, pad: 2, text: head})
 	}
-	out = append(out, pal.op(c.Op, head+" {"))
+	out = append(out, blockLine{op: c.Op, pad: 2, text: head + " {"})
 	width := 0
 	for _, a := range attrs {
 		width = max(width, len(a.Name))
 	}
 	for _, a := range attrs {
-		line := fmt.Sprintf("%s%s %-*s = %s", indent+"    ", opGlyph[a.Op], width, a.Name, attrValueText(a))
+		text := fmt.Sprintf("%-*s = %s", width, a.Name, attrValueText(a))
 		for _, h := range ph.onAttr[c.Ref()+"\x00"+a.Name] {
-			line += " " + hazardNote(h)
+			text += " " + hazardNote(h)
 		}
-		out = append(out, pal.op(a.Op, line))
+		out = append(out, blockLine{op: a.Op, pad: 6, text: text})
 	}
 	if c.Unchanged > 0 {
-		out = append(out, fmt.Sprintf("%s      # (%s hidden)", indent, count(c.Unchanged, "unchanged attribute")))
+		out = append(out, blockLine{pad: 8, text: fmt.Sprintf("# (%s hidden)", count(c.Unchanged, "unchanged attribute"))})
 	}
 
-	return append(out, indent+"  }")
+	return append(out, blockLine{pad: 4, text: "}"})
+}
+
+func terminalLine(l blockLine, pal palette) string {
+	if l.op == "" {
+		return strings.Repeat(" ", l.pad) + l.text
+	}
+
+	return pal.op(l.op, strings.Repeat(" ", l.pad)+opGlyph[l.op]+" "+l.text)
+}
+
+// diffLine leads with the marker: GitHub highlights a fenced line only when the marker is its first character.
+func diffLine(l blockLine) string {
+	if l.op == "" {
+		return strings.Repeat(" ", l.pad) + l.text
+	}
+
+	return opGlyph[l.op] + strings.Repeat(" ", l.pad+1) + l.text
 }
 
 func shown(c engine.ObjectChange) []engine.AttrChange {
-	if c.Kind != engine.KindView && c.Kind != engine.KindMatView {
+	switch c.Kind {
+	case engine.KindView, engine.KindMatView:
+		return changedOnly(c.Attrs)
+	case engine.KindFunction, engine.KindProcedure:
+		return maskBody(c.Attrs)
+	default:
 		return c.Attrs
 	}
+}
+
+func changedOnly(attrs []engine.AttrChange) []engine.AttrChange {
 	var out []engine.AttrChange
-	for _, a := range c.Attrs {
+	for _, a := range attrs {
 		if a.Op == engine.OpUpdate {
 			out = append(out, engine.AttrChange{Op: a.Op, Name: a.Name, Old: []string{"(changed)"}, New: []string{"(changed)"}})
 		}
@@ -106,7 +138,24 @@ func shown(c engine.ObjectChange) []engine.AttrChange {
 	return out
 }
 
+func maskBody(attrs []engine.AttrChange) []engine.AttrChange {
+	out := make([]engine.AttrChange, 0, len(attrs))
+	for _, a := range attrs {
+		switch {
+		case a.Name != engine.BodyAttr:
+			out = append(out, a)
+		case a.Op == engine.OpUpdate:
+			out = append(out, engine.AttrChange{Op: a.Op, Name: a.Name, Old: []string{"(changed)"}, New: []string{"(changed)"}})
+		}
+	}
+
+	return out
+}
+
 func quoteObject(c engine.ObjectChange) string {
+	if c.Kind == engine.KindFunction || c.Kind == engine.KindProcedure {
+		return c.Ref()
+	}
 	if c.Schema == "" {
 		return `"` + c.Name + `"`
 	}
@@ -146,15 +195,19 @@ func (p planItem) describable() bool {
 	return len(p.changes) > 0
 }
 
+// undescribed is prose, not a comment: it prints outside the fence, where a leading # is a heading.
 func (p planItem) undescribed() string {
 	if p.effect != "" {
 		return ""
 	}
 	if reason := p.Opaque(); reason != "" {
-		return "  # a schema snapshot cannot see what this does (" + reason + "); the statements it runs are below"
+		return "godwit cannot describe what this one does to the database (" + reason + "), so the statements it runs" +
+			" are below instead."
 	}
 
-	return "  # no schema change was recorded for this one; the statements it runs are below"
+	return "godwit cannot describe what this one does to the database: the schema before and after it is the same," +
+		" so what it changes is something the snapshot does not cover — a grant, row-level security, a comment." +
+		" The statements it runs are below instead."
 }
 
 func (p planItem) schemaHeading() string {
@@ -202,15 +255,22 @@ func (r planReport) objectFooter() string {
 	return fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy.", add, change, destroy)
 }
 
-func writeSchemaText(w io.Writer, p planItem, pal palette) {
+func blockLines(p planItem) []blockLine {
 	ph := placeHazards(p)
+	var out []blockLine
 	for _, h := range ph.loose {
-		fmt.Fprintln(w, "  "+hazardNote(h))
+		out = append(out, blockLine{pad: 2, text: hazardNote(h)})
 	}
 	for _, c := range p.changes {
-		for _, l := range schemaBlock(c, ph, "  ", pal) {
-			fmt.Fprintln(w, l)
-		}
+		out = append(out, schemaBlock(c, ph)...)
+	}
+
+	return out
+}
+
+func writeSchemaText(w io.Writer, p planItem, pal palette) {
+	for _, l := range blockLines(p) {
+		fmt.Fprintln(w, terminalLine(l, pal))
 	}
 	for _, h := range recipeBlocks(p) {
 		fmt.Fprintf(w, "    recipe for %s:\n", h.Code)
@@ -219,13 +279,9 @@ func writeSchemaText(w io.Writer, p planItem, pal palette) {
 }
 
 func writeSchemaMarkdown(w io.Writer, p planItem) {
-	ph := placeHazards(p)
-	var lines []string
-	for _, h := range ph.loose {
-		lines = append(lines, hazardNote(h))
-	}
-	for _, c := range p.changes {
-		lines = append(lines, schemaBlock(c, ph, "", mono)...)
+	lines := make([]string, 0, len(p.changes))
+	for _, l := range blockLines(p) {
+		lines = append(lines, diffLine(l))
 	}
 	fmt.Fprintf(w, "\n```diff\n%s\n```\n", strings.Join(lines, "\n"))
 	for _, h := range recipeBlocks(p) {

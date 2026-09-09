@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 
 	pgquery "github.com/pganalyze/pg_query_go/v6"
@@ -43,6 +44,13 @@ type Hazard struct {
 	Recipe    string
 	Object    string
 	Attribute string
+}
+
+var lockHazards = []string{"H001", "H004", "H006", "H007", "H009", "H010"}
+
+// HoldsLock reports whether the hazard is about a lock other sessions queue behind.
+func (h Hazard) HoldsLock() bool {
+	return slices.Contains(lockHazards, h.Code)
 }
 
 // Short is the hazard's own wording cut before the recipe it goes on to describe in prose.

@@ -52,8 +52,8 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 			"<!-- godwit-plan-verdict: 1 to apply, 1 hazard to acknowledge -->\n<!-- godwit-plan-hazards: 1 -->\n") {
 		t.Fatalf("the pending hazard must still be gated:\n%s", got)
 	}
-	if strings.Count(got, "H001") != 3 {
-		t.Fatalf("only the pending migration's hazard may appear (statement, gate line, ack hint):\n%s", got)
+	if strings.Count(got, "H001") != 4 {
+		t.Fatalf("only the pending migration's hazard may appear (statement, lock strategy, gate line, ack hint):\n%s", got)
 	}
 }
 
@@ -142,8 +142,8 @@ func TestPlanReportNamesTheIgnoredBookkeepingTables(t *testing.T) {
 	if !strings.Contains(b.String(), want) {
 		t.Fatalf("markdown missing %q:\n%s", want, b.String())
 	}
-	if strings.Contains(b.String(), "<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: direct\nplan: p1\n```") == false {
-		t.Fatalf("the details block keeps only what a person reads:\n%s", b.String())
+	if !strings.Contains(b.String(), "<!-- godwit-plan-id: p1 -->") || strings.Contains(b.String(), "plan: p1") {
+		t.Fatalf("the id is machine identity and rides in a comment:\n%s", b.String())
 	}
 
 	b.Reset()

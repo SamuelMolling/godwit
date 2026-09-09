@@ -290,9 +290,13 @@ godwit will perform the following actions:
 not executed by this run (1):
   R__order_stats  unchanged since it was last applied
 
+how this will run:
+  The one statement commits with its own journal row on the target, so a run that fails or is killed part way is resumed at it rather than replaying the migration from its first line.
+  Every statement here runs inside a transaction, so one that fails leaves nothing of itself behind.
+  Every statement sets the target's lock_timeout before it runs, so one that cannot take its lock gives up and fails the run instead of queueing in front of every query behind it.
+  If a statement fails, that statement is rolled back and the run stops there; the statements before it stay committed and the migrations already finished stay applied. Fix the migration and run it again.
+
 plan details:
-  target: app
-  rollout: direct
   plan: 48779753-1d13-4637-a290-6639adaca3dc
 
 Plan: 0 to add, 1 to change, 0 to destroy.

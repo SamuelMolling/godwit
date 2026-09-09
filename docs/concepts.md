@@ -466,9 +466,8 @@ and godwit will not silently upgrade what the reader approved.
 **A target mid-rollout is not plannable.** Between the phases the schema matches no recorded state, so `PlanRun`
 and `CreateRun` refuse with `target <t> has run <id> awaiting contract; confirm or revert it first`.
 
-**Never already applied.** The expanded body carries DML (the backfill) and objects a snapshot cannot read back
-(the trigger and its function), so `Plan.Opaque()` already stops `Detect`'s prefix walk. That is the right answer
-for the right reason; there is no special case for it.
+**Never already applied.** The expanded body carries DML (the backfill), so `Plan.Opaque()` already stops
+`Detect`'s prefix walk. That is the right answer for the right reason; there is no special case for it.
 
 **Progress.** The scheduler writes the newest statement event to `cp_runs.progress` under the heartbeat, so
 `godwit runs`, `godwit run get` and the UI show `backfill 320000/~1240000 rows (batch 64)` while it runs. A run
@@ -711,15 +710,17 @@ down files as a review artifact.
 
 ## Drift
 
-After every successful run (and after a baseline) the scheduler stores a **snapshot** of the target schema in `cp_snapshots`: tables, their columns, constraints, indexes, sequences, enum types, and an `md5` of each view and materialized view definition, sorted under a format marker, with a `sha256` fingerprint.
+After every successful run (and after a baseline) the scheduler stores a **snapshot** of the target schema in `cp_snapshots`: tables, their columns, constraints, indexes and triggers, sequences, enum types, functions and procedures, and an `md5` of each view and materialized view definition, sorted under a format marker, with a `sha256` fingerprint.
+
+A trigger belongs to the table it fires on, the way a constraint does, and is recorded as `pg_get_triggerdef` writes it; the enforcement triggers behind a foreign key are internal and left out, because the constraint line already carries them. A function or procedure is keyed by its argument list, so two overloads are two objects, and carries its language, return type, volatility, security, strictness and parallel safety in full — but its **body as an `md5`**, the way a view definition is. A body is a page of PL/pgSQL and a snapshot line holds one object per line; the digest says the body moved without pasting it into a diff, and the migration that moved it is the diff. What a body's digest cannot say is *how* it changed, and a per-function `SET` (`proconfig`) is not recorded at all, which is why a `CREATE FUNCTION ... SET search_path` is `effect not inspectable` rather than a described change.
 
 A column carries the type as PostgreSQL declares it — `format_type`, so `character varying(20)`, `numeric(10,2)`, `timestamp(3) with time zone`, `text[]` and the name of an enum, rather than the one word `information_schema` reduces each of them to. Widening a `varchar`, changing an enum column from one type to another and turning a column into an array are all schema changes, and a snapshot that cannot tell them apart cannot report them. The default is the expression `pg_get_expr` renders, which is also where a generated column's expression lands.
 
 Left out, in one place rather than per query: `pg_catalog` and `information_schema`, godwit's own journal, everything an extension owns, and under `ignore_adopted_tables` the bookkeeping tables of the migration tool the database was adopted from. Two more are left out because something else already reports them, and reporting them twice turns one change into two diff lines: **the index behind a constraint** (the constraint line carries it) and **a sequence a serial or identity column owns** (the column's default carries it).
 
-Not described at all: functions, procedures, triggers, row-level security policies, grants, and which extensions are installed. A change to any of those is invisible to drift; keep them in migrations and review them there.
+Not described at all: row-level security policies, grants, comments, and which extensions are installed. A change to any of those is invisible to drift; keep them in migrations and review them there.
 
-**The format marker.** The first line of every definition names the snapshot format (`godwit-schema-v3`). A stored baseline carrying an older marker was taken by a godwit that looked at a different set of objects, or described them differently, so it cannot be compared with a fresh one: `CheckDrift` and the monitor refuse with `drift baseline predates the schema format` and name the fix (`godwit drift accept <target>`), rather than either reporting the upgrade as fleet-wide drift or silently re-baselining over drift the target really had. A plan's own drift falls back to empty for the same reason, and a stored plan taken before the change is `PlanStale{schema}` — re-plan.
+**The format marker.** The first line of every definition names the snapshot format (`godwit-schema-v4`). A stored baseline carrying an older marker was taken by a godwit that looked at a different set of objects, or described them differently, so it cannot be compared with a fresh one: `CheckDrift` and the monitor refuse with `drift baseline predates the schema format` and name the fix (`godwit drift accept <target>`), rather than either reporting the upgrade as fleet-wide drift or silently re-baselining over drift the target really had. A plan's own drift falls back to empty for the same reason, and a stored plan taken before the change is `PlanStale{schema}` — re-plan.
 
 **The tool godwit replaced is not drift.** A database adopted from golang-migrate keeps its `schema_migrations`; from Flyway, `flyway_schema_history`; also recognised are Liquibase's `databasechangelog` and `databasechangeloglock`, Alembic's `alembic_version`, Rails' `schema_migrations` and `ar_internal_metadata`, Prisma's `_prisma_migrations` and Atlas's `atlas_schema_revisions`. No migration creates them, so every plan and every drift check would report them for the rest of the target's life, and a signal that is always on is one people stop reading. The exemption is earned by shape, not by name: the table must carry the columns that tool's table must have and none it never creates, so a `schema_migrations` of your own stays visible. Every plan report names what it left out and how to turn the exemption off (`ignore_adopted_tables`), and the same exemption applies to the scratch replay, so the two sides of a comparison always agree about what is in the schema.
 
@@ -889,7 +890,7 @@ Only what the snapshot sees can be matched ([drift](#drift) lists it). Everythin
 | Situation | `note` | What to do |
 |---|---|---|
 | The migration has DML (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `COPY`, `TRUNCATE`, `SELECT`, `CALL`, `DO`) | `has DML, must execute` | Run it; data is never inferred from a schema. |
-| The migration creates or alters something the snapshot cannot see (functions, procedures, triggers, policies, grants, extensions, composite or domain types, tablespaces, collations, unlogged or temporary tables, view options…) or has no effect on the scratch schema | `effect not inspectable` | Run it, or baseline it explicitly. |
+| The migration creates or alters something the snapshot cannot see (policies, grants, comments, extensions, composite or domain types, tablespaces, collations, unlogged or temporary tables, view options, a function's `SET` or `LEAKPROOF`…) or has no effect on the scratch schema | `effect not inspectable` | Run it, or baseline it explicitly. |
 | The hand changes match the migration's effect but not as a prefix of the pending set (`S_k` never equals the target) | `effect is present but not as a prefix` and the difference in `drift` | Reorder or split the migrations so the hand-applied ones come first, or `godwit drift accept` the schema change and adopt the migrations with `godwit target adopt`. |
 | An applied migration's body differs from its checksum | `invalid_argument: ... applied with different content` | Restore the file. |
 | `skip_validation` | no note; `drift` falls back to the last snapshot | Validate to detect. |

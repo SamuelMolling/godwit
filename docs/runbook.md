@@ -217,7 +217,7 @@ Two things godwit cannot see and this query will not list: a `COMMENT ON COLUMN`
 
 **Symptom.** `schema drift detected` in the log, `godwit_drift_checks_total{result="drifted"}`, a `drift detected` notification, `GodwitSchemaDrift`.
 
-**Meaning.** The target's schema fingerprint (columns, constraints, indexes and views outside `pg_catalog`/`information_schema`) differs from the snapshot taken after the last successful run or baseline. Someone changed the schema outside godwit, or a run was reverted by PITR.
+**Meaning.** The target's schema fingerprint (columns, constraints, indexes, triggers, sequences, enums, functions, procedures and views outside `pg_catalog`/`information_schema`) differs from the snapshot taken after the last successful run or baseline. Someone changed the schema outside godwit, or a run was reverted by PITR.
 
 ```sql
 SELECT id, detected_at, resolved_at, diff FROM cp_drift_events

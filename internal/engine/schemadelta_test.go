@@ -187,6 +187,66 @@ func TestSchemaChangesReadsSequencesAndEnums(t *testing.T) {
 	}
 }
 
+func TestSchemaChangesReadsRoutinesAndTriggers(t *testing.T) {
+	t.Parallel()
+	conn := newTestDB(t)()
+
+	changes := snapshotAround(t, conn, `
+		CREATE TABLE widgets (id bigint PRIMARY KEY, at timestamptz);
+		CREATE FUNCTION grade(n integer) RETURNS text LANGUAGE sql STABLE AS $$ SELECT 'a' $$;`,
+		`CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN new.at := now(); RETURN new; END $$;
+		 CREATE TRIGGER touch_widgets BEFORE UPDATE ON widgets FOR EACH ROW EXECUTE FUNCTION touch();
+		 CREATE PROCEDURE sweep() LANGUAGE plpgsql AS $$ BEGIN DELETE FROM widgets; END $$;
+		 CREATE OR REPLACE FUNCTION grade(n integer) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT 'b' $$;`)
+
+	made := changeOf(t, changes, KindFunction, "touch()")
+	if made.Op != OpCreate || made.Schema != "public" {
+		t.Fatalf("touch = %+v", made)
+	}
+	if got := attrOf(t, made, "returns"); got.New[0] != "trigger" {
+		t.Fatalf("returns = %+v", got)
+	}
+	if got := attrOf(t, made, BodyAttr); len(got.New) != 1 || len(got.New[0]) != 32 {
+		t.Fatalf("the body is a digest, not the source: %+v", got)
+	}
+	if got := changeOf(t, changes, KindProcedure, "sweep()"); got.Op != OpCreate {
+		t.Fatalf("sweep = %+v", got)
+	}
+
+	edited := changeOf(t, changes, KindFunction, "grade(n integer)")
+	if got := attrOf(t, edited, "volatility"); got.Old[0] != "stable" || got.New[0] != "immutable" {
+		t.Fatalf("volatility = %+v", got)
+	}
+	if attrOf(t, edited, BodyAttr).Op != OpUpdate {
+		t.Fatalf("a rewritten body is a change: %+v", edited)
+	}
+
+	table := changeOf(t, changes, KindTable, "widgets")
+	got := attrOf(t, table, "touch_widgets")
+	if got.Op != OpCreate || !strings.HasPrefix(got.New[0], "CREATE TRIGGER touch_widgets BEFORE UPDATE") {
+		t.Fatalf("a trigger belongs to the table it fires on: %+v", got)
+	}
+}
+
+func TestSchemaChangesKeepsOverloadsApart(t *testing.T) {
+	t.Parallel()
+
+	changes := SchemaChanges("", strings.Join([]string{
+		SchemaFormat,
+		"function public.f(a integer) language=sql body=one returns=text",
+		"function public.f(a bigint, b double precision) language=sql body=two returns=SETOF text",
+	}, "\n"))
+	if len(changes) != 2 {
+		t.Fatalf("two overloads are two objects: %+v", changes)
+	}
+	if changes[0].Name != "f(a bigint, b double precision)" || changes[1].Name != "f(a integer)" {
+		t.Fatalf("the argument list is part of the identity: %+v", changes)
+	}
+	if got := attrOf(t, changes[0], "returns"); got.New[0] != "SETOF text" {
+		t.Fatalf("the return type is read whole, spaces and all: %+v", got)
+	}
+}
+
 func TestSchemaChangesIgnoresWhatItCannotRead(t *testing.T) {
 	t.Parallel()
 

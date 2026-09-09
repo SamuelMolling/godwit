@@ -305,7 +305,7 @@ case "${COMMAND}" in
     if [ ! -s "${summary}" ]; then
       refused plan refused
     fi
-    plan_id="$(sed -n 's/^plan: \(.*\)$/\1/p' "${summary}" | head -n 1)"
+    plan_id="$(marker id)"
     plan_key="$(marker key)"
     plan_verdict="$(marker verdict)"
     plan_hazards="$(marker hazards)"
