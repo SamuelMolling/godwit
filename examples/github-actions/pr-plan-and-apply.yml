@@ -17,7 +17,7 @@ permissions:
 
 # Branch protection on main: require the godwit/applied status and "Require branches to be up to
 # date before merging". The status is set on the head commit, so a push after the apply drops it
-# and the pull request needs `/godwit apply` again; a base move re-runs `check` and re-plans.
+# and the pull request needs `godwit apply` again; a base move re-runs `check` and re-plans.
 concurrency: migrate-orders   # one apply per target at a time
 
 jobs:
@@ -51,15 +51,15 @@ jobs:
 
       - run: echo "plan ${{ steps.plan.outputs.plan-id }} (key ${{ steps.plan.outputs.plan-key }})"
 
-  # `/godwit apply` as a comment or review on the pull request applies the stored plan from the
-  # pull request head; `/godwit confirm` runs the contract phase it held back; `/godwit revert`
+  # `godwit apply` as a comment or review on the pull request applies the stored plan from the
+  # pull request head; `godwit confirm` runs the contract phase it held back; `godwit revert`
   # runs the down files of that run when the pull request is abandoned. The commander must hold
   # write or admin permission on this repository (allowed-associations only narrows further), and
   # apply and confirm additionally need an approving review standing on the exact head commit.
   # Other events end the job as skipped.
   apply:
     if: >-
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/godwit '))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, 'godwit '))
       || github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     steps:
@@ -84,9 +84,9 @@ jobs:
 
       # With rollout: expand-contract the apply above can end in awaiting_contract: the expand phase
       # is applied and godwit/applied stays pending. Deploy the application version that reads both
-      # shapes, then comment `/godwit confirm` to release the same run's contract phase.
+      # shapes, then comment `godwit confirm` to release the same run's contract phase.
       - name: Run the contract phase the apply held back
-        if: contains(github.event.comment.body, '/godwit confirm')
+        if: contains(github.event.comment.body, 'godwit confirm')
         uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: confirm
@@ -95,7 +95,7 @@ jobs:
           target: orders
 
       - name: Revert the run of the pull request
-        if: contains(github.event.comment.body, '/godwit revert')
+        if: contains(github.event.comment.body, 'godwit revert')
         uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: revert

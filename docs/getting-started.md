@@ -441,7 +441,7 @@ Then `godwit lint`, `godwit plan` and `godwit migrate` work bare. The token stay
 Two consequences of this particular file worth knowing before you write it:
 
 - `target` reaches `migrate`, `revert`, `runs`, `run confirm` and `diff`, but **not** `plan`: `plan --target` is a service command, and a flag that changes what a command connects to does not arrive from a file. A bare `godwit plan` parses the directory offline whatever the file says; spell `--target app --save` when you want the stored plan of section 3c.
-- `rollout: expand-contract` applies to every run, including the ones CI makes, so a destructive migration will stop at `awaiting_contract` and wait for `godwit run confirm` (or `/godwit confirm` on the pull request, below).
+- `rollout: expand-contract` applies to every run, including the ones CI makes, so a destructive migration will stop at `awaiting_contract` and wait for `godwit run confirm` (or `godwit confirm` on the pull request, below).
 
 ## 5. CI
 
@@ -461,7 +461,7 @@ steps:
       token: ${{ secrets.GODWIT_TOKEN_READ }}
       target: orders
 
-# on issue_comment (created): a collaborator comments "/godwit apply" once the review is done
+# on issue_comment (created): a collaborator comments "godwit apply" once the review is done
 permissions: { contents: read, pull-requests: write, statuses: write }
 steps:
   - uses: actions/checkout@v4
@@ -486,13 +486,13 @@ steps:
 
 `lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head and sets the `godwit/applied` commit status the branch protection requires; `verify` on the merge proves `main` carries nothing unapplied.
 
-`/godwit apply` is refused unless the commenter holds write or admin permission on the repository **and** an approving review by someone other than the pull request author stands on that exact commit — so a push after the approval means approving again before applying. Working alone, either approve from a second account or pass `require-approval: "false"` ([who may command an apply](ci-cd.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
+`godwit apply` is refused unless the commenter holds write or admin permission on the repository **and** an approving review by someone other than the pull request author stands on that exact commit — so a push after the approval means approving again before applying. Working alone, either approve from a second account or pass `require-approval: "false"` ([who may command an apply](ci-cd.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
 
-The database changes **before** the merge, on purpose: by the time the pull request lands, `main` describes a schema the target already has. An `expand-contract` apply needs a second comment to finish: it stops at `awaiting_contract`, and until `/godwit confirm` runs, `godwit/applied` stays `pending` with *expand applied; comment `/godwit confirm` to run the contract phase*, so branch protection holds the pull request. Add the step beside the apply, in the same `issue_comment` job:
+The database changes **before** the merge, on purpose: by the time the pull request lands, `main` describes a schema the target already has. An `expand-contract` apply needs a second comment to finish: it stops at `awaiting_contract`, and until `godwit confirm` runs, `godwit/applied` stays `pending` with *expand applied; comment `godwit confirm` to run the contract phase*, so branch protection holds the pull request. Add the step beside the apply, in the same `issue_comment` job:
 
 ```yaml
   - name: Run the contract phase held by the apply
-    if: contains(github.event.comment.body, '/godwit confirm')
+    if: contains(github.event.comment.body, 'godwit confirm')
     uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
     with:
       command: confirm

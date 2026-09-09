@@ -23,7 +23,7 @@ Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behin
 
 ```
 $ godwit plan --target app --dir db/migrations --rollout expand-contract
-1 migration will be applied to app. The expand phase runs on apply, then the run stops at awaiting_contract and the contract phase waits for a confirm (/godwit confirm on a pull request).
+1 migration will be applied to app. The expand phase runs on apply, then the run stops at awaiting_contract and the contract phase waits for a confirm (godwit confirm on a pull request).
 
 20260901121000_customer_id_text  14 statements, expand then contract phases, written by a directive
   -- godwit: change-type orders.customer_id text using='customer_id::text'
@@ -53,7 +53,7 @@ Plan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge
 
 (An excerpt: the run has fourteen statements.) The trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, statement 6 is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
 
-**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `/godwit apply` bound to the reviewed plan, `/godwit confirm` for the contract phase, and a `godwit/applied` commit status that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
+**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `godwit apply` bound to the reviewed plan, `godwit confirm` for the contract phase, and a `godwit/applied` commit status that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
 
 ## Quickstart
 
@@ -92,7 +92,7 @@ That single-server form executes submitted SQL on the store server as the store 
 | Assertions | `-- godwit: assert '<select>' = 0` makes a condition about the data a statement of the plan, journalled and re-checked at confirm time — [concepts](docs/concepts.md#assertions) |
 | Admission | the hazard gate, an out-of-order guard, and a replay of the target's recorded history plus the new files on a throwaway database, before anything is queued — [concepts](docs/concepts.md#admission) |
 | Plan as contract | the admitted plan is stored with an observation of the target; `migrate` binds to it, re-plans what other runs explain, refuses the rest, and records a migration already applied by hand instead of executing it — [concepts](docs/concepts.md#plans) |
-| Apply before merge | composite GitHub Action: lint and plan on the pull request, `/godwit apply`, `/godwit confirm`, `/godwit revert`, `verify` on the merge commit; ArgoCD hooks and a Helm chart — [CI/CD](docs/ci-cd.md) |
+| Apply before merge | composite GitHub Action: lint and plan on the pull request, `godwit apply`, `godwit confirm`, `godwit revert`, `verify` on the merge commit; ArgoCD hooks and a Helm chart — [CI/CD](docs/ci-cd.md) |
 | Expand → contract | the rollout is split by statement: the run parks in `awaiting_contract` and `ConfirmRollout` resumes the same run where it stopped — [concepts](docs/concepts.md#rollout-policies) |
 | Revert | scoped to what the run actually applied, never to the directory it submitted; a plan that would destroy rows is refused, not warned about — [concepts](docs/concepts.md#revert) |
 | Version targets | `--to <version>` stops a run short; the migrations above it stay on the plan marked **withheld**, so the report cannot be read as the whole set — [concepts](docs/concepts.md#version-targets) |

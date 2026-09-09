@@ -497,7 +497,7 @@ func TestMigrateDryRun(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "1 migration will be applied to app. The expand phase runs on apply, then the run stops at" +
-		" awaiting_contract and the contract phase waits for a confirm (/godwit confirm on a pull request).\n" +
+		" awaiting_contract and the contract phase waits for a confirm (godwit confirm on a pull request).\n" +
 		"\n+ 20260901120001_drop_a  1 statement, contract phase\n" +
 		"  [0] tx\n" +
 		"      ALTER TABLE users DROP COLUMN a;\n" +
@@ -507,7 +507,7 @@ func TestMigrateDryRun(t *testing.T) {
 		"\nplan details:\n" +
 		"  target: app\n  rollout: expand-contract\n" +
 		"\n1 hazard on what this run would execute: take the recipe printed beside the statement, or accept the risk" +
-		" with --ack H003 (/godwit apply --ack H003 on a pull request).\n" +
+		" with --ack H003 (godwit apply --ack H003 on a pull request).\n" +
 		"Plan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
@@ -534,7 +534,7 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 	}
 	want := "## godwit dry run\n\n" +
 		"\u26a0\ufe0f **1 migration will be applied to `app`.** The expand phase runs on apply, then the run stops at" +
-		" `awaiting_contract` and the contract phase waits for a confirm (`/godwit confirm` on a pull request).\n" +
+		" `awaiting_contract` and the contract phase waits for a confirm (`godwit confirm` on a pull request).\n" +
 		"\n\u26a0\ufe0f **Not validated.** These statements were never replayed on a scratch database, so nothing has" +
 		" proved they apply.\n" +
 		"\n```diff\n+ 20260901120001_drop_a  1 statement, contract phase\n```\n" +
@@ -544,7 +544,7 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 		"\n<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: expand-contract\n" +
 		"```\n\n</details>\n" +
 		"\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the statement, or accept" +
-		" the risk with `--ack H003` (`/godwit apply --ack H003` on a pull request).\n" +
+		" the risk with `--ack H003` (`godwit apply --ack H003` on a pull request).\n" +
 		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n" +
 		"\n<!-- godwit-plan-verdict: 1 to apply, 1 hazard to acknowledge -->\n<!-- godwit-plan-hazards: 1 -->\n"
 	if out != want {
@@ -1232,7 +1232,7 @@ func TestMigrateDryRunAlreadyApplied(t *testing.T) {
 			"ALTER TABLE users ADD COLUMN email text;\n```\n") ||
 		!strings.Contains(out, "\n**H011** seed rows in a migration\n") ||
 		!strings.Contains(out, "\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the"+
-			" statement, or accept the risk with `--ack H011` (`/godwit apply --ack H011` on a pull request).\n") {
+			" statement, or accept the risk with `--ack H011` (`godwit apply --ack H011` on a pull request).\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 

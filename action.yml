@@ -10,10 +10,10 @@ inputs:
     description: "apply-on-pr (default: apply runs from the pull request, verify on push, migrate is refused) or apply-on-merge (migrate runs on push; apply, confirm and revert are refused)"
     default: apply-on-pr
   apply-on:
-    description: "What triggers apply: comment (a '/godwit apply' comment or review), approve (an approved review), or comment,approve"
+    description: "What triggers apply: comment (a 'godwit apply' comment or review), approve (an approved review), or comment,approve"
     default: comment
   allowed-associations:
-    description: "author_association values whose comment or review may command apply, confirm or revert; it narrows, it does not authorise — the commander must also hold write or admin permission on the repository. Only OWNER, MEMBER and COLLABORATOR are accepted"
+    description: "author_association values whose comment or review may command plan, apply, confirm or revert; it narrows, it does not authorise — the commander must also hold write or admin permission on the repository. Only OWNER, MEMBER and COLLABORATOR are accepted"
     default: OWNER,MEMBER,COLLABORATOR
   require-approval:
     description: "apply and confirm need an approving review, by someone other than the pull request author who holds write or admin permission, standing on the exact commit being applied"
@@ -25,13 +25,13 @@ inputs:
     description: "Git ref; lint only checks migrations added since it (empty checks every migration)"
     default: origin/main
   ack:
-    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002). A '/godwit apply --ack H001' or '/godwit revert --ack H001' comment adds its codes to these for that run only"
+    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002). A 'godwit apply --ack H001' or 'godwit revert --ack H001' comment adds its codes to these for that run only"
     default: ""
   allow-data-loss:
-    description: "revert: run a plan that drops a table or column still holding rows (godwit refuses it by default); a '/godwit revert --allow-data-loss' comment sets it for that run only"
+    description: "revert: run a plan that drops a table or column still holding rows (godwit refuses it by default); a 'godwit revert --allow-data-loss' comment sets it for that run only"
     default: "false"
   force:
-    description: "revert: undo a run that is not the newest un-reverted one on its target; a '/godwit revert --force' comment sets it for that run only"
+    description: "revert: undo a run that is not the newest un-reverted one on its target; a 'godwit revert --force' comment sets it for that run only"
     default: "false"
   server:
     description: "godwit service URL (lint, plan, apply, verify, revert, migrate, diff; lint uses it for the schema_source check, warning W002 without it; default: server from godwit.yaml or GODWIT_SERVER)"
@@ -43,7 +43,7 @@ inputs:
     description: "Target name (lint, plan, apply, verify, migrate, diff; confirm and revert narrow the run search with it; default: target from godwit.yaml). With a target, plan stores the admitted plan on the service"
     default: ""
   rollout:
-    description: "Rollout policy for plan, apply and migrate: direct or expand-contract (default: godwit.yaml, else direct)"
+    description: "Rollout policy for plan, apply and migrate: direct or expand-contract (default: godwit.yaml, else direct). A 'godwit plan --rollout expand-contract' comment sets it for that re-plan"
     default: ""
   dry-run:
     description: "With migrate: ask the service for the admitted plan without persisting it and without queueing a run (command: plan persists it). With diff: report the migration without writing files"
@@ -111,7 +111,7 @@ outputs:
     description: "Head commit of that pull request; plan and apply set their commit status on it"
     value: ${{ steps.context.outputs.head-sha }}
   skipped:
-    description: "true when the event did not carry a command for apply, confirm or revert (nothing ran)"
+    description: "true when the event did not carry a command for plan, apply, confirm or revert (nothing ran)"
     value: ${{ steps.context.outputs.skipped }}
   changed:
     description: "true when diff found the target and the desired schema differ"
@@ -126,10 +126,23 @@ outputs:
 runs:
   using: composite
   steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    - name: Build godwit
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        CGO_ENABLED=1 go build -o "${RUNNER_TEMP}/godwit" ./cmd/godwit
+
     - name: Read the event
       id: context
       shell: bash
       env:
+        GODWIT_BIN: ${{ runner.temp }}/godwit
         GH_TOKEN: ${{ inputs.github-token }}
         COMMAND: ${{ inputs.command }}
         MODE: ${{ inputs.mode }}
@@ -143,20 +156,6 @@ runs:
         REPOSITORY: ${{ github.repository }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: "${{ github.action_path }}/scripts/action-context.sh"
-
-    - uses: actions/setup-go@v5
-      if: ${{ steps.context.outputs.skipped != 'true' }}
-      with:
-        go-version: ${{ inputs.go-version }}
-        cache-dependency-path: ${{ github.action_path }}/go.sum
-
-    - name: Build godwit
-      if: ${{ steps.context.outputs.skipped != 'true' }}
-      shell: bash
-      working-directory: ${{ github.action_path }}
-      run: |
-        set -euo pipefail
-        CGO_ENABLED=1 go build -o "${RUNNER_TEMP}/godwit" ./cmd/godwit
 
     - name: Run godwit ${{ inputs.command }}
       id: godwit
@@ -173,7 +172,7 @@ runs:
         FORCE: ${{ steps.context.outputs.force || inputs.force }}
         SERVER: ${{ inputs.server }}
         TARGET: ${{ inputs.target }}
-        ROLLOUT: ${{ inputs.rollout }}
+        ROLLOUT: ${{ steps.context.outputs.rollout || inputs.rollout }}
         DRY_RUN: ${{ inputs.dry-run }}
         SOURCE: ${{ inputs.source }}
         SCHEMA: ${{ inputs.schema }}
