@@ -131,7 +131,7 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string, base DiffBase, fi
 	if err != nil {
 		return SchemaDiff{}, err
 	}
-	obs, err := d.sched.engine.Observe(ctx, tg.dsn)
+	obs, err := d.sched.engine.Observe(ctx, tg.dsn, tg.scope)
 	if err != nil {
 		return SchemaDiff{}, err
 	}

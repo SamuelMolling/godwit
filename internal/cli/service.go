@@ -111,7 +111,7 @@ func adoptedFromJournalLine(target string, resp *godwitv1.ReconcileTargetRespons
 func newTargetAddCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.RegisterTargetRequest{}
-	var keepOld bool
+	var keepOld, ignoreAdopted bool
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Register a target with its credential provider",
@@ -120,6 +120,9 @@ func newTargetAddCmd() *cobra.Command {
 			req.Name = args[0]
 			if cmd.Flags().Changed("keep-old") {
 				req.KeepOld = &keepOld
+			}
+			if cmd.Flags().Changed("ignore-adopted-tables") {
+				req.IgnoreAdoptedTables = &ignoreAdopted
 			}
 			resp, err := client.RegisterTarget(cmd.Context(), connect.NewRequest(req))
 			if err != nil {
@@ -140,6 +143,8 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
 	cmd.Flags().StringVar(&req.SearchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
 	cmd.Flags().BoolVar(&keepOld, "keep-old", true, "change-type on this target keeps the pre-swap column as the rollback")
+	cmd.Flags().BoolVar(&ignoreAdopted, "ignore-adopted-tables", true,
+		"leave the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and its drift")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for runs on this target")
 	_ = cmd.MarkFlagRequired("provider")
 
@@ -286,6 +291,7 @@ func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
 		r.items = append(r.items, planItem{
 			Plan: p, applied: pm.Applied, phase: pm.Phase, alreadyApplied: pm.AlreadyApplied, effect: pm.Effect, note: pm.Note,
 			directives: pm.Directives, expanded: pm.Expanded, notes: pm.Notes, withheld: pm.Withheld,
+			skipped: pm.Skipped,
 		})
 	}
 
@@ -305,7 +311,7 @@ func observationFromProto(o *godwitv1.PlanObservation) *planObservation {
 
 	return &planObservation{
 		HistoryHash: o.HistoryHash, SchemaFingerprint: o.SchemaFingerprint,
-		AppliedCount: o.AppliedCount, NewestApplied: o.NewestApplied, At: stamp(o.At),
+		AppliedCount: o.AppliedCount, NewestApplied: o.NewestApplied, At: stamp(o.At), IgnoredTables: o.IgnoredTables,
 	}
 }
 

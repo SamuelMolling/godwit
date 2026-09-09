@@ -89,6 +89,8 @@ message RegisterTargetRequest {
   // search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
   // Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
   string search_path = 10;
+  // Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
+  optional bool ignore_adopted_tables = 12;
 }
 
 message RegisterTargetResponse {}
@@ -148,6 +150,8 @@ message PlanObservation {
   google.protobuf.Timestamp at = 5;
   // The search_path the target's sessions actually resolve under (current_schemas), which the plan was taken with.
   string search_path = 6;
+  // Bookkeeping tables of a previous migration tool that the schema snapshot left out, as "schema.table (tool)".
+  repeated string ignored_tables = 7;
 }
 
 // Error detail on failed_precondition: the stored plan no longer matches the target.
@@ -239,6 +243,8 @@ message PlannedMigration {
   bool checkpoint = 15;
   // The newest version a checkpoint collapses; zero on every other migration.
   int64 collapses_through = 16;
+  // The executor would not run these statements, so their hazards are not gated and --ack does nothing to them.
+  bool skipped = 17;
 }
 
 message PlanRunResponse {

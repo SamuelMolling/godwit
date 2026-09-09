@@ -142,7 +142,7 @@ func rpcErr(err error) *connect.Error {
 		errors.Is(err, controlplane.ErrNotRevertable), errors.Is(err, controlplane.ErrBaselineRun),
 		errors.Is(err, engine.ErrAlreadyMigrated), errors.Is(err, controlplane.ErrAppliedContent),
 		errors.Is(err, engine.ErrHistoryConflict), errors.Is(err, controlplane.ErrDiverged),
-		errors.Is(err, controlplane.ErrJournalOnSearchPath):
+		errors.Is(err, controlplane.ErrJournalOnSearchPath), errors.Is(err, controlplane.ErrBaselineFormat):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, safe(err))
@@ -215,6 +215,9 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	}
 	if m.KeepOld != nil {
 		config[controlplane.ConfigKeepOld] = strconv.FormatBool(*m.KeepOld)
+	}
+	if m.IgnoreAdoptedTables != nil {
+		config[controlplane.ConfigIgnoreAdopted] = strconv.FormatBool(*m.IgnoreAdoptedTables)
 	}
 	searchPath, err := controlplane.ParseSearchPath(m.SearchPath)
 	if err != nil {
@@ -829,7 +832,7 @@ func (s *Server) checkHazards(plans []engine.Plan, applied controlplane.AppliedS
 	}
 	var pending []string
 	for _, p := range plans {
-		if !runsBody(p, applied) {
+		if !controlplane.RunsBody(p, applied) {
 			continue
 		}
 		for _, st := range p.Statements {
@@ -847,18 +850,6 @@ func (s *Server) checkHazards(plans []engine.Plan, applied controlplane.AppliedS
 	}
 
 	return nil
-}
-
-// runsBody inverts for a down plan: it undoes what the target holds, so being applied is what makes it run.
-func runsBody(p engine.Plan, applied controlplane.AppliedSet) bool {
-	if p.MarkOnly {
-		return false
-	}
-	if p.Direction == engine.DirectionDown {
-		return true
-	}
-
-	return !applied.Has(p.Migration)
 }
 
 // checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it

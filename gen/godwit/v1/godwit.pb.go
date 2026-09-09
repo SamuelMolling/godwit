@@ -498,9 +498,11 @@ type RegisterTargetRequest struct {
 	KeepOld *bool `protobuf:"varint,11,opt,name=keep_old,json=keepOld,proto3,oneof" json:"keep_old,omitempty"`
 	// search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
 	// Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
-	SearchPath    string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SearchPath string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
+	// Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
+	IgnoreAdoptedTables *bool `protobuf:"varint,12,opt,name=ignore_adopted_tables,json=ignoreAdoptedTables,proto3,oneof" json:"ignore_adopted_tables,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *RegisterTargetRequest) Reset() {
@@ -608,6 +610,13 @@ func (x *RegisterTargetRequest) GetSearchPath() string {
 		return x.SearchPath
 	}
 	return ""
+}
+
+func (x *RegisterTargetRequest) GetIgnoreAdoptedTables() bool {
+	if x != nil && x.IgnoreAdoptedTables != nil {
+		return *x.IgnoreAdoptedTables
+	}
+	return false
 }
 
 type RegisterTargetResponse struct {
@@ -961,7 +970,9 @@ type PlanObservation struct {
 	NewestApplied     int64                  `protobuf:"varint,4,opt,name=newest_applied,json=newestApplied,proto3" json:"newest_applied,omitempty"`
 	At                *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=at,proto3" json:"at,omitempty"`
 	// The search_path the target's sessions actually resolve under (current_schemas), which the plan was taken with.
-	SearchPath    string `protobuf:"bytes,6,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
+	SearchPath string `protobuf:"bytes,6,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
+	// Bookkeeping tables of a previous migration tool that the schema snapshot left out, as "schema.table (tool)".
+	IgnoredTables []string `protobuf:"bytes,7,rep,name=ignored_tables,json=ignoredTables,proto3" json:"ignored_tables,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1036,6 +1047,13 @@ func (x *PlanObservation) GetSearchPath() string {
 		return x.SearchPath
 	}
 	return ""
+}
+
+func (x *PlanObservation) GetIgnoredTables() []string {
+	if x != nil {
+		return x.IgnoredTables
+	}
+	return nil
 }
 
 // Error detail on failed_precondition: the stored plan no longer matches the target.
@@ -1508,8 +1526,10 @@ type PlannedMigration struct {
 	Checkpoint bool `protobuf:"varint,15,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"`
 	// The newest version a checkpoint collapses; zero on every other migration.
 	CollapsesThrough int64 `protobuf:"varint,16,opt,name=collapses_through,json=collapsesThrough,proto3" json:"collapses_through,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The executor would not run these statements, so their hazards are not gated and --ack does nothing to them.
+	Skipped       bool `protobuf:"varint,17,opt,name=skipped,proto3" json:"skipped,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlannedMigration) Reset() {
@@ -1652,6 +1672,13 @@ func (x *PlannedMigration) GetCollapsesThrough() int64 {
 		return x.CollapsesThrough
 	}
 	return 0
+}
+
+func (x *PlannedMigration) GetSkipped() bool {
+	if x != nil {
+		return x.Skipped
+	}
+	return false
 }
 
 type PlanRunResponse struct {
@@ -5133,7 +5160,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\trows_done\x18\x04 \x01(\x03R\browsDone\x12\x1d\n" +
 	"\n" +
 	"rows_total\x18\x05 \x01(\x03R\trowsTotal\x12\x18\n" +
-	"\abatches\x18\x06 \x01(\x05R\abatches\"\x81\x03\n" +
+	"\abatches\x18\x06 \x01(\x05R\abatches\"\xd4\x03\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -5149,8 +5176,10 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\bkeep_old\x18\v \x01(\bH\x00R\akeepOld\x88\x01\x01\x12\x1f\n" +
 	"\vsearch_path\x18\n" +
 	" \x01(\tR\n" +
-	"searchPathB\v\n" +
-	"\t_keep_old\"\x18\n" +
+	"searchPath\x127\n" +
+	"\x15ignore_adopted_tables\x18\f \x01(\bH\x01R\x13ignoreAdoptedTables\x88\x01\x01B\v\n" +
+	"\t_keep_oldB\x18\n" +
+	"\x16_ignore_adopted_tables\"\x18\n" +
 	"\x16RegisterTargetResponse\"\x9b\x03\n" +
 	"\x10CreateRunRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12.\n" +
@@ -5182,7 +5211,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\apersist\x18\a \x01(\bR\apersist\x12\x16\n" +
 	"\x06source\x18\b \x01(\tR\x06source\x12\x1d\n" +
 	"\n" +
-	"to_version\x18\t \x01(\x03R\ttoVersion\"\xfc\x01\n" +
+	"to_version\x18\t \x01(\x03R\ttoVersion\"\xa3\x02\n" +
 	"\x0fPlanObservation\x12!\n" +
 	"\fhistory_hash\x18\x01 \x01(\tR\vhistoryHash\x12-\n" +
 	"\x12schema_fingerprint\x18\x02 \x01(\tR\x11schemaFingerprint\x12#\n" +
@@ -5190,7 +5219,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x0enewest_applied\x18\x04 \x01(\x03R\rnewestApplied\x12*\n" +
 	"\x02at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x1f\n" +
 	"\vsearch_path\x18\x06 \x01(\tR\n" +
-	"searchPath\"\xbf\x01\n" +
+	"searchPath\x12%\n" +
+	"\x0eignored_tables\x18\a \x03(\tR\rignoredTables\"\xbf\x01\n" +
 	"\tPlanStale\x12\x17\n" +
 	"\aplan_id\x18\x01 \x01(\tR\x06planId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12#\n" +
@@ -5224,7 +5254,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\ahazards\x18\x03 \x03(\v2\x18.godwit.v1.PlannedHazardR\ahazards\x12\x14\n" +
 	"\x05phase\x18\x04 \x01(\tR\x05phase\x12-\n" +
 	"\x05batch\x18\x05 \x01(\v2\x17.godwit.v1.PlannedBatchR\x05batch\x120\n" +
-	"\x06assert\x18\x06 \x01(\v2\x18.godwit.v1.PlannedAssertR\x06assert\"\xf9\x03\n" +
+	"\x06assert\x18\x06 \x01(\v2\x18.godwit.v1.PlannedAssertR\x06assert\"\x93\x04\n" +
 	"\x10PlannedMigration\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x03R\aversion\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
@@ -5250,7 +5280,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\n" +
 	"checkpoint\x18\x0f \x01(\bR\n" +
 	"checkpoint\x12+\n" +
-	"\x11collapses_through\x18\x10 \x01(\x03R\x10collapsesThrough\"\xa0\x02\n" +
+	"\x11collapses_through\x18\x10 \x01(\x03R\x10collapsesThrough\x12\x18\n" +
+	"\askipped\x18\x11 \x01(\bR\askipped\"\xa0\x02\n" +
 	"\x0fPlanRunResponse\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x18\n" +
 	"\arollout\x18\x02 \x01(\tR\arollout\x12;\n" +

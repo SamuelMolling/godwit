@@ -15,6 +15,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/config"
+	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
@@ -65,6 +66,30 @@ type planItem struct {
 	expanded       bool
 	notes          []string
 	withheld       bool
+	skipped        bool
+}
+
+func (r planReport) gatedHazards() (gated, ungated int) {
+	for _, p := range r.items {
+		for _, st := range p.Statements {
+			if p.skipped {
+				ungated += len(st.Hazards)
+
+				continue
+			}
+			gated += len(st.Hazards)
+		}
+	}
+
+	return gated, ungated
+}
+
+func ungatedLine(n int) string {
+	if n == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("%d hazard(s) on statements this run would not execute; `--ack` does not apply to them", n)
 }
 
 func (p planItem) phaseSplit() (expand, contract int) {
@@ -93,11 +118,12 @@ func (p planItem) directiveSuffix() string {
 }
 
 type planObservation struct {
-	HistoryHash       string `json:"history_hash"`
-	SchemaFingerprint string `json:"schema_fingerprint"`
-	AppliedCount      int32  `json:"applied_count"`
-	NewestApplied     int64  `json:"newest_applied"`
-	At                string `json:"at"`
+	HistoryHash       string   `json:"history_hash"`
+	SchemaFingerprint string   `json:"schema_fingerprint"`
+	AppliedCount      int32    `json:"applied_count"`
+	NewestApplied     int64    `json:"newest_applied"`
+	At                string   `json:"at"`
+	IgnoredTables     []string `json:"ignored_tables,omitempty"`
 }
 
 type storedPlan struct {
@@ -165,9 +191,21 @@ func (r planReport) contract() []string {
 	if o := r.observed; o != nil {
 		lines = append(lines, fmt.Sprintf("observed: %d applied, newest %d, history %s, schema %s, at %s",
 			o.AppliedCount, o.NewestApplied, o.HistoryHash, o.SchemaFingerprint, o.At))
+		if l := ignoredLine(o.IgnoredTables); l != "" {
+			lines = append(lines, l)
+		}
 	}
 
 	return lines
+}
+
+func ignoredLine(tables []string) string {
+	if len(tables) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("ignored: %s left behind by a previous migration tool, kept out of the schema and its drift; "+
+		"set %s=false on the target to count them", strings.Join(tables, ", "), controlplane.ConfigIgnoreAdopted)
 }
 
 // withheldLine names what a version target left out, so the plan and the pull-request comment cannot be read as the whole set.
@@ -388,7 +426,6 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 		fmt.Fprintln(w, "## godwit plan")
 	}
 	fmt.Fprintln(w)
-	hazards := 0
 	if len(r.items) > 0 {
 		fmt.Fprintln(w, "| Migration | Direction | # | Mode | Statement | Hazards |"+r.liveHeader())
 		fmt.Fprintln(w, "|---|---|---|---|---|---|"+r.liveRule())
@@ -399,7 +436,6 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 			for _, h := range st.Hazards {
 				codes = append(codes, fmt.Sprintf("%s: %s", h.Code, h.Detail))
 			}
-			hazards += len(st.Hazards)
 			fmt.Fprintf(w, "| `%s` | %s | %d | %s | %s | %s |%s\n", p.Migration.ID(), p.Direction, i,
 				statementMode(st), statementCell(st), markdownCell(strings.Join(codes, "; ")), p.liveCells(r.live))
 		}
@@ -416,12 +452,16 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	}
 	fmt.Fprint(w, r.expansionBlock())
 	fmt.Fprint(w, r.alreadyAppliedBlock())
-	if hazards > 0 {
-		fmt.Fprintf(w, "⚠️ %d hazard(s); acknowledge them with `--ack`\n", hazards)
-
-		return
+	gated, ungated := r.gatedHazards()
+	if gated > 0 {
+		fmt.Fprintf(w, "⚠️ %d hazard(s); acknowledge them with `--ack`\n", gated)
+	} else {
+		fmt.Fprintln(w, "✅ no hazards")
 	}
-	fmt.Fprintln(w, "✅ no hazards")
+	if l := ungatedLine(ungated); l != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, l)
+	}
 }
 
 func (r planReport) kind() string {
@@ -589,6 +629,7 @@ type livePlanJSON struct {
 	Expanded       bool     `json:"expanded,omitempty"`
 	Notes          []string `json:"notes,omitempty"`
 	Withheld       bool     `json:"withheld,omitempty"`
+	Skipped        bool     `json:"skipped,omitempty"`
 }
 
 type dryRunJSON struct {
@@ -638,6 +679,7 @@ func writePlanJSON(w io.Writer, r planReport) {
 				planJSON: toPlanJSON(p.Plan), Applied: p.applied, Phase: p.phase,
 				AlreadyApplied: p.alreadyApplied, Effect: p.effect, Note: p.note,
 				Directives: p.directives, Expanded: p.expanded, Notes: p.notes, Withheld: p.withheld,
+				Skipped: p.skipped,
 			})
 		}
 		out = live

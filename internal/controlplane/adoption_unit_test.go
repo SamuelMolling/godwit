@@ -24,12 +24,12 @@ func (e stubEngine) MarkApplied(context.Context, string, []engine.Migration) ([]
 	return e.marked, e.err
 }
 
-func (e stubEngine) Observe(context.Context, string) (Observation, error) {
+func (e stubEngine) Observe(context.Context, string, engine.SnapshotScope) (Observation, error) {
 	return e.obs, e.err
 }
 
-func (e stubEngine) Snapshot(context.Context, string) (string, string, error) {
-	return "", "", e.err
+func (e stubEngine) Snapshot(context.Context, string, engine.SnapshotScope) (engine.Schema, error) {
+	return engine.Schema{}, e.err
 }
 
 func mockScheduler(t *testing.T, eng Engine) (pgxmock.PgxPoolIface, *Scheduler) {

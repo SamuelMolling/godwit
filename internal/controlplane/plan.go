@@ -41,6 +41,7 @@ type Observation struct {
 	Fingerprint string
 	SearchPath  string
 	At          time.Time
+	Ignored     []engine.Adopted
 }
 
 // HistoryHash hashes the observed history, ascending by version then by repeatable name.
@@ -94,6 +95,9 @@ type PlanMigration struct {
 	Effect         string `json:"effect,omitempty"`
 	Note           string `json:"note,omitempty"`
 	Withheld       bool   `json:"withheld,omitempty"`
+
+	// Stored inverted: a plan written before the field existed keeps counting every hazard rather than none.
+	Skipped bool `json:"skipped,omitempty"`
 
 	// Checkpoint marks the migration that carries the whole schema of everything through Through.
 	Checkpoint bool  `json:"checkpoint,omitempty"`
@@ -230,7 +234,7 @@ func WithheldMigrations(plans []engine.Plan, applied AppliedSet) []PlanMigration
 	for _, p := range plans {
 		out = append(out, PlanMigration{
 			Version: p.Migration.Version, Name: p.Migration.Name, Repeatable: p.Migration.Repeatable,
-			Checksum: p.Migration.Checksum, Applied: applied.Has(p.Migration), Withheld: true,
+			Checksum: p.Migration.Checksum, Applied: applied.Has(p.Migration), Withheld: true, Skipped: true,
 		})
 	}
 
@@ -252,6 +256,18 @@ func PlanKey(target, rollout string, pending []engine.Migration) string {
 type AppliedSet struct {
 	Versions    []int64
 	Repeatables map[string]string
+}
+
+// RunsBody reports whether the executor would run the plan's statements; a down plan runs because the target holds it.
+func RunsBody(p engine.Plan, applied AppliedSet) bool {
+	if p.MarkOnly {
+		return false
+	}
+	if p.Direction == engine.DirectionDown {
+		return true
+	}
+
+	return !applied.Has(p.Migration)
 }
 
 // Has reports whether the target already holds m: the version, or the repeatable under that content.
@@ -285,6 +301,7 @@ func BuildPlanMigrations(rollout string, plans []engine.Plan, applied AppliedSet
 		pm := PlanMigration{
 			Version: p.Migration.Version, Name: p.Migration.Name, Repeatable: p.Migration.Repeatable,
 			Checksum: p.Migration.Checksum, Applied: applied.Has(p.Migration), Phase: phase,
+			Skipped: !RunsBody(p, applied),
 		}
 		pm.Statements = PlanStatements(p.Statements)
 		if exp, ok := exps[pm.ID()]; ok {
@@ -436,7 +453,11 @@ func StaleDiff(p Plan, obs Observation) PlanDiff {
 	}
 	slices.SortFunc(d.Added, compareChanges)
 	slices.SortFunc(d.Removed, compareChanges)
-	if p.SchemaFingerprint != obs.Fingerprint {
+	switch {
+	case p.SchemaFingerprint == obs.Fingerprint:
+	case !engine.SameFormat(p.SchemaDefinition):
+		d.Schema = []string{"the plan's schema was recorded before godwit changed what a snapshot describes; re-plan"}
+	default:
 		d.Schema = engine.DiffSchemas(p.SchemaDefinition, obs.Definition)
 	}
 	if p.PathMoved(obs) {

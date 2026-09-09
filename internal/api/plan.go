@@ -119,7 +119,7 @@ func (s *Server) driftSince(ctx context.Context, target string, obs controlplane
 	if err != nil {
 		return "", err
 	}
-	if snap.Fingerprint == obs.Fingerprint {
+	if snap.Fingerprint == obs.Fingerprint || !engine.SameFormat(snap.Definition) {
 		return "", nil
 	}
 
@@ -142,7 +142,7 @@ func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMig
 			Version: m.Version, Name: m.Name, Repeatable: m.Repeatable, Checksum: m.Checksum, Applied: m.Applied,
 			Phase: m.Phase, AlreadyApplied: m.AlreadyApplied, Effect: m.Effect, Note: m.Note,
 			Directives: m.Directives, Expanded: m.Expanded, Notes: m.Notes, Withheld: m.Withheld,
-			Checkpoint: m.Checkpoint, CollapsesThrough: m.Through,
+			Checkpoint: m.Checkpoint, CollapsesThrough: m.Through, Skipped: m.Skipped,
 		}
 		pm.Statements = statementsToProto(m.Statements)
 		out = append(out, pm)
@@ -173,7 +173,7 @@ func statementsToProto(sts []controlplane.PlanStatement) []*godwitv1.PlannedStat
 func observationToProto(obs controlplane.Observation) *godwitv1.PlanObservation {
 	out := &godwitv1.PlanObservation{
 		HistoryHash: obs.HistoryHash(), SchemaFingerprint: obs.Fingerprint, AppliedCount: int32(len(obs.Applied)),
-		At: timestamppb.New(obs.At), SearchPath: obs.SearchPath,
+		At: timestamppb.New(obs.At), SearchPath: obs.SearchPath, IgnoredTables: engine.AdoptedLines(obs.Ignored),
 	}
 	for _, a := range obs.Applied {
 		out.NewestApplied = max(out.NewestApplied, a.Version)

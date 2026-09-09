@@ -167,7 +167,7 @@ func TestDriftErrorBranches(t *testing.T) {
 		t.Parallel()
 		s, _ := newStore(t)
 		mon, _ := newMonitor(t, s, notify.None{})
-		if err := s.SaveSnapshot(ctx, "app", "fp", "def", ""); err != nil {
+		if err := s.SaveSnapshot(ctx, "app", "fp", engine.SchemaFormat+"\ndef", ""); err != nil {
 			t.Fatal(err)
 		}
 		// Break the target's provider config so DSN resolution fails.
@@ -190,7 +190,7 @@ func TestDriftErrorBranches(t *testing.T) {
 		if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{"dsn": "postgres://bad:bad@127.0.0.1:1/x"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.SaveSnapshot(ctx, "app", "fp", "def", ""); err != nil {
+		if err := s.SaveSnapshot(ctx, "app", "fp", engine.SchemaFormat+"\ndef", ""); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := mon.Check(ctx, "app"); err == nil {

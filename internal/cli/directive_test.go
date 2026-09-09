@@ -202,6 +202,17 @@ func TestTargetAddKeepOldFlag(t *testing.T) {
 	if got := stub.registered.KeepOld; got != nil {
 		t.Fatalf("an untouched flag must leave the target's default alone: %v", *got)
 	}
+	if got := stub.registered.IgnoreAdoptedTables; got != nil {
+		t.Fatalf("an untouched flag must leave the target's default alone: %v", *got)
+	}
+
+	if code, _, errOut := runCLI("target", "add", "app", "--server", url, "--provider", "static", "--dsn", "x",
+		"--ignore-adopted-tables=false"); code != 0 {
+		t.Fatalf("code = %d, err = %s", code, errOut)
+	}
+	if got := stub.registered.IgnoreAdoptedTables; got == nil || *got {
+		t.Fatalf("ignore_adopted_tables = %v", got)
+	}
 }
 
 func assertReport() planReport {

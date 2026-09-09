@@ -29,9 +29,9 @@ type ApplyRequest struct {
 type Engine interface {
 	Apply(ctx context.Context, req ApplyRequest) error
 	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) ([]engine.Migration, error)
-	Snapshot(ctx context.Context, dsn string) (definition, fingerprint string, err error)
+	Snapshot(ctx context.Context, dsn string, scope engine.SnapshotScope) (engine.Schema, error)
 	Applied(ctx context.Context, dsn string) ([]engine.Applied, []engine.Repeatable, error)
-	Observe(ctx context.Context, dsn string) (Observation, error)
+	Observe(ctx context.Context, dsn string, scope engine.SnapshotScope) (Observation, error)
 	DataLoss(ctx context.Context, dsn string, drops []engine.Drop) ([]engine.Loss, error)
 }
 
@@ -116,14 +116,14 @@ func (PGEngine) MarkApplied(ctx context.Context, dsn string, migs []engine.Migra
 }
 
 // Snapshot implements Engine.
-func (PGEngine) Snapshot(ctx context.Context, dsn string) (string, string, error) {
+func (PGEngine) Snapshot(ctx context.Context, dsn string, scope engine.SnapshotScope) (engine.Schema, error) {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		return "", "", fmt.Errorf("connect target: %w", err)
+		return engine.Schema{}, fmt.Errorf("connect target: %w", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	return engine.Snapshot(ctx, conn)
+	return engine.Snapshot(ctx, conn, scope)
 }
 
 // Applied implements Engine.
@@ -148,17 +148,17 @@ func listApplied(ctx context.Context, db engine.DB) ([]engine.Applied, []engine.
 }
 
 // Observe implements Engine: history and schema read over one connection.
-func (PGEngine) Observe(ctx context.Context, dsn string) (Observation, error) {
+func (PGEngine) Observe(ctx context.Context, dsn string, scope engine.SnapshotScope) (Observation, error) {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return Observation{}, fmt.Errorf("connect target: %w", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 
-	return observe(ctx, conn)
+	return observe(ctx, conn, scope)
 }
 
-func observe(ctx context.Context, db engine.DB) (Observation, error) {
+func observe(ctx context.Context, db engine.DB, scope engine.SnapshotScope) (Observation, error) {
 	obs := Observation{At: time.Now().UTC()}
 	var err error
 	if obs.Applied, err = engine.ListApplied(ctx, db); err != nil {
@@ -167,9 +167,11 @@ func observe(ctx context.Context, db engine.DB) (Observation, error) {
 	if obs.Repeatables, err = engine.ListRepeatables(ctx, db); err != nil {
 		return Observation{}, err
 	}
-	if obs.Definition, obs.Fingerprint, err = engine.Snapshot(ctx, db); err != nil {
+	schema, err := engine.Snapshot(ctx, db, scope)
+	if err != nil {
 		return Observation{}, err
 	}
+	obs.Definition, obs.Fingerprint, obs.Ignored = schema.Definition, schema.Fingerprint, schema.Ignored
 	var setting, role string
 	if err := db.QueryRow(ctx, `SELECT array_to_string(current_schemas(false), ','), current_setting('search_path'), current_user`).
 		Scan(&obs.SearchPath, &setting, &role); err != nil {

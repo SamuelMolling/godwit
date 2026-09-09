@@ -269,19 +269,19 @@ func RunEvent(r Run, typ, detail string) notify.Event {
 }
 
 func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
-	dsn, err := s.targetDSN(ctx, run.Target)
+	tg, err := s.target(ctx, run.Target)
 	if err != nil {
 		log.Warn("baseline skipped", "error", err)
 
 		return
 	}
-	def, fp, err := s.engine.Snapshot(ctx, dsn)
+	schema, err := s.engine.Snapshot(ctx, tg.dsn, tg.scope)
 	if err != nil {
 		log.Warn("baseline snapshot failed", "error", err)
 
 		return
 	}
-	if err := s.store.SaveSnapshot(ctx, run.Target, fp, def, run.ID); err != nil {
+	if err := s.store.SaveSnapshot(ctx, run.Target, schema.Fingerprint, schema.Definition, run.ID); err != nil {
 		log.Warn("baseline save failed", "error", err)
 	}
 }
@@ -323,7 +323,7 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 		return heldWork{}, err
 	}
 	if run.Reverts == "" && run.PlanID != "" {
-		if plans, err = s.markOnly(ctx, run.PlanID, plans, tg.dsn); err != nil {
+		if plans, err = s.markOnly(ctx, run.PlanID, plans, tg); err != nil {
 			return heldWork{}, err
 		}
 	}
@@ -504,7 +504,7 @@ func (s *Scheduler) shapeCheckpoint(ctx context.Context, plans []engine.Plan, ds
 	return engine.ShapeCheckpoint(plans, newest)
 }
 
-func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.Plan, dsn string) ([]engine.Plan, error) {
+func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.Plan, tg resolvedTarget) ([]engine.Plan, error) {
 	plan, err := s.store.Plan(ctx, planID)
 	if err != nil {
 		return nil, fmt.Errorf("bound plan %s: %w", planID, err)
@@ -518,7 +518,7 @@ func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.
 	if len(marked) == 0 {
 		return plans, nil
 	}
-	obs, err := s.engine.Observe(ctx, dsn)
+	obs, err := s.engine.Observe(ctx, tg.dsn, tg.scope)
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +558,7 @@ type resolvedTarget struct {
 	provider   string
 	timeouts   Timeouts
 	searchPath string
+	scope      engine.SnapshotScope
 }
 
 func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, error) {
@@ -580,7 +581,7 @@ func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, er
 
 	return resolvedTarget{
 		dsn: dsnWithSearchPath(dsn, searchPath), provider: providerName,
-		timeouts: TargetTimeouts(config), searchPath: searchPath,
+		timeouts: TargetTimeouts(config), searchPath: searchPath, scope: SnapshotScopeOf(config),
 	}, nil
 }
 
