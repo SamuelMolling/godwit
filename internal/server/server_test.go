@@ -18,6 +18,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
+	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"golang.org/x/net/http2"
 
@@ -41,6 +42,7 @@ func TestMain(m *testing.M) {
 		tcpostgres.WithUsername("godwit"),
 		tcpostgres.WithPassword("godwit"),
 		tcpostgres.BasicWaitStrategies(),
+		testcontainers.WithCmdArgs("-c", "max_connections=300"),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "postgres container required for server tests:", err)
