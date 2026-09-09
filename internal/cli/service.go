@@ -346,7 +346,7 @@ func newRevertCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, revertPlanText(resp.Msg))
+			flags.print(cmd, resp.Msg, revertPlanText(resp.Msg, colors(cmd.OutOrStdout())))
 			if req.DryRun {
 				return nil
 			}
@@ -368,7 +368,7 @@ func newRevertCmd() *cobra.Command {
 }
 
 // revertPlanText is the plan godwit prints before it runs anything, and all a --dry-run prints.
-func revertPlanText(m *godwitv1.RevertRunResponse) string {
+func revertPlanText(m *godwitv1.RevertRunResponse, pal palette) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s will be reverted on %s, newest first", count(len(m.Migrations), "migration"), m.Target)
 	if m.Reverts != "" {
@@ -380,7 +380,7 @@ func revertPlanText(m *godwitv1.RevertRunResponse) string {
 	b.WriteString(".")
 	hazards := 0
 	for _, pm := range m.Migrations {
-		fmt.Fprintf(&b, "\n\n%s (down)  %s", migrationID(pm), count(len(pm.Statements), "statement"))
+		fmt.Fprintf(&b, "\n\n%s", pal.change(engine.DirectionDown, migrationID(pm)+" (down)  "+count(len(pm.Statements), "statement")))
 		for i, st := range pm.Statements {
 			mode := "tx"
 			if st.NoTx {

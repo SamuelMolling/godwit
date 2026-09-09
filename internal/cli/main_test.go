@@ -15,6 +15,8 @@ import (
 var testDSN string
 
 func TestMain(m *testing.M) {
+	_ = os.Unsetenv("GODWIT_COLOR")
+	_ = os.Unsetenv("NO_COLOR")
 	ctx := context.Background()
 	ctr, err := tcpostgres.Run(ctx, "postgres:17-alpine",
 		tcpostgres.WithDatabase("godwit"),

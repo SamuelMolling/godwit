@@ -498,17 +498,16 @@ func TestMigrateDryRun(t *testing.T) {
 	}
 	want := "1 migration will be applied to app. The expand phase runs on apply, then the run stops at" +
 		" awaiting_contract and the contract phase waits for a confirm (/godwit confirm on a pull request).\n" +
-		"\n20260901120001_drop_a  1 statement, contract phase\n" +
+		"\n+ 20260901120001_drop_a  1 statement, contract phase\n" +
 		"  [0] tx\n" +
 		"      ALTER TABLE users DROP COLUMN a;\n" +
 		"      hazard H003: DROP COLUMN is destructive\n" +
 		"        -- expand then contract:\n" +
 		"        -- drop users.a later\n" +
-		"\nnot executed by this run (1):\n" +
-		"  20260901120000_users  already in the target's history\n" +
 		"\nplan details:\n" +
-		"  target: app\n  rollout: expand-contract\n  validation: validated on a scratch database\n" +
-		"\n1 hazard must be acknowledged before this runs; use --ack H003.\n" +
+		"  target: app\n  rollout: expand-contract\n" +
+		"\n1 hazard on what this run would execute: take the recipe printed beside the statement, or accept the risk" +
+		" with --ack H003 (/godwit apply --ack H003 on a pull request).\n" +
 		"Plan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
@@ -534,18 +533,18 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "## godwit dry run\n\n" +
-		"**1 migration will be applied to `app`.** The expand phase runs on apply, then the run stops at" +
+		"\u26a0\ufe0f **1 migration will be applied to `app`.** The expand phase runs on apply, then the run stops at" +
 		" `awaiting_contract` and the contract phase waits for a confirm (`/godwit confirm` on a pull request).\n" +
-		"\n### `20260901120001_drop_a`\n\n1 statement, contract phase\n" +
+		"\n\u26a0\ufe0f **Not validated.** These statements were never replayed on a scratch database, so nothing has" +
+		" proved they apply.\n" +
+		"\n```diff\n+ 20260901120001_drop_a  1 statement, contract phase\n```\n" +
+		"\n### `20260901120001_drop_a`\n" +
 		"\n`[0]` tx\n\n```sql\nALTER TABLE users DROP COLUMN a;\n```\n" +
 		"\n**H003** DROP COLUMN is destructive\n\n```sql\n-- expand then contract:\n-- drop users.a later\n```\n" +
-		"\n<details><summary>1 migration this run will not execute</summary>\n\n" +
-		"| Migration | Not executed because | Hazards |\n|---|---|---|\n" +
-		"| `20260901120000_users` | already in the target's history |  |\n" +
-		"\n</details>\n" +
 		"\n<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: expand-contract\n" +
-		"validation: not validated\n```\n\n</details>\n" +
-		"\n1 hazard must be acknowledged before this runs; use `--ack H003`.\n" +
+		"```\n\n</details>\n" +
+		"\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the statement, or accept" +
+		" the risk with `--ack H003` (`/godwit apply --ack H003` on a pull request).\n" +
 		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
@@ -773,7 +772,7 @@ func TestRevert(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "1 migration will be reverted on app, newest first, undoing run r1.\n" +
-		"\n20260901120000_t (down)  2 statements\n" +
+		"\n- 20260901120000_t (down)  2 statements\n" +
 		"  [0] tx\n      DROP TABLE t;\n      hazard H002: DROP TABLE is destructive\n" +
 		"  [1] no-tx\n      DROP INDEX CONCURRENTLY i;\n" +
 		"\ndata loss: 20260901120000_t drops table public.t holding 3 row(s)\n" +
@@ -1092,9 +1091,7 @@ func TestPlan_RemoteSaves(t *testing.T) {
 	}
 	want := "\nchanges outside migrations:\n  + table public.orders\n  - index public.idx_old\n" +
 		"\nplan details:\n" +
-		"  target: app\n  rollout: expand-contract\n  validation: validated on a scratch database\n" +
-		"  plan: p1\n  key: k1\n" +
-		"  observed: 1 applied, newest 20260901120000, history h1, schema f1, at 2026-09-01T10:00:00Z\n"
+		"  target: app\n  rollout: expand-contract\n  plan: p1\n"
 	if !strings.HasPrefix(out, "1 migration will be applied to app.") || !strings.Contains(out, want) {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
@@ -1152,7 +1149,7 @@ func TestPlan_RemoteFormats(t *testing.T) {
 
 	_, out, _ := runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t), "--format", "markdown")
 	for _, want := range []string{
-		"## godwit plan\n", "\nkey: k1\n", "\nobserved: 1 applied",
+		"## godwit plan\n", "\n<!-- godwit-plan-key: k1 -->\n",
 		"<details><summary>2 changes on this database were not made by a migration</summary>\n\n" +
 			"```diff\n+ table public.orders\n- index public.idx_old\n```\n\n</details>\n\n### `20260901120001_drop_a`",
 	} {
@@ -1218,21 +1215,23 @@ func TestMigrateDryRunAlreadyApplied(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if !strings.Contains(out, "\n20260901120001_email  1 statement, expand phase; its effect is already on the database,"+
+	if !strings.Contains(out, "\n+ 20260901120001_email  1 statement, expand phase; its effect is already on the database,"+
 		" so the run records it without executing\n  + column public.users.email text null=YES default=<none>\n") ||
-		!strings.Contains(out, "\n20260901120002_seed  1 statement, expand phase; has DML, must execute\n") {
+		!strings.Contains(out, "\n+ 20260901120002_seed  1 statement, expand phase; has DML, must execute\n") {
 		t.Fatalf("out = %q", out)
 	}
 
 	code, out, _ = runCLI("migrate", "--dry-run", "--format", "markdown", "--server", url, "--target", "app", "--dir", goodMigs(t))
 	if code != 0 ||
-		!strings.Contains(out, "### `20260901120001_email`\n\n1 statement, expand phase; its effect is already on the"+
-			" database, so the run records it without executing\n\n```diff\n"+
+		!strings.Contains(out, "```diff\n+ 20260901120001_email  1 statement, expand phase; its effect is already on the"+
+			" database, so the run records it without executing\n"+
+			"+ 20260901120002_seed  1 statement, expand phase; has DML, must execute\n```\n") ||
+		!strings.Contains(out, "### `20260901120001_email`\n\n```diff\n"+
 			"+ column public.users.email text null=YES default=<none>\n```\n\n`[0]` tx\n\n```sql\n"+
 			"ALTER TABLE users ADD COLUMN email text;\n```\n") ||
-		!strings.Contains(out, "### `20260901120002_seed`\n\n1 statement, expand phase; has DML, must execute\n") ||
 		!strings.Contains(out, "\n**H011** seed rows in a migration\n") ||
-		!strings.Contains(out, "\n1 hazard must be acknowledged before this runs; use `--ack H011`.\n") {
+		!strings.Contains(out, "\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the"+
+			" statement, or accept the risk with `--ack H011` (`/godwit apply --ack H011` on a pull request).\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 

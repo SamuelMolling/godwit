@@ -159,7 +159,7 @@ func TestPlanPrintsACheckpointWithoutADown(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if !strings.Contains(out, "\n20260101000003_squash  ") || strings.Contains(out, "20260101000003_squash (down)") {
+	if !strings.Contains(out, "\n+ 20260101000003_squash  ") || strings.Contains(out, "20260101000003_squash (down)") {
 		t.Fatalf("out = %s", out)
 	}
 }

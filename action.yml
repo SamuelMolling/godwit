@@ -25,13 +25,13 @@ inputs:
     description: "Git ref; lint only checks migrations added since it (empty checks every migration)"
     default: origin/main
   ack:
-    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002)"
+    description: "Comma-separated hazard codes to acknowledge, e.g. H001,H003 (revert: the codes in the down files, e.g. H002). A '/godwit apply --ack H001' or '/godwit revert --ack H001' comment adds its codes to these for that run only"
     default: ""
   allow-data-loss:
-    description: "revert: run a plan that drops a table or column still holding rows (godwit refuses it by default)"
+    description: "revert: run a plan that drops a table or column still holding rows (godwit refuses it by default); a '/godwit revert --allow-data-loss' comment sets it for that run only"
     default: "false"
   force:
-    description: "revert: undo a run that is not the newest un-reverted one on its target"
+    description: "revert: undo a run that is not the newest un-reverted one on its target; a '/godwit revert --force' comment sets it for that run only"
     default: "false"
   server:
     description: "godwit service URL (lint, plan, apply, verify, revert, migrate, diff; lint uses it for the schema_source check, warning W002 without it; default: server from godwit.yaml or GODWIT_SERVER)"
@@ -131,6 +131,7 @@ runs:
         APPLY_ON: ${{ inputs.apply-on }}
         ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
         REQUIRE_APPROVAL: ${{ inputs.require-approval }}
+        ACK: ${{ inputs.ack }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_PATH: ${{ github.event_path }}
         REPOSITORY: ${{ github.repository }}
@@ -161,9 +162,9 @@ runs:
         COMMAND: ${{ inputs.command }}
         DIR: ${{ inputs.dir }}
         BASE: ${{ inputs.base }}
-        ACK: ${{ inputs.ack }}
-        ALLOW_DATA_LOSS: ${{ inputs.allow-data-loss }}
-        FORCE: ${{ inputs.force }}
+        ACK: ${{ steps.context.outputs.ack || inputs.ack }}
+        ALLOW_DATA_LOSS: ${{ steps.context.outputs.allow-data-loss || inputs.allow-data-loss }}
+        FORCE: ${{ steps.context.outputs.force || inputs.force }}
         SERVER: ${{ inputs.server }}
         TARGET: ${{ inputs.target }}
         ROLLOUT: ${{ inputs.rollout }}

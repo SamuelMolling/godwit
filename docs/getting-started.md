@@ -211,14 +211,17 @@ To land a branch one migration at a time, stop the run at a version instead of e
 
 ```
 $ godwit plan --target app --dir db/migrations --to 20260904181500 --save
-plan e6d08852-34ff-42a9-a327-b4e193c80640 on app (rollout direct, validated on a scratch database)
-key: bc051b2c60b53c2d31ffa945f98c369c08da213b3c4a890ff8ccab7b8731ae53
-observed: 5 applied, newest 20260904181000, history 369a12ef…, schema ec575f3f…, at 2026-09-04T18:03:08Z
+1 migration will be applied to app.
 withheld: 2 migration(s) in the directory this plan does not cover (20260904182000_orders_channel, R__order_stats)
+
++ 20260904181500_orders_source  1 statement, expand phase
+  [0] tx
+      ALTER TABLE orders ADD COLUMN source text;
+
+not executed by this run (2):
+  20260904182000_orders_channel  held back by --to
+  R__order_stats  held back by --to
 ...
-20260904181500_orders_source (up): 1 statement(s) [expand, pending]
-  [0] tx    ALTER TABLE orders ADD COLUMN source text
-20260904182000_orders_channel (up): 0 statement(s) [withheld]
 
 $ godwit migrate --target app --dir db/migrations --to 20260904181500
 plan e6d08852-34ff-42a9-a327-b4e193c80640: bound
@@ -272,22 +275,17 @@ godwit migrate --target app --dir db/migrations   # after review; binds the stor
 $ godwit plan --target app --dir db/migrations --save
 1 migration will be applied to app.
 
-20260904180008_orders_status  1 statement, expand phase
++ 20260904180008_orders_status  1 statement, expand phase
   [0] tx
       ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL;
 
-not executed by this run (3):
-  20260901120000_create_orders  already in the target's history
-  20260901120500_orders_customer_idx  already in the target's history
+not executed by this run (1):
   R__order_stats  unchanged since it was last applied
 
 plan details:
   target: app
   rollout: direct
-  validation: validated on a scratch database
   plan: 48779753-1d13-4637-a290-6639adaca3dc
-  key: 7fa0a893cf922112cc5365a626276bfdf770708ea117a7d854d70ab8df6c783b
-  observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-04T18:00:14Z
 
 Plan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge
 
@@ -297,7 +295,7 @@ run 5bd4a4f6-2e7f-4014-af6b-ce5601604b8a: queued
 run 5bd4a4f6-2e7f-4014-af6b-ce5601604b8a: succeeded (attempt 1)
 ```
 
-The plan covers the whole directory, but only what the run would execute is above the fold: what the target already holds is collapsed under *not executed by this run*, and the plan id, key and observation sit under *plan details* at the bottom.
+The plan covers the whole directory, but the report is only what the run would do to the database. A migration the target already has is not listed at all — with nothing pending the first line is `Nothing to apply. app is at <version> (N migrations).` — and *not executed by this run* keeps only the rows a reader could act on: a migration held back by `--to`, or a repeatable one that has not changed. The plan's key and the observation it was made against are machine identity and live in `--format json`.
 
 If the target moves between the two, `migrate` refuses with the diff and exits 3 instead of applying something nobody reviewed. `godwit target add --require-plan` (or `serve --require-plan`) makes the stored plan mandatory, and `godwit plans` / `godwit plan show <id>` read them back.
 

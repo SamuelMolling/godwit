@@ -66,6 +66,8 @@ schema_source:
 | `GODWIT_TOKEN` | `--token` | bearer token sent as `Authorization: Bearer <secret>` |
 | `GODWIT_DSN` | `--dsn` | target DSN for the local commands (`up`, `status`, `down`), so the password need not be a process argument |
 | `GODWIT_TARGET_DSN` | `target add --dsn` | DSN of a `static` target being registered, for the same reason |
+| `GODWIT_COLOR` | — | `auto` (default: colour when stdout is a terminal), `always` or `never`, for the `+`/`-` change lines of `plan`, `migrate --dry-run`, `revert` and `diff`. Anything else is read as `auto` |
+| `NO_COLOR` | — | any non-empty value turns colour off; an explicit `GODWIT_COLOR=always` outranks it |
 
 Every service command also accepts `--json` (print the raw protojson response instead of the human line).
 

@@ -300,7 +300,7 @@ case "${COMMAND}" in
       refused plan refused
     fi
     plan_id="$(sed -n 's/^plan: \(.*\)$/\1/p' "${summary}" | head -n 1)"
-    plan_key="$(sed -n 's/^key: \(.*\)$/\1/p' "${summary}" | head -n 1)"
+    plan_key="$(sed -n 's/^<!-- godwit-plan-key: \(.*\) -->$/\1/p' "${summary}" | head -n 1)"
     ;;
   migrate)
     if [ "${DRY_RUN}" = "true" ]; then

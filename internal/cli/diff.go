@@ -305,7 +305,7 @@ func writeDiffReport(w io.Writer, m *godwitv1.DiffResponse, files []string, sche
 
 		return
 	}
-	fmt.Fprint(w, planReport{drift: m.Drift}.driftBlock("drift (the target's live schema, not its history, is the starting point):", "  ", "", ""))
+	fmt.Fprint(w, planReport{drift: m.Drift}.driftBlock("drift (the target's live schema, not its history, is the starting point):", "  ", "", "", colors(w)))
 	fmt.Fprintf(w, "%s -> %s: %d statement(s)\n", m.Target, schema, len(m.Statements))
 	for i, st := range m.Statements {
 		fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(engine.Statement{NoTx: st.NoTx}), firstLine(st.Sql))

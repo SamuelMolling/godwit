@@ -34,14 +34,14 @@ func TestPlanWithAVersionTargetNamesWhatItWithheld(t *testing.T) {
 	}
 	want := "1 migration will be applied to app.\n" +
 		"withheld: 2 migration(s) in the directory this plan does not cover (20260901120001_drop_a, R__v)\n" +
-		"\n20260901120000_users  1 statement, expand phase\n" +
+		"\n+ 20260901120000_users  1 statement, expand phase\n" +
 		"  [0] tx\n" +
 		"      CREATE TABLE users (id int);\n" +
 		"\nnot executed by this run (2):\n" +
 		"  20260901120001_drop_a  held back by --to\n" +
 		"  R__v  held back by --to\n" +
 		"\nplan details:\n" +
-		"  target: app\n  rollout: direct\n  validation: validated on a scratch database\n  plan: p1\n  key: k1\n" +
+		"  target: app\n  rollout: direct\n  plan: p1\n" +
 		"\nPlan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)

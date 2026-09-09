@@ -430,7 +430,33 @@ jobs:
           comment created ',"pull_request":{"url":"x"}' "/godwit apply ${OTHER_SHA}" OWNER
           context; expect rc=1; says 'the head moved after the comment'
           comment created ',"pull_request":{"url":"x"}' '/godwit apply notasha' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=2; says "does not understand 'notasha'"
+
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack H001' OWNER
+          context; expect rc=0; expect skipped=false; expect ack=H001
+          ACK=H002 context; expect rc=0; expect ack=H002,H001
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack H001,H003' OWNER
+          context; expect rc=0; expect ack=H001,H003
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack=H001' OWNER
+          context; expect rc=0; expect ack=H001
+          comment created ',"pull_request":{"url":"x"}' "/godwit apply ${HEAD_SHA} --ack H001" OWNER
+          context; expect rc=0; expect skipped=false; expect ack=H001
+          comment created ',"pull_request":{"url":"x"}' "/godwit apply ${OTHER_SHA} --ack H001" OWNER
+          context; expect rc=1; says 'the head moved after the comment'
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack' OWNER
+          context; expect rc=2; says 'names no hazard code'
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack h1' OWNER
+          context; expect rc=2; says "'h1' is not a hazard code"
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack H001 --force' OWNER
+          context; expect rc=2; says 'does not take --force'
+          comment created ',"pull_request":{"url":"x"}' '/godwit apply --unknown' OWNER
+          context; expect rc=2; says "does not understand '--unknown'"
+          COMMAND=confirm comment created ',"pull_request":{"url":"x"}' '/godwit confirm --ack H001' MEMBER
+          COMMAND=confirm context; expect rc=2; says 'does not take --ack'
+          COMMAND=revert comment created ',"pull_request":{"url":"x"}' '/godwit revert --ack H002 --allow-data-loss --force' OWNER
+          COMMAND=revert context; expect rc=0; expect skipped=false; expect ack=H002; expect allow-data-loss=true; expect force=true
+          COMMAND=revert comment created ',"pull_request":{"url":"x"}' '/godwit revert' OWNER
+          COMMAND=revert context; expect rc=0; expect allow-data-loss=; expect force=
 
           comment created ',"pull_request":{"url":"x"}' "\`\`\`\n/godwit apply\n\`\`\`" OWNER
           context; expect rc=0; expect skipped=true
@@ -600,8 +626,14 @@ jobs:
           test -n "${STORED_KEY}"
           grep -q '^## godwit plan$' "${STORED_SUMMARY}"
           grep -q "^plan: ${STORED_ID}$" "${STORED_SUMMARY}"
-          grep -q "^key: ${STORED_KEY}$" "${STORED_SUMMARY}"
-          grep -q '^observed: 0 applied' "${STORED_SUMMARY}"
+          grep -q "^<!-- godwit-plan-key: ${STORED_KEY} -->$" "${STORED_SUMMARY}"
+          grep -q '^```diff$' "${STORED_SUMMARY}"
+          grep -q '^+ 20260901120000_users  ' "${STORED_SUMMARY}"
+          absent_in() { if grep -q "$1" "$2"; then exit 1; fi; }
+          absent_in '^key: ' "${STORED_SUMMARY}"
+          absent_in '^observed: ' "${STORED_SUMMARY}"
+          absent_in '^validation: ' "${STORED_SUMMARY}"
+          absent_in 'this run will not execute' "${STORED_SUMMARY}"
 
           test "${STALE_OUTCOME}" = "failure"
           test "${STALE}" = "true"
@@ -633,7 +665,6 @@ jobs:
           grep -q '^## godwit diff$' "${DIFFDRY_SUMMARY}"
           grep -q "^target \`app\` -> \`testdata/action/schema.sql\`: [0-9]* statement(s)$" "${DIFFDRY_SUMMARY}"
           grep -q 'CREATE TABLE' "${DIFFDRY_SUMMARY}"
-          absent_in() { if grep -q "$1" "$2"; then exit 1; fi; }
           absent_in '^wrote ' "${DIFFDRY_SUMMARY}"
           test "${DIFF_CHANGED}" = "true"
           # shellcheck disable=SC2086
