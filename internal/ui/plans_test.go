@@ -84,7 +84,7 @@ func TestPlansList(t *testing.T) {
 	h := newUI(s, Config{Replica: "godwit-0"})
 
 	rec := do(h, http.MethodGet, "/ui/plans", nil)
-	want(t, rec, http.StatusOK, "<title>godwit</title>", "All plans", `class="n">3<`,
+	want(t, rec, http.StatusOK, "<title>Godwit</title>", "All plans", `class="n">3<`,
 		"/ui/plans/p-ready-001", "/ui/plans/p-plan-0001", "/ui/plans/p-super-001",
 		"key k-ready-", "by sam", "by ci", "github", "expand-contract", "not validated",
 		"/ui/runs/r-ok-000001", "not bound", "1 pending",
