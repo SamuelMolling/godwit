@@ -145,7 +145,11 @@ func writeLintMarkdown(w io.Writer, rep lint.Report) {
 		}
 		fmt.Fprintln(w)
 		for _, f := range rep.Findings {
-			writeRecipeDetails(w, fmt.Sprintf("recipe for %s in `%s`", f.Code, f.File), f.Recipe)
+			if f.Recipe == "" {
+				continue
+			}
+			fmt.Fprintf(w, "<details><summary>recipe for %s in `%s`</summary>\n\n```sql\n%s\n```\n\n</details>\n\n",
+				f.Code, f.File, f.Recipe)
 		}
 	}
 	if rep.Blocking > 0 {

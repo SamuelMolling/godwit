@@ -78,15 +78,25 @@ godwit plan --dir db/migrations
 ```
 
 ```
-20260901120000_create_orders (up): 1 statement(s)
-  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
-20260901120000_create_orders (down): 1 statement(s)
-  [0] tx    DROP TABLE orders
-        hazard H002: DROP TABLE is destructive
-          -- expand then contract: ship the application version that no longer uses orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)
-20260901120500_orders_customer_idx (up): 1 statement(s)
-  [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
+Offline plan. Both sides of every migration in the directory, as written; no database was consulted, so nothing here says what is pending.
+
+20260901120000_create_orders  1 statement
+  [0] tx
+      CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
+
+20260901120000_create_orders (down)  1 statement
+  [0] tx
+      DROP TABLE orders;
+      hazard H002: DROP TABLE is destructive
+        -- expand then contract: ship the application version that no longer uses orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)
+
+20260901120500_orders_customer_idx  1 statement
+  [0] no-tx
+      CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
+
+1 hazard must be acknowledged before this runs; use --ack H002.
+Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
 
 `tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([concepts: hazards](concepts.md#hazards)).
@@ -260,17 +270,26 @@ godwit migrate --target app --dir db/migrations   # after review; binds the stor
 
 ```
 $ godwit plan --target app --dir db/migrations --save
-plan 48779753-1d13-4637-a290-6639adaca3dc on app (rollout direct, validated on a scratch database)
-key: 7fa0a893cf922112cc5365a626276bfdf770708ea117a7d854d70ab8df6c783b
-observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-04T18:00:14Z
-20260901120000_create_orders (up): 1 statement(s) [expand, applied]
-  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
-20260901120500_orders_customer_idx (up): 1 statement(s) [expand, applied]
-  [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
-20260904180008_orders_status (up): 1 statement(s) [expand, pending]
-  [0] tx    ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL
-R__order_stats (up): 1 statement(s) [expand, unchanged]
-  [0] tx    CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id
+1 migration will be applied to app.
+
+20260904180008_orders_status  1 statement, expand phase
+  [0] tx
+      ALTER TABLE "public"."orders" ADD COLUMN "status" text COLLATE "pg_catalog"."default" DEFAULT 'new'::text NOT NULL;
+
+not executed by this run (3):
+  20260901120000_create_orders  already in the target's history
+  20260901120500_orders_customer_idx  already in the target's history
+  R__order_stats  unchanged since it was last applied
+
+plan details:
+  target: app
+  rollout: direct
+  validation: validated on a scratch database
+  plan: 48779753-1d13-4637-a290-6639adaca3dc
+  key: 7fa0a893cf922112cc5365a626276bfdf770708ea117a7d854d70ab8df6c783b
+  observed: 2 applied, newest 20260901120500, history 79d14c57…, schema 814c9433…, at 2026-09-04T18:00:14Z
+
+Plan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge
 
 $ godwit migrate --target app --dir db/migrations
 plan 48779753-1d13-4637-a290-6639adaca3dc: bound
@@ -278,7 +297,7 @@ run 5bd4a4f6-2e7f-4014-af6b-ce5601604b8a: queued
 run 5bd4a4f6-2e7f-4014-af6b-ce5601604b8a: succeeded (attempt 1)
 ```
 
-The plan covers the whole directory, so it lists what the target already has as `applied` and `unchanged` beside the one migration that is `pending`; only the pending ones are run.
+The plan covers the whole directory, but only what the run would execute is above the fold: what the target already holds is collapsed under *not executed by this run*, and the plan id, key and observation sit under *plan details* at the bottom.
 
 If the target moves between the two, `migrate` refuses with the diff and exits 3 instead of applying something nobody reviewed. `godwit target add --require-plan` (or `serve --require-plan`) makes the stored plan mandatory, and `godwit plans` / `godwit plan show <id>` read them back.
 
@@ -296,14 +315,17 @@ A `-- godwit: <op>` comment line states the intent and godwit renders the lock-s
 `godwit lint` parses it offline; `godwit plan --target` shows the expansion, split into the phases it will run in:
 
 ```
-20260904180100_total_cents (up): 12 statement(s) [expand, pending]   directive, expand 6 / contract 6
+20260904180100_total_cents  12 statements, expand then contract phases, written by a directive
   -- godwit: change-type orders.total bigint using='(total * 100)::bigint'
-  -- godwit expanded: change-type orders.total bigint
-  [0] tx    ALTER TABLE public.orders ADD COLUMN total_new bigint   [expand]
-  [1] tx    CREATE FUNCTION public.orders_total_sync() RETURNS trigger ...   [expand]
-  [3] batch WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint ...)   [expand]
-        batch over id (int), 5000 rows per transaction
-  [8] tx    ALTER TABLE public.orders RENAME COLUMN total TO total_old   [contract]
+  [0] tx
+      -- godwit expanded: change-type orders.total bigint
+      ALTER TABLE public.orders ADD COLUMN total_new bigint;
+  [1] tx
+      CREATE FUNCTION public.orders_total_sync() RETURNS trigger ...;
+  [3] batch over id (int), 5000 rows per transaction
+      WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint ...);
+  [8] tx, contract phase
+      ALTER TABLE public.orders RENAME COLUMN total TO total_old;
   note: leaves public.orders.total_old for rollback; drop it with `-- godwit: drop-column public.orders.total_old`
 ```
 

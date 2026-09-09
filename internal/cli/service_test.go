@@ -159,7 +159,10 @@ func (s *stubService) RevertRun(_ context.Context, req *connect.Request[godwitv1
 		RunId: s.revertID, Reverts: req.Msg.RunId, Target: "app", Forced: req.Msg.Force,
 		Migrations: []*godwitv1.PlannedMigration{{
 			Version: 20260901120000, Name: "t",
-			Statements: []*godwitv1.PlannedStatement{{Sql: "DROP TABLE t;"}, {Sql: "DROP INDEX CONCURRENTLY i;", NoTx: true}},
+			Statements: []*godwitv1.PlannedStatement{
+				{Sql: "DROP TABLE t;", Hazards: []*godwitv1.PlannedHazard{{Code: "H002", Detail: "DROP TABLE is destructive"}}},
+				{Sql: "DROP INDEX CONCURRENTLY i;", NoTx: true},
+			},
 		}},
 		DataLoss: []*godwitv1.DataLoss{{Migration: "20260901120000_t", Kind: "table", Object: "public.t", Rows: 3}},
 	}), nil
@@ -472,7 +475,7 @@ func dryRunStub() *stubService {
 	return &stubService{plan: &godwitv1.PlanRunResponse{
 		Target: "app", Rollout: "expand-contract", Validated: true,
 		Migrations: []*godwitv1.PlannedMigration{
-			{Version: 20260901120000, Name: "users", Checksum: "c1", Applied: true, Phase: "expand", Statements: []*godwitv1.PlannedStatement{
+			{Version: 20260901120000, Name: "users", Checksum: "c1", Applied: true, Skipped: true, Phase: "expand", Statements: []*godwitv1.PlannedStatement{
 				{Sql: "CREATE TABLE users (id int)"},
 				{Sql: "CREATE INDEX CONCURRENTLY idx_users ON users (id)", NoTx: true},
 			}},
@@ -493,15 +496,20 @@ func TestMigrateDryRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "dry run on app (rollout expand-contract, validated on a scratch database)\n" +
-		"20260901120000_users (up): 2 statement(s) [expand, applied]\n" +
-		"  [0] tx    CREATE TABLE users (id int)\n" +
-		"  [1] no-tx CREATE INDEX CONCURRENTLY idx_users ON users (id)\n" +
-		"20260901120001_drop_a (up): 1 statement(s) [contract, pending]\n" +
-		"  [0] tx    ALTER TABLE users DROP COLUMN a\n" +
-		"        hazard H003: DROP COLUMN is destructive\n" +
-		"          -- expand then contract:\n" +
-		"          -- drop users.a later\n"
+	want := "1 migration will be applied to app. The expand phase runs on apply, then the run stops at" +
+		" awaiting_contract and the contract phase waits for a confirm (/godwit confirm on a pull request).\n" +
+		"\n20260901120001_drop_a  1 statement, contract phase\n" +
+		"  [0] tx\n" +
+		"      ALTER TABLE users DROP COLUMN a;\n" +
+		"      hazard H003: DROP COLUMN is destructive\n" +
+		"        -- expand then contract:\n" +
+		"        -- drop users.a later\n" +
+		"\nnot executed by this run (1):\n" +
+		"  20260901120000_users  already in the target's history\n" +
+		"\nplan details:\n" +
+		"  target: app\n  rollout: expand-contract\n  validation: validated on a scratch database\n" +
+		"\n1 hazard must be acknowledged before this runs; use --ack H003.\n" +
+		"Plan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
@@ -525,14 +533,20 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "## godwit dry run\n\nTarget `app`, rollout `expand-contract`, not validated.\n\n" +
-		"| Migration | Direction | # | Mode | Statement | Hazards | Phase | Status |\n" +
-		"|---|---|---|---|---|---|---|---|\n" +
-		"| `20260901120000_users` | up | 0 | tx | `CREATE TABLE users (id int)` |  | expand | applied |\n" +
-		"| `20260901120000_users` | up | 1 | no-tx | `CREATE INDEX CONCURRENTLY idx_users ON users (id)` |  | expand | applied |\n" +
-		"| `20260901120001_drop_a` | up | 0 | tx | `ALTER TABLE users DROP COLUMN a` | H003: DROP COLUMN is destructive | contract | pending |\n\n" +
-		"<details><summary>recipe for H003 in `20260901120001_drop_a` (up) #0</summary>\n\n```sql\n-- expand then contract:\n-- drop users.a later\n```\n\n</details>\n\n" +
-		"⚠️ 1 hazard(s); acknowledge them with `--ack`\n"
+	want := "## godwit dry run\n\n" +
+		"**1 migration will be applied to `app`.** The expand phase runs on apply, then the run stops at" +
+		" `awaiting_contract` and the contract phase waits for a confirm (`/godwit confirm` on a pull request).\n" +
+		"\n### `20260901120001_drop_a`\n\n1 statement, contract phase\n" +
+		"\n`[0]` tx\n\n```sql\nALTER TABLE users DROP COLUMN a;\n```\n" +
+		"\n**H003** DROP COLUMN is destructive\n\n```sql\n-- expand then contract:\n-- drop users.a later\n```\n" +
+		"\n<details><summary>1 migration this run will not execute</summary>\n\n" +
+		"| Migration | Not executed because | Hazards |\n|---|---|---|\n" +
+		"| `20260901120000_users` | already in the target's history |  |\n" +
+		"\n</details>\n" +
+		"\n<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: expand-contract\n" +
+		"validation: not validated\n```\n\n</details>\n" +
+		"\n1 hazard must be acknowledged before this runs; use `--ack H003`.\n" +
+		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)
 	}
@@ -758,9 +772,12 @@ func TestRevert(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "revert of run r1 on app: 1 migration(s), reverse order of application\n" +
-		"  20260901120000_t (down): 2 statement(s)\n    [0] tx    DROP TABLE t;\n    [1] no_tx DROP INDEX CONCURRENTLY i;\n" +
-		"  data loss: 20260901120000_t drops table public.t holding 3 row(s)\n" +
+	want := "1 migration will be reverted on app, newest first, undoing run r1.\n" +
+		"\n20260901120000_t (down)  2 statements\n" +
+		"  [0] tx\n      DROP TABLE t;\n      hazard H002: DROP TABLE is destructive\n" +
+		"  [1] no-tx\n      DROP INDEX CONCURRENTLY i;\n" +
+		"\ndata loss: 20260901120000_t drops table public.t holding 3 row(s)\n" +
+		"\nPlan: 0 to apply, 1 to revert, 1 hazard(s) to acknowledge\n" +
 		"run r2: running (attempt 1)\nrun r2: succeeded (attempt 1)\n"
 	if out != want {
 		t.Fatalf("out = %q", out)
@@ -1073,15 +1090,13 @@ func TestPlan_RemoteSaves(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "plan p1 on app (rollout expand-contract, validated on a scratch database)\n" +
-		"key: k1\n" +
-		"observed: 1 applied, newest 20260901120000, history h1, schema f1, at 2026-09-01T10:00:00Z\n" +
-		"drift since baseline:\n" +
-		"  + table public.orders\n" +
-		"  - index public.idx_old\n" +
-		"20260901120000_users (up): 2 statement(s) [expand, applied]\n"
-	if !strings.HasPrefix(out, want) {
-		t.Fatalf("out = %q, want prefix %q", out, want)
+	want := "\nchanges outside migrations:\n  + table public.orders\n  - index public.idx_old\n" +
+		"\nplan details:\n" +
+		"  target: app\n  rollout: expand-contract\n  validation: validated on a scratch database\n" +
+		"  plan: p1\n  key: k1\n" +
+		"  observed: 1 applied, newest 20260901120000, history h1, schema f1, at 2026-09-01T10:00:00Z\n"
+	if !strings.HasPrefix(out, "1 migration will be applied to app.") || !strings.Contains(out, want) {
+		t.Fatalf("out = %q, want %q", out, want)
 	}
 	p := stub.planned
 	if !p.Persist || p.Target != "app" || p.Rollout != "expand-contract" || !p.SkipValidation || !p.AllowOutOfOrder ||
@@ -1136,7 +1151,11 @@ func TestPlan_RemoteFormats(t *testing.T) {
 	url := startStub(t, storedPlanStub())
 
 	_, out, _ := runCLI("plan", "--server", url, "--target", "app", "--dir", goodMigs(t), "--format", "markdown")
-	for _, want := range []string{"## godwit plan p1\n", "\nkey: k1\n", "\nobserved: 1 applied", "\n### Changes outside migrations\n\n```diff\n+ table public.orders\n- index public.idx_old\n```\n\n| Migration"} {
+	for _, want := range []string{
+		"## godwit plan\n", "\nkey: k1\n", "\nobserved: 1 applied",
+		"<details><summary>2 changes on this database were not made by a migration</summary>\n\n" +
+			"```diff\n+ table public.orders\n- index public.idx_old\n```\n\n</details>\n\n### `20260901120001_drop_a`",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("markdown lacks %q:\n%s", want, out)
 		}
@@ -1176,7 +1195,7 @@ func alreadyAppliedStub() *stubService {
 	return &stubService{plan: &godwitv1.PlanRunResponse{
 		Target: "app", Rollout: "direct", Validated: true, PlanId: "p1", PlanKey: "k1",
 		Migrations: []*godwitv1.PlannedMigration{
-			{Version: 20260901120000, Name: "users", Checksum: "c1", Applied: true, Phase: "expand", Statements: []*godwitv1.PlannedStatement{
+			{Version: 20260901120000, Name: "users", Checksum: "c1", Applied: true, Skipped: true, Phase: "expand", Statements: []*godwitv1.PlannedStatement{
 				{Sql: "CREATE TABLE users (id int)"},
 			}},
 			{
@@ -1199,16 +1218,21 @@ func TestMigrateDryRunAlreadyApplied(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if !strings.Contains(out, "20260901120001_email (up): 1 statement(s) [expand, already applied]\n") ||
-		!strings.Contains(out, "20260901120002_seed (up): 1 statement(s) [expand, pending (has DML, must execute)]\n") {
+	if !strings.Contains(out, "\n20260901120001_email  1 statement, expand phase; its effect is already on the database,"+
+		" so the run records it without executing\n  + column public.users.email text null=YES default=<none>\n") ||
+		!strings.Contains(out, "\n20260901120002_seed  1 statement, expand phase; has DML, must execute\n") {
 		t.Fatalf("out = %q", out)
 	}
 
 	code, out, _ = runCLI("migrate", "--dry-run", "--format", "markdown", "--server", url, "--target", "app", "--dir", goodMigs(t))
-	if code != 0 || !strings.Contains(out, "| `20260901120001_email` | up | 0 | tx | `ALTER TABLE users ADD COLUMN email text` |  | expand | already applied |\n") ||
-		!strings.Contains(out, "| H011: seed rows in a migration | expand | pending (has DML, must execute) |\n") ||
-		!strings.Contains(out, "\n`20260901120001_email` is already applied by hand; migrate records it without executing:\n\n```diff\n+ column public.users.email text null=YES default=<none>\n```\n\n⚠️ 1 hazard(s); acknowledge them with `--ack`\n") ||
-		strings.Contains(out, "<details>") {
+	if code != 0 ||
+		!strings.Contains(out, "### `20260901120001_email`\n\n1 statement, expand phase; its effect is already on the"+
+			" database, so the run records it without executing\n\n```diff\n"+
+			"+ column public.users.email text null=YES default=<none>\n```\n\n`[0]` tx\n\n```sql\n"+
+			"ALTER TABLE users ADD COLUMN email text;\n```\n") ||
+		!strings.Contains(out, "### `20260901120002_seed`\n\n1 statement, expand phase; has DML, must execute\n") ||
+		!strings.Contains(out, "\n**H011** seed rows in a migration\n") ||
+		!strings.Contains(out, "\n1 hazard must be acknowledged before this runs; use `--ack H011`.\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 

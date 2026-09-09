@@ -47,13 +47,13 @@ func TestPlanTextMarksRepeatableUnchanged(t *testing.T) {
 	r := planReportFromProto(&godwitv1.PlanRunResponse{
 		Target: "app", Rollout: "direct",
 		Migrations: []*godwitv1.PlannedMigration{{
-			Name: "stats", Repeatable: true, Applied: true, Phase: "expand",
+			Name: "stats", Repeatable: true, Applied: true, Skipped: true, Phase: "expand",
 			Statements: []*godwitv1.PlannedStatement{{Sql: "CREATE OR REPLACE VIEW stats AS SELECT 1;"}},
 		}},
 	})
 	var b strings.Builder
 	writePlanText(&b, r)
-	if !strings.Contains(b.String(), "R__stats (up): 1 statement(s) [expand, unchanged]") {
+	if !strings.Contains(b.String(), "  R__stats  unchanged since it was last applied\n") {
 		t.Fatalf("text = %s", b.String())
 	}
 }

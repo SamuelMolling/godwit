@@ -170,15 +170,25 @@ Without `--target` it is entirely offline — no database, no service — and pr
 
 ```console
 $ godwit plan --dir db/migrations
-20260901120000_create_orders (up): 1 statement(s)
-  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
-20260901120000_create_orders (down): 1 statement(s)
-  [0] tx    DROP TABLE orders
-        hazard H002: DROP TABLE is destructive
-          -- expand then contract: ship the application version that no longer uses orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)
-20260901120500_orders_customer_idx (up): 1 statement(s)
-  [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
+Offline plan. Both sides of every migration in the directory, as written; no database was consulted, so nothing here says what is pending.
+
+20260901120000_create_orders  1 statement
+  [0] tx
+      CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
+
+20260901120000_create_orders (down)  1 statement
+  [0] tx
+      DROP TABLE orders;
+      hazard H002: DROP TABLE is destructive
+        -- expand then contract: ship the application version that no longer uses orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)
+
+20260901120500_orders_customer_idx  1 statement
+  [0] no-tx
+      CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
+
+1 hazard must be acknowledged before this runs; use --ack H002.
+Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
 
 With `--target` it becomes a different, more useful thing: godwit connects to that database through the service, works out which migrations are actually pending there, and replays them on a scratch database to prove they apply. It prints what it found and stores nothing — the same work `migrate --dry-run` does, and the two are interchangeable.
@@ -187,15 +197,29 @@ Add `--save` and it also **stores the result as a plan**, with a snapshot of the
 
 ```console
 $ godwit plan --target app --dir db/migrations --save
-plan f27eecc1-d479-4255-ae90-b53247e9230f on app (rollout direct, validated on a scratch database)
-key: 4ad4fbb546cb1d6910cacd27e4a8831180649d476ade99808c5e114870708f63
-observed: 0 applied, newest 0, history e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, schema e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, at 2026-09-08T13:19:09Z
-20260901120000_create_orders (up): 1 statement(s) [expand, pending]
-  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
-20260901120500_orders_customer_idx (up): 1 statement(s) [expand, pending]
-  [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
-R__order_stats (up): 1 statement(s) [expand, pending]
-  [0] tx    CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id
+3 migrations will be applied to app.
+
+20260901120000_create_orders  1 statement, expand phase
+  [0] tx
+      CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
+
+20260901120500_orders_customer_idx  1 statement, expand phase
+  [0] no-tx
+      CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
+
+R__order_stats  1 statement, expand phase
+  [0] tx
+      CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
+
+plan details:
+  target: app
+  rollout: direct
+  validation: validated on a scratch database
+  plan: f27eecc1-d479-4255-ae90-b53247e9230f
+  key: 4ad4fbb546cb1d6910cacd27e4a8831180649d476ade99808c5e114870708f63
+  observed: 0 applied, newest 0, history e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, schema e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, at 2026-09-08T13:19:09Z
+
+Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
 
 Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [Concepts: plans](concepts.md#plans).
@@ -257,13 +281,26 @@ The first line tells you which reviewed plan this run is bound to. When no plan 
 
 ```console
 $ godwit migrate --target app --dir db/migrations --dry-run
-dry run on app (rollout direct, validated on a scratch database)
-20260901120000_create_orders (up): 1 statement(s) [expand, pending]
-  [0] tx    CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL)
-20260901120500_orders_customer_idx (up): 1 statement(s) [expand, pending]
-  [0] no-tx CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id)
-R__order_stats (up): 1 statement(s) [expand, pending]
-  [0] tx    CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id
+3 migrations will be applied to app.
+
+20260901120000_create_orders  1 statement, expand phase
+  [0] tx
+      CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
+
+20260901120500_orders_customer_idx  1 statement, expand phase
+  [0] no-tx
+      CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
+
+R__order_stats  1 statement, expand phase
+  [0] tx
+      CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
+
+plan details:
+  target: app
+  rollout: direct
+  validation: validated on a scratch database
+
+Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
 
 When a statement fails, the run stops and so does the command, with a non-zero exit:

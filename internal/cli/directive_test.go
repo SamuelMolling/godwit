@@ -39,12 +39,11 @@ func TestPlanTextRendersTheExpansion(t *testing.T) {
 	writePlanText(&b, expandedReport())
 	out := b.String()
 	for _, want := range []string{
-		"directive, expand 3 / contract 1",
+		"20260901130000_age  4 statements, expand then contract phases, written by a directive\n",
 		"  -- godwit: change-type users.age bigint",
-		`[1] batch UPDATE public.users SET age_new = age   [expand]`,
-		`batch over "id" (int), 5000 rows per transaction, pausing 100ms`,
-		"[2] tx    ALTER TABLE public.users RENAME COLUMN age TO age_old   [contract]",
-		"[3] no-tx SELECT 1\n",
+		"  [1] batch over \"id\" (int), 5000 rows per transaction, pausing 100ms\n      UPDATE public.users SET age_new = age;\n",
+		"  [2] tx, contract phase\n      ALTER TABLE public.users RENAME COLUMN age TO age_old;\n",
+		"  [3] no-tx\n      SELECT 1;\n",
 		"note: leaves public.users.age_old for rollback",
 	} {
 		if !strings.Contains(out, want) {
@@ -56,9 +55,7 @@ func TestPlanTextRendersTheExpansion(t *testing.T) {
 	r.items[0].Statements[1].Batch = &engine.BatchSpec{Key: `"id"`, KeyKind: engine.BatchKeyInt, Size: 100}
 	b.Reset()
 	writePlanText(&b, r)
-	if !strings.Contains(b.String(), `batch over "id" (int), 100 rows per transaction
-`) &&
-		!strings.Contains(b.String(), `batch over "id" (int), 100 rows per transaction`+"\n") {
+	if !strings.Contains(b.String(), `batch over "id" (int), 100 rows per transaction`+"\n") {
 		t.Fatalf("no pause:\n%s", b.String())
 	}
 	b.Reset()
@@ -71,7 +68,7 @@ func TestPlanTextRendersTheExpansion(t *testing.T) {
 	r.items[0].Statements = r.items[0].Statements[:2]
 	b.Reset()
 	writePlanText(&b, r)
-	if !strings.Contains(b.String(), "directive, expanded\n") {
+	if !strings.Contains(b.String(), "2 statements, expand phase, written by a directive\n") {
 		t.Fatalf("one-phase expansion:\n%s", b.String())
 	}
 }
@@ -82,10 +79,11 @@ func TestPlanMarkdownRendersTheExpansion(t *testing.T) {
 	writePlanMarkdown(&b, expandedReport())
 	out := b.String()
 	for _, want := range []string{
-		"<details><summary>expansion of <code>-- godwit: change-type users.age bigint</code> (4 statements)</summary>",
-		"-- expand\nALTER TABLE public.users ADD COLUMN age_new bigint;",
-		"-- contract\nALTER TABLE public.users RENAME COLUMN age TO age_old;",
-		"note: leaves public.users.age_old for rollback",
+		"### `20260901130000_age`\n\n4 statements, expand then contract phases, written by a directive\n" +
+			"\n```sql\n-- godwit: change-type users.age bigint\n```\n",
+		"`[0]` tx\n\n```sql\nALTER TABLE public.users ADD COLUMN age_new bigint;\n```\n",
+		"`[2]` tx, contract phase\n\n```sql\nALTER TABLE public.users RENAME COLUMN age TO age_old;\n```\n",
+		"\nnote: leaves public.users.age_old for rollback\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
@@ -105,8 +103,8 @@ func TestRenderersShowTheStatementUnderTheExpandedMarker(t *testing.T) {
 	writePlanText(&b, r)
 	out := b.String()
 	for _, want := range []string{
-		"  " + marked + "\n  [0] tx    ALTER TABLE public.users ADD COLUMN age_new bigint",
-		"  " + engine.ExpandedMarker + "assert 'SELECT 1' = 0\n  [3] assert SELECT 1",
+		"  [0] tx\n      " + marked + "\n      ALTER TABLE public.users ADD COLUMN age_new bigint;\n",
+		"  [3] assert, the result must be = 0\n      " + engine.ExpandedMarker + "assert 'SELECT 1' = 0\n      SELECT 1;\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
@@ -115,9 +113,9 @@ func TestRenderersShowTheStatementUnderTheExpandedMarker(t *testing.T) {
 
 	b.Reset()
 	writePlanMarkdown(&b, r)
-	if md := b.String(); !strings.Contains(md, "| `ALTER TABLE public.users ADD COLUMN age_new bigint` |") ||
-		strings.Contains(md, "| `"+engine.ExpandedMarker) {
-		t.Fatalf("the cell must carry the statement, not the marker:\n%s", md)
+	if md := b.String(); !strings.Contains(md,
+		"```sql\n"+marked+"\nALTER TABLE public.users ADD COLUMN age_new bigint;\n```\n") {
+		t.Fatalf("the block must carry the marker and the statement:\n%s", md)
 	}
 
 	b.Reset()
@@ -231,17 +229,13 @@ func TestPlanRendersTheAssertion(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
 	writePlanText(&b, assertReport())
-	for _, want := range []string{
-		"[0] assert SELECT count(*) FROM orders WHERE total IS NULL   [expand]",
-		"        the result must be = 0",
-	} {
-		if !strings.Contains(b.String(), want) {
-			t.Fatalf("missing %q in:\n%s", want, b.String())
-		}
+	if want := "  [0] assert, the result must be = 0\n      SELECT count(*) FROM orders WHERE total IS NULL;\n"; !strings.Contains(b.String(), want) {
+		t.Fatalf("missing %q in:\n%s", want, b.String())
 	}
 	b.Reset()
 	writePlanMarkdown(&b, assertReport())
-	if !strings.Contains(b.String(), "| assert | `SELECT count(*) FROM orders WHERE total IS NULL` must be `= 0` |") {
+	if !strings.Contains(b.String(),
+		"`[0]` assert, the result must be = 0\n\n```sql\nSELECT count(*) FROM orders WHERE total IS NULL;\n```\n") {
 		t.Fatalf("markdown:\n%s", b.String())
 	}
 	b.Reset()
