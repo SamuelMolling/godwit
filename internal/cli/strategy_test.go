@@ -57,8 +57,8 @@ func TestStrategyDescribesEveryShapeTheRunTakes(t *testing.T) {
 	for _, want := range []string{
 		"8 statements run one at a time, in the order this report lists them, each committing with its own journal row",
 		"2 of them cannot run inside a transaction, because PostgreSQL refuses them there",
-		"2 statements do not run as one statement at all: godwit walks the table by id in batches of 2000 rows and" +
-			" commits each batch, pausing 250ms",
+		"2 statements do not run as one statement at all: godwit walks the table by id in batches of 2000 rows," +
+			" pausing 250ms; by id in batches of 2000 rows and commits each batch",
 		"2 statements change nothing: they are conditions the migration declared",
 		"2 statements hold a lock the rest of the application queues behind while they run: public.a: ADD" +
 			" CONSTRAINT CHECK scans the whole table under lock (H006); public.c: CREATE INDEX without" +

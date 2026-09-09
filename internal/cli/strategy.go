@@ -15,6 +15,7 @@ type runShape struct {
 	noTx       int
 	batched    []engine.Statement
 	asserts    int
+	locked     int
 	locks      []engine.Hazard
 }
 
@@ -34,15 +35,24 @@ func (r planReport) shape() runShape {
 			case st.NoTx:
 				s.noTx++
 			}
-			for _, h := range st.Hazards {
-				if h.HoldsLock() && !slices.ContainsFunc(s.locks, func(o engine.Hazard) bool { return o.Code == h.Code && o.Object == h.Object }) {
-					s.locks = append(s.locks, h)
-				}
-			}
+			s.takeLocks(st)
 		}
 	}
 
 	return s
+}
+
+func (s *runShape) takeLocks(st engine.Statement) {
+	before := len(s.locks)
+	for _, h := range st.Hazards {
+		same := func(o engine.Hazard) bool { return o.Code == h.Code && o.Object == h.Object }
+		if h.HoldsLock() && !slices.ContainsFunc(s.locks, same) {
+			s.locks = append(s.locks, h)
+		}
+	}
+	if len(s.locks) > before {
+		s.locked++
+	}
 }
 
 func (r planReport) strategy(m markup) []string {
@@ -101,12 +111,18 @@ func (s runShape) batches() string {
 	if len(s.batched) == 0 {
 		return ""
 	}
-	b := s.batched[0].Batch
+	var walks []string
+	for _, st := range s.batched {
+		b := st.Batch
+		if w := fmt.Sprintf("by %s in batches of %d rows%s", b.Key, b.Size, pauseSuffix(b.Pause)); !slices.Contains(walks, w) {
+			walks = append(walks, w)
+		}
+	}
 
-	return fmt.Sprintf("%s %s not run as one statement at all: godwit walks the table by %s in batches of %d rows"+
-		" and commits each batch%s, so no single transaction holds a lock or a snapshot over the whole table, and the"+
-		" cursor it journals is where a killed run picks the backfill up.",
-		count(len(s.batched), "statement"), agree(len(s.batched), "does", "do"), b.Key, b.Size, pauseSuffix(b.Pause))
+	return fmt.Sprintf("%s %s not run as one statement at all: godwit walks the table %s and commits each batch, so"+
+		" no single transaction holds a lock or a snapshot over the whole table, and the cursor it journals is where"+
+		" a killed run picks the backfill up.",
+		count(len(s.batched), "statement"), agree(len(s.batched), "does", "do"), strings.Join(walks, "; "))
 }
 
 func (s runShape) checks() string {
@@ -136,8 +152,8 @@ func (s runShape) lockLine(m markup) string {
 
 	return fmt.Sprintf("%s %s a lock the rest of the application queues behind while %s: %s. How long that matters is"+
 		" how long the statement itself takes, which grows with the table. %s",
-		count(len(s.locks), "statement"), agree(len(s.locks), "holds", "hold"),
-		agree(len(s.locks), "it runs", "they run"), strings.Join(parts, "; "), base)
+		count(s.locked, "statement"), agree(s.locked, "holds", "hold"),
+		agree(s.locked, "it runs", "they run"), strings.Join(parts, "; "), base)
 }
 
 func agree(n int, singular, plural string) string {
