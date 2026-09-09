@@ -43,7 +43,7 @@ func TestPlanCommand(t *testing.T) {
 		"      hazard H001: CREATE INDEX without CONCURRENTLY blocks writes on users\n        -- or let godwit run it: -- godwit: add-index users (id) name=idx_users\n        CREATE INDEX CONCURRENTLY idx_users ON users USING btree (id);\n",
 		"      hazard H002: DROP TABLE is destructive\n        -- expand then contract: ship the application version that no longer uses users",
 		"\n2 hazards on what this run would execute: take the recipe printed beside the statement, or accept the risk" +
-			" with --ack H001,H002 (/godwit apply --ack H001,H002 on a pull request).\n" +
+			" with --ack H001,H002 (godwit apply --ack H001,H002 on a pull request).\n" +
 			"Plan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -89,7 +89,7 @@ func TestPlanMarkdown(t *testing.T) {
 			"**H002** DROP TABLE is destructive\n\n```sql\n-- expand then contract: ship the application version that no" +
 			" longer uses users, then run this DROP TABLE as a contract migration (rollout: expand-contract)\n```\n",
 		"\n\u26a0\ufe0f 2 hazards on what this run would execute: take the recipe printed beside the statement, or accept" +
-			" the risk with `--ack H001,H002` (`/godwit apply --ack H001,H002` on a pull request).\n\n" +
+			" the risk with `--ack H001,H002` (`godwit apply --ack H001,H002` on a pull request).\n\n" +
 			"Plan: 1 to apply, 1 to revert, 2 hazard(s) to acknowledge\n",
 	} {
 		if !strings.Contains(out, want) {

@@ -110,7 +110,7 @@ cmd_verify() {
     printf '## godwit verify\n\ntarget `%s`: %s migrations, all applied\n' "${target}" "${total}" >"${summary}"
   else
     {
-      printf '## godwit verify\n\ntarget `%s`: **%s of %s migrations are not applied**; apply on the pull request before merging (`/godwit apply`):\n\n' "${target}" "${pending}" "${total}"
+      printf '## godwit verify\n\ntarget `%s`: **%s of %s migrations are not applied**; apply on the pull request before merging (`godwit apply`):\n\n' "${target}" "${pending}" "${total}"
       jq -r '.migrations[] | select((.applied // false) | not) | "- `\(.version)_\(.name)`"' "${work}/plan.json"
     } >"${summary}"
     status=1
@@ -327,9 +327,9 @@ case "${COMMAND}" in
     fi
     ;;
   apply)
-    cmd_migrate apply "re-run the pull request workflow (re-plan) or push, then comment \`/godwit apply\` again" \
+    cmd_migrate apply "re-run the pull request workflow (re-plan) or push, then comment \`godwit apply\` again" \
       " at [\`${HEAD_SHA:0:7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})" \
-      "expand applied; comment \`/godwit confirm\` to run the contract phase"
+      "expand applied; comment \`godwit confirm\` to run the contract phase"
     ;;
   confirm)
     cmd_confirm

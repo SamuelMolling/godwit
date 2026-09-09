@@ -216,7 +216,7 @@ What this does **not** protect against, stated so nobody reads more into it:
 
 - **Two people with write permission are enough.** One writes the migration, another approves it. That is the intended trust boundary — the same one that lets them merge — not a residual to be closed by the Action.
 - **A fork's SQL still runs on the target when a maintainer commands the apply.** That is the point of reviewing a contribution: the guard is that a human with write permission approved *that exact commit*, not that the code is trusted a priori.
-- **`require-approval: "false"` removes the anchor.** The comment path then has no sha of its own; `/godwit apply <sha>` in the comment body restores an anchor a commenter chose deliberately, and is refused when the head has moved past it.
+- **`require-approval: "false"` removes the anchor.** The comment path then has no sha of its own; `godwit apply <sha>` in the comment body restores an anchor a commenter chose deliberately, and is refused when the head has moved past it.
 - **Anything the checkout runs inherits the job's environment.** `lint` and `diff` with an ORM `schema_source` execute code from the repository (`go run`, `npx prisma`, `python manage.py`) in a step that carries `GODWIT_TOKEN` and `GH_TOKEN`. Keep those steps on `pull_request` with a `read` token, and install dependencies with lifecycle scripts off (`npm ci --ignore-scripts`).
 
 ## Admission limits

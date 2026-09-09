@@ -89,6 +89,9 @@ func (f *clientFlags) runE(fn remoteFunc) func(*cobra.Command, []string) error {
 // ExitPlanRefused is the exit code when the service refuses to bind a migration set to a stored plan.
 const ExitPlanRefused = 3
 
+// ExitActionRefused is the exit code the GitHub Action reserves for a configuration or grammar refusal.
+const ExitActionRefused = 2
+
 type exitError struct {
 	code int
 	msg  string

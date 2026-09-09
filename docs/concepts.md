@@ -346,7 +346,7 @@ than `bigint` would otherwise refuse the `int8` the executor binds.
 trigger's assignment makes false for every row it is handed, and what the closing `SELECT count(*)` asks about, so
 the three cannot disagree about what "converged" means. That count is a generated [assertion](#assertions), `= 0`,
 and it is the **last statement of the expand phase** — the statement the run has to pass before `awaiting_contract`
-and, because a resumed run re-evaluates an assertion it walks past, the statement `/godwit confirm` has to pass
+and, because a resumed run re-evaluates an assertion it walks past, the statement `godwit confirm` has to pass
 again before the rename. The rename is the irreversible half of a `change-type`, so nothing else in the expansion
 is worth checking: a `using=` that does not converge — one whose value depends on something outside the row that
 moved while the batches ran — used to leave the batches' own rows behind, report `succeeded` and then swap the
@@ -644,7 +644,7 @@ There is no `to_version` key in `godwit.yaml`. A standing version target would t
 
 The split is by statement, and a migration whose statements carry no phase of their own has a single phase. A statement belongs to the contract phase when it says so (`Statement.Phase`, which only a directive expansion sets today) or, failing that, when its migration carries a contract hazard — so a hand-written migration mixing `ADD COLUMN` and `DROP COLUMN` still lands in the contract phase whole, and only an expansion splits a migration down the middle.
 
-On a pull request the GitHub Action makes the hold visible: an apply that ends `awaiting_contract` leaves the `godwit/applied` commit status at `pending` ("expand applied; comment `/godwit confirm` to run the contract phase"), so branch protection keeps the pull request unmergeable until `/godwit confirm` releases the same run and the status turns `success` ([CI/CD](ci-cd.md#pull-request-confirm-the-contract-phase)).
+On a pull request the GitHub Action makes the hold visible: an apply that ends `awaiting_contract` leaves the `godwit/applied` commit status at `pending` ("expand applied; comment `godwit confirm` to run the contract phase"), so branch protection keeps the pull request unmergeable until `godwit confirm` releases the same run and the status turns `success` ([CI/CD](ci-cd.md#pull-request-confirm-the-contract-phase)).
 
 A migration split down the middle is **not** run twice. The expand phase stops at `Plan.HoldFrom`, the index of the first held statement, and returns without recording the migration: the target's `godwit.runs` row stays `running` and no `godwit.migrations` row appears. `ConfirmRollout` re-queues the same control-plane run with `phase = contract`, which rebuilds the plan with every statement and no hold; `openRun` finds that still-open target run, `loadProgress` checks the hash of each journalled statement against the rebuilt plan — the list is identical, only the hold differed — and execution resumes at `lastDone + 1` on the same run id before finalising it. A crash anywhere in either phase resumes through the same journal, with no extra state.
 

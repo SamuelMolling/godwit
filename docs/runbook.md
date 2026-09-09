@@ -71,13 +71,13 @@ Take a [restore point](operations.md#backups-and-pitr) first. If the deploy was 
 
 ### A pull request stuck in `awaiting_contract`
 
-**Symptom.** `/godwit apply` succeeded, the `## godwit apply` comment says **awaiting_contract**, and the `godwit/applied` status is `pending` ("expand applied; comment `/godwit confirm` to run the contract phase"), so branch protection will not let the pull request merge. Nothing is broken: the expand phase is on the database, the contract phase is not, and the status is telling the truth.
+**Symptom.** `godwit apply` succeeded, the `## godwit apply` comment says **awaiting_contract**, and the `godwit/applied` status is `pending` ("expand applied; comment `godwit confirm` to run the contract phase"), so branch protection will not let the pull request merge. Nothing is broken: the expand phase is on the database, the contract phase is not, and the status is telling the truth.
 
-**Action.** Once the application version that reads both shapes is out, comment `/godwit confirm` on the pull request. It releases the same run (not a new one), the status turns `success` and the pull request becomes mergeable ([CI/CD](ci-cd.md#pull-request-confirm-the-contract-phase)).
+**Action.** Once the application version that reads both shapes is out, comment `godwit confirm` on the pull request. It releases the same run (not a new one), the status turns `success` and the pull request becomes mergeable ([CI/CD](ci-cd.md#pull-request-confirm-the-contract-phase)).
 
 Three ways it does not work, and what to do instead:
 
-- **The head moved after the apply.** The `confirm` step refuses (`checked-out commit … is not the head of pull request #N`), and a new `/godwit apply` is refused too (`target <t> has run <id> awaiting contract; confirm or revert it first`). Release the run from the CLI — `godwit run confirm --latest --target <target>` — then re-plan on the new head, or `/godwit revert` and start over.
+- **The head moved after the apply.** The `confirm` step refuses (`checked-out commit … is not the head of pull request #N`), and a new `godwit apply` is refused too (`target <t> has run <id> awaiting contract; confirm or revert it first`). Release the run from the CLI — `godwit run confirm --latest --target <target>` — then re-plan on the new head, or `godwit revert` and start over.
 - **Nothing is awaiting.** `no run of pull request #N is awaiting its contract phase`: the run was already confirmed, or it belongs to another pull request. `godwit runs --target <target>` shows who owns it; the status of this pull request is left untouched.
 - **The contract phase failed.** The status goes `failure` and the run is `failed` or `needs_attention` with its error in the comment. That is the [`failed`](#run-failed) case: fix the cause and `godwit run resume <run-id>`, or `godwit revert <run-id>`. Do not re-apply from the pull request; the run is still the one that owns the migration.
 

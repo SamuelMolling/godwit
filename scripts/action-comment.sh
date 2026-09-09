@@ -110,13 +110,13 @@ case "${kind}:${STATUS}:${STALE}" in
   apply:0:*)
     if [ "${PHASE:-}" = "awaiting-contract" ]; then
       state=pending
-      description="expand applied; comment /godwit confirm to run the contract phase"
+      description="expand applied; comment godwit confirm to run the contract phase"
     else
       state=success
       description="applied by run ${short}; merge when the review is done"
     fi
     ;;
-  apply:*:true) state=failure; description="plan stale or missing: re-plan on the pull request, then /godwit apply again" ;;
+  apply:*:true) state=failure; description="plan stale or missing: re-plan on the pull request, then godwit apply again" ;;
   apply:*) state=failure; description="apply failed${RUN_ID:+ (run ${short})}; see the pull request comment" ;;
   confirm:0:*) state=success; description="contract applied by run ${short}; merge when the review is done" ;;
   confirm:*)
@@ -131,7 +131,7 @@ case "${kind}:${STATUS}:${STALE}" in
       exit 0
     fi
     state=failure
-    description="reverted by run ${short}; comment /godwit apply to apply again"
+    description="reverted by run ${short}; comment godwit apply to apply again"
     ;;
   revert:*) state=failure; description="revert failed${RUN_ID:+ (run ${short})}; see the pull request comment" ;;
 esac

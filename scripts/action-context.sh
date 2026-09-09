@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Env: COMMAND MODE DRY_RUN APPLY_ON ALLOWED_ASSOCIATIONS REQUIRE_APPROVAL ACK EVENT_NAME EVENT_PATH REPOSITORY GH_TOKEN GITHUB_SHA GITHUB_OUTPUT RUN_URL
+# Env: GODWIT_BIN COMMAND MODE DRY_RUN APPLY_ON ALLOWED_ASSOCIATIONS REQUIRE_APPROVAL ACK EVENT_NAME EVENT_PATH REPOSITORY GH_TOKEN GITHUB_SHA GITHUB_OUTPUT RUN_URL
 ACK="${ACK:-}"
 out() { printf '%s=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT}"; }
 emit() {
@@ -59,29 +59,35 @@ case "${EVENT_NAME}" in
       refuse "the ${EVENT_NAME} payload carries no head commit"
     fi
     if [ "${EVENT_NAME}" = "pull_request_target" ] && [ "${writes}" = "true" ]; then
-      refuse "command ${COMMAND} is refused on pull_request_target: that event runs in ${REPOSITORY} with its secrets and a write token even for a pull request opened from a fork, so whoever opened it would apply their own migrations; run this command on pull_request, which withholds the secrets from forks, or command it with a '/godwit ${COMMAND}' comment on the pull request" 2
+      refuse "command ${COMMAND} is refused on pull_request_target: that event runs in ${REPOSITORY} with its secrets and a write token even for a pull request opened from a fork, so whoever opened it would apply their own migrations; run this command on pull_request, which withholds the secrets from forks, or command it with a 'godwit ${COMMAND}' comment on the pull request" 2
     fi
     if [ "${head_repo}" != "${REPOSITORY}" ]; then
       if [ "${EVENT_NAME}" = "pull_request_target" ]; then
         refuse "pull_request_target for a pull request from ${head_repo:-an unknown repository} is refused: the job would run that fork's checkout with ${REPOSITORY}'s secrets; trigger on pull_request instead"
       fi
       if [ "${writes}" = "true" ]; then
-        refuse "command ${COMMAND} is refused on a pull request from ${head_repo:-an unknown repository}: a fork may not apply to the targets of ${REPOSITORY}; review it and comment /godwit ${COMMAND} instead"
+        refuse "command ${COMMAND} is refused on a pull request from ${head_repo:-an unknown repository}: a fork may not apply to the targets of ${REPOSITORY}; review it and comment godwit ${COMMAND} instead"
       fi
     fi
     ;;
 esac
 
+commanded=false
 case "${COMMAND}" in
-  apply|confirm|revert) ;;
-  *)
+  apply|confirm|revert) commanded=true ;;
+  plan)
     case "${EVENT_NAME}" in
-      pull_request|pull_request_target) emit false "${pr_number}" "${pr_head}" ;;
-      *) emit false "" "${GITHUB_SHA}" ;;
+      issue_comment|pull_request_review) commanded=true ;;
     esac
-    exit 0
     ;;
 esac
+if [ "${commanded}" != "true" ]; then
+  case "${EVENT_NAME}" in
+    pull_request|pull_request_target) emit false "${pr_number}" "${pr_head}" ;;
+    *) emit false "" "${GITHUB_SHA}" ;;
+  esac
+  exit 0
+fi
 
 case "${REQUIRE_APPROVAL}" in
   true|false) ;;
@@ -100,103 +106,34 @@ for association in ${associations//,/ }; do
   esac
 done
 
-want="/godwit ${COMMAND}"
+want="godwit ${COMMAND}"
+command_name=""
 command_sha=""
 command_ack=""
 command_data_loss=""
 command_force=""
-sha() { hex "$1" && [ "${#1}" -ge 7 ] && [ "${#1}" -le 40 ]; }
-# Only the flags the command itself takes: confirm takes none, and a flag godwit would ignore must not read
-# as an accepted one.
-takes() {
-  case "${COMMAND}:$1" in
-    apply:--ack|revert:--ack|revert:--allow-data-loss|revert:--force) return 0 ;;
-  esac
-  refuse "${want} does not take ${1}$(usage)" 2
-}
-usage() {
-  case "${COMMAND}" in
-    apply) echo " (want '${want}', '${want} <sha>' or '${want} --ack H001,H003')" ;;
-    revert) echo " (want '${want}', '${want} --ack H001', '${want} --allow-data-loss' or '${want} --force')" ;;
-    *) echo " (want '${want}' or '${want} <sha>')" ;;
-  esac
-}
-acked() {
-  local code
-  for code in ${1//,/ }; do
-    case "${code}" in
-      [A-Z][0-9][0-9][0-9]) ;;
-      *) refuse "${want} --ack '${code:-}' is not a hazard code (want --ack H001 or --ack H001,H003)" 2 ;;
-    esac
-  done
-  command_ack="$1"
-}
-# A comment that names the command runs it or is refused: applying while quietly dropping what it asked for
-# is worse than not applying.
-arguments() {
-  local words=("$@") word i=0
-  if [ "${#words[@]}" -gt 0 ] && sha "${words[0]}"; then
-    command_sha="${words[0]}"
-    i=1
+command_rollout=""
+# The grammar lives in internal/comment; the shell only reads back what it decided.
+parse() {
+  local body out rc=0 key value
+  body="$(mktemp)"
+  event "$1" >"${body}"
+  out="$("${GODWIT_BIN:-godwit}" comment parse --command "${COMMAND}" --body-file "${body}" 2>&1)" || rc=$?
+  rm -f "${body}"
+  if [ "${rc}" -ne 0 ]; then
+    if [ "${rc}" -ne 2 ]; then rc=1; fi
+    refuse "$(printf '%s' "${out}" | sed 's/^godwit: //')" "${rc}"
   fi
-  while [ "${i}" -lt "${#words[@]}" ]; do
-    word="${words[${i}]}"
-    case "${word}" in
-      --ack)
-        takes --ack
-        i=$((i + 1))
-        if [ "${i}" -ge "${#words[@]}" ]; then
-          refuse "${want} --ack names no hazard code (want --ack H001 or --ack H001,H003)" 2
-        fi
-        acked "${words[${i}]}"
-        ;;
-      --ack=*)
-        takes --ack
-        acked "${word#--ack=}"
-        ;;
-      --allow-data-loss)
-        takes --allow-data-loss
-        command_data_loss=true
-        ;;
-      --force)
-        takes --force
-        command_force=true
-        ;;
-      *) refuse "${want} does not understand '${word}'$(usage)" 2 ;;
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      command) command_name="${value}" ;;
+      sha) command_sha="${value}" ;;
+      ack) command_ack="${value}" ;;
+      allow-data-loss) command_data_loss="${value}" ;;
+      force) command_force="${value}" ;;
+      rollout) command_rollout="${value}" ;;
     esac
-    i=$((i + 1))
-  done
-}
-# A whole line outside a fenced block, so a pasted log carrying the command does not fire.
-commanded() {
-  local line rest fenced=0
-  local -a words
-  while IFS= read -r line; do
-    line="${line%$'\r'}"
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    case "${line}" in
-      '```'*|'~~~'*)
-        fenced=$((1 - fenced))
-        continue
-        ;;
-    esac
-    if [ "${fenced}" -eq 1 ]; then continue; fi
-    if [ "${line}" = "${want}" ]; then
-      return 0
-    fi
-    case "${line}" in
-      "${want} "*)
-        rest="${line#"${want} "}"
-        read -r -a words <<<"${rest}"
-        arguments ${words[@]+"${words[@]}"}
-
-        return 0
-        ;;
-    esac
-  done <<<"$1"
-
-  return 1
+  done <<<"${out}"
 }
 allowed() {
   case ",${associations}," in
@@ -245,7 +182,8 @@ if ! wants_on comment && ! wants_on approve; then
   refuse "apply-on '${APPLY_ON}' enables nothing (want comment, approve or comment,approve)" 2
 fi
 by_comment() {
-  if ! commanded "$1"; then skip "$2 is not '${want}'"; fi
+  parse "$1"
+  if [ -z "${command_name}" ]; then skip "$2 is not '${want}'"; fi
   if [ "${COMMAND}" = "apply" ] && ! wants_on comment; then skip "apply-on: ${APPLY_ON} ignores '${want}' comments"; fi
 }
 
@@ -255,7 +193,7 @@ case "${EVENT_NAME}" in
   issue_comment)
     if [ "$(event .action)" != "created" ]; then skip "comment ${EVENT_NAME} $(event .action), nothing to do"; fi
     if [ "$(event '.issue.pull_request // empty')" = "" ]; then skip "comment on an issue, not a pull request"; fi
-    by_comment "$(event '.comment.body // ""')" comment
+    by_comment '.comment.body // ""' comment
     commander="$(event '.comment.user.login // ""')"
     allowed "$(event '.comment.author_association // "NONE"')" "${commander}"
     number="$(event '.issue.number // ""')"
@@ -265,7 +203,7 @@ case "${EVENT_NAME}" in
     if [ "${COMMAND}" = "apply" ] && wants_on approve && [ "$(event .review.state)" = "approved" ]; then
       echo "godwit: approved review, applying"
     else
-      by_comment "$(event '.review.body // ""')" review
+      by_comment '.review.body // ""' review
     fi
     commander="$(event '.review.user.login // ""')"
     allowed "$(event '.review.author_association // "NONE"')" "${commander}"
@@ -296,7 +234,7 @@ if ! hex "${head}"; then
 fi
 
 case "${COMMAND}" in
-  apply|confirm)
+  plan|apply|confirm)
     if [ "${state}" != "open" ]; then
       refuse "pull request #${number} is ${state}: nothing to ${COMMAND}"
     fi
@@ -313,13 +251,16 @@ case "${COMMAND}" in
     if [ "${checked_out}" != "${head}" ]; then
       refuse "checked-out commit ${checked_out:-<none>} is not the head of pull request #${number} (${head}); check out the head (ref: refs/pull/${number}/head) and, if it moved after the command, comment ${want} again"
     fi
-    if [ "${REQUIRE_APPROVAL}" = "true" ]; then
-      approved
+    # A re-plan writes no godwit/applied status and needs no approval: it applies nothing.
+    if [ "${COMMAND}" != "plan" ]; then
+      if [ "${REQUIRE_APPROVAL}" = "true" ]; then
+        approved
+      fi
+      doing="applying"
+      if [ "${COMMAND}" = "confirm" ]; then doing="confirming the contract phase of"; fi
+      STATE=pending DESCRIPTION="${doing} ${head:0:7} from pull request #${number}" TARGET_URL="${RUN_URL}" SHA="${head}" \
+        "$(dirname "$0")/action-status.sh"
     fi
-    doing="applying"
-    if [ "${COMMAND}" = "confirm" ]; then doing="confirming the contract phase of"; fi
-    STATE=pending DESCRIPTION="${doing} ${head:0:7} from pull request #${number}" TARGET_URL="${RUN_URL}" SHA="${head}" \
-      "$(dirname "$0")/action-status.sh"
     ;;
   revert)
     if [ "${merged}" = "true" ]; then
@@ -333,5 +274,6 @@ if [ -n "${command_ack}" ]; then ack="${ACK:+${ACK},}${command_ack}"; fi
 out ack "${ack}"
 out allow-data-loss "${command_data_loss}"
 out force "${command_force}"
+out rollout "${command_rollout}"
 echo "godwit: ${want} on pull request #${number} at ${head}"
 emit false "${number}" "${head}"

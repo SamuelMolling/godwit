@@ -29,15 +29,16 @@ It builds godwit from the checked-out action ref with `actions/setup-go` (`CGO_E
 
 ### Two modes
 
-The default, `mode: apply-on-pr`, is the Atlantis model: the pull request plans, `/godwit apply` on the pull request applies, and the merge only verifies. `main` never carries a migration the database does not have, because the merge is gated on the `godwit/applied` commit status that only a successful apply sets.
+The default, `mode: apply-on-pr`, is the Atlantis model: the pull request plans, `godwit apply` on the pull request applies, and the merge only verifies. `main` never carries a migration the database does not have, because the merge is gated on the `godwit/applied` commit status that only a successful apply sets.
 
 | Event | Command | What happens |
 |---|---|---|
 | `pull_request` | `lint`, `plan` | lint the new files; store the admitted plan on the service; sticky comments; status `godwit/plan` on the head commit |
-| `issue_comment` `/godwit apply`, or `pull_request_review` | `apply` | `migrate` from the pull request head, bound to the stored plan; status `godwit/applied` on the head commit |
-| `issue_comment` `/godwit confirm` | `confirm` | the contract phase of the run the pull request left in `awaiting_contract`; the status goes from `pending` to `success` |
+| `issue_comment` `godwit plan` | `plan` | re-plan the pull request head and store it, without pushing ([re-planning from a comment](#re-planning-from-a-comment)) |
+| `issue_comment` `godwit apply`, or `pull_request_review` | `apply` | `migrate` from the pull request head, bound to the stored plan; status `godwit/applied` on the head commit |
+| `issue_comment` `godwit confirm` | `confirm` | the contract phase of the run the pull request left in `awaiting_contract`; the status goes from `pending` to `success` |
 | merge (`push`) | `verify` | `migrate --dry-run`: fails when a migration on `main` is not applied; never applies |
-| `issue_comment` `/godwit revert` | `revert` | undoes what the run(s) of the pull request applied, newest first; the dry-run plan goes in the comment before anything is queued; status back to failure |
+| `issue_comment` `godwit revert` | `revert` | undoes what the run(s) of the pull request applied, newest first; the dry-run plan goes in the comment before anything is queued; status back to failure |
 
 In this mode `command: migrate` is refused (exit 2) unless `dry-run: "true"`. `mode: apply-on-merge` keeps the previous flow: `plan` on the pull request, `migrate` on push; `apply`, `confirm` and `revert` are refused there (confirm the contract phase from the deploy pipeline with `godwit run confirm --latest --allow-none --target <t>`, [below](#expand--contract-in-a-pipeline)). Use it when nothing may touch the database before the merge (for example when the PreSync hook in [ArgoCD](#argocd) is the only thing allowed to apply).
 
@@ -47,18 +48,18 @@ In this mode `command: migrate` is refused (exit 2) unless `dry-run: "true"`. `m
 |---|---|---|
 | `command` | required | `lint`, `plan`, `apply`, `confirm`, `verify`, `revert`, `migrate`, `diff` |
 | `mode` | `apply-on-pr` | `apply-on-pr` (apply, confirm and revert from the pull request, verify on push, migrate refused) or `apply-on-merge` (migrate on push, apply, confirm and revert refused) |
-| `apply-on` | `comment` | apply: `comment` (a `/godwit apply` comment or review body), `approve` (an approved review), or `comment,approve`. `confirm` is always commanded by a `/godwit confirm` comment or review body |
-| `allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | apply, confirm, revert: `author_association` values whose comment or review counts. It **narrows**, it does not authorise ([below](#who-may-command-an-apply)); only `OWNER`, `MEMBER` and `COLLABORATOR` are accepted, anything else is a configuration error (exit 2) |
+| `apply-on` | `comment` | apply: `comment` (a `godwit apply` comment or review body), `approve` (an approved review), or `comment,approve`. `confirm` is always commanded by a `godwit confirm` comment or review body |
+| `allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | plan, apply, confirm, revert: `author_association` values whose comment or review counts. It **narrows**, it does not authorise ([below](#who-may-command-an-apply)); only `OWNER`, `MEMBER` and `COLLABORATOR` are accepted, anything else is a configuration error (exit 2) |
 | `require-approval` | `true` | apply, confirm: an approving review, by someone other than the pull request author who holds write or admin permission, must stand on the exact commit being applied. `false` removes the anchor and the review requirement |
 | `dir` | `dir` from `godwit.yaml`, else `migrations` | all but revert; diff writes the generated pair there |
 | `base` | `origin/main` | lint: only migrations added since the ref are linted, files modified since it are `E003`; empty checks every file. The ref is fetched depth-1 when missing |
 | `ack` | — | lint, plan, apply, verify, migrate: comma-separated hazard codes; revert: the codes found in the down files (`H002` for `DROP TABLE`, `H009` for `DROP INDEX`, ...). A `--ack` on the command comment adds its codes to these for that run ([flags on a command comment](#flags-on-a-command-comment)) |
-| `allow-data-loss` | `false` | revert: run a plan that drops a table or column still holding rows. godwit refuses it by default and names the objects and their row counts in the comment. `/godwit revert --allow-data-loss` sets it for that run |
-| `force` | `false` | revert: undo a run that is not the newest un-reverted one on its target. `/godwit revert --force` sets it for that run |
+| `allow-data-loss` | `false` | revert: run a plan that drops a table or column still holding rows. godwit refuses it by default and names the objects and their row counts in the comment. `godwit revert --allow-data-loss` sets it for that run |
+| `force` | `false` | revert: undo a run that is not the newest un-reverted one on its target. `godwit revert --force` sets it for that run |
 | `server` | `server` from `godwit.yaml` or `GODWIT_SERVER` | plan, apply, verify, revert, migrate, diff |
 | `token` | — | plan, verify and diff (`read`), apply, confirm, revert and migrate (`pipeline`); exported as `GODWIT_TOKEN`, never passed on the command line |
 | `target` | `target` from `godwit.yaml` | plan, apply, verify, migrate, diff; confirm and revert (optional, narrows the run search). With a target, `plan` runs on the service and stores the plan; without one it parses the files offline |
-| `rollout` | `godwit.yaml`, else `direct` | plan, apply, migrate: part of the plan key, so all must agree |
+| `rollout` | `godwit.yaml`, else `direct` | plan, apply, migrate: part of the plan key, so all must agree. `godwit plan --rollout expand-contract` on a comment sets it for that re-plan |
 | `dry-run` | `false` | migrate: `PlanRun` without persisting, markdown report, no run (`command: plan` is the persisting variant); allowed in both modes. diff: report the migration without writing the files |
 | `schema` | — | diff: file holding the whole desired database as DDL |
 | `prisma` | — | diff: `schema.prisma` rendered to DDL by the Prisma CLI, which the checkout must provide (`npm ci`); exclusive with `schema` |
@@ -173,6 +174,22 @@ The commit is what keeps the two in step; nothing stops a later pull request fro
 
 godwit replays the committed migrations on a scratch database (the target's recorded history first, then the files) and diffs the result against the rendered ORM schema. Empty means they match; anything left is `E005` with the residual SQL under it, and the step fails ([concepts](concepts.md#keeping-the-generated-sql-and-the-orm-schema-together)). `schema_source.lint: false` in `godwit.yaml` makes it a warning instead. Drop `server` and the check reports `W002` and lint runs offline as before — the check lives in `lint` rather than in the workflow precisely so the local command and the CI one agree.
 
+### Re-planning from a comment
+
+A `pull_request` event re-plans on every push, which covers the usual case: the plan on the pull request is the plan of its head. `godwit plan` as a comment re-plans that same head without one — when the target moved under the stored plan and the migrations did not, when the plan was refused for a hazard that has since been accepted through the `ack` input, or to plan the same files under a different rollout:
+
+```yaml
+      - uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
+        with:
+          command: plan
+          dir: db/migrations
+          server: https://godwit.internal
+          token: ${{ secrets.GODWIT_TOKEN_READ }}
+          target: orders
+```
+
+**A re-plan from a comment changes what a later `apply` does.** `apply` binds by plan key, not by plan id, so the newest stored plan with that key is the one it runs; the comment therefore reaches past the pull request's own content into what the next apply will execute. It is commanded like `apply` ([what counts as commanding](#what-counts-as-commanding)) and authorised like it — `allowed-associations` and write or admin permission on the repository ([who may command an apply](#who-may-command-an-apply)) — and it is refused when the pull request is closed, when the checked-out commit is not the head, or when a `godwit plan <sha>` names a commit the head has moved past. It does **not** need an approving review: `require-approval` anchors the apply to a reviewed commit, and a plan applies nothing. `--rollout` is part of the plan key, so `godwit plan --rollout expand-contract` stores the plan under a different key from the one an `apply` step left on the default rollout looks for; the two have to agree, as they already do between the `plan` and `apply` steps of a workflow.
+
 ### Pull request: apply
 
 ```yaml
@@ -185,7 +202,7 @@ permissions:
   statuses: write
 jobs:
   apply:
-    if: github.event_name == 'pull_request_review' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/godwit '))
+    if: github.event_name == 'pull_request_review' || (github.event.issue.pull_request && contains(github.event.comment.body, 'godwit '))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,15 +216,33 @@ jobs:
           target: orders
 ```
 
-Once the review is done, a collaborator comments `/godwit apply` (the whole comment, or one line of it; also accepted as the body of a review). With `apply-on: comment,approve` an approving review applies as well. The step:
+Once the review is done, a collaborator comments `godwit apply` — the **whole comment**, nothing else in it; also accepted as the body of a review. With `apply-on: comment,approve` an approving review applies as well. `/godwit apply`, which earlier versions of this page documented, is still accepted for every command; `godwit apply` is the form to write and the one the reports and statuses print. The step:
 
-1. Reads the event. The command is a whole line of the comment, outside any fenced code block, so a pasted log or a quoted reply carrying `/godwit apply` does not fire; the line may name the commit the commenter was reading (`/godwit apply <sha>`), and then that sha must be the head. A comment that is not the command, a review that does not apply, an edited comment or a comment on an issue end the step with `skipped=true` and exit 0. The command line also takes the flags that command has ([below](#flags-on-a-command-comment)).
+1. Reads the event. The command has to be the entire comment ([what counts as commanding](#what-counts-as-commanding)), so prose around it — a log pasted above it, a sentence explaining it to a teammate, a thank-you below it — means nothing fires. It may name the commit the commenter was reading (`godwit apply <sha>`), and then that sha must be the head. A comment that is not the command, a review that does not apply, an edited comment or a comment on an issue end the step with `skipped=true` and exit 0. The command takes the flags that command has ([below](#flags-on-a-command-comment)).
 2. Authorises the commander — `allowed-associations`, then the real permission lookup and the approval anchor described [below](#who-may-command-an-apply). Every refusal exits 1 and says which check failed.
 3. Reads the pull request through the API: it must be open, and the checked-out commit must be its head, so the job has to check out `refs/pull/<n>/head` (the default checkout of `issue_comment` is the default branch). This catches a mis-configured checkout. It does **not** catch a push that raced the job: both sides of that comparison move together, which is what the approval anchor in step 2 is for.
 4. Sets the commit status `godwit/applied` to `pending` on the head, then runs `godwit migrate` from the pull request files with the same `dir`, `target` and `rollout` as the plan step, so it binds to the stored plan ([concepts: plans](concepts.md#plans)) and refuses when the target moved since (exit 3, `stale=true`).
-5. Posts the `## godwit apply` report on the pull request and sets the status: `success` ("applied by run …; merge when the review is done"), `pending` when the run stopped at `awaiting_contract` ("expand applied; comment /godwit confirm to run the contract phase", output `phase=awaiting-contract`), or `failure` with the reason (stale plan → re-plan then command again; SQL error → the run's error is in the comment). The status links to the comment.
+5. Posts the `## godwit apply` report on the pull request and sets the status: `success` ("applied by run …; merge when the review is done"), `pending` when the run stopped at `awaiting_contract` ("expand applied; comment godwit confirm to run the contract phase", output `phase=awaiting-contract`), or `failure` with the reason (stale plan → re-plan then command again; SQL error → the run's error is in the comment). The status links to the comment.
 
 The status is per commit, so a push after the apply leaves the new head without one. Branch protection on the base branch should require the `godwit/applied` status and **"Require branches to be up to date before merging"**: the first makes the apply the gate of the merge, the second makes GitHub re-run the pull request workflow (re-plan) when the base moves, so the plan stored last is the one computed on the exact set the pull request applies. The `source` recorded on the run is `github.com/<owner>/<repo>@<head sha>[:<dir>]`, which `godwit runs`, `godwit audit` and `revert` use.
+
+### What counts as commanding
+
+**The command must be the entire comment.** A comment is trimmed of surrounding whitespace, any backticks wrapping the whole of it are stripped, and what is left must be the command and its arguments — nothing before it, nothing after it, no second line. Anything else names nothing: the step ends `skipped=true` and exits 0.
+
+| Comment | |
+|---|---|
+| `godwit apply` | commands |
+| `` `godwit apply` `` , ```` ```godwit apply``` ```` | commands — GitHub's copy and quote-reply wrap a command in backticks |
+| `godwit apply <sha> --ack H001` | commands; this rule is about surrounding content, not arguments |
+| `To deploy, comment:` ⏎ `godwit apply` | silence |
+| `godwit apply` ⏎ `thanks!` | silence |
+| a pasted log or a fenced block containing `godwit apply` | silence |
+| `please godwit apply` | silence |
+
+This is [Atlantis's rule](https://github.com/runatlantis/atlantis/blob/main/server/events/comment_parser.go) — its parser ignores any comment with a second non-empty line — and godwit takes it for the same reason. Without the `/` prefix, `godwit apply` on its own line is exactly how someone explains the tool to a teammate, and the person explaining is usually someone whose permission would let the apply through. Requiring the whole comment costs the commander nothing and takes that footgun away. It also removes the need for a fenced-code-block rule: a real fenced block spans lines, so it is already silence.
+
+**A review body obeys the same rule.** The parser is the same one, deliberately: two grammars is what this page used to have and it is not worth having again for a convenience. Approving *and* saying something is a normal thing to do, but it already has its own path — `apply-on: approve` makes the approving review itself the trigger and never reads the body ([who may command an apply](#who-may-command-an-apply)), so prose and an apply coexist there. When the body is the command, it has to be only the command. The failure mode of getting this wrong is inaction: nothing applies, and the reviewer comments again.
 
 ### Flags on a command comment
 
@@ -215,15 +250,16 @@ A commanded line may carry the flags its command takes, after the optional sha:
 
 | Command | Flags |
 |---|---|
-| `/godwit apply` | `--ack H001`, `--ack H001,H003` (or `--ack=H001`) |
-| `/godwit revert` | `--ack …`, `--allow-data-loss`, `--force` |
-| `/godwit confirm` | none |
+| `godwit plan` | `--rollout direct`, `--rollout expand-contract` |
+| `godwit apply` | `--ack H001`, `--ack H001,H003` (or `--ack=H001`) |
+| `godwit confirm` | none |
+| `godwit revert` | `--ack …`, `--allow-data-loss`, `--force` |
 
 `--ack` on a comment is the escape hatch for a hazard someone has decided to accept on this one run — the main path stays editing the migration to use the recipe the report prints beside the statement, and the `ack` input stays the place for a code the repository always accepts. The comment's codes are **added** to the `ack` input; `--allow-data-loss` and `--force` set the corresponding input for that run.
 
-A line that opens with the command and then carries something the command does not take — an unknown flag, a flag belonging to another command, a hazard code that is not one, `--ack` with nothing after it — **fails the job** with the reason. It does not quietly apply without what was asked for, and it is not the same as a comment that never named the command, which still ends `skipped=true` and exit 0.
+A comment that *is* the command and then carries something the command does not take — an unknown flag, a flag belonging to another command, a hazard code that is not one, `--ack` with nothing after it — **fails the job** with the reason. It does not quietly apply without what was asked for. That is not the same as a comment which never commanded at all — one with prose around it, or one that names no command — and those still end `skipped=true` and exit 0, even when the text inside them would have been a refusal on its own.
 
-A caller's workflow that filters events before the Action runs has to let the flags through: a job that matches the comment with an exact `== '/godwit apply'` on the first line refuses `/godwit apply --ack H001` before godwit ever sees it. Match a prefix (`startsWith(..., '/godwit apply')`) instead, and leave the parsing and the refusals to the Action.
+A caller's workflow that filters events before the Action runs has to let the flags through: a job that matches the comment with an exact `== 'godwit apply'` on the first line refuses `godwit apply --ack H001` before godwit ever sees it. Match loosely (`contains(..., 'godwit apply')`) instead, and leave the parsing and the refusals to the Action. `contains` rather than `startsWith` is also what lets `/godwit apply` — the form earlier versions of this page documented, still accepted — reach the Action.
 
 The `apply` step also accepts `pull_request` events, for teams that apply on every push to a labelled pull request. There is no comment to authorise there, so the guards that remain are the approval anchor (`require-approval`, on by default: an approving review must stand on the head being applied) and a refusal when the pull request comes from a fork — GitHub withholds the secrets from a fork's `pull_request` run anyway, and a stated refusal beats a confusing authentication failure. The workflow's own `if` is the rest of the gate.
 
@@ -235,7 +271,7 @@ The `apply` step also accepts `pull_request` events, for teams that apply on eve
 
 1. **`allowed-associations`** — the commenter's `author_association` must be in the list. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and `NONE` are rejected as *configuration* (exit 2): anyone who opened a pull request carries one of them, so listing one would authorise the world.
 2. **Repository permission** — `GET /repos/{owner}/{repo}/collaborators/{login}/permission` must return `admin` or `write`, for the commander and, when an approval is required, for the approver too. The `github-token` must be able to read that; if the call fails, the command is refused rather than allowed.
-3. **An approving review on the exact commit** (`require-approval`, default `true`) — the pull request must carry an `APPROVED` review whose `commit_id` is the head being applied, from a login other than the pull request author, whose latest review is not a later `CHANGES_REQUESTED`. This is the anchor: GitHub records the sha a reviewer approved, so a push after the approval invalidates it and the apply is refused. It is what makes `/godwit apply` mean "apply what was reviewed" rather than "apply whatever is on the branch now"; a comment payload carries no sha of its own, which is why the anchor is a review and not the comment.
+3. **An approving review on the exact commit** (`require-approval`, default `true`) — the pull request must carry an `APPROVED` review whose `commit_id` is the head being applied, from a login other than the pull request author, whose latest review is not a later `CHANGES_REQUESTED`. This is the anchor: GitHub records the sha a reviewer approved, so a push after the approval invalidates it and the apply is refused. It is what makes `godwit apply` mean "apply what was reviewed" rather than "apply whatever is on the branch now"; a comment payload carries no sha of its own, which is why the anchor is a review and not the comment.
 
 An approving review that itself triggers the apply (`apply-on: approve`) is additionally checked against `review.commit_id`, so approving a stale page in the browser cannot apply a newer head.
 
@@ -243,11 +279,11 @@ Three costs, stated plainly. `require-approval: true` needs a **second person** 
 
 ### Pull request: confirm the contract phase
 
-An `expand-contract` apply whose plan holds statements back ends in `awaiting_contract`: the expand phase is on the database, the contract phase is not, and the migration is only half done. The step exits 0, so `godwit/applied` must **not** say `success` there — it stays `pending` with "expand applied; comment /godwit confirm to run the contract phase". Branch protection keeps the pull request unmergeable until the contract phase runs, which is the point: `main` never carries a migration the database has only half of.
+An `expand-contract` apply whose plan holds statements back ends in `awaiting_contract`: the expand phase is on the database, the contract phase is not, and the migration is only half done. The step exits 0, so `godwit/applied` must **not** say `success` there — it stays `pending` with "expand applied; comment godwit confirm to run the contract phase". Branch protection keeps the pull request unmergeable until the contract phase runs, which is the point: `main` never carries a migration the database has only half of.
 
 ```yaml
       - name: Run the contract phase held by the apply
-        if: contains(github.event.comment.body, '/godwit confirm')
+        if: contains(github.event.comment.body, 'godwit confirm')
         uses: SamuelMolling/godwit@f4d803c9aae750b85ee35c75cabb990ea98d2eb6
         with:
           command: confirm
@@ -256,7 +292,7 @@ An `expand-contract` apply whose plan holds statements back ends in `awaiting_co
           target: orders
 ```
 
-Once the application version that reads both shapes is deployed, a collaborator comments `/godwit confirm`. The step reads the event under the same rules as `apply` ([who may command an apply](#who-may-command-an-apply), open pull request, the checked-out commit must be the head), sets `godwit/applied` to `pending` ("confirming the contract phase of …"), then:
+Once the application version that reads both shapes is deployed, a collaborator comments `godwit confirm`. The step reads the event under the same rules as `apply` ([who may command an apply](#who-may-command-an-apply), open pull request, the checked-out commit must be the head), sets `godwit/applied` to `pending` ("confirming the contract phase of …"), then:
 
 1. Lists the commits of the pull request and the runs of the target, and takes the newest run whose `source` is `<repo>@<one of those commits>` and whose state is `awaiting_contract` — the same provenance match `revert` uses, so it can only release what this pull request applied.
 2. Calls `ConfirmRollout` on it and streams the run to its end. It is the **same run id**, resumed at the statement it stopped at with `phase = contract`: no second plan, no second bind, nothing re-executed ([concepts: rollout policies](concepts.md#rollout-policies)).
@@ -268,7 +304,7 @@ If the head moved while the run was awaiting its contract phase, the head guard 
 
 ### Pull request: revert
 
-When a pull request is closed without merging after it applied, `/godwit revert` runs `command: revert`: it lists the commits of the pull request, finds every run whose `source` is `<repo>@<one of those commits>` and is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, and calls `godwit revert <id>` for each, newest first, stopping at the first failure. The down files pass the hazard gate, so `ack` must carry their codes (`H002`, `H009`, ...). A merged pull request is refused: its migrations belong to the base branch now, revert them from a new pull request. The report is posted on the pull request and the status goes back to `failure` ("reverted by run …"), so the pull request cannot be merged until it applies again. The original run ends `reverted`, the plan it was bound to is retired when the next apply binds ([concepts: revert](concepts.md#revert)); a re-plan stores a fresh plan and `/godwit apply` binds to that one.
+When a pull request is closed without merging after it applied, `godwit revert` runs `command: revert`: it lists the commits of the pull request, finds every run whose `source` is `<repo>@<one of those commits>` and is `succeeded`, `awaiting_contract`, `failed` or `needs_attention`, and calls `godwit revert <id>` for each, newest first, stopping at the first failure. The down files pass the hazard gate, so `ack` must carry their codes (`H002`, `H009`, ...). A merged pull request is refused: its migrations belong to the base branch now, revert them from a new pull request. The report is posted on the pull request and the status goes back to `failure` ("reverted by run …"), so the pull request cannot be merged until it applies again. The original run ends `reverted`, the plan it was bound to is retired when the next apply binds ([concepts: revert](concepts.md#revert)); a re-plan stores a fresh plan and `godwit apply` binds to that one.
 
 ### Merge: verify
 
@@ -324,7 +360,7 @@ The step streams `godwit migrate --json` events, writes `## godwit migrate` with
 
 ### Expand → contract in a pipeline
 
-With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`) exits 0 while the run sits in `awaiting_contract`. On a pull request the contract phase is released by [`/godwit confirm`](#pull-request-confirm-the-contract-phase); everywhere else, confirm from the deploy pipeline once the new application version is out:
+With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`) exits 0 while the run sits in `awaiting_contract`. On a pull request the contract phase is released by [`godwit confirm`](#pull-request-confirm-the-contract-phase); everywhere else, confirm from the deploy pipeline once the new application version is out:
 
 ```yaml
       - run: godwit run confirm --latest --allow-none --target orders
@@ -349,9 +385,9 @@ Replace `orders`, the Secret name and, for a reproducible hook, the image tag (`
 
 1. Author the change as two migrations: an additive one (`CREATE`, `ADD COLUMN`, `CREATE INDEX CONCURRENTLY`) and a later destructive one (`DROP`, `RENAME`: H002/H003/H008); or as one `-- godwit:` directive, which godwit splits down the middle itself. The split is by statement: everything up to the first contract statement runs in expand, that statement and everything after it wait for contract ([concepts: rollout policies](concepts.md#rollout-policies)).
 2. Pull request: `lint` (hazards acknowledged where intended), `plan` with a read token: the admitted plan is stored with an observation of the target.
-3. `/godwit apply` on the pull request: `migrate --rollout expand-contract` binds to the stored plan (or refuses with exit 3 when the target moved) → run ends `awaiting_contract`, step exits 0, `godwit/applied` on the head stays **`pending`** ("expand applied; comment /godwit confirm to run the contract phase"); the outcome is posted on the pull request.
+3. `godwit apply` on the pull request: `migrate --rollout expand-contract` binds to the stored plan (or refuses with exit 3 when the target moved) → run ends `awaiting_contract`, step exits 0, `godwit/applied` on the head stays **`pending`** ("expand applied; comment godwit confirm to run the contract phase"); the outcome is posted on the pull request.
 4. Deploy the application version that handles both shapes.
-5. `/godwit confirm` on the pull request (or `run confirm --latest --allow-none` from the deploy pipeline) → the same run resumes with `phase = contract` and ends `succeeded`, `godwit/applied` turns `success` and the pull request becomes mergeable. Merge: `verify` finds every migration applied.
-6. If step 4 fails: `/godwit revert` on the pull request, or `godwit revert <run-id>`, applies the down side of the expand phase (needs the destructive hazards in the down files acknowledged).
+5. `godwit confirm` on the pull request (or `run confirm --latest --allow-none` from the deploy pipeline) → the same run resumes with `phase = contract` and ends `succeeded`, `godwit/applied` turns `success` and the pull request becomes mergeable. Merge: `verify` finds every migration applied.
+6. If step 4 fails: `godwit revert` on the pull request, or `godwit revert <run-id>`, applies the down side of the expand phase (needs the destructive hazards in the down files acknowledged).
 
 A run whose plan has no contract statements skips `awaiting_contract` and ends `succeeded` directly, so the same pipeline serves additive and destructive changes.

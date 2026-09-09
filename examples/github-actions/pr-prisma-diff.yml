@@ -18,7 +18,7 @@ concurrency:
 # A pull request that edits prisma/schema.prisma carries exactly one generated pair,
 # <timestamp>_prisma.{up,down}.sql, regenerated from the live target on every push. A push made with
 # GITHUB_TOKEN does not trigger workflows, which is why lint and plan run here, after the commit: the
-# plan the `/godwit apply` of pr-plan-and-apply.yml binds to must include the generated files.
+# plan the `godwit apply` of pr-plan-and-apply.yml binds to must include the generated files.
 #
 # The lint step's schema check reads the source from godwit.yaml, so declare it there:
 #

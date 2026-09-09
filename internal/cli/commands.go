@@ -144,7 +144,7 @@ func (r planReport) verdict(m markup) string {
 	line := m.glyph(mark) + m.bold(fmt.Sprintf("%s will be applied to %s.", count(apply, "migration"), m.code(r.target)))
 	if r.pauses() {
 		line += fmt.Sprintf(" The expand phase runs on apply, then the run stops at %s and the contract phase"+
-			" waits for a confirm (%s on a pull request).", m.code("awaiting_contract"), m.code("/godwit confirm"))
+			" waits for a confirm (%s on a pull request).", m.code("awaiting_contract"), m.code("godwit confirm"))
 	}
 
 	return line
@@ -202,7 +202,7 @@ func (r planReport) footerLines(m markup) []string {
 		ack := "--ack " + strings.Join(codes, ",")
 		out = append(out, fmt.Sprintf("%s%s on what this run would execute: take the recipe printed beside the statement,"+
 			" or accept the risk with %s (%s on a pull request).",
-			m.glyph("⚠️"), count(gated, "hazard"), m.code(ack), m.code("/godwit apply "+ack)))
+			m.glyph("⚠️"), count(gated, "hazard"), m.code(ack), m.code("godwit apply "+ack)))
 	}
 
 	return append(out, fmt.Sprintf("Plan: %d to apply, %d to revert, %d hazard(s) to acknowledge", apply, revert, gated))
