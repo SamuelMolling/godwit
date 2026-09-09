@@ -36,11 +36,20 @@ const (
 	PhaseContract = "contract"
 )
 
-// Hazard flags a statement that can hurt a live database.
+// Hazard flags a statement that can hurt a live database; Object and Attribute are what it is about.
 type Hazard struct {
-	Code   string
-	Detail string
-	Recipe string
+	Code      string
+	Detail    string
+	Recipe    string
+	Object    string
+	Attribute string
+}
+
+// Short is the hazard's own wording cut before the recipe it goes on to describe in prose.
+func (h Hazard) Short() string {
+	detail, _, _ := strings.Cut(h.Detail, "; ")
+
+	return detail
 }
 
 // Drop is a table, or a column of one, that a statement removes.
@@ -234,13 +243,26 @@ func classify(node *pgquery.Node, st *Statement) error {
 	return nil
 }
 
-func (st *Statement) hazard(code, detail, recipe string) {
+func (st *Statement) hazard(code, detail, recipe string) *Hazard {
 	st.Hazards = append(st.Hazards, Hazard{Code: code, Detail: detail, Recipe: recipe})
+
+	return &st.Hazards[len(st.Hazards)-1]
+}
+
+func (h *Hazard) on(schema, name, attribute string) {
+	if name == "" {
+		return
+	}
+	h.Object, h.Attribute = name, attribute
+	if schema != "" {
+		h.Object = schema + "." + name
+	}
 }
 
 func classifyIndex(idx *pgquery.IndexStmt, st *Statement) error {
 	if !idx.Concurrent {
-		st.hazard("H001", "CREATE INDEX without CONCURRENTLY blocks writes on "+idx.Relation.Relname, recipeIndex(idx))
+		st.hazard("H001", "CREATE INDEX without CONCURRENTLY blocks writes on "+idx.Relation.Relname, recipeIndex(idx)).
+			on(idx.Relation.Schemaname, idx.Idxname, "")
 
 		return nil
 	}
@@ -262,10 +284,13 @@ func classifyDrop(d *pgquery.DropStmt, st *Statement) {
 			schema, name := qualifiedName([]*pgquery.Node{obj})
 			st.Drops = append(st.Drops, Drop{Schema: schema, Table: name})
 		}
-		st.hazard("H002", "DROP TABLE is destructive", recipeDropTable(d))
+		schema, name := qualifiedName(d.Objects)
+		st.hazard("H002", "DROP TABLE is destructive", recipeDropTable(d)).on(schema, name, "")
 	case pgquery.ObjectType_OBJECT_INDEX:
 		if !d.Concurrent {
-			st.hazard("H009", "DROP INDEX without CONCURRENTLY blocks reads and writes on the table; use DROP INDEX CONCURRENTLY", recipeDropIndex(d))
+			schema, name := qualifiedName(d.Objects)
+			st.hazard("H009", "DROP INDEX without CONCURRENTLY blocks reads and writes on the table; use DROP INDEX CONCURRENTLY",
+				recipeDropIndex(d)).on(schema, name, "")
 
 			return
 		}
@@ -295,17 +320,21 @@ func classifyAlterTable(a *pgquery.AlterTableStmt, st *Statement) {
 		switch cmd.Subtype {
 		case pgquery.AlterTableType_AT_DropColumn:
 			st.Drops = append(st.Drops, Drop{Schema: a.Relation.Schemaname, Table: a.Relation.Relname, Column: cmd.Name})
-			st.hazard("H003", "DROP COLUMN is destructive", recipeDropColumn(a.Relation, cmd.Name))
+			st.hazard("H003", "DROP COLUMN is destructive", recipeDropColumn(a.Relation, cmd.Name)).
+				on(a.Relation.Schemaname, a.Relation.Relname, cmd.Name)
 		case pgquery.AlterTableType_AT_AlterColumnType:
-			st.hazard("H004", "ALTER COLUMN TYPE rewrites the table under an exclusive lock", recipeAlterType(a.Relation, cmd))
+			st.hazard("H004", "ALTER COLUMN TYPE rewrites the table under an exclusive lock", recipeAlterType(a.Relation, cmd)).
+				on(a.Relation.Schemaname, a.Relation.Relname, cmd.Name)
 		case pgquery.AlterTableType_AT_AddColumn:
 			if col := cmd.GetDef().GetColumnDef(); col != nil && notNullWithoutDefault(col) {
-				st.hazard("H005", "ADD COLUMN NOT NULL without DEFAULT fails on non-empty tables", recipeAddColumn(a.Relation, col))
+				st.hazard("H005", "ADD COLUMN NOT NULL without DEFAULT fails on non-empty tables", recipeAddColumn(a.Relation, col)).
+					on(a.Relation.Schemaname, a.Relation.Relname, col.Colname)
 			}
 		case pgquery.AlterTableType_AT_AddConstraint:
 			classifyAddConstraint(a.Relation, cmd.GetDef().GetConstraint(), st)
 		case pgquery.AlterTableType_AT_SetNotNull:
-			st.hazard("H007", "SET NOT NULL on "+cmd.Name+" scans the table under an exclusive lock; add CHECK ("+cmd.Name+" IS NOT NULL) NOT VALID, VALIDATE CONSTRAINT it, then SET NOT NULL is instant on PostgreSQL 12+", recipeNotNull(a.Relation, cmd.Name))
+			st.hazard("H007", "SET NOT NULL on "+cmd.Name+" scans the table under an exclusive lock; add CHECK ("+cmd.Name+" IS NOT NULL) NOT VALID, VALIDATE CONSTRAINT it, then SET NOT NULL is instant on PostgreSQL 12+", recipeNotNull(a.Relation, cmd.Name)).
+				on(a.Relation.Schemaname, a.Relation.Relname, cmd.Name)
 		default:
 		}
 	}
@@ -315,11 +344,13 @@ func classifyAddConstraint(rel *pgquery.RangeVar, cn *pgquery.Constraint, st *St
 	switch cn.Contype {
 	case pgquery.ConstrType_CONSTR_FOREIGN, pgquery.ConstrType_CONSTR_CHECK:
 		if !cn.SkipValidation {
-			st.hazard("H006", "ADD CONSTRAINT "+constraintKind(cn)+" scans the whole table under lock; add it NOT VALID, then VALIDATE CONSTRAINT in a separate statement", recipeConstraint(rel, cn))
+			st.hazard("H006", "ADD CONSTRAINT "+constraintKind(cn)+" scans the whole table under lock; add it NOT VALID, then VALIDATE CONSTRAINT in a separate statement", recipeConstraint(rel, cn)).
+				on(rel.Schemaname, rel.Relname, cn.Conname)
 		}
 	case pgquery.ConstrType_CONSTR_PRIMARY, pgquery.ConstrType_CONSTR_UNIQUE:
 		if cn.Indexname == "" {
-			st.hazard("H010", "ADD "+constraintKind(cn)+" builds its index under an exclusive lock; CREATE UNIQUE INDEX CONCURRENTLY first, then ADD CONSTRAINT ... USING INDEX", recipeUsingIndex(rel, cn))
+			st.hazard("H010", "ADD "+constraintKind(cn)+" builds its index under an exclusive lock; CREATE UNIQUE INDEX CONCURRENTLY first, then ADD CONSTRAINT ... USING INDEX", recipeUsingIndex(rel, cn)).
+				on(rel.Schemaname, rel.Relname, cn.Conname)
 		}
 	default:
 	}
@@ -341,9 +372,11 @@ func constraintKind(cn *pgquery.Constraint) string {
 func classifyRename(r *pgquery.RenameStmt, st *Statement) {
 	switch r.RenameType {
 	case pgquery.ObjectType_OBJECT_TABLE:
-		st.hazard("H008", "RENAME TABLE "+r.Relation.Relname+" breaks application versions still using the old name; add the new table, migrate readers and writers, then drop the old one", recipeRenameTable(r))
+		st.hazard("H008", "RENAME TABLE "+r.Relation.Relname+" breaks application versions still using the old name; add the new table, migrate readers and writers, then drop the old one", recipeRenameTable(r)).
+			on(r.Relation.Schemaname, r.Relation.Relname, "")
 	case pgquery.ObjectType_OBJECT_COLUMN:
-		st.hazard("H008", "RENAME COLUMN "+r.Subname+" breaks application versions still using the old name; add the new column, backfill, migrate readers and writers, then drop the old one", recipeRenameColumn(r))
+		st.hazard("H008", "RENAME COLUMN "+r.Subname+" breaks application versions still using the old name; add the new column, backfill, migrate readers and writers, then drop the old one", recipeRenameColumn(r)).
+			on(r.Relation.Schemaname, r.Relation.Relname, r.Subname)
 	default:
 	}
 }

@@ -333,7 +333,8 @@ Two migrations applied by two runs, then a revert of the second:
 $ godwit revert 71a9be1b-44eb-4db4-95c5-af7cc0138e17 --ack H002
 revert of run 71a9be1b-44eb-4db4-95c5-af7cc0138e17 on app: 1 migration(s), reverse order of application
   20260101000001_b (down): 1 statement(s)
-    [0] tx    DROP TABLE b;
+    statement 0, runs inside a transaction
+      DROP TABLE b;
 run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: queued
 run 07ba15e8-b53c-4eb4-a40d-c7bb18339065: succeeded (attempt 1) [statement 0 of 20260101000001_b]
 ```

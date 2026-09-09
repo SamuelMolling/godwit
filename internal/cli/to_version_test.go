@@ -34,8 +34,8 @@ func TestPlanWithAVersionTargetNamesWhatItWithheld(t *testing.T) {
 	}
 	want := "1 migration will be applied to app.\n" +
 		"withheld: 2 migration(s) in the directory this plan does not cover (20260901120001_drop_a, R__v)\n" +
-		"\n+ 20260901120000_users  1 statement, expand phase\n" +
-		"  [0] tx\n" +
+		"\n+ 20260901120000_users  1 statement\n" +
+		"  statement 0, runs inside a transaction\n" +
 		"      CREATE TABLE users (id int);\n" +
 		"\nnot executed by this run (2):\n" +
 		"  20260901120001_drop_a  held back by --to\n" +

@@ -486,6 +486,20 @@ func dryRunStub() *stubService {
 	}}
 }
 
+const twoHalvesProse = "This runs in two halves. Now, godwit applies only what adds: new columns, indexes" +
+	" and constraints, which the application it is already running does not have to know about. Nothing is" +
+	" renamed and nothing is dropped yet. When you confirm, godwit runs the rest: the renames, and the drops" +
+	" it held back. Until you confirm, the old columns are still there holding the data you started with," +
+	" and that is the way back. The run waits at awaiting_contract; confirm it with godwit confirm on the" +
+	" pull request."
+
+const twoHalvesProseMarkdown = "This runs in two halves. Now, godwit applies only what adds: new columns," +
+	" indexes and constraints, which the application it is already running does not have to know about." +
+	" Nothing is renamed and nothing is dropped yet. When you confirm, godwit runs the rest: the renames," +
+	" and the drops it held back. Until you confirm, the old columns are still there holding the data you" +
+	" started with, and that is the way back. The run waits at `awaiting_contract`; confirm it with" +
+	" `godwit confirm` on the pull request."
+
 func TestMigrateDryRun(t *testing.T) {
 	t.Parallel()
 	stub := dryRunStub()
@@ -496,17 +510,16 @@ func TestMigrateDryRun(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "1 migration will be applied to app. The expand phase runs on apply, then the run stops at" +
-		" awaiting_contract and the contract phase waits for a confirm (godwit confirm on a pull request).\n" +
+	want := "1 migration will be applied to app. " + twoHalvesProse + "\n" +
 		"\n+ 20260901120001_drop_a  1 statement, contract phase\n" +
-		"  [0] tx\n" +
+		"  statement 0, runs inside a transaction\n" +
 		"      ALTER TABLE users DROP COLUMN a;\n" +
 		"      hazard H003: DROP COLUMN is destructive\n" +
 		"        -- expand then contract:\n" +
 		"        -- drop users.a later\n" +
 		"\nplan details:\n" +
 		"  target: app\n  rollout: expand-contract\n" +
-		"\n1 hazard on what this run would execute: take the recipe printed beside the statement, or accept the risk" +
+		"\n1 hazard on what this run would execute: take the recipe printed with it, or accept the risk" +
 		" with --ack H003 (godwit apply --ack H003 on a pull request).\n" +
 		"Plan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
 	if out != want {
@@ -533,17 +546,17 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "## godwit dry run\n\n" +
-		"\u26a0\ufe0f **1 migration will be applied to `app`.** The expand phase runs on apply, then the run stops at" +
-		" `awaiting_contract` and the contract phase waits for a confirm (`godwit confirm` on a pull request).\n" +
+		"\u26a0\ufe0f **1 migration will be applied to `app`.** " + twoHalvesProseMarkdown + "\n" +
 		"\n\u26a0\ufe0f **Not validated.** These statements were never replayed on a scratch database, so nothing has" +
-		" proved they apply.\n" +
+		" proved they apply. Nothing read the schema they leave behind either, so what follows is the SQL the run" +
+		" would execute rather than what it does to the database.\n" +
 		"\n```diff\n+ 20260901120001_drop_a  1 statement, contract phase\n```\n" +
 		"\n### `20260901120001_drop_a`\n" +
-		"\n`[0]` tx\n\n```sql\nALTER TABLE users DROP COLUMN a;\n```\n" +
+		"\n`statement 0`, runs inside a transaction\n\n```sql\nALTER TABLE users DROP COLUMN a;\n```\n" +
 		"\n**H003** DROP COLUMN is destructive\n\n```sql\n-- expand then contract:\n-- drop users.a later\n```\n" +
 		"\n<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: expand-contract\n" +
 		"```\n\n</details>\n" +
-		"\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the statement, or accept" +
+		"\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed with it, or accept" +
 		" the risk with `--ack H003` (`godwit apply --ack H003` on a pull request).\n" +
 		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n" +
 		"\n<!-- godwit-plan-verdict: 1 to apply, 1 hazard to acknowledge -->\n<!-- godwit-plan-hazards: 1 -->\n"
@@ -774,8 +787,8 @@ func TestRevert(t *testing.T) {
 	}
 	want := "1 migration will be reverted on app, newest first, undoing run r1.\n" +
 		"\n- 20260901120000_t (down)  2 statements\n" +
-		"  [0] tx\n      DROP TABLE t;\n      hazard H002: DROP TABLE is destructive\n" +
-		"  [1] no-tx\n      DROP INDEX CONCURRENTLY i;\n" +
+		"  statement 0, runs inside a transaction\n      DROP TABLE t;\n      hazard H002: DROP TABLE is destructive\n" +
+		"  statement 1, runs outside a transaction\n      DROP INDEX CONCURRENTLY i;\n" +
 		"\ndata loss: 20260901120000_t drops table public.t holding 3 row(s)\n" +
 		"\nPlan: 0 to apply, 1 to revert, 1 hazard(s) to acknowledge\n" +
 		"run r2: running (attempt 1)\nrun r2: succeeded (attempt 1)\n"
@@ -1216,23 +1229,23 @@ func TestMigrateDryRunAlreadyApplied(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if !strings.Contains(out, "\n+ 20260901120001_email  1 statement, expand phase; its effect is already on the database,"+
+	if !strings.Contains(out, "\n+ 20260901120001_email  1 statement; its effect is already on the database,"+
 		" so the run records it without executing\n  + column public.users.email text null=YES default=<none>\n") ||
-		!strings.Contains(out, "\n+ 20260901120002_seed  1 statement, expand phase; has DML, must execute\n") {
+		!strings.Contains(out, "\n+ 20260901120002_seed  1 statement; has DML, must execute\n") {
 		t.Fatalf("out = %q", out)
 	}
 
 	code, out, _ = runCLI("migrate", "--dry-run", "--format", "markdown", "--server", url, "--target", "app", "--dir", goodMigs(t))
 	if code != 0 ||
-		!strings.Contains(out, "```diff\n+ 20260901120001_email  1 statement, expand phase; its effect is already on the"+
+		!strings.Contains(out, "```diff\n+ 20260901120001_email  1 statement; its effect is already on the"+
 			" database, so the run records it without executing\n"+
-			"+ 20260901120002_seed  1 statement, expand phase; has DML, must execute\n```\n") ||
+			"+ 20260901120002_seed  1 statement; has DML, must execute\n```\n") ||
 		!strings.Contains(out, "### `20260901120001_email`\n\n```diff\n"+
-			"+ column public.users.email text null=YES default=<none>\n```\n\n`[0]` tx\n\n```sql\n"+
+			"+ column public.users.email text null=YES default=<none>\n```\n\n`statement 0`, runs inside a transaction\n\n```sql\n"+
 			"ALTER TABLE users ADD COLUMN email text;\n```\n") ||
 		!strings.Contains(out, "\n**H011** seed rows in a migration\n") ||
-		!strings.Contains(out, "\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed beside the"+
-			" statement, or accept the risk with `--ack H011` (`godwit apply --ack H011` on a pull request).\n") {
+		!strings.Contains(out, "\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed with"+
+			" it, or accept the risk with `--ack H011` (`godwit apply --ack H011` on a pull request).\n") {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 

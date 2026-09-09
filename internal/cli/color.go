@@ -8,7 +8,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-type palette struct{ add, del func(string) string }
+type palette struct{ add, del, mod func(string) string }
 
 func ansi(code string) func(string) string {
 	return func(s string) string {
@@ -17,9 +17,20 @@ func ansi(code string) func(string) string {
 }
 
 var (
-	mono     = palette{plain, plain}
-	coloured = palette{ansi("32"), ansi("31")}
+	mono     = palette{plain, plain, plain}
+	coloured = palette{ansi("32"), ansi("31"), ansi("33")}
 )
+
+func (p palette) op(operation, line string) string {
+	switch operation {
+	case engine.OpCreate:
+		return p.add(line)
+	case engine.OpDestroy:
+		return p.del(line)
+	default:
+		return p.mod(line)
+	}
+}
 
 func (p palette) change(d engine.Direction, line string) string {
 	if d == engine.DirectionDown {

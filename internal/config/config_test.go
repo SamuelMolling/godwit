@@ -33,6 +33,7 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		"GODWIT_DIR", "GODWIT_TARGET", "GODWIT_ROLLOUT", "GODWIT_SERVER", "GODWIT_LOCK_TIMEOUT", "GODWIT_STATEMENT_TIMEOUT",
 		"GODWIT_ALLOW_OUT_OF_ORDER", "GODWIT_SCHEMA_SOURCE_KIND", "GODWIT_SCHEMA_SOURCE_PATH", "GODWIT_SCHEMA_SOURCE_BIN",
+		"GODWIT_PLAN_FORMAT",
 	} {
 		t.Setenv(k, "")
 	}
@@ -308,5 +309,42 @@ func TestLoadEnvBadValues(t *testing.T) {
 		if _, err := Load(""); err == nil || !strings.Contains(err.Error(), key) {
 			t.Fatalf("%s: err = %v", key, err)
 		}
+	}
+}
+
+func TestPlanFormatDefaultsToSchema(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+
+	plain := filepath.Join(dir, "plain.yaml")
+	write(t, plain, "dir: db\n")
+	cfg, err := Load(plain)
+	if err != nil || cfg.PlanFormat() != PlanFormatSchema {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
+	}
+
+	chosen := filepath.Join(dir, "chosen.yaml")
+	write(t, chosen, "plan:\n  format: statements\n")
+	if cfg, err = Load(chosen); err != nil || cfg.PlanFormat() != PlanFormatStatements {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
+	}
+
+	t.Setenv("GODWIT_PLAN_FORMAT", PlanFormatSchema)
+	if cfg, err = Load(chosen); err != nil || cfg.PlanFormat() != PlanFormatSchema {
+		t.Fatalf("the env overrides the file: cfg = %+v, err = %v", cfg, err)
+	}
+	if cfg, err = Load(plain); err != nil || cfg.PlanFormat() != PlanFormatSchema {
+		t.Fatalf("the env reaches a file with no plan section: cfg = %+v, err = %v", cfg, err)
+	}
+}
+
+func TestPlanFormatIsOneOfTwo(t *testing.T) {
+	clearEnv(t)
+	path := filepath.Join(t.TempDir(), FileName)
+	write(t, path, "plan:\n  format: diagram\n")
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), `plan.format "diagram" is not one of schema, statements`) {
+		t.Fatalf("err = %v", err)
 	}
 }

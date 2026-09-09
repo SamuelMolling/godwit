@@ -158,7 +158,7 @@ The indented lines are the *recipe*: the same change written safely. `--format m
 
 ### `godwit plan`
 
-**Shows you the statements that would run.** Every migration in the directory is parsed and printed statement by statement, labelled `tx` (runs inside a transaction with its journal row) or `no-tx` (cannot, so it gets a write-ahead intent and a check afterwards).
+**Shows you what would happen to the database.** One block per object the migrations create, change or destroy, in terraform's shape: `+` creates, `-` destroys, `~` changes, at the object and at the attribute, and a hazard is written on the attribute line that causes it. `--plan-format statements` gives the other view — every statement in order, with the transaction mode and the recipes — which is what to reach for when auditing the SQL or reading a failed run. `plan.format` in `godwit.yaml` sets the default for a repository ([configuration](configuration.md#plan)).
 
 It has three forms, in order of what they touch. `--help` lists them in the same order:
 
@@ -172,28 +172,32 @@ It has three forms, in order of what they touch. `--help` lists them in the same
 
 Without `--target` it is entirely offline — no database, no service — and prints both the up and the down side of every file:
 
+An offline plan has no database, so there is no schema delta to describe and it prints the statements whatever `plan.format` says:
+
 ```console
 $ godwit plan --dir db/migrations
 Offline plan. Both sides of every migration in the directory, as written; no database was consulted, so nothing here says what is pending.
 
-20260901120000_create_orders  1 statement
-  [0] tx
++ 20260901120000_create_orders  1 statement
+  statement 0, runs inside a transaction
       CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 
-20260901120000_create_orders (down)  1 statement
-  [0] tx
+- 20260901120000_create_orders (down)  1 statement
+  statement 0, runs inside a transaction
       DROP TABLE orders;
       hazard H002: DROP TABLE is destructive
         -- expand then contract: ship the application version that no longer uses orders, then run this DROP TABLE as a contract migration (rollout: expand-contract)
 
-20260901120500_orders_customer_idx  1 statement
-  [0] no-tx
++ 20260901120500_orders_customer_idx  1 statement
+  statement 0, runs outside a transaction
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
 
 1 hazard must be acknowledged before this runs; use --ack H002.
 Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
+
+`runs inside a transaction` means the statement commits with its own journal row; `runs outside a transaction` means it cannot, so it gets a write-ahead intent and a check afterwards.
 
 With `--target` it becomes a different, more useful thing: godwit connects to that database through the service, works out which migrations are actually pending there, and replays them on a scratch database to prove they apply. It prints what it found and stores nothing — the same work `migrate --dry-run` does, and the two are interchangeable.
 
@@ -203,27 +207,49 @@ Add `--save` and it also **stores the result as a plan**, with a snapshot of the
 $ godwit plan --target app --dir db/migrations --save
 3 migrations will be applied to app.
 
-+ 20260901120000_create_orders  1 statement, expand phase
-  [0] tx
-      CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
+godwit will perform the following actions:
 
-+ 20260901120500_orders_customer_idx  1 statement, expand phase
-  [0] no-tx
-      CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
+  # 20260901120000_create_orders
+  + table "public"."orders" {
+      + customer_id = bigint NOT NULL
+      + id          = bigint NOT NULL DEFAULT nextval('orders_id_seq'::regclass)
+      + total       = numeric NOT NULL
+      + orders_pkey = PRIMARY KEY (id)
+    }
 
-+ R__order_stats  1 statement, expand phase
-  [0] tx
-      CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
+  # 20260901120500_orders_customer_idx
+  + index "public"."orders_customer_idx" {
+      + definition = CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)
+    }
+
+  # R__order_stats
+  + view "public"."order_stats"
 
 plan details:
   target: app
   rollout: direct
   plan: f27eecc1-d479-4255-ae90-b53247e9230f
 
-Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
+Plan: 3 to add, 0 to change, 0 to destroy.
 ```
 
-A `+` marks a migration the run would apply and a `-` one it would revert; on a terminal they are green and red (see [colour](#colour)). The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
+A hazard is not a footnote here: it goes on the attribute that causes it, the way terraform writes `# forces replacement`, with its recipe under the block.
+
+```console
+  # 20260910120000_widen_age
+  ~ table "public"."widgets" {
+      ~ age     = integer -> character varying(20) # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)
+      + age_old = integer NULL
+        # (4 unchanged attributes hidden)
+    }
+    recipe for H004:
+      -- or let godwit run it: -- godwit: change-type public.widgets.age varchar(20)
+      ...
+```
+
+The type carries its modifier — `character varying(20)`, `numeric(10,2)`, `timestamp(3) with time zone` — under PostgreSQL's own canonical name for it, the one `\d` prints. On a terminal `+` is green, `-` red and `~` yellow (see [colour](#colour)). The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`, which also carries the delta under `changes`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
+
+A migration whose effect a schema snapshot cannot see — a seed, a `GRANT`, a function body — has no block; it says so on its own line and falls back to its statements.
 
 Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [Concepts: plans](concepts.md#plans).
 
@@ -283,19 +309,19 @@ The first line tells you which reviewed plan this run is bound to. When no plan 
 `--dry-run` does everything except queue the run — including the scratch replay — and prints what would happen:
 
 ```console
-$ godwit migrate --target app --dir db/migrations --dry-run
+$ godwit migrate --target app --dir db/migrations --dry-run --plan-format statements
 3 migrations will be applied to app.
 
-+ 20260901120000_create_orders  1 statement, expand phase
-  [0] tx
++ 20260901120000_create_orders  1 statement
+  statement 0, runs inside a transaction
       CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 
-+ 20260901120500_orders_customer_idx  1 statement, expand phase
-  [0] no-tx
++ 20260901120500_orders_customer_idx  1 statement
+  statement 0, runs outside a transaction
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 
-+ R__order_stats  1 statement, expand phase
-  [0] tx
++ R__order_stats  1 statement
+  statement 0, runs inside a transaction
       CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
 
 plan details:
@@ -305,7 +331,7 @@ plan details:
 Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
 
-`--skip-validation`, or a service started with `--skip-validation`, adds a `Not validated.` line above the plan: nothing replayed the SQL anywhere, so nothing has proved it applies.
+`--skip-validation`, or a service started with `--skip-validation`, adds a `Not validated.` line above the plan: nothing replayed the SQL anywhere, so nothing has proved it applies — and nothing read the schema it leaves behind either, so the report falls back to the statements above whatever `plan.format` says.
 
 When a statement fails, the run stops and so does the command, with a non-zero exit:
 
@@ -355,7 +381,8 @@ H002: DROP TABLE is destructive
 $ godwit revert --target app --ack H002
 revert of run 9c60b73c-ac42-42ec-9194-498a2c66cbc3 on app: 1 migration(s), reverse order of application
   20260908150000_create_notes (down): 1 statement(s)
-    [0] tx    DROP TABLE notes
+    statement 0, runs inside a transaction
+      DROP TABLE notes
 run 635b0cda-d61f-4beb-9550-1adb6da14e3b: queued
 run 635b0cda-d61f-4beb-9550-1adb6da14e3b: succeeded (attempt 1)
 ```
@@ -561,11 +588,11 @@ f27eecc1-d479-4255-ae90-b53247e9230f  ready  direct   3        true       admin 
 Reach for it to answer "what exactly was approved?" long after the pull request is closed.
 
 ```console
-$ godwit plan show f27eecc1-d479-4255-ae90-b53247e9230f
+$ godwit plan show f27eecc1-d479-4255-ae90-b53247e9230f --plan-format statements
 3 migrations will be applied to app.
 
-+ 20260901120000_create_orders  1 statement, expand phase
-  [0] tx
++ 20260901120000_create_orders  1 statement
+  statement 0, runs inside a transaction
       CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 ...
 

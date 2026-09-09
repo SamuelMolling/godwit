@@ -597,8 +597,8 @@ A file pair named `R__<snake_name>.up.sql` / `R__<snake_name>.down.sql` has no v
 1 migration will be applied to app.
 withheld: 2 migration(s) in the directory this plan does not cover (20260901120100_b, R__v)
 
-+ 20260901120000_a  1 statement, expand phase
-  [0] tx
++ 20260901120000_a  1 statement
+  statement 0, runs inside a transaction
       CREATE TABLE a (id int);
 
 not executed by this run (2):
@@ -639,7 +639,7 @@ There is no `to_version` key in `godwit.yaml`. A standing version target would t
 
 | Policy | Behaviour |
 |---|---|
-| `direct` (default) | every plan runs in the expand phase; the run ends `succeeded` |
+| `direct` (default) | every plan runs in the expand phase; the run ends `succeeded`. The plan report names no phase here: nothing is held, so there is no second half to distinguish from the first. |
 | `expand-contract` | statements up to the first contract statement run now; that statement and everything after it are held; the run ends `awaiting_contract` (or `succeeded` when nothing was held). `ConfirmRollout` re-queues it with `phase = contract`; the executor skips the already-applied plans and runs the rest. |
 
 The split is by statement, and a migration whose statements carry no phase of their own has a single phase. A statement belongs to the contract phase when it says so (`Statement.Phase`, which only a directive expansion sets today) or, failing that, when its migration carries a contract hazard — so a hand-written migration mixing `ADD COLUMN` and `DROP COLUMN` still lands in the contract phase whole, and only an expansion splits a migration down the middle.
@@ -713,11 +713,13 @@ down files as a review artifact.
 
 After every successful run (and after a baseline) the scheduler stores a **snapshot** of the target schema in `cp_snapshots`: tables, their columns, constraints, indexes, sequences, enum types, and an `md5` of each view and materialized view definition, sorted under a format marker, with a `sha256` fingerprint.
 
+A column carries the type as PostgreSQL declares it — `format_type`, so `character varying(20)`, `numeric(10,2)`, `timestamp(3) with time zone`, `text[]` and the name of an enum, rather than the one word `information_schema` reduces each of them to. Widening a `varchar`, changing an enum column from one type to another and turning a column into an array are all schema changes, and a snapshot that cannot tell them apart cannot report them. The default is the expression `pg_get_expr` renders, which is also where a generated column's expression lands.
+
 Left out, in one place rather than per query: `pg_catalog` and `information_schema`, godwit's own journal, everything an extension owns, and under `ignore_adopted_tables` the bookkeeping tables of the migration tool the database was adopted from. Two more are left out because something else already reports them, and reporting them twice turns one change into two diff lines: **the index behind a constraint** (the constraint line carries it) and **a sequence a serial or identity column owns** (the column's default carries it).
 
 Not described at all: functions, procedures, triggers, row-level security policies, grants, and which extensions are installed. A change to any of those is invisible to drift; keep them in migrations and review them there.
 
-**The format marker.** The first line of every definition names the snapshot format. A stored baseline carrying an older marker was taken by a godwit that looked at a different set of objects, so it cannot be compared with a fresh one: `CheckDrift` and the monitor refuse with `drift baseline predates the schema format` and name the fix (`godwit drift accept <target>`), rather than either reporting the upgrade as fleet-wide drift or silently re-baselining over drift the target really had. A plan's own drift falls back to empty for the same reason, and a stored plan taken before the change is `PlanStale{schema}` — re-plan.
+**The format marker.** The first line of every definition names the snapshot format (`godwit-schema-v3`). A stored baseline carrying an older marker was taken by a godwit that looked at a different set of objects, or described them differently, so it cannot be compared with a fresh one: `CheckDrift` and the monitor refuse with `drift baseline predates the schema format` and name the fix (`godwit drift accept <target>`), rather than either reporting the upgrade as fleet-wide drift or silently re-baselining over drift the target really had. A plan's own drift falls back to empty for the same reason, and a stored plan taken before the change is `PlanStale{schema}` — re-plan.
 
 **The tool godwit replaced is not drift.** A database adopted from golang-migrate keeps its `schema_migrations`; from Flyway, `flyway_schema_history`; also recognised are Liquibase's `databasechangelog` and `databasechangeloglock`, Alembic's `alembic_version`, Rails' `schema_migrations` and `ar_internal_metadata`, Prisma's `_prisma_migrations` and Atlas's `atlas_schema_revisions`. No migration creates them, so every plan and every drift check would report them for the rest of the target's life, and a signal that is always on is one people stop reading. The exemption is earned by shape, not by name: the table must carry the columns that tool's table must have and none it never creates, so a `schema_migrations` of your own stays visible. Every plan report names what it left out and how to turn the exemption off (`ignore_adopted_tables`), and the same exemption applies to the scratch replay, so the two sides of a comparison always agree about what is in the schema.
 

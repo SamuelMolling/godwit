@@ -102,7 +102,7 @@ const (
 )
 
 // SchemaFormat is the first line of every definition; bump it whenever Snapshot changes what it emits.
-const SchemaFormat = "godwit-schema-v2"
+const SchemaFormat = "godwit-schema-v3"
 
 // SameFormat reports whether a stored definition was taken by this version of Snapshot.
 func SameFormat(definition string) bool {
@@ -127,14 +127,19 @@ var snapshotQueries = []struct {
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind IN ('r', 'p') AND n.nspname NOT IN ('pg_catalog', 'information_schema')`},
+	// format_type carries the declared modifier; information_schema reduces varchar(20) to one word.
 	{"column", `
-		SELECT c.table_schema || '.' || c.table_name,
-		       c.table_schema || '.' || c.table_name || '.' || c.column_name || ' ' ||
-		       c.data_type || ' null=' || c.is_nullable || ' default=' || coalesce(c.column_default, '<none>')
-		FROM information_schema.columns c
-		JOIN information_schema.tables t
-		  ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
-		WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')`},
+		SELECT n.nspname || '.' || c.relname,
+		       n.nspname || '.' || c.relname || '.' || a.attname || ' ' ||
+		       format_type(a.atttypid, a.atttypmod) ||
+		       ' null=' || CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END ||
+		       ' default=' || coalesce(pg_get_expr(d.adbin, d.adrelid), '<none>')
+		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+		WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
+		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')`},
 	{"constraint", `
 		SELECT n.nspname || '.' || cl.relname,
 		       n.nspname || '.' || cl.relname || '.' || con.conname || ' ' || pg_get_constraintdef(con.oid)

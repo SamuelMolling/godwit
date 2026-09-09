@@ -51,9 +51,11 @@ func (o Observation) HistoryHash() string {
 
 // PlanHazard is one hazard on a planned statement.
 type PlanHazard struct {
-	Code   string `json:"code"`
-	Detail string `json:"detail"`
-	Recipe string `json:"recipe,omitempty"`
+	Code      string `json:"code"`
+	Detail    string `json:"detail"`
+	Recipe    string `json:"recipe,omitempty"`
+	Object    string `json:"object,omitempty"`
+	Attribute string `json:"attribute,omitempty"`
 }
 
 // PlanBatch describes a statement the executor runs as a resumable loop instead of once.
@@ -95,6 +97,8 @@ type PlanMigration struct {
 	Effect         string `json:"effect,omitempty"`
 	Note           string `json:"note,omitempty"`
 	Withheld       bool   `json:"withheld,omitempty"`
+
+	Changes []engine.ObjectChange `json:"changes,omitempty"`
 
 	// Stored inverted: a plan written before the field existed keeps counting every hazard rather than none.
 	Skipped bool `json:"skipped,omitempty"`
@@ -328,12 +332,26 @@ func PlanStatements(sts []engine.Statement) []PlanStatement {
 			ps.Assert = &PlanAssert{Op: st.Assert.Op, Kind: st.Assert.Kind, Value: st.Assert.Value}
 		}
 		for _, h := range st.Hazards {
-			ps.Hazards = append(ps.Hazards, PlanHazard{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
+			ps.Hazards = append(ps.Hazards, PlanHazard{
+				Code: h.Code, Detail: h.Detail, Recipe: h.Recipe, Object: h.Object, Attribute: h.Attribute,
+			})
 		}
 		out = append(out, ps)
 	}
 
 	return out
+}
+
+// AttachChanges puts what the scratch replay saw each migration do to the schema on the migration itself.
+func AttachChanges(migs []PlanMigration, v *Validation) {
+	if v == nil {
+		return
+	}
+	for i := range migs {
+		if i < len(v.Changes) {
+			migs[i].Changes = v.Changes[i]
+		}
+	}
 }
 
 // Detect marks the longest prefix of migs whose effect the target already holds; otherwise returns the drift.

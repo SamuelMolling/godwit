@@ -68,6 +68,7 @@ type planItem struct {
 	notes          []string
 	withheld       bool
 	skipped        bool
+	changes        []engine.ObjectChange
 }
 
 func (r planReport) hazardGate() (gated int, codes []string) {
@@ -143,11 +144,34 @@ func (r planReport) verdict(m markup) string {
 	}
 	line := m.glyph(mark) + m.bold(fmt.Sprintf("%s will be applied to %s.", count(apply, "migration"), m.code(r.target)))
 	if r.pauses() {
-		line += fmt.Sprintf(" The expand phase runs on apply, then the run stops at %s and the contract phase"+
-			" waits for a confirm (%s on a pull request).", m.code("awaiting_contract"), m.code("godwit confirm"))
+		line += " " + r.twoHalves(m)
 	}
 
 	return line
+}
+
+func (r planReport) twoHalves(m markup) string {
+	out := "This runs in two halves. Now, godwit applies only what adds: new columns, indexes and constraints," +
+		" which the application it is already running does not have to know about."
+	if r.expands() {
+		out += " A generated column change writes into a new column and holds the two in step with a trigger," +
+			" so writes never stop while it fills."
+	}
+
+	return out + " Nothing is renamed and nothing is dropped yet. When you confirm, godwit runs the rest: the" +
+		" renames, and the drops it held back. Until you confirm, the old columns are still there holding the data" +
+		" you started with, and that is the way back. The run waits at " + m.code("awaiting_contract") +
+		"; confirm it with " + m.code("godwit confirm") + " on the pull request."
+}
+
+func (r planReport) expands() bool {
+	for _, p := range r.items {
+		if p.expanded && !p.skipped {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r planReport) state() (applied int, newest int64) {
@@ -182,8 +206,13 @@ func (r planReport) notices(m markup) []string {
 	}
 	var out []string
 	if !r.validated {
-		out = append(out, m.glyph("⚠️")+m.bold("Not validated.")+" These statements were never replayed on a scratch"+
-			" database, so nothing has proved they apply.")
+		line := m.glyph("⚠️") + m.bold("Not validated.") + " These statements were never replayed on a scratch" +
+			" database, so nothing has proved they apply."
+		if r.schema() {
+			line += " Nothing read the schema they leave behind either, so what follows is the SQL the run would" +
+				" execute rather than what it does to the database."
+		}
+		out = append(out, line)
 	}
 	if o := r.observed; o != nil {
 		if l := ignoredLine(o.IgnoredTables, m); l != "" {
@@ -200,12 +229,25 @@ func (r planReport) footerLines(m markup) []string {
 	var out []string
 	if gated > 0 {
 		ack := "--ack " + strings.Join(codes, ",")
-		out = append(out, fmt.Sprintf("%s%s on what this run would execute: take the recipe printed beside the statement,"+
+		out = append(out, fmt.Sprintf("%s%s on what this run would execute: take the recipe printed with it,"+
 			" or accept the risk with %s (%s on a pull request).",
 			m.glyph("⚠️"), count(gated, "hazard"), m.code(ack), m.code("godwit apply "+ack)))
 	}
+	if r.describes() {
+		return append(out, r.objectFooter())
+	}
 
 	return append(out, fmt.Sprintf("Plan: %d to apply, %d to revert, %d hazard(s) to acknowledge", apply, revert, gated))
+}
+
+func (r planReport) acts() bool {
+	for _, p := range r.items {
+		if !p.skipped && p.describable() {
+			return true
+		}
+	}
+
+	return false
 }
 
 // statusVerdict is the whole of a commit status description, which GitHub cuts at 140 characters.
@@ -275,8 +317,11 @@ func (p planItem) skipReason() string {
 	return "the run would not execute its body"
 }
 
-func (p planItem) phases() []string {
+func (p planItem) phases(pauses bool) []string {
 	var out []string
+	if !pauses {
+		return nil
+	}
 	for _, st := range p.Statements {
 		if ph := effectivePhase(p, st); ph != "" && !slices.Contains(out, ph) {
 			out = append(out, ph)
@@ -285,9 +330,9 @@ func (p planItem) phases() []string {
 	return out
 }
 
-func (p planItem) summary() string {
+func (p planItem) summary(pauses bool) string {
 	s := count(len(p.Statements), "statement")
-	switch ph := p.phases(); len(ph) {
+	switch ph := p.phases(pauses); len(ph) {
 	case 0:
 	case 1:
 		s += ", " + ph[0] + " phase"
@@ -307,9 +352,22 @@ func (p planItem) summary() string {
 	return s
 }
 
-func statementFacts(i int, p planItem, st engine.Statement, m markup) string {
-	s := m.code(fmt.Sprintf("[%d]", i)) + " " + statementMode(st)
-	if ph := effectivePhase(p, st); ph != "" && ph != p.phase {
+func runsIn(st engine.Statement) string {
+	switch {
+	case st.Assert != nil:
+		return "runs as a check"
+	case st.Batch != nil:
+		return "runs in batches"
+	case st.NoTx:
+		return "runs outside a transaction"
+	default:
+		return "runs inside a transaction"
+	}
+}
+
+func statementFacts(i int, p planItem, st engine.Statement, m markup, pauses bool) string {
+	s := m.code(fmt.Sprintf("statement %d", i)) + ", " + runsIn(st)
+	if ph := effectivePhase(p, st); pauses && ph != "" && ph != p.phase {
 		s += ", " + ph + " phase"
 	}
 	if b := st.Batch; b != nil {
@@ -410,6 +468,15 @@ type planReport struct {
 	drift     string
 	stored    *storedPlan
 	items     []planItem
+	format    string
+}
+
+func (r planReport) schema() bool {
+	return r.format != config.PlanFormatStatements
+}
+
+func (r planReport) describes() bool {
+	return r.schema() && r.acts()
 }
 
 func ignoredLine(tables []string, m markup) string {
@@ -457,11 +524,38 @@ var planFormats = map[string]func(io.Writer, planReport){
 	"json":     writePlanJSON,
 }
 
+type reportFlags struct {
+	format     string
+	planFormat string
+}
+
+func (f *reportFlags) register(cmd *cobra.Command, what string) {
+	cmd.Flags().StringVar(&f.format, "format", "text", strings.TrimSpace(what+" output format: text, markdown or json"))
+	cmd.Flags().StringVar(&f.planFormat, "plan-format", config.PlanFormatSchema,
+		"what the report says: schema (what the migrations do to the database) or statements (the SQL the run would execute)")
+	configKeys(cmd, "plan-format")
+}
+
+func (f *reportFlags) writer() (func(io.Writer, planReport), error) {
+	write, ok := planFormats[f.format]
+	if !ok {
+		return nil, fmt.Errorf("unknown format %q (want text, markdown or json)", f.format)
+	}
+	if f.planFormat != config.PlanFormatSchema && f.planFormat != config.PlanFormatStatements {
+		return nil, fmt.Errorf("unknown plan format %q (want schema or statements)", f.planFormat)
+	}
+
+	return func(w io.Writer, r planReport) {
+		r.format = f.planFormat
+		write(w, r)
+	}, nil
+}
+
 func newPlanCmd() *cobra.Command {
 	flags := &targetFlags{}
 	remote := &clientFlags{}
 	req := &godwitv1.PlanRunRequest{}
-	var format string
+	report := &reportFlags{}
 	var save bool
 	cmd := &cobra.Command{
 		Use:   "plan",
@@ -477,9 +571,9 @@ func newPlanCmd() *cobra.Command {
 			"--target is a flag here and only a flag: plan never reads it from godwit.yaml, so a bare `godwit plan`\n" +
 			"is the offline form even in a repository whose config names a target.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			write, ok := planFormats[format]
-			if !ok {
-				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			write, err := report.writer()
+			if err != nil {
+				return err
 			}
 			if err := checkToVersion(cmd, req.ToVersion, "", req.Target); err != nil {
 				return err
@@ -519,7 +613,7 @@ func newPlanCmd() *cobra.Command {
 	cmd.AddCommand(newPlanShowCmd())
 	flags.register(cmd, false)
 	remote.register(cmd)
-	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
+	report.register(cmd, "")
 	cmd.Flags().StringVar(&req.Target, "target", "", "target name; plans against the live database through the service instead of parsing the directory offline")
 	cmd.Flags().BoolVar(&save, "save", false, "store the plan on the service so a later migrate can bind to it (needs --target)")
 	cmd.Flags().StringVar(&req.Rollout, "rollout", "direct", "rollout policy: direct or expand-contract")
@@ -559,11 +653,14 @@ func writePlanText(w io.Writer, r planReport) {
 	for _, l := range r.notices(terminal) {
 		fmt.Fprintln(w, l)
 	}
+	if r.describes() {
+		fmt.Fprintf(w, "\n%s\n", actionsHeading)
+	}
 	for _, p := range r.items {
 		if p.skipped {
 			continue
 		}
-		writeMigrationText(w, p, pal)
+		writeMigrationText(w, r, p, pal)
 	}
 	if rows := r.notRun(); len(rows) > 0 {
 		fmt.Fprintf(w, "\nnot executed by this run (%d):\n", len(rows))
@@ -594,22 +691,37 @@ func downSuffix(d engine.Direction) string {
 	return ""
 }
 
-func writeMigrationText(w io.Writer, p planItem, pal palette) {
-	fmt.Fprintf(w, "\n%s\n", pal.change(p.Direction, p.Migration.ID()+downSuffix(p.Direction)+"  "+p.summary()))
+func writeMigrationText(w io.Writer, r planReport, p planItem, pal palette) {
+	if r.describes() {
+		fmt.Fprintf(w, "\n%s\n", p.schemaHeading())
+	} else {
+		fmt.Fprintf(w, "\n%s\n", pal.change(p.Direction, p.Migration.ID()+downSuffix(p.Direction)+"  "+p.summary(r.pauses())))
+	}
 	for _, d := range p.directives {
 		fmt.Fprintln(w, "  "+d)
 	}
-	writeIndented(w, "  ", p.effect, pal)
+	if r.describes() && p.describable() {
+		writeSchemaText(w, p, pal)
+	} else {
+		writeIndented(w, "  ", p.effect, pal)
+		if l := p.undescribed(); r.describes() && l != "" {
+			fmt.Fprintln(w, l)
+		}
+		writeStatementsText(w, r, p)
+	}
+	for _, n := range p.notes {
+		fmt.Fprintln(w, "  note: "+n)
+	}
+}
+
+func writeStatementsText(w io.Writer, r planReport, p planItem) {
 	for i, st := range p.Statements {
-		fmt.Fprintln(w, "  "+statementFacts(i, p, st, terminal))
+		fmt.Fprintln(w, "  "+statementFacts(i, p, st, terminal, r.pauses()))
 		writeIndented(w, "      ", st.SQL+";", mono)
 		for _, h := range st.Hazards {
 			fmt.Fprintf(w, "      hazard %s: %s\n", h.Code, h.Detail)
 			writeRecipeText(w, "        ", h.Recipe)
 		}
-	}
-	for _, n := range p.notes {
-		fmt.Fprintln(w, "  note: "+n)
 	}
 }
 
@@ -648,11 +760,14 @@ func writePlanMarkdown(w io.Writer, r planReport) {
 	}
 	fmt.Fprint(w, r.changeList())
 	fmt.Fprint(w, r.driftDetails())
+	if r.describes() {
+		fmt.Fprintf(w, "\n%s\n", actionsHeading)
+	}
 	for _, p := range r.items {
 		if p.skipped {
 			continue
 		}
-		writeMigrationMarkdown(w, p)
+		writeMigrationMarkdown(w, r, p)
 	}
 	fmt.Fprint(w, r.notRunDetails())
 	fmt.Fprint(w, r.detailsMarkdown())
@@ -677,7 +792,7 @@ func (r planReport) changeList() string {
 		if p.skipped {
 			continue
 		}
-		fmt.Fprintf(&b, "%s\n", mono.change(p.Direction, p.Migration.ID()+downSuffix(p.Direction)+"  "+p.summary()))
+		fmt.Fprintf(&b, "%s\n", mono.change(p.Direction, p.Migration.ID()+downSuffix(p.Direction)+"  "+p.summary(r.pauses())))
 	}
 	if b.Len() == 0 {
 		return ""
@@ -686,25 +801,36 @@ func (r planReport) changeList() string {
 	return "\n```diff\n" + b.String() + "```\n"
 }
 
-func writeMigrationMarkdown(w io.Writer, p planItem) {
+func writeMigrationMarkdown(w io.Writer, r planReport, p planItem) {
 	fmt.Fprintf(w, "\n### `%s`%s\n", p.Migration.ID(), downSuffix(p.Direction))
 	for _, d := range p.directives {
 		fmt.Fprintf(w, "\n```sql\n%s\n```\n", d)
 	}
-	if p.effect != "" {
-		fmt.Fprintf(w, "\n```diff\n%s\n```\n", p.effect)
+	if r.describes() && p.describable() {
+		writeSchemaMarkdown(w, p)
+	} else {
+		if p.effect != "" {
+			fmt.Fprintf(w, "\n```diff\n%s\n```\n", p.effect)
+		}
+		if l := p.undescribed(); r.describes() && l != "" {
+			fmt.Fprintf(w, "\n%s\n", strings.TrimSpace(l))
+		}
+		writeStatementsMarkdown(w, r, p)
 	}
+	for _, n := range p.notes {
+		fmt.Fprintf(w, "\nnote: %s\n", n)
+	}
+}
+
+func writeStatementsMarkdown(w io.Writer, r planReport, p planItem) {
 	for i, st := range p.Statements {
-		fmt.Fprintf(w, "\n%s\n\n```sql\n%s;\n```\n", statementFacts(i, p, st, markdown), st.SQL)
+		fmt.Fprintf(w, "\n%s\n\n```sql\n%s;\n```\n", statementFacts(i, p, st, markdown, r.pauses()), st.SQL)
 		for _, h := range st.Hazards {
 			fmt.Fprintf(w, "\n**%s** %s\n", h.Code, h.Detail)
 			if h.Recipe != "" {
 				fmt.Fprintf(w, "\n```sql\n%s\n```\n", h.Recipe)
 			}
 		}
-	}
-	for _, n := range p.notes {
-		fmt.Fprintf(w, "\nnote: %s\n", n)
 	}
 }
 

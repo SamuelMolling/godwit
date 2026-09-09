@@ -23,35 +23,30 @@ Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behin
 
 ```
 $ godwit plan --target app --dir db/migrations --rollout expand-contract
-1 migration will be applied to app. The expand phase runs on apply, then the run stops at awaiting_contract and the contract phase waits for a confirm (godwit confirm on a pull request).
+1 migration will be applied to app. This runs in two halves. Now, godwit applies only what adds: new
+columns, indexes and constraints, which the application it is already running does not have to know
+about. A generated column change writes into a new column and holds the two in step with a trigger, so
+writes never stop while it fills. Nothing is renamed and nothing is dropped yet. When you confirm,
+godwit runs the rest: the renames, and the drops it held back. Until you confirm, the old columns are
+still there holding the data you started with, and that is the way back. The run waits at
+awaiting_contract; confirm it with godwit confirm on the pull request.
 
-20260901121000_customer_id_text  14 statements, expand then contract phases, written by a directive
+godwit will perform the following actions:
+
+  # 20260901121000_customer_id_text  (written by a directive)
   -- godwit: change-type orders.customer_id text using='customer_id::text'
   -- godwit: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
-  [0] tx
-      -- godwit expanded: change-type orders.customer_id text
-      ALTER TABLE public.orders ADD COLUMN customer_id_new text;
-  [1] tx
-      CREATE FUNCTION public.orders_customer_id_sync() RETURNS trigger LANGUAGE plpgsql AS …;
-  [2] tx
-      CREATE TRIGGER orders_customer_id_sync BEFORE INSERT OR UPDATE ON public.orders …;
-  [3] batch over id (int), 5000 rows per transaction
-      WITH b AS (SELECT id AS godwit_key FROM public.orders WHERE id > $1::bigint AND …);
-  [6] assert, the result must be = 0
-      SELECT count(*) FROM public.orders WHERE customer_id_new IS DISTINCT FROM customer_id::text;
-  [7] assert, the result must be = 0
-      -- godwit expanded: assert 'SELECT count(*) FROM orders WHERE customer_id IS NULL' = 0
-      SELECT count(*) FROM orders WHERE customer_id IS NULL;
-  [10] tx, contract phase
-      ALTER TABLE public.orders RENAME COLUMN customer_id TO customer_id_old;
-  [11] tx, contract phase
-      ALTER TABLE public.orders RENAME COLUMN customer_id_new TO customer_id;
+  ~ table "public"."orders" {
+      ~ customer_id     = bigint -> text
+      + customer_id_old = bigint NOT NULL
+        # (3 unchanged attributes hidden)
+    }
   note: leaves public.orders.customer_id_old for rollback; drop it with `-- godwit: drop-column public.orders.customer_id_old`
 
-Plan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge
+Plan: 0 to add, 1 to change, 0 to destroy.
 ```
 
-(An excerpt: the run has fourteen statements.) The trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, statement 6 is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
+That is fourteen statements. `--plan-format statements` prints them: the trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, one statement is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
 
 **The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `godwit apply` bound to the reviewed plan, `godwit confirm` for the contract phase, and a `godwit/applied` commit status that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
 

@@ -66,15 +66,15 @@ func planStateLabel(p *godwitv1.Plan) string {
 
 func newPlanShowCmd() *cobra.Command {
 	flags := &clientFlags{}
-	var format string
+	report := &reportFlags{}
 	cmd := &cobra.Command{
 		Use:   "show <plan-id>",
 		Short: "Show a stored plan: statements, hazards, observation, drift, state and the run that applied it",
 		Args:  cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			write, ok := planFormats[format]
-			if !ok {
-				return fmt.Errorf("unknown format %q (want text, markdown or json)", format)
+			write, err := report.writer()
+			if err != nil {
+				return err
 			}
 			resp, err := client.GetPlan(cmd.Context(), connect.NewRequest(&godwitv1.GetPlanRequest{PlanId: args[0]}))
 			if err != nil {
@@ -91,7 +91,7 @@ func newPlanShowCmd() *cobra.Command {
 		}),
 	}
 	flags.register(cmd)
-	cmd.Flags().StringVar(&format, "format", "text", "output format: text, markdown or json")
+	report.register(cmd, "")
 
 	return cmd
 }
