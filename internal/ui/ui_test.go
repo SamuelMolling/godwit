@@ -292,7 +292,7 @@ func TestIndex(t *testing.T) {
 	h := newUI(s, Config{Replica: "godwit-0"})
 
 	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusOK,
-		"<title>godwit</title>", "godwit-0", "Needs you", "r-bad-00", "needs attention", "awaiting contract", "lock timeout",
+		"<title>Godwit</title>", "godwit-0", "Needs you", "r-bad-00", "needs attention", "awaiting contract", "lock timeout",
 		"oldest 2 days ago", "since 5 min ago", "Confirm rollout", "Resume", "revert of r-ok-000", "by ci", "1m30s", "300ms", "3.0s", "24h0m", "1h0m",
 		"No sign-in configured", `class="cnt">2<`, `class="dot bad"`)
 	if s.actor != "ui:anonymous" {
