@@ -142,8 +142,8 @@ func TestPlanRun_EmptyEffectNeverMarked(t *testing.T) {
 	t.Parallel()
 	client, _ := validatedTarget(t)
 	files := append(orderedFiles()[:2],
-		&godwitv1.MigrationFile{Name: "20260901120002_fn.up.sql", Body: "CREATE FUNCTION f() RETURNS int AS 'SELECT 1' LANGUAGE sql;"},
-		&godwitv1.MigrationFile{Name: "20260901120002_fn.down.sql", Body: "DROP FUNCTION f;"},
+		&godwitv1.MigrationFile{Name: "20260901120002_grant.up.sql", Body: "GRANT SELECT ON t TO PUBLIC;"},
+		&godwitv1.MigrationFile{Name: "20260901120002_grant.down.sql", Body: "REVOKE SELECT ON t FROM PUBLIC;"},
 	)
 
 	plan := validatedPlan(t, client, files)

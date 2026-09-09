@@ -493,6 +493,24 @@ const twoHalvesProse = "This runs in two halves. Now, godwit applies only what a
 	" and that is the way back. The run waits at awaiting_contract; confirm it with godwit confirm on the" +
 	" pull request."
 
+const (
+	runOne = "The one statement commits with its own journal row on the target, so a run that fails or is killed" +
+		" part way is resumed at it rather than replaying the migration from its first line."
+	runInTx = "Every statement here runs inside a transaction, so one that fails leaves nothing of itself behind."
+	runLock = "Every statement sets the target's lock_timeout before it runs, so one that cannot take its lock" +
+		" gives up and fails the run instead of queueing in front of every query behind it."
+	runLockMarkdown = "Every statement sets the target's `lock_timeout` before it runs, so one that cannot take its" +
+		" lock gives up and fails the run instead of queueing in front of every query behind it."
+	runPause = "The run does not go through in one go: with expand-contract it stops after the expand half, waits" +
+		" in awaiting_contract holding no lock and no transaction, and runs the contract half only once godwit" +
+		" confirm releases it."
+	runPauseMarkdown = "The run does not go through in one go: with `expand-contract` it stops after the expand" +
+		" half, waits in `awaiting_contract` holding no lock and no transaction, and runs the contract half only" +
+		" once `godwit confirm` releases it."
+	runFails = "If a statement fails, that statement is rolled back and the run stops there; the statements before" +
+		" it stay committed and the migrations already finished stay applied. Fix the migration and run it again."
+)
+
 const twoHalvesProseMarkdown = "This runs in two halves. Now, godwit applies only what adds: new columns," +
 	" indexes and constraints, which the application it is already running does not have to know about." +
 	" Nothing is renamed and nothing is dropped yet. When you confirm, godwit runs the rest: the renames," +
@@ -517,8 +535,8 @@ func TestMigrateDryRun(t *testing.T) {
 		"      hazard H003: DROP COLUMN is destructive\n" +
 		"        -- expand then contract:\n" +
 		"        -- drop users.a later\n" +
-		"\nplan details:\n" +
-		"  target: app\n  rollout: expand-contract\n" +
+		"\nhow this will run:\n" +
+		"  " + runOne + "\n  " + runInTx + "\n  " + runLock + "\n  " + runPause + "\n  " + runFails + "\n" +
 		"\n1 hazard on what this run would execute: take the recipe printed with it, or accept the risk" +
 		" with --ack H003 (godwit apply --ack H003 on a pull request).\n" +
 		"Plan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n"
@@ -554,8 +572,9 @@ func TestMigrateDryRunMarkdown(t *testing.T) {
 		"\n### `20260901120001_drop_a`\n" +
 		"\n`statement 0`, runs inside a transaction\n\n```sql\nALTER TABLE users DROP COLUMN a;\n```\n" +
 		"\n**H003** DROP COLUMN is destructive\n\n```sql\n-- expand then contract:\n-- drop users.a later\n```\n" +
-		"\n<details><summary>plan details</summary>\n\n```\ntarget: app\nrollout: expand-contract\n" +
-		"```\n\n</details>\n" +
+		"\n<details><summary>how this will run: transactions, locks, and what a failure leaves behind</summary>\n\n" +
+		runOne + "\n\n" + runInTx + "\n\n" + runLockMarkdown + "\n\n" + runPauseMarkdown + "\n\n" + runFails +
+		"\n\n</details>\n" +
 		"\n\u26a0\ufe0f 1 hazard on what this run would execute: take the recipe printed with it, or accept" +
 		" the risk with `--ack H003` (`godwit apply --ack H003` on a pull request).\n" +
 		"\nPlan: 1 to apply, 0 to revert, 1 hazard(s) to acknowledge\n" +
@@ -1104,8 +1123,9 @@ func TestPlan_RemoteSaves(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	want := "\nchanges outside migrations:\n  + table public.orders\n  - index public.idx_old\n" +
-		"\nplan details:\n" +
-		"  target: app\n  rollout: expand-contract\n  plan: p1\n"
+		"\nhow this will run:\n" +
+		"  " + runOne + "\n  " + runInTx + "\n  " + runLock + "\n  " + runPause + "\n  " + runFails + "\n" +
+		"\nplan details:\n  plan: p1\n"
 	if !strings.HasPrefix(out, "1 migration will be applied to app.") || !strings.Contains(out, want) {
 		t.Fatalf("out = %q, want %q", out, want)
 	}

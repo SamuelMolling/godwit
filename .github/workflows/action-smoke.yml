@@ -729,7 +729,7 @@ jobs:
           test -n "${STORED_ID}"
           test -n "${STORED_KEY}"
           grep -q '^## godwit plan$' "${STORED_SUMMARY}"
-          grep -q "^plan: ${STORED_ID}$" "${STORED_SUMMARY}"
+          grep -q "^<!-- godwit-plan-id: ${STORED_ID} -->$" "${STORED_SUMMARY}"
           grep -q "^<!-- godwit-plan-key: ${STORED_KEY} -->$" "${STORED_SUMMARY}"
           grep -q '^```diff$' "${STORED_SUMMARY}"
           grep -q '^+ 20260901120000_users  ' "${STORED_SUMMARY}"

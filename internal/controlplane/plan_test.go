@@ -315,7 +315,7 @@ func TestObserveQueryErrors(t *testing.T) {
 
 	expectNoGodwitTables(mock)
 	expectNoExcludedObjects(mock)
-	for range 8 {
+	for range 11 {
 		mock.ExpectQuery("SELECT").WillReturnRows(pgxmock.NewRows([]string{"owner", "line"}))
 	}
 	mock.ExpectQuery("current_schemas").WillReturnError(errBoom)

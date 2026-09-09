@@ -225,9 +225,13 @@ godwit will perform the following actions:
   # R__order_stats
   + view "public"."order_stats"
 
+how this will run:
+  3 statements run one at a time, in the order this report lists them, each committing with its own journal row on the target. A run that fails or is killed part way is resumed at the first statement that never committed, rather than replaying the migration from its first line.
+  Every statement here runs inside a transaction, so one that fails leaves nothing of itself behind.
+  Every statement sets the target's lock_timeout before it runs, so one that cannot take its lock gives up and fails the run instead of queueing in front of every query behind it.
+  If a statement fails, that statement is rolled back and the run stops there; the statements before it stay committed and the migrations already finished stay applied. Fix the migration and run it again.
+
 plan details:
-  target: app
-  rollout: direct
   plan: f27eecc1-d479-4255-ae90-b53247e9230f
 
 Plan: 3 to add, 0 to change, 0 to destroy.
@@ -247,9 +251,11 @@ A hazard is not a footnote here: it goes on the attribute that causes it, the wa
       ...
 ```
 
-The type carries its modifier — `character varying(20)`, `numeric(10,2)`, `timestamp(3) with time zone` — under PostgreSQL's own canonical name for it, the one `\d` prints. On a terminal `+` is green, `-` red and `~` yellow (see [colour](#colour)). The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`, which also carries the delta under `changes`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
+The type carries its modifier — `character varying(20)`, `numeric(10,2)`, `timestamp(3) with time zone` — under PostgreSQL's own canonical name for it, the one `\d` prints. A table's triggers sit inside its block, the way its constraints do; a function or procedure is a block of its own, named with its argument list so two overloads are two objects, and its body is reported as `body = (changed)` rather than pasted in. On a terminal `+` is green, `-` red and `~` yellow (see [colour](#colour)), and the marker sits after the indentation, as terraform writes it. `--format markdown` moves the marker to column 0 and the indentation after it, because GitHub colours a line inside a ```` ```diff ```` fence only when the marker is its first character; the text still lands in the same column, and the closing brace and the comment lines carry no marker. The plan's key, the history and schema fingerprints and the raw observation are machine identity and stay in `--format json`, which also carries the delta under `changes`. What the target already has is not listed at all: with nothing pending the first line reads `Nothing to apply. app is at <version> (N migrations).`
 
-A migration whose effect a schema snapshot cannot see — a seed, a `GRANT`, a function body — has no block; it says so on its own line and falls back to its statements.
+A migration whose effect a schema snapshot cannot see — a seed, a `GRANT`, a policy — has no block; it says so in a line of prose (not a `#` comment: outside the fence that would be a heading) and falls back to its statements.
+
+**`how this will run`** is the last block before the footer, and it is about execution rather than schema: how many statements there are and that each commits with its own journal row, which of them PostgreSQL refuses to run inside a transaction and what godwit does about that, which walk the table in batches, which are assertions, which hold a lock the application queues behind, whether the run stops between the two halves of an expand/contract rollout, and what a failure part way through leaves behind. The plan's id is not in it: it is machine identity, and in `--format markdown` it rides in a `<!-- godwit-plan-id: ... -->` comment, which is what the GitHub Action reads to bind a later `apply`.
 
 Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [Concepts: plans](concepts.md#plans).
 
@@ -324,9 +330,11 @@ $ godwit migrate --target app --dir db/migrations --dry-run --plan-format statem
   statement 0, runs inside a transaction
       CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id;
 
-plan details:
-  target: app
-  rollout: direct
+how this will run:
+  3 statements run one at a time, in the order this report lists them, each committing with its own journal row on the target. A run that fails or is killed part way is resumed at the first statement that never committed, rather than replaying the migration from its first line.
+  1 of them cannot run inside a transaction, because PostgreSQL refuses it there: an index built or dropped CONCURRENTLY, a VACUUM, a concurrent matview refresh. PostgreSQL cannot roll it back, so godwit writes an intent row before each one and, when a run comes back to it, asks the database what the statement left rather than running it a second time.
+  Every statement sets the target's lock_timeout before it runs, so one that cannot take its lock gives up and fails the run instead of queueing in front of every query behind it.
+  If a statement fails, the run stops there; what committed before it stays committed. An index built CONCURRENTLY that failed leaves an INVALID index behind, and the next run of this plan finds it, drops it and builds it again.
 
 Plan: 3 to apply, 0 to revert, 0 hazard(s) to acknowledge
 ```
@@ -596,9 +604,10 @@ $ godwit plan show f27eecc1-d479-4255-ae90-b53247e9230f --plan-format statements
       CREATE TABLE orders (id bigserial PRIMARY KEY, customer_id bigint NOT NULL, total numeric NOT NULL);
 ...
 
+how this will run:
+  ...
+
 plan details:
-  target: app
-  rollout: direct
   plan: f27eecc1-d479-4255-ae90-b53247e9230f
   state: bound (run 7071c5ac-93e5-43de-9322-960a47d47f00)
   by: admin at 2026-09-08T13:19:09Z

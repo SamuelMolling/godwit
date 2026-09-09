@@ -164,10 +164,10 @@ func TestDetectRefusals(t *testing.T) {
 		t.Fatalf("dml: %+v", migs)
 	}
 
-	migs, plans, val = detectFixture(t, "CREATE FUNCTION f() RETURNS int AS 'SELECT 1' LANGUAGE sql;", ddl)
+	migs, plans, val = detectFixture(t, "CREATE TYPE mood AS ENUM ('a');", ddl)
 	Detect(migs, plans, val, Observation{Fingerprint: "f2"})
 	if migs[0].AlreadyApplied || migs[0].Note != engine.OpaqueUnknown || migs[1].AlreadyApplied {
-		t.Fatalf("function: %+v", migs)
+		t.Fatalf("enum: %+v", migs)
 	}
 
 	migs, plans, val = detectFixture(t, ddl, ddl)

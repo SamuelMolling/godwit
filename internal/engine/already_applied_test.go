@@ -64,15 +64,24 @@ func TestOpacity(t *testing.T) {
 		{"CREATE VIEW v WITH (security_barrier) AS SELECT 1;", OpaqueUnknown},
 		{"CREATE VIEW v AS SELECT 1 WITH CHECK OPTION;", OpaqueUnknown},
 		{"CREATE MATERIALIZED VIEW mv AS SELECT 1;", OpaqueUnknown},
-		{"DROP FUNCTION f;", OpaqueUnknown},
+		{"DROP FUNCTION f;", ""},
+		{"DROP PROCEDURE p;", ""},
+		{"DROP TRIGGER trg ON t;", ""},
+		{"DROP SEQUENCE s;", OpaqueUnknown},
 		{"ALTER FUNCTION f RENAME TO g;", OpaqueUnknown},
+		{"ALTER FUNCTION f SET search_path = public;", OpaqueUnknown},
 		{"ALTER VIEW v RENAME COLUMN a TO b;", OpaqueUnknown},
 		{"ALTER TABLE t ADD COLUMN a int GENERATED ALWAYS AS IDENTITY;", OpaqueUnknown},
 		{"ALTER TABLE t ALTER COLUMN a TYPE text COLLATE \"C\";", OpaqueUnknown},
 		{"ALTER TABLE t SET LOGGED;", OpaqueUnknown},
 		{"ALTER TABLE t ENABLE ROW LEVEL SECURITY;", OpaqueUnknown},
 		{"ALTER INDEX i SET (fillfactor = 70);", OpaqueUnknown},
-		{"CREATE FUNCTION f() RETURNS int AS 'SELECT 1' LANGUAGE sql;", OpaqueUnknown},
+		{"CREATE FUNCTION f() RETURNS int AS 'SELECT 1' LANGUAGE sql;", ""},
+		{"CREATE FUNCTION f() RETURNS int LANGUAGE sql SECURITY DEFINER PARALLEL SAFE AS 'SELECT 1';", ""},
+		{"CREATE FUNCTION f() RETURNS int LANGUAGE sql SET search_path = public AS 'SELECT 1';", OpaqueUnknown},
+		{"CREATE FUNCTION f() RETURNS int LANGUAGE sql LEAKPROOF AS 'SELECT 1';", OpaqueUnknown},
+		{"CREATE FUNCTION f() RETURNS int LANGUAGE sql COST 5 AS 'SELECT 1';", OpaqueUnknown},
+		{"CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW EXECUTE FUNCTION f();", ""},
 		{"CREATE TYPE mood AS ENUM ('a');", OpaqueUnknown},
 		{"CREATE SEQUENCE s;", OpaqueUnknown},
 		{"CREATE EXTENSION pgcrypto;", OpaqueUnknown},
@@ -91,7 +100,7 @@ func TestOpacity(t *testing.T) {
 func TestPlanOpaqueFirstReason(t *testing.T) {
 	t.Parallel()
 	p := buildPlanT(t, Migration{
-		Version: 1, Name: "m", UpSQL: "CREATE TABLE t (id int); CREATE FUNCTION f() RETURNS int AS 'SELECT 1' LANGUAGE sql; INSERT INTO t VALUES (1);",
+		Version: 1, Name: "m", UpSQL: "CREATE TABLE t (id int); CREATE TYPE mood AS ENUM ('a'); INSERT INTO t VALUES (1);",
 		DownSQL: "SELECT 1;",
 	}, DirectionUp)
 	if got := p.Opaque(); got != OpaqueUnknown {

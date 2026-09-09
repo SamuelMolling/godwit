@@ -40,8 +40,9 @@ func TestPlanWithAVersionTargetNamesWhatItWithheld(t *testing.T) {
 		"\nnot executed by this run (2):\n" +
 		"  20260901120001_drop_a  held back by --to\n" +
 		"  R__v  held back by --to\n" +
-		"\nplan details:\n" +
-		"  target: app\n  rollout: direct\n  plan: p1\n" +
+		"\nhow this will run:\n" +
+		"  " + runOne + "\n  " + runInTx + "\n  " + runLock + "\n  " + runFails + "\n" +
+		"\nplan details:\n  plan: p1\n" +
 		"\nPlan: 1 to apply, 0 to revert, 0 hazard(s) to acknowledge\n"
 	if out != want {
 		t.Fatalf("out = %q, want %q", out, want)

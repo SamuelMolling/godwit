@@ -63,10 +63,10 @@ func TestSchemaMarkdownFencesTheBlockAndCollapsesTheRecipe(t *testing.T) {
 	var b strings.Builder
 	writePlanMarkdown(&b, widenAge())
 	for _, want := range []string{
-		"\n```diff\n~ table \"public\".\"widgets\" {\n" +
-			"    ~ age     = integer -> character varying(20)" +
+		"\n```diff\n~   table \"public\".\"widgets\" {\n" +
+			"~       age     = integer -> character varying(20)" +
 			" # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)\n" +
-			"    + age_old = integer NULL\n      # (4 unchanged attributes hidden)\n  }\n```\n",
+			"+       age_old = integer NULL\n        # (4 unchanged attributes hidden)\n    }\n```\n",
 		"<details><summary>H004 recipe</summary>\n\n```sql\n-- godwit: change-type public.widgets.age varchar(20)\n```",
 		"\nPlan: 0 to add, 1 to change, 0 to destroy.\n",
 	} {
@@ -112,6 +112,14 @@ func TestSchemaBlocksCoverEveryObjectKind(t *testing.T) {
 		{Op: engine.OpCreate, Kind: engine.KindView, Schema: "public", Name: "stats", Attrs: []engine.AttrChange{
 			{Op: engine.OpCreate, Name: "definition", New: []string{"5d41402abc4b2a76b9719d911017c592"}},
 		}},
+		{Op: engine.OpCreate, Kind: engine.KindFunction, Schema: "public", Name: "touch()", Attrs: []engine.AttrChange{
+			{Op: engine.OpCreate, Name: "language", New: []string{"plpgsql"}},
+			{Op: engine.OpCreate, Name: engine.BodyAttr, New: []string{"5d41402abc4b2a76b9719d911017c592"}},
+			{Op: engine.OpCreate, Name: "returns", New: []string{"trigger"}},
+		}},
+		{Op: engine.OpUpdate, Kind: engine.KindProcedure, Schema: "public", Name: "sweep()", Unchanged: 5, Attrs: []engine.AttrChange{
+			{Op: engine.OpUpdate, Name: engine.BodyAttr, Old: []string{"a"}, New: []string{"b"}},
+		}},
 	}
 	var b strings.Builder
 	writePlanText(&b, r)
@@ -120,7 +128,9 @@ func TestSchemaBlocksCoverEveryObjectKind(t *testing.T) {
 		"  + index \"public\".\"widgets_kind_idx\" {\n      + definition = CREATE INDEX widgets_kind_idx ON public.widgets USING btree (kind)\n    }\n",
 		"  ~ materialized view \"mv\" {\n      ~ definition = (changed)\n    }\n",
 		"  + view \"public\".\"stats\"\n",
-		"Plan: 2 to add, 1 to change, 1 to destroy.\n",
+		"  + function public.touch() {\n      + language = plpgsql\n      + returns  = trigger\n    }\n",
+		"  ~ procedure public.sweep() {\n      ~ body = (changed)\n        # (5 unchanged attributes hidden)\n    }\n",
+		"Plan: 3 to add, 2 to change, 1 to destroy.\n",
 	} {
 		if !strings.Contains(b.String(), want) {
 			t.Fatalf("missing %q in:\n%s", want, b.String())
@@ -172,8 +182,11 @@ func TestSchemaSaysWhyOneMigrationHasNoBlock(t *testing.T) {
 	var b strings.Builder
 	writePlanText(&b, r)
 	for _, want := range []string{
-		"  # a schema snapshot cannot see what this does (has DML); the statements it runs are below\n",
-		"  # no schema change was recorded for this one; the statements it runs are below\n",
+		"  godwit cannot describe what this one does to the database (has DML), so the statements it runs are" +
+			" below instead.\n",
+		"  godwit cannot describe what this one does to the database: the schema before and after it is the same," +
+			" so what it changes is something the snapshot does not cover — a grant, row-level security, a comment." +
+			" The statements it runs are below instead.\n",
 	} {
 		if !strings.Contains(b.String(), want) {
 			t.Fatalf("missing %q in:\n%s", want, b.String())
@@ -181,8 +194,81 @@ func TestSchemaSaysWhyOneMigrationHasNoBlock(t *testing.T) {
 	}
 	var md strings.Builder
 	writePlanMarkdown(&md, r)
-	if !strings.Contains(md.String(), "\n# a schema snapshot cannot see what this does (has DML); the statements it runs are below\n") {
+	if !strings.Contains(md.String(), "\ngodwit cannot describe what this one does to the database (has DML), so"+
+		" the statements it runs are below instead.\n") {
 		t.Fatalf("markdown:\n%s", md.String())
+	}
+	if strings.Contains(md.String(), "\n# ") {
+		t.Fatalf("a line outside a fence that opens with # is an H1 heading:\n%s", md.String())
+	}
+}
+
+func TestSchemaMarkdownPutsEveryMarkerInColumnZero(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	writePlanMarkdown(&b, widenAge())
+	fenced, marked := false, 0
+	for _, line := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(line, "```") {
+			fenced = strings.HasPrefix(line, "```diff")
+
+			continue
+		}
+		if !fenced {
+			continue
+		}
+		if trimmed := strings.TrimLeft(line, " "); trimmed != line &&
+			(strings.HasPrefix(trimmed, "+ ") || strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "~ ")) {
+			t.Fatalf("GitHub colours a fenced line only from column 0: %q", line)
+		}
+		if line != "" && strings.ContainsRune("+-~", rune(line[0])) {
+			marked++
+		}
+	}
+	if marked != 4 {
+		t.Fatalf("the change list and the three changed lines of the block carry a marker, got %d:\n%s", marked, b.String())
+	}
+}
+
+func TestMarkdownOutsideAFenceCannotBeReadAsMarkup(t *testing.T) {
+	t.Parallel()
+	r := widenAge()
+	r.planID, r.planKey, r.drift = "p1", "k1", "- table public.gone"
+	r.stored = &storedPlan{State: "stored", CreatedBy: "sam", CreatedAt: "now"}
+	r.observed = &planObservation{IgnoredTables: []string{"public.schema_migrations (rails)"}}
+	r.items[0].notes = []string{"leaves public.widgets.age_old for rollback"}
+	r.items[0].directives = []string{"-- godwit: change-type public.widgets.age varchar(20)"}
+	r.items = append(r.items, planItem{
+		Plan: engine.Plan{
+			Migration:  engine.Migration{Version: 20260910130000, Name: "grant"},
+			Direction:  engine.DirectionUp,
+			Statements: []engine.Statement{{SQL: "GRANT SELECT ON widgets TO reader"}},
+		},
+	}, planItem{
+		skipped: true,
+		Plan:    engine.Plan{Migration: engine.Migration{Version: 20260910110000, Name: "old"}},
+	})
+	var b strings.Builder
+	writePlanMarkdown(&b, r)
+
+	fenced := false
+	for i, line := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(line, "```") {
+			fenced = !fenced
+
+			continue
+		}
+		if fenced || line == "" || strings.HasPrefix(line, "<") || strings.HasPrefix(line, "| ") ||
+			strings.HasPrefix(line, "|---") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") {
+			continue
+		}
+		if strings.ContainsRune("#->|", rune(line[0])) {
+			t.Fatalf("line %d is markup, not prose: %q", i+1, line)
+		}
+		if digit, rest, ok := strings.Cut(line, "."); ok && digit != "" && strings.HasPrefix(rest, " ") &&
+			strings.IndexFunc(digit, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
+			t.Fatalf("line %d opens an ordered list: %q", i+1, line)
+		}
 	}
 }
 
@@ -276,7 +362,7 @@ func TestSchemaMarkdownKeepsALooseHazardAndSkipsWhatDoesNotRun(t *testing.T) {
 	})
 	var b strings.Builder
 	writePlanMarkdown(&b, r)
-	if !strings.Contains(b.String(), "```diff\n# ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)\n~ table") {
+	if !strings.Contains(b.String(), "```diff\n  # ALTER COLUMN TYPE rewrites the table under an exclusive lock (H004)\n~   table") {
 		t.Fatalf("out:\n%s", b.String())
 	}
 	if strings.Contains(b.String(), "recipe</summary>") {

@@ -41,7 +41,7 @@ plan:
   format: schema      # schema | statements
 ```
 
-`schema` (the default) describes what the migrations do to the database: one block per table, index, sequence, enum or view, `+` for created, `-` for destroyed and `~` for changed, with the hazard each change carries written on the line that causes it. It needs the schema delta the scratch replay produces, so a report with none — an offline `godwit plan --dir`, a `--skip-validation` run, a service with no validator — falls back to the statement listing whole and says why.
+`schema` (the default) describes what the migrations do to the database: one block per table, index, sequence, enum, view, function or procedure, `+` for created, `-` for destroyed and `~` for changed, with the hazard each change carries written on the line that causes it. It needs the schema delta the scratch replay produces, so a report with none — an offline `godwit plan --dir`, a `--skip-validation` run, a service with no validator — falls back to the statement listing whole and says why.
 
 `statements` is the SQL the run would execute, in order, with the transaction mode and the hazard recipes. Reach for it when you are auditing the exact statements or reading a run that failed on one.
 

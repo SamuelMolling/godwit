@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"slices"
+
 	pgquery "github.com/pganalyze/pg_query_go/v6"
 )
 
@@ -23,6 +25,10 @@ func opacity(node *pgquery.Node) string {
 	case node.GetViewStmt() != nil:
 		v := node.GetViewStmt()
 		visible = len(v.Options) == 0 && v.WithCheckOption == pgquery.ViewCheckOption_NO_CHECK_OPTION
+	case node.GetCreateFunctionStmt() != nil:
+		visible = plainFunction(node.GetCreateFunctionStmt())
+	case node.GetCreateTrigStmt() != nil:
+		visible = true
 	case node.GetDropStmt() != nil:
 		visible = visibleDrop(node.GetDropStmt().RemoveType)
 	case node.GetRenameStmt() != nil:
@@ -75,9 +81,23 @@ func plainColumn(col *pgquery.ColumnDef) bool {
 	return true
 }
 
+// snapshotFunctionOptions are the clauses a snapshot records; SET, LEAKPROOF, COST and SUPPORT are not.
+var snapshotFunctionOptions = []string{"as", "language", "volatility", "strict", "security", "parallel"}
+
+func plainFunction(c *pgquery.CreateFunctionStmt) bool {
+	for _, opt := range c.Options {
+		if !slices.Contains(snapshotFunctionOptions, opt.GetDefElem().Defname) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func visibleDrop(t pgquery.ObjectType) bool {
 	switch t {
-	case pgquery.ObjectType_OBJECT_TABLE, pgquery.ObjectType_OBJECT_INDEX, pgquery.ObjectType_OBJECT_VIEW:
+	case pgquery.ObjectType_OBJECT_TABLE, pgquery.ObjectType_OBJECT_INDEX, pgquery.ObjectType_OBJECT_VIEW,
+		pgquery.ObjectType_OBJECT_FUNCTION, pgquery.ObjectType_OBJECT_PROCEDURE, pgquery.ObjectType_OBJECT_TRIGGER:
 		return true
 	default:
 		return false
