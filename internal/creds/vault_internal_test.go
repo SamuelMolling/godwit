@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func audienceVault(t *testing.T, presented *[]string) *httptest.Server {
+func projectedTokenVault(t *testing.T, presented *[]string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/auth/kubernetes/login", func(w http.ResponseWriter, r *http.Request) {
@@ -36,21 +36,20 @@ func audienceVault(t *testing.T, presented *[]string) *httptest.Server {
 
 // The kubelet rewrites a projected token long before it expires and the one it replaced stops working,
 // so the file is read at every login rather than once at start-up.
-func TestTheStoresAudienceNamesTheTokenAndARotatedOneIsPickedUp(t *testing.T) {
+func TestAStoreLogsInWithTheProjectedTokenAndARotatedOneIsPickedUp(t *testing.T) {
 	t.Parallel()
 
 	var presented []string
-	srv := audienceVault(t, &presented)
-	dir := t.TempDir()
-	token := filepath.Join(dir, "vault.production.example")
+	srv := projectedTokenVault(t, &presented)
+	token := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(token, []byte("first\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p := vaults{
 		client: srv.Client(),
-		dir:    dir,
+		path:   token,
 		lookup: func(context.Context, string) (VaultStore, error) {
-			return VaultStore{Address: srv.URL, Role: "godwit", Audience: "vault.production.example"}, nil
+			return VaultStore{Address: srv.URL, Role: "godwit"}, nil
 		},
 	}
 	config := map[string]string{"path": "secret/data/app", StoreConfigKey: "production"}
@@ -68,13 +67,16 @@ func TestTheStoresAudienceNamesTheTokenAndARotatedOneIsPickedUp(t *testing.T) {
 	}
 }
 
-func TestTheDefaultTokenDirectoryIsTheOneTheChartMounts(t *testing.T) {
+func TestTheIdentityIsTheOneTheChartMints(t *testing.T) {
 	t.Parallel()
 
-	if audienceTokenDir != "/var/run/secrets/godwit/vault" {
-		t.Fatalf("audienceTokenDir = %q; godwit.vaultTokenDir in the chart mounts the other one", audienceTokenDir)
+	if VaultAudience != "godwit" {
+		t.Fatalf("VaultAudience = %q; the chart's projected volume mints the other one", VaultAudience)
 	}
-	if audienceTokenDir == filepath.Dir(defaultJWTPath) {
-		t.Fatal("the audience tokens land where the generic ServiceAccount token does")
+	if VaultTokenPath != "/var/run/secrets/godwit/vault/token" {
+		t.Fatalf("VaultTokenPath = %q; the chart mounts the other one", VaultTokenPath)
+	}
+	if VaultTokenPath == defaultJWTPath {
+		t.Fatal("the projected token lands where the generic ServiceAccount token does")
 	}
 }

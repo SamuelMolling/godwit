@@ -28,28 +28,20 @@ absent "${off}" 'name: webhook' 'the default render carries a webhook port or Se
 absent "${off}" 'GODWIT_GITHUB_' 'the default render carries GitHub App environment'
 absent "${off}" 'github-app-key' 'the default render mounts the App private key'
 
-absent "${off}" 'vault-audience-tokens' 'the default render projects a Vault token no store asked for'
-
-# An audience is one source of one projected volume, not one volume: two of them must land in the same
-# mount, at their own names, and neither may be the generic ServiceAccount token.
-aud="$(helm template godwit "${chart}" -f "${chart}/ci/full-values.yaml")"
-present "${aud}" 'mountPath: /var/run/secrets/godwit/vault$' 'the audience tokens are not mounted where godwit reads them'
-present "${aud}" 'audience: "vault.production.example.com"' 'the production audience is not projected'
-present "${aud}" 'audience: "vault.staging.example.com"' 'the staging audience is not projected'
-present "${aud}" 'path: "vault.staging.example.com"' 'an audience is projected at a name godwit cannot derive'
-present "${aud}" 'expirationSeconds: 900' 'the projected tokens do not carry the configured expiry'
-if [[ "$(grep -c 'serviceAccountToken:' <<<"${aud}")" != 2 ]]; then
-  fail 'two audiences did not render two serviceAccountToken sources'
-fi
-if [[ "$(grep -c 'name: vault-audience-tokens' <<<"${aud}")" != 2 ]]; then
-  fail 'two audiences rendered more than the one volume and its one mount'
+# The identity godwit presents at Vault is the deployment's, not a value: every render carries it, at
+# the file internal/creds names, and it is not the generic ServiceAccount token.
+present "${off}" 'audience: godwit$' 'the default render mints no token for the godwit audience'
+present "${off}" 'mountPath: /var/run/secrets/godwit/vault$' 'the token is not mounted where godwit reads it'
+present "${off}" 'path: token$' 'the token is projected at a name godwit does not read'
+if [[ "$(grep -c 'serviceAccountToken:' <<<"${off}")" != 1 ]]; then
+  fail 'a deployment is one identity and rendered more than one projected token'
 fi
 
 # An explicit serviceAccountToken projection does not depend on the automounted one, so a deployment
-# can hold its audience tokens and not the generic token every Vault accepts.
+# can hold its own token and not the generic one every Vault accepts.
 noauto="$(helm template godwit "${chart}" -f "${chart}/ci/platform-gitops-values.yaml")"
 present "${noauto}" 'automountServiceAccountToken: false' 'the gitops render still automounts the generic token'
-present "${noauto}" 'audience: "vault.example.internal"' 'turning the automount off took the audience tokens with it'
+present "${noauto}" 'audience: godwit$' 'turning the automount off took the projected token with it'
 
 on="$(helm template godwit "${chart}" -f "${chart}/ci/platform-github-app-values.yaml")"
 present "${on}" '- --github-webhook-addr=:8475' 'the App render does not open the webhook listener'

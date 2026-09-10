@@ -1,6 +1,6 @@
 # 0022 — Control-plane data is not chart configuration
 
-Shipped in #138. It deletes `targets.enabled`, `targets.list`, `stores.list` and the register Job from the Helm chart. `stores.allowedHosts` stays, and the reason it stays is the whole line this record draws. ([0023](0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) later deleted `stores.allowedHosts` too, having closed the escalation it guarded rather than the line this record draws; `stores.audiences` sits in the same column, for the same reason.)
+Shipped in #138. It deletes `targets.enabled`, `targets.list`, `stores.list` and the register Job from the Helm chart. `stores.allowedHosts` stays, and the reason it stays is the whole line this record draws. ([0023](0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) later deleted `stores.allowedHosts` too, having closed the escalation it guarded rather than the line this record draws; the `stores.audiences` it put there in exchange went the same way once the audience became a constant.)
 
 ## The question
 

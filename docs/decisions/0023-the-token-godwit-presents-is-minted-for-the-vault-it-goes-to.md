@@ -147,3 +147,44 @@ knob for the path.
 | Keeping `--vault-host` alongside the audience | refused | Above. It bounds a case the audience leaves open, and pays for it with an address-shaped key in a store abstraction meant to outgrow addresses, defaulting to off. |
 | Verifying the `aud` claim in godwit before presenting | refused | With the path derived from the audience there is no file to present but the right one; parsing our own JWT would guard a state the code cannot reach. |
 | One projected volume per audience | refused | Sources are the unit that carries an audience. One volume, one mount, *n* sources. |
+
+## Amendment — the audience is a constant, `godwit`
+
+Amended in #145. What stands: the token godwit presents is minted for an audience, read inside the
+login on every fetch, and `--vault-host` / `GODWIT_VAULT_HOSTS` / `stores.allowedHosts` stay deleted.
+What is withdrawn: that the audience is a **property of a store**, and everything that followed from
+it — `stores.audiences`, `stores.tokenExpirationSeconds`, the `k8s_audience` column, the required
+`--vault-audience` flag, and the validation that kept an audience usable as a file name.
+
+**A godwit deployment is one identity.** The record above argued the audience per store because a
+store is per Vault, and read that as *n* Vaults, *n* identities. The pod is one workload with one
+ServiceAccount; what the audience names is which Vault may accept its token, not who it is. Making it
+plural bought exactly one case — two Vaults demanding different audience strings, neither of them
+ours — which is rare, and which the operator fixes on their own side by configuring `audience="godwit"`
+on both roles. Everything else it bought was configuration: a chart list, a database column, a
+required flag, and a validation rule for a file name derived from user data.
+
+**The path-traversal rule is not weakened; the hole it guarded no longer exists.** `CheckAudience`
+was there because the token's file name *was* the audience, so a store could name
+`../../kubernetes.io/serviceaccount/token` and read the generic token back. With
+`creds.VaultTokenPath` a constant, no field of a store row reaches a file path at all — `Address` is
+a URL, `Mount` a URL path segment, `TokenEnv` a variable name behind the `VAULT_TOKEN` prefix. The
+check went out with the data flow it was checking.
+
+**"Required, not defaulted", revisited.** That section refused a default because a default is a value
+an operator arrives at without saying so. A constant is not a default: there is no value to arrive at,
+nothing to leave empty, and no `403` naming nothing — the audience is `godwit` in the chart, in the
+binary and in the one line of Vault configuration this asks for, and the three cannot disagree.
+
+**What it costs, and the case against.** Every Vault godwit authenticates at requires the same
+audience string, so one harvested projected token is replayable at all of them, where per-store
+audiences would have confined it to one. That is not a regression in reach: the pod held every
+audience's token under the old design too, and an admin-token holder harvested them one hostile store
+at a time. It also asks operators to accept `godwit` as the string rather than a name of their
+choosing — which is the same constraint the old design imposed anyway, since the audience had to be
+usable as a file name, and it makes the URL-shaped audience that constraint refused a non-question.
+The store row loses its `k8s_audience` column in migration `20260910000022`; no environment had
+registered a store, so nothing is stranded.
+
+**Still open, unchanged.** Pairing the identity with the addresses it may be presented to is the
+follow-up this record left open, and it is the thing that would actually close the replay above.

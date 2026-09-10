@@ -697,12 +697,11 @@ Per-target settings live on this command too — `--lock-timeout`, `--statement-
 
 ```console
 $ godwit credential-store add production \
-    --vault-addr https://vault.production.internal --vault-k8s-role godwit \
-    --vault-audience vault.production.internal
+    --vault-addr https://vault.production.internal --vault-k8s-role godwit
 credential store production: registered (https://vault.production.internal)
 ```
 
-`--vault-k8s-role` logs in at that Vault with a ServiceAccount token minted for `--vault-audience`, which is the form to use in Kubernetes: that Vault needs a Kubernetes auth mount trusting this cluster and a role bound to godwit's ServiceAccount **and requiring that audience**, and the deployment must project a token for it (`stores.audiences` in the chart). The audience is required and has no default — a token minted for nothing in particular is one every other Vault also accepts. Outside Kubernetes, `--vault-token-env VAULT_TOKEN` names an environment variable of the *service* holding a token instead — the value never travels through this command and is never stored.
+`--vault-k8s-role` logs in at that Vault with the ServiceAccount token the deployment mints for the audience `godwit`, which is the form to use in Kubernetes: that Vault needs a Kubernetes auth mount trusting this cluster and a role bound to godwit's ServiceAccount **carrying `audience=godwit`**. The audience is a constant, not a flag and not a chart value; a deployment is one identity, and setting `audience="godwit"` on the Vault role is the only thing an operator configures. Outside Kubernetes, `--vault-token-env VAULT_TOKEN` names an environment variable of the *service* holding a token instead — the value never travels through this command and is never stored.
 
 Registering a store is a full replace, like `target add`: re-running it with a new address moves every target that names it. [Security: credential stores](security.md#credential-stores).
 
@@ -712,12 +711,12 @@ Registering a store is a full replace, like `target add`: re-running it with a n
 
 ```console
 $ godwit credential-stores
-NAME        VAULT                                AUTH                                                          TARGETS
-production  https://vault.production.internal    kubernetes kubernetes as godwit for vault.production.internal  7
-staging     https://vault.staging.internal       kubernetes kubernetes as godwit for vault.staging.internal     2
+NAME        VAULT                                AUTH                            TARGETS
+production  https://vault.production.internal    kubernetes kubernetes as godwit  7
+staging     https://vault.staging.internal       kubernetes kubernetes as godwit  2
 ```
 
-Read scope: a store holds an address, a role, an audience and the *name* of a variable, never a secret.
+Read scope: a store holds an address, a role and the *name* of a variable, never a secret.
 
 ### `godwit target adopt`
 

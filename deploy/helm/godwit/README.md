@@ -134,8 +134,7 @@ Register them against the API instead, with an `admin` token that belongs to wha
 
 ```bash
 godwit credential-store add production \
-  --vault-addr https://vault.production.internal:8200 --vault-k8s-role godwit \
-  --vault-audience vault.production.internal
+  --vault-addr https://vault.production.internal:8200 --vault-k8s-role godwit
 
 godwit target add orders --provider vault --credential-store production \
   --vault-path secret/data/orders/db \
@@ -149,7 +148,7 @@ Registration is not adoption. A database that already has a schema still needs `
 
 ## Credential providers
 
-- `vault`: every `vault` target names a credential store, registered with `godwit credential-store add`, and that store is the only thing that says which Vault the secret is read from — no chart value reaches any target, and a target whose store is missing refuses its runs. With `--vault-k8s-role` the service logs in at that Vault with a ServiceAccount token minted for `--vault-audience`; `--vault-token-env` names an environment variable of the service holding a token instead, whose name must begin with `VAULT_TOKEN` and which `extraEnv` / `extraEnvFrom` brings in from a Secret. `stores.audiences` is the chart's one key here, and it is not a store: it is the set of Vault identities this pod carries, one projected token each, at `/var/run/secrets/godwit/vault/<audience>`. A store naming an audience the list does not carry has no token to present and its targets refuse ([security](../../../docs/security.md#credential-stores)).
+- `vault`: every `vault` target names a credential store, registered with `godwit credential-store add`, and that store is the only thing that says which Vault the secret is read from — no chart value reaches any target, and a target whose store is missing refuses its runs. With `--vault-k8s-role` the service logs in at that Vault with the ServiceAccount token this chart projects at `/var/run/secrets/godwit/vault/token`, minted for the audience `godwit`; `--vault-token-env` names an environment variable of the service holding a token instead, whose name must begin with `VAULT_TOKEN` and which `extraEnv` / `extraEnvFrom` brings in from a Secret. The chart has no key here: the audience is a constant, and the one thing to configure is `audience="godwit"` on each Vault's Kubernetes auth role ([security](../../../docs/security.md#credential-stores)).
 - **`serve.keyProvider.vaultAddr` and its siblings are not that.** They configure the `vault-transit` key provider, where godwit seals the DSNs of `static` targets; leave them empty unless `serve.keyProvider.name` is `vault-transit`.
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
 - `static`: the only one that needs a key, and the chart configures none by default. Set `existingSecret.keys.masterKey` (or a `serve.keyProvider` of `gcpkms` / `vault-transit`) before registering one; the DSN is sealed with it.

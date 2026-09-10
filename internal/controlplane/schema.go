@@ -432,6 +432,15 @@ ALTER TABLE cp_credential_stores ADD COLUMN k8s_audience text NOT NULL DEFAULT '
 ALTER TABLE cp_credential_stores DROP COLUMN k8s_audience;
 ALTER TABLE cp_credential_stores ADD COLUMN k8s_jwt text NOT NULL DEFAULT '';`,
 	},
+	{
+		Version:  20260910000022,
+		Name:     "credential_store_constant_audience",
+		Checksum: "cp-credential-store-constant-audience-v1",
+		UpSQL: `
+ALTER TABLE cp_credential_stores DROP COLUMN k8s_audience;`,
+		DownSQL: `
+ALTER TABLE cp_credential_stores ADD COLUMN k8s_audience text NOT NULL DEFAULT '';`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

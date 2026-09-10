@@ -31,9 +31,6 @@ serve:
     enabled: true
     origins: ["https://godwit.example.internal"]
 
-stores:
-  audiences: [vault.example.internal]
-
 notifications:
   publicUrl: https://godwit.example.internal
   slack:

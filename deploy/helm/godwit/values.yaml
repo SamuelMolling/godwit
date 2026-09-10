@@ -390,11 +390,3 @@ affinity: {}
 # `cp_credential_stores` and `cp_targets` — created through the API with an `admin` token
 # and audited there, so declaring them here would give one row two owners. Register them
 # with `godwit credential-store add` and `godwit target add` (chart README).
-stores:
-  # ServiceAccount tokens this pod holds, one projected per entry at /var/run/secrets/godwit/vault/<audience>
-  # and named by it, so each must be a plain name. Stores name one with --vault-audience (docs/security.md#credential-stores).
-  audiences: []
-  # - vault.production.internal
-  # - vault.staging.internal
-  # How long each projected token is valid; the API server's floor is 600.
-  tokenExpirationSeconds: 3600
