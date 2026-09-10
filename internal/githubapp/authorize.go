@@ -47,39 +47,39 @@ type authorizer struct {
 	allowed map[string]bool
 }
 
-func (a authorizer) authorize(ctx context.Context, req *request) (string, repoView, *outcome, error) {
+func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, error) {
 	if !a.allowed[req.association] {
-		return "", nil, refused("godwit %s by %s refused: author association %s is not allowed",
+		return at{}, refused("godwit %s by %s refused: author association %s is not allowed",
 			req.name, req.commander, orNone(req.association)), nil
 	}
 	repo, err := a.open(ctx)
 	if err != nil {
-		return "", nil, nil, err
+		return at{}, nil, err
 	}
 	if out, err := permitted(ctx, repo, req.commander, "commander"); out != nil || err != nil {
-		return "", nil, out, err
+		return at{}, out, err
 	}
 	pr, err := repo.pullRequest(ctx, req.number)
 	if err != nil {
-		return "", nil, nil, err
+		return at{}, nil, err
 	}
 	if !validSHA(pr.head) {
-		return "", nil, refused("could not read the head of pull request #%d", req.number), nil
+		return at{}, refused("could not read the head of pull request #%d", req.number), nil
 	}
 	if pr.headRepo != req.repository {
-		return "", nil, refused("godwit %s on pull request #%d refused: its head is in %s, not %s; a fork may not reach "+
+		return at{}, refused("godwit %s on pull request #%d refused: its head is in %s, not %s; a fork may not reach "+
 			"the targets of %s", req.name, req.number, orNone(pr.headRepo), req.repository, req.repository), nil
 	}
 	if out := anchored(req, pr); out != nil {
-		return "", nil, out, nil
+		return at{}, out, nil
 	}
 	if needsApproval[req.name] {
 		if out, err := approved(ctx, repo, req, pr); out != nil || err != nil {
-			return "", nil, out, err
+			return at{}, out, err
 		}
 	}
 
-	return pr.head, repo, nil, nil
+	return at{head: pr.head, repo: repo, files: pr.files}, nil, nil
 }
 
 func anchored(req *request, pr pull) *outcome {
@@ -106,9 +106,14 @@ func anchored(req *request, pr pull) *outcome {
 }
 
 func approved(ctx context.Context, repo repoView, req *request, pr pull) (*outcome, error) {
-	all, err := repo.reviews(ctx, req.number)
+	all, whole, err := repo.reviews(ctx, req.number)
 	if err != nil {
 		return nil, err
+	}
+	if !whole {
+		return refused("pull request #%d carries more reviews than godwit reads, and github lists the oldest "+
+			"first, so the ones that withdraw an approval are the ones it would miss; godwit %s is refused rather "+
+			"than decided on a part of the record", req.number, req.name), nil
 	}
 	approver := standingApproval(all, pr.head, pr.author)
 	if approver == "" {

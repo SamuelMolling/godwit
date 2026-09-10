@@ -1,6 +1,7 @@
 package githubapp
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -304,4 +305,93 @@ func TestAPlanCannotMintItsInstallationToken(t *testing.T) {
 	f.api.err = errBroken
 	check(t, f.post(t, eventPullRequest, "d1", pullBodyJSON("opened", testRepo, testHead)),
 		http.StatusInternalServerError, "could not answer")
+}
+
+func TestATruncatedListingNeverConcludesNothingToPlan(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, event, body string }{
+		{"a push", eventPullRequest, pullBodyJSON("synchronize", testRepo, testHead)},
+		{"a command", eventIssueComment, commentBody("godwit apply", "MEMBER", "alice", now)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := repoWith(t, []string{"src/app.js"}, map[string]string{"godwit.yaml": ordersYAML})
+			repo.filesCapped = true
+			f := newFixture(t, bound, repo)
+			rec := f.post(t, tc.event, "d1", tc.body)
+			check(t, rec, http.StatusAccepted, "will not guess")
+			if got := f.result(t); got != resultRefused {
+				t.Fatalf("result = %s, want %s", got, resultRefused)
+			}
+			if strings.Contains(rec.Body.String(), "no bound project") {
+				t.Fatalf("a partial listing was read as nothing to do: %q", rec.Body.String())
+			}
+			if len(f.runner.got) != 0 {
+				t.Fatal("a partial listing enqueued work")
+			}
+		})
+	}
+}
+
+func TestATruncatedListingIsRefusedEvenWhenSomethingMatched(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": ordersYAML})
+	repo.filesCapped = true
+	f := newFixture(t, bound, repo)
+	check(t, f.post(t, eventPullRequest, "d1", pullBodyJSON("opened", testRepo, testHead)),
+		http.StatusAccepted, "will not guess")
+	if len(f.runner.got) != 0 {
+		t.Fatal("a project matched from a partial listing was planned; the projects it did not see were not")
+	}
+}
+
+func TestAListingShorterThanThePullRequestSaysIsTruncated(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, []string{"src/app.js"}, map[string]string{"godwit.yaml": ordersYAML})
+	f := newFixture(t, bound, repo)
+	body := strings.Replace(pullBodyJSON("opened", testRepo, testHead), `"number":3`, `"number":3,"changed_files":9000`, 1)
+	rec := f.post(t, eventPullRequest, "d1", body)
+	check(t, rec, http.StatusAccepted, "listed 1 of the 9000 files")
+	if got := f.result(t); got != resultRefused {
+		t.Fatalf("result = %s, want %s", got, resultRefused)
+	}
+}
+
+func TestAWholeListingIsBelievedWhateverTheCountSays(t *testing.T) {
+	t.Parallel()
+
+	for _, files := range []int{0, 1} {
+		f := newFixture(t, bound, repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"},
+			map[string]string{"godwit.yaml": ordersYAML}))
+		body := strings.Replace(pullBodyJSON("opened", testRepo, testHead),
+			`"number":3`, fmt.Sprintf(`"number":3,"changed_files":%d`, files), 1)
+		check(t, f.post(t, eventPullRequest, "d1", body), http.StatusAccepted, "godwit plan accepted")
+	}
+}
+
+func TestTruncationIsCaughtFromTheApiCountOnACommand(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": ordersYAML})
+	repo.pr.files = 4000
+	f := newFixture(t, bound, repo)
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+		http.StatusAccepted, "listed 1 of the 4000 files")
+}
+
+func TestATruncatedReviewListingRefusesTheApply(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": ordersYAML})
+	repo.reviewsCapped = true
+	f := newFixture(t, bound, repo)
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+	check(t, rec, http.StatusAccepted, "the ones that withdraw an approval are the ones it would miss")
+	if len(f.runner.got) != 0 {
+		t.Fatal("an apply was decided on a part of the review record")
+	}
 }

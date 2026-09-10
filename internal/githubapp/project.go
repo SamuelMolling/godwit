@@ -34,14 +34,21 @@ type resolution struct {
 	skipped []string
 }
 
-func resolve(ctx context.Context, repo repoView, bound bindings, req *request, head string) (resolution, error) {
+// errTruncated is a listing godwit knows is partial, which it refuses rather than reads as nothing to plan.
+var errTruncated = errors.New("truncated")
+
+func resolve(ctx context.Context, repo repoView, bound bindings, req *request, head string, files int) (resolution, error) {
 	changed, err := repo.changed(ctx, req.number)
 	if err != nil {
 		return resolution{}, err
 	}
+	if !changed.whole(files) {
+		return resolution{}, fmt.Errorf("%w: github listed %d of the %d files pull request #%d changes",
+			errTruncated, changed.listed, max(files, changed.listed), req.number)
+	}
 	var out resolution
 	for _, root := range roots(bound) {
-		under := within(root, changed)
+		under := within(root, changed.paths)
 		if len(under) == 0 {
 			continue
 		}

@@ -83,6 +83,27 @@ It also avoids the footgun Atlantis has here: `../` from a repository-root proje
 - **A repository can make its own project plan more often than it needs to.** That is the trade Atlantis makes and the reason is the same: the cost lands on the repository that asked for it, and the binding is what stops it landing anywhere else.
 - **`dir` in a binding entry changed meaning** from the migration directory to the project root. 0016 is not merged, so nothing in the wild carries the old reading, but the two records must be read together.
 
+### A listing godwit cannot read the whole of decides nothing
+
+`GET /pulls/{n}/files` answers with **at most 3000 files**, paginates to that limit and then simply stops. There is no flag, no error and no last page marker: a caller that follows the `Link` header to exhaustion gets a short list that looks complete.
+
+Read naively, that is the failure this whole design exists to avoid. A pull request with 3200 files, one of them a migration, would list the first 3000, match no project, and be answered with silence. The author would see godwit say nothing, the reviewer would merge believing no migration was involved, and the database would be behind the branch with nothing anywhere recording it. Rarity is not a defence: the outcome is a wrong answer that looks like a right one.
+
+**So godwit checks whether the listing is whole, and refuses when it is not.** Two signals, either of which is enough:
+
+- the read stopped at the cap, which is a listing godwit truncated itself;
+- fewer entries came back than `changed_files` on the pull request — GitHub's own count of what it changed, which arrives in the signed `pull_request` payload for free and from `GET /pulls/{n}` on the comment path.
+
+The refusal names both numbers and says what to do. It applies to every command, not only the automatic plan: an `apply` decided from a partial listing would apply the projects godwit happened to see and silently skip the ones it did not, which is the same wrong answer wearing a different hat.
+
+*Rejected: planning every bound project when the listing is partial.* It preserves the invariant for `plan`, which is read-only, and breaks it for `apply` — a `godwit apply` would then run migrations against every target the repository is bound to on the strength of no evidence at all. An asymmetry between the read path and the write path is exactly the kind of rule that gets applied to the wrong one later.
+
+*Rejected: planning the projects the partial listing did match.* A positive match from a partial list is sound on its own, but the projects it did **not** match are still undecided, so the answer is right about some targets and silently wrong about others. Partial knowledge is what is being refused; acting on part of it is not a smaller version of the same thing.
+
+*Deferred: falling back to a tree comparison.* `GET /git/trees/{sha}?recursive=1` carries an explicit `truncated` flag and holds 100,000 entries, so diffing the merge base against the head would answer correctly where the file listing cannot. It is the better outcome and it is not taken here, because it is four more calls of new code on a path that fires for perhaps one pull request in ten thousand, resting on three API behaviours nothing in this repository can exercise. An untested fallback on a path nobody walks is a liability pretending to be a fix; a refusal that is provably correct is worth more until there is a reason to spend that complexity.
+
+**The review listing has the same shape and the opposite danger.** `GET /pulls/{n}/reviews` has no documented cap, and godwit follows its pages to exhaustion — but an unbounded read is its own problem, and GitHub returns reviews **oldest first**, so anything a truncation drops is the newest: precisely the `CHANGES_REQUESTED` and `DISMISSED` entries that withdraw an approval. Where a short file listing under-reports and fails closed on its own, a short review listing would fail *open*. godwit therefore stops at 3000 reviews and refuses the approval check rather than deciding it from a prefix of the record.
+
 ## Where the App stops, and why `godwit diff` is not here
 
 "I changed a Go model — how does godwit know to write a migration?" is a different question with a different answer, and it does not belong to the App.
@@ -115,4 +136,5 @@ The two halves meet in the pull request, which is where they were always going t
 - **Atlantis's behaviour is quoted from `main` and its published docs, not run.** The two claims most worth re-checking if this record is ever leaned on: that `allowed_overrides` does not cover `autoplan` (read in `global_cfg.go`, and the docs' own table is out of date on that field's contents), and that a `pull_request` matching no project posts nothing (read in `plan_command_runner.go`).
 - **The Contents API's shape for a small file.** The reader asks for the JSON form, expects `type: file` and `encoding: base64`, and refuses anything else — including the `encoding: none` GitHub returns for a blob over 1 MiB, which a 64 KiB cap should make unreachable. Not exercised against a live repository.
 - **What a rename costs.** `previous_filename` is treated as changed alongside `filename`, so moving a migration out of a directory triggers the project it left. That is what the API documents; not tested live.
-- **The 3000-file cap on `GET /pulls/{n}/files`.** A pull request over it would have its trigger evaluated against a truncated list, and the App would silently under-plan. No handling, and no evidence it happens.
+- **That `changed_files` on a pull request is the true count** and does not itself saturate on a very large pull request. It is the second of the two truncation signals; the cap check stands alone if it turns out to be unreliable.
+- **That `GET /pulls/{n}/reviews` really is uncapped.** godwit bounds it at 3000 itself and refuses past that, so the assumption cannot produce a wrong answer either way — only an unnecessary refusal on a pull request with three thousand reviews.

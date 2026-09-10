@@ -243,17 +243,21 @@ func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payloa
 			"and not a plan; ask a godwit operator to bind it (godwit target add <target> --github-repo %s)",
 			req.repository, req.repository), nil
 	}
-	head, repo, out, err := r.resolve(ctx, req, p)
+	at, out, err := r.resolve(ctx, req, p)
 	if out != nil || err != nil {
 		return nil, out, err
 	}
-	res, err := resolve(ctx, repo, bound, req, head)
+	res, err := resolve(ctx, at.repo, bound, req, at.head, at.files)
+	if errors.Is(err, errTruncated) {
+		return nil, tooLarge(req, err), nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(res.planned) == 0 {
 		return nil, nothingToDo(req, res), nil
 	}
+	head := at.head
 
 	return &command{
 		delivery: delivery, event: event, repository: req.repository, installation: p.Installation.ID,
@@ -262,6 +266,13 @@ func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payloa
 		bound:     bound, name: req.name, cmd: req.cmd, projects: res.planned,
 		source: "github.com/" + req.repository + "@" + head,
 	}, nil, nil
+}
+
+// tooLarge is what a partial listing gets instead of a wrong answer, and it is never silence.
+func tooLarge(req *request, err error) *outcome {
+	return refused("%s, so it cannot tell which projects this pull request touches and will not guess; "+
+		"godwit %s is refused rather than reported as nothing to do. Split the pull request, or land the "+
+		"migrations in one of their own", err, req.name)
 }
 
 // nothingToDo is silence for a pull request that touched no project, and a reason for a person who asked.
@@ -277,7 +288,14 @@ func nothingToDo(req *request, res resolution) *outcome {
 	return refused("%s", strings.Join(res.skipped, "; "))
 }
 
-func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (string, repoView, *outcome, error) {
+// at is the commit a delivery resolved to, the view it resolved through, and what the pull request changes.
+type at struct {
+	head  string
+	repo  repoView
+	files int
+}
+
+func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *outcome, error) {
 	open := func(ctx context.Context) (repoView, error) {
 		return r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
 	}
@@ -285,15 +303,15 @@ func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (strin
 		return authorizer{open: open, allowed: r.allowed}.authorize(ctx, req)
 	}
 	if req.headRepo != req.repository {
-		return "", nil, refused("pull request #%d has its head in %s, not %s: a fork's pull request is not planned "+
+		return at{}, refused("pull request #%d has its head in %s, not %s: a fork's pull request is not planned "+
 			"against the targets of %s", req.number, orNone(req.headRepo), req.repository, req.repository), nil
 	}
 	repo, err := open(ctx)
 	if err != nil {
-		return "", nil, nil, err
+		return at{}, nil, err
 	}
 
-	return req.headSHA, repo, nil, nil
+	return at{head: req.headSHA, repo: repo, files: req.files}, nil, nil
 }
 
 // fresh ages a delivery by GitHub's own timestamp inside a body GitHub signed, never by a committer date.

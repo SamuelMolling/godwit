@@ -441,6 +441,8 @@ Nothing here needs an operator's permission, and nothing here grants any: the tr
 
 **A pull request touching several bound projects plans all of them**, ordered by target name. **One touching none is silence** — no plan, no comment, nothing, which is the point of having a trigger. A `godwit apply` comment on such a pull request is refused instead, because a person asked and is owed an answer.
 
+**A pull request godwit cannot see the whole of is refused, never called empty.** `GET /pulls/{n}/files` answers with at most 3000 files and does not say when it truncated, so godwit compares what it listed against the count the pull request itself reports and stops believing a listing that falls short of it. Concluding "nothing to plan" there would report a migration as absent when it is in the pull request and the reviewer would merge on it, so instead every command is refused with what was listed, what was expected, and the advice to split the pull request or land the migrations in one of their own. The same rule refuses an apply whose review list hit its cap: GitHub lists reviews oldest first, so a truncated read drops exactly the dismissals that withdraw an approval.
+
 ### What the App does not do: `godwit diff`
 
 "I changed my Go model — how does godwit know to write a migration?" is not the App's question, and it will not become one.
@@ -469,7 +471,7 @@ Beyond those: the pull request must be open (`plan`, `apply`, `confirm`) and unm
 | `413`, empty | the body is over `--github-webhook-max-bytes` |
 | `400` | not a `POST`, no `X-GitHub-Delivery`, or a body that is not JSON |
 | `202 accepted` | verified, authorised, recorded |
-| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing), refused (unbound, unauthorised, stale, a fork), or a duplicate delivery id |
+| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing, a pull request no bound project plans), refused (unbound, unauthorised, stale, a fork, a listing godwit could not read the whole of), or a duplicate delivery id |
 | `500` | the store or GitHub could not be reached. Nothing was recorded, so GitHub's redelivery is a fresh attempt |
 
 Every delivery increments `godwit_webhook_deliveries_total{event,result}`.

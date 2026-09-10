@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -211,9 +212,9 @@ func TestReviewsFollowThePages(t *testing.T) {
 		client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return now }},
 		token:  "ghs_x", repository: testRepo,
 	}
-	reviews, err := r.reviews(context.Background(), 3)
-	if err != nil {
-		t.Fatal(err)
+	reviews, whole, err := r.reviews(context.Background(), 3)
+	if err != nil || !whole {
+		t.Fatalf("reviews = %t, %v", whole, err)
 	}
 	if len(reviews) != 2 || reviews[1].state != "APPROVED" || reviews[1].commitID != testHead {
 		t.Fatalf("reviews = %+v", reviews)
@@ -224,7 +225,7 @@ func TestReviewsFail(t *testing.T) {
 	t.Parallel()
 
 	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
-	if _, err := r.reviews(context.Background(), 3); err == nil {
+	if _, _, err := r.reviews(context.Background(), 3); err == nil {
 		t.Fatal("no error")
 	}
 }
@@ -329,8 +330,11 @@ func TestChangedFilesFollowThePages(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"db/migrations/a.up.sql", "db/migrations/c.up.sql", "db/old/c.up.sql"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("changed = %v, want %v", got, want)
+	if strings.Join(got.paths, ",") != strings.Join(want, ",") {
+		t.Fatalf("changed = %v, want %v", got.paths, want)
+	}
+	if got.listed != 2 || !got.whole(2) {
+		t.Fatalf("listing = %+v", got)
 	}
 }
 
@@ -397,5 +401,77 @@ func TestFileTransportFailure(t *testing.T) {
 	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
 	if _, err := r.file(context.Background(), "godwit.yaml", testHead); err == nil {
 		t.Fatal("no error")
+	}
+}
+
+func pages(t *testing.T, entry string, n int) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	page := 0
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		page++
+		w.Header().Set("Link", `<`+srv.URL+`/next?page=`+strconv.Itoa(page+1)+`>; rel="next"`)
+		items := make([]string, n)
+		for i := range items {
+			items[i] = entry
+		}
+		_, _ = io.WriteString(w, "["+strings.Join(items, ",")+"]")
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv
+}
+
+func clientAt(t *testing.T, srv *httptest.Server) *repoClient {
+	t.Helper()
+
+	return &repoClient{
+		client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return now }},
+		token:  "ghs_x", repository: testRepo,
+	}
+}
+
+func TestAChangedFileListingStopsAtTheCapAndSaysSo(t *testing.T) {
+	t.Parallel()
+
+	r := clientAt(t, pages(t, `{"filename":"a.sql"}`, 100))
+	got, err := r.changed(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.listed != filesCap || !got.capped || got.whole(0) {
+		t.Fatalf("listing = %d entries, capped %t, whole %t", got.listed, got.capped, got.whole(0))
+	}
+}
+
+func TestAReviewListingStopsAtTheCapAndDecidesNothing(t *testing.T) {
+	t.Parallel()
+
+	r := clientAt(t, pages(t, `{"state":"APPROVED","user":{"login":"bob"}}`, 100))
+	got, whole, err := r.reviews(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if whole || got != nil {
+		t.Fatalf("reviews = %d, whole %t; want nothing and not whole", len(got), whole)
+	}
+}
+
+func TestWholeReadsTheCountItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		l     listing
+		files int
+		want  bool
+	}{
+		{listing{listed: 3}, 0, true},
+		{listing{listed: 3}, 3, true},
+		{listing{listed: 3}, 4, false},
+		{listing{listed: 3, capped: true}, 3, false},
+	} {
+		if got := tc.l.whole(tc.files); got != tc.want {
+			t.Fatalf("%+v.whole(%d) = %t, want %t", tc.l, tc.files, got, tc.want)
+		}
 	}
 }
