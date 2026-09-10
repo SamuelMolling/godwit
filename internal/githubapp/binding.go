@@ -8,22 +8,20 @@ import (
 	"strings"
 )
 
-// Binding is one target a repository may reach, from one directory in it or, with an empty Dir, from any.
-type Binding struct {
-	Target string
-	Dir    string
+type binding struct {
+	target string
+	dir    string
 }
 
-// Bindings are the targets one repository may reach, by target name.
-type Bindings []Binding
+type bindings []binding
 
-func bind(stored map[string]string, repository string) Bindings {
-	var out Bindings
+func bind(stored map[string]string, repository string) bindings {
+	var out bindings
 	for _, target := range slices.Sorted(maps.Keys(stored)) {
 		for _, entry := range strings.Split(stored[target], ",") {
 			repo, dir, _ := strings.Cut(strings.TrimSpace(entry), ":")
 			if repo == repository {
-				out = append(out, Binding{Target: target, Dir: dir})
+				out = append(out, binding{target: target, dir: dir})
 			}
 		}
 	}
@@ -31,24 +29,21 @@ func bind(stored map[string]string, repository string) Bindings {
 	return out
 }
 
-// Targets names the bound targets, for a log line; it never reaches the repository.
-func (b Bindings) Targets() []string {
+func (b bindings) targets() []string {
 	out := make([]string, 0, len(b))
 	for _, e := range b {
-		if !slices.Contains(out, e.Target) {
-			out = append(out, e.Target)
+		if !slices.Contains(out, e.target) {
+			out = append(out, e.target)
 		}
 	}
 
 	return out
 }
 
-// Grant answers whether this repository may reach the target its godwit.yaml named, from dir. The refusal
-// reads the same for a target bound elsewhere and for one that does not exist: a caller with no ListTargets
-// must not be handed one.
-func (b Bindings) Grant(repository, dir, target string) error {
+// grant refuses identically for a target bound elsewhere and one that does not exist: a caller that holds no token has no ListTargets, and a refusal telling the two apart would hand it one.
+func (b bindings) grant(repository, dir, target string) error {
 	for _, e := range b {
-		if e.Target == target && (e.Dir == "" || e.Dir == dir) {
+		if e.target == target && (e.dir == "" || e.dir == dir) {
 			return nil
 		}
 	}

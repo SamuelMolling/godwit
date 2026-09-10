@@ -501,8 +501,7 @@ type RegisterTargetRequest struct {
 	SearchPath string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
 	// Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
 	IgnoreAdoptedTables *bool `protobuf:"varint,12,opt,name=ignore_adopted_tables,json=ignoreAdoptedTables,proto3,oneof" json:"ignore_adopted_tables,omitempty"`
-	// Repositories a GitHub App delivery may reach this target from, each "owner/repo" or "owner/repo:dir".
-	// A repository not listed here on any target gets nothing from the App, not even a plan.
+	// Repositories a GitHub App delivery may reach this target from, each "owner/repo" or "owner/repo:dir"; none may when empty.
 	GithubRepositories []string `protobuf:"bytes,13,rep,name=github_repositories,json=githubRepositories,proto3" json:"github_repositories,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
@@ -3265,8 +3264,7 @@ type TargetSummary struct {
 	// Distinct versions the target's runs applied to completion and no revert undid, whatever state those runs ended in.
 	AppliedCount int32 `protobuf:"varint,11,opt,name=applied_count,json=appliedCount,proto3" json:"applied_count,omitempty"`
 	// Runs waiting for a human: needs_attention or awaiting_contract.
-	AttentionRuns int32 `protobuf:"varint,12,opt,name=attention_runs,json=attentionRuns,proto3" json:"attention_runs,omitempty"`
-	// Repositories a GitHub App delivery may reach this target from; empty means none may.
+	AttentionRuns      int32    `protobuf:"varint,12,opt,name=attention_runs,json=attentionRuns,proto3" json:"attention_runs,omitempty"`
 	GithubRepositories []string `protobuf:"bytes,13,rep,name=github_repositories,json=githubRepositories,proto3" json:"github_repositories,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache

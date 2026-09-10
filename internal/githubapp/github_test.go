@@ -55,7 +55,7 @@ func TestInstallationTokenIsNarrowedToOneRepository(t *testing.T) {
 		gotBody, gotPath, gotAuth = string(body), r.URL.Path, r.Header.Get("Authorization")
 		_, _ = io.WriteString(w, `{"token":"ghs_installation"}`)
 	})
-	repo, err := c.Repository(context.Background(), 7, 42, testRepo)
+	repo, err := c.repository(context.Background(), 7, 42, testRepo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestInstallationTokenFailures(t *testing.T) {
 		t.Parallel()
 
 		c := newClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
-		if _, err := c.Repository(context.Background(), 7, 42, testRepo); err == nil ||
+		if _, err := c.repository(context.Background(), 7, 42, testRepo); err == nil ||
 			!strings.Contains(err.Error(), "mint installation token") {
 			t.Fatalf("err = %v", err)
 		}
@@ -108,7 +108,7 @@ func TestInstallationTokenFailures(t *testing.T) {
 		t.Parallel()
 
 		c := newClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) })
-		if _, err := c.Repository(context.Background(), 7, 42, testRepo); err == nil ||
+		if _, err := c.repository(context.Background(), 9, 43, "acme/payments"); err == nil ||
 			!strings.Contains(err.Error(), "no token") {
 			t.Fatalf("err = %v", err)
 		}
@@ -118,7 +118,7 @@ func TestInstallationTokenFailures(t *testing.T) {
 
 		c := newClient(t, func(http.ResponseWriter, *http.Request) {})
 		c.Signer = brokenSigner{}
-		if _, err := c.Repository(context.Background(), 7, 42, testRepo); err == nil ||
+		if _, err := c.repository(context.Background(), 7, 42, testRepo); err == nil ||
 			!strings.Contains(err.Error(), "sign app jwt") {
 			t.Fatalf("err = %v", err)
 		}
@@ -143,25 +143,25 @@ func TestPermission(t *testing.T) {
 			}
 			_, _ = io.WriteString(w, `{"permission":"write"}`)
 		})
-		perm, err := r.Permission(context.Background(), "alice")
+		perm, err := r.permission(context.Background(), "alice")
 		if err != nil || perm != "write" {
-			t.Fatalf("Permission = %q, %v", perm, err)
+			t.Fatalf("permission = %q, %v", perm, err)
 		}
 	})
 	t.Run("a login github does not know is none, not an error", func(t *testing.T) {
 		t.Parallel()
 
 		r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
-		perm, err := r.Permission(context.Background(), "stranger")
+		perm, err := r.permission(context.Background(), "stranger")
 		if err != nil || perm != "none" {
-			t.Fatalf("Permission = %q, %v", perm, err)
+			t.Fatalf("permission = %q, %v", perm, err)
 		}
 	})
 	t.Run("a lookup that fails refuses rather than allows", func(t *testing.T) {
 		t.Parallel()
 
 		r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
-		if _, err := r.Permission(context.Background(), "alice"); err == nil {
+		if _, err := r.permission(context.Background(), "alice"); err == nil {
 			t.Fatal("a failed permission lookup returned no error")
 		}
 	})
@@ -174,11 +174,11 @@ func TestPullRequestRead(t *testing.T) {
 		_, _ = io.WriteString(w, `{"state":"open","merged":true,"user":{"login":"carol"},
 			"head":{"sha":"`+testHead+`","repo":{"full_name":"`+testRepo+`"}}}`)
 	})
-	pr, err := r.PullRequest(context.Background(), 3)
+	pr, err := r.pullRequest(context.Background(), 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := PullRequest{Head: testHead, HeadRepo: testRepo, State: "open", Merged: true, Author: "carol"}
+	want := pull{head: testHead, headRepo: testRepo, state: "open", merged: true, author: "carol"}
 	if pr != want {
 		t.Fatalf("PullRequest = %+v, want %+v", pr, want)
 	}
@@ -188,7 +188,7 @@ func TestPullRequestReadFails(t *testing.T) {
 	t.Parallel()
 
 	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) })
-	if _, err := r.PullRequest(context.Background(), 3); err == nil {
+	if _, err := r.pullRequest(context.Background(), 3); err == nil {
 		t.Fatal("no error")
 	}
 }
@@ -211,11 +211,11 @@ func TestReviewsFollowThePages(t *testing.T) {
 		client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return now }},
 		token:  "ghs_x", repository: testRepo,
 	}
-	reviews, err := r.Reviews(context.Background(), 3)
+	reviews, err := r.reviews(context.Background(), 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reviews) != 2 || reviews[1].State != "APPROVED" || reviews[1].CommitID != testHead {
+	if len(reviews) != 2 || reviews[1].state != "APPROVED" || reviews[1].commitID != testHead {
 		t.Fatalf("reviews = %+v", reviews)
 	}
 }
@@ -224,7 +224,7 @@ func TestReviewsFail(t *testing.T) {
 	t.Parallel()
 
 	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
-	if _, err := r.Reviews(context.Background(), 3); err == nil {
+	if _, err := r.reviews(context.Background(), 3); err == nil {
 		t.Fatal("no error")
 	}
 }
@@ -254,7 +254,7 @@ func TestCallFailures(t *testing.T) {
 
 		c := &Client{BaseURL: "http://[::1", HTTP: http.DefaultClient, Now: func() time.Time { return now }}
 		r := &repoClient{client: c, token: "x", repository: testRepo}
-		if _, err := r.PullRequest(context.Background(), 3); err == nil {
+		if _, err := r.pullRequest(context.Background(), 3); err == nil {
 			t.Fatal("no error")
 		}
 	})
@@ -268,7 +268,7 @@ func TestCallFailures(t *testing.T) {
 			client: &Client{BaseURL: url, HTTP: http.DefaultClient, Now: func() time.Time { return now }},
 			token:  "x", repository: testRepo,
 		}
-		if _, err := r.PullRequest(context.Background(), 3); err == nil {
+		if _, err := r.pullRequest(context.Background(), 3); err == nil {
 			t.Fatal("no error")
 		}
 	})
@@ -282,7 +282,7 @@ func TestCallFailures(t *testing.T) {
 			},
 			token: "x", repository: testRepo,
 		}
-		if _, err := r.PullRequest(context.Background(), 3); !errors.Is(err, errBroken) {
+		if _, err := r.pullRequest(context.Background(), 3); !errors.Is(err, errBroken) {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -290,7 +290,7 @@ func TestCallFailures(t *testing.T) {
 		t.Parallel()
 
 		r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "<html>") })
-		if _, err := r.PullRequest(context.Background(), 3); err == nil {
+		if _, err := r.pullRequest(context.Background(), 3); err == nil {
 			t.Fatal("no error")
 		}
 	})

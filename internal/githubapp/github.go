@@ -2,6 +2,7 @@ package githubapp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -17,37 +18,33 @@ import (
 	"time"
 )
 
-// DefaultAPIBaseURL is github.com's REST API.
-const DefaultAPIBaseURL = "https://api.github.com"
+const (
+	defaultAPIBaseURL = "https://api.github.com"
+	responseLimit     = 8 << 20
+)
 
-const responseLimit = 8 << 20
-
-// Repo answers about one repository, over a token minted for that repository and nothing else.
-type Repo interface {
-	Permission(ctx context.Context, login string) (string, error)
-	PullRequest(ctx context.Context, number int) (PullRequest, error)
-	Reviews(ctx context.Context, number int) ([]Review, error)
+type repoView interface {
+	permission(ctx context.Context, login string) (string, error)
+	pullRequest(ctx context.Context, number int) (pull, error)
+	reviews(ctx context.Context, number int) ([]review, error)
 }
 
-// API opens the per-delivery view of the repository a verified payload named.
-type API interface {
-	Repository(ctx context.Context, installation, repositoryID int64, repository string) (Repo, error)
+type forge interface {
+	repository(ctx context.Context, installation, repositoryID int64, repository string) (repoView, error)
 }
 
-// PullRequest is the live head, state and author of a pull request, read at the moment of the command.
-type PullRequest struct {
-	Head     string
-	HeadRepo string
-	State    string
-	Merged   bool
-	Author   string
+type pull struct {
+	head     string
+	headRepo string
+	state    string
+	merged   bool
+	author   string
 }
 
-// Review is one submitted review, with the commit its state was submitted against.
-type Review struct {
-	Login    string
-	State    string
-	CommitID string
+type review struct {
+	login    string
+	state    string
+	commitID string
 }
 
 // Client authenticates as the App: a JWT to mint an installation token, and that token for everything else.
@@ -59,8 +56,9 @@ type Client struct {
 	Now     func() time.Time
 }
 
-// Repository mints an installation token narrowed to repositoryID and returns the view it opens.
-func (c *Client) Repository(ctx context.Context, installation, repositoryID int64, repository string) (Repo, error) {
+func (c *Client) base() string { return cmp.Or(c.BaseURL, defaultAPIBaseURL) }
+
+func (c *Client) repository(ctx context.Context, installation, repositoryID int64, repository string) (repoView, error) {
 	jwt, err := appJWT(c.AppID, c.Signer, c.Now())
 	if err != nil {
 		return nil, err
@@ -68,7 +66,7 @@ func (c *Client) Repository(ctx context.Context, installation, repositoryID int6
 	var out struct {
 		Token string `json:"token"`
 	}
-	url := c.BaseURL + "/app/installations/" + strconv.FormatInt(installation, 10) + "/access_tokens"
+	url := c.base() + "/app/installations/" + strconv.FormatInt(installation, 10) + "/access_tokens"
 	body := fmt.Sprintf(`{"repository_ids":[%d]}`, repositoryID)
 	if _, err := c.call(ctx, http.MethodPost, url, jwt, []byte(body), &out); err != nil {
 		return nil, fmt.Errorf("mint installation token: %w", err)
@@ -88,8 +86,7 @@ type repoClient struct {
 
 var errNotFound = errors.New("not found")
 
-// Permission is the login's role on the repository; a login GitHub does not know there is "none".
-func (r *repoClient) Permission(ctx context.Context, login string) (string, error) {
+func (r *repoClient) permission(ctx context.Context, login string) (string, error) {
 	var out struct {
 		Permission string `json:"permission"`
 	}
@@ -119,16 +116,15 @@ type pullBody struct {
 	} `json:"head"`
 }
 
-// PullRequest reads the pull request's head, state and author now, not as the payload described them.
-func (r *repoClient) PullRequest(ctx context.Context, number int) (PullRequest, error) {
+func (r *repoClient) pullRequest(ctx context.Context, number int) (pull, error) {
 	var out pullBody
 	if _, err := r.client.call(ctx, http.MethodGet, r.url("/pulls/"+strconv.Itoa(number)), r.token, nil, &out); err != nil {
-		return PullRequest{}, err
+		return pull{}, err
 	}
 
-	return PullRequest{
-		Head: out.Head.SHA, HeadRepo: out.Head.Repo.FullName,
-		State: out.State, Merged: out.Merged, Author: out.User.Login,
+	return pull{
+		head: out.Head.SHA, headRepo: out.Head.Repo.FullName,
+		state: out.State, merged: out.Merged, author: out.User.Login,
 	}, nil
 }
 
@@ -140,10 +136,9 @@ type reviewBody struct {
 	} `json:"user"`
 }
 
-// Reviews lists every submitted review, following the pages: an approval is as likely to be on the last one.
-func (r *repoClient) Reviews(ctx context.Context, number int) ([]Review, error) {
+func (r *repoClient) reviews(ctx context.Context, number int) ([]review, error) {
 	url := r.url("/pulls/" + strconv.Itoa(number) + "/reviews?per_page=100")
-	var all []Review
+	var all []review
 	for url != "" {
 		var page []reviewBody
 		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
@@ -151,7 +146,7 @@ func (r *repoClient) Reviews(ctx context.Context, number int) ([]Review, error) 
 			return nil, err
 		}
 		for _, p := range page {
-			all = append(all, Review{Login: p.User.Login, State: p.State, CommitID: p.CommitID})
+			all = append(all, review{login: p.User.Login, state: p.State, commitID: p.CommitID})
 		}
 		url = next
 	}
@@ -160,7 +155,7 @@ func (r *repoClient) Reviews(ctx context.Context, number int) ([]Review, error) 
 }
 
 func (r *repoClient) url(path string) string {
-	return r.client.BaseURL + "/repos/" + r.repository + path
+	return r.client.base() + "/repos/" + r.repository + path
 }
 
 func (c *Client) call(ctx context.Context, method, url, token string, body []byte, out any) (string, error) {
@@ -213,7 +208,6 @@ func nextPage(link string) string {
 
 const jwtHeader = `{"alg":"RS256","typ":"JWT"}`
 
-// appJWT is the ten-minute assertion GitHub accepts as the App itself, backdated a minute against clock skew.
 func appJWT(appID string, signer crypto.Signer, now time.Time) (string, error) {
 	claims := fmt.Sprintf(`{"iat":%d,"exp":%d,"iss":%q}`, now.Add(-time.Minute).Unix(), now.Add(9*time.Minute).Unix(), appID)
 	enc := base64.RawURLEncoding

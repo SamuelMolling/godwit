@@ -14,10 +14,10 @@ func TestBindKeepsOnlyThisRepository(t *testing.T) {
 		"shared":   "acme/orders:svc/billing",
 	}
 	got := bind(stored, testRepo)
-	want := Bindings{
-		{Target: "orders"},
-		{Target: "orders", Dir: "db/migrations"},
-		{Target: "shared", Dir: "svc/billing"},
+	want := bindings{
+		{target: "orders"},
+		{target: "orders", dir: "db/migrations"},
+		{target: "shared", dir: "svc/billing"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Bind = %+v, want %+v", got, want)
@@ -27,7 +27,7 @@ func TestBindKeepsOnlyThisRepository(t *testing.T) {
 			t.Fatalf("Bind = %+v, want %+v", got, want)
 		}
 	}
-	if targets := strings.Join(got.Targets(), ","); targets != "orders,shared" {
+	if targets := strings.Join(got.targets(), ","); targets != "orders,shared" {
 		t.Fatalf("Targets = %s", targets)
 	}
 }
@@ -51,12 +51,12 @@ func TestGrant(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := b.Grant(testRepo, tc.dir, tc.target)
+			err := b.grant(testRepo, tc.dir, tc.target)
 			if (err == nil) != tc.want {
 				t.Fatalf("Grant(%q, %q) = %v, want granted = %t", tc.dir, tc.target, err, tc.want)
 			}
 			if err != nil && !strings.Contains(err.Error(), "ask a godwit operator") {
-				t.Fatalf("Grant = %q", err)
+				t.Fatalf("grant = %q", err)
 			}
 		})
 	}
@@ -65,12 +65,12 @@ func TestGrant(t *testing.T) {
 func TestGrantNamesTheDirectoryItWasAskedAbout(t *testing.T) {
 	t.Parallel()
 
-	err := Bindings{}.Grant(testRepo, "db/migrations", "orders")
+	err := bindings{}.grant(testRepo, "db/migrations", "orders")
 	if !strings.Contains(err.Error(), "--github-repo acme/orders:db/migrations") {
-		t.Fatalf("Grant = %q", err)
+		t.Fatalf("grant = %q", err)
 	}
-	root := Bindings{}.Grant(testRepo, "", "orders")
-	if !strings.Contains(root.Error(), "--github-repo acme/orders)") {
-		t.Fatalf("Grant = %q", root)
+	root := bindings{}.grant("acme/payments", "", "orders")
+	if !strings.Contains(root.Error(), "--github-repo acme/payments)") {
+		t.Fatalf("grant = %q", root)
 	}
 }

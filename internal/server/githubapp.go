@@ -1,7 +1,6 @@
 package server
 
 import (
-	"cmp"
 	"context"
 	"crypto"
 	"crypto/x509"
@@ -20,9 +19,7 @@ import (
 
 // GitHubApp configures the App webhook listener, which is its own listener rather than a path on the API's.
 type GitHubApp struct {
-	// Addr is the address the webhook listener binds; empty leaves the whole App off.
-	Addr string
-	// Secret lets its holder apply an already-approved pull request, so it lives where the master key lives.
+	Addr          string
 	Secret        string
 	AppID         string
 	PrivateKeyPEM string
@@ -33,12 +30,17 @@ type GitHubApp struct {
 	OnReady       func(addr net.Addr)
 }
 
-// DeliveryRetentionFactor keeps a delivery id past the age at which its delivery would be refused anyway.
-const DeliveryRetentionFactor = 4
+const (
+	deliveryRetentionFactor = 4
+	minDeliveryRetention    = 24 * time.Hour
+)
+
+func deliveryRetention(maxAge time.Duration) time.Duration {
+	return max(minDeliveryRetention, deliveryRetentionFactor*maxAge)
+}
 
 func (g GitHubApp) enabled() bool { return g.Addr != "" }
 
-// credential refuses a misconfigured App before the store is opened, and returns the key it signs with.
 func (g GitHubApp) credential() (crypto.Signer, error) {
 	if !g.enabled() {
 		return nil, nil
@@ -62,7 +64,7 @@ func (g GitHubApp) receiver(key crypto.Signer, store *controlplane.Store, m *met
 		Associations: g.Associations,
 		Store:        githubapp.Adapt(store),
 		API: &githubapp.Client{
-			BaseURL: cmp.Or(g.APIBaseURL, githubapp.DefaultAPIBaseURL),
+			BaseURL: g.APIBaseURL,
 			AppID:   g.AppID,
 			Signer:  key,
 			HTTP:    &http.Client{Timeout: 30 * time.Second},
@@ -113,7 +115,7 @@ func serveWebhook(cfg Config, key crypto.Signer, store *controlplane.Store, m *m
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
-	log.Info("github webhook listening", "addr", ln.Addr().String(), "path", githubapp.Path)
+	log.Info("github webhook listening", "addr", ln.Addr().String())
 	if cfg.GitHub.OnReady != nil {
 		cfg.GitHub.OnReady(ln.Addr())
 	}

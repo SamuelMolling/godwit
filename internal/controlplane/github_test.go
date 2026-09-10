@@ -9,7 +9,7 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 )
 
-func TestParseGitHubRepositories(t *testing.T) {
+func TestSetGitHubRepositories(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -26,15 +26,16 @@ func TestParseGitHubRepositories(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := ParseGitHubRepositories(tc.in)
-			if err != nil || got != tc.want {
-				t.Fatalf("ParseGitHubRepositories(%v) = %q, %v; want %q", tc.in, got, err, tc.want)
+			config := map[string]string{}
+			err := SetGitHubRepositories(config, tc.in)
+			if err != nil || config[configGitHubRepositories] != tc.want {
+				t.Fatalf("SetGitHubRepositories(%v) = %q, %v; want %q", tc.in, config[configGitHubRepositories], err, tc.want)
 			}
 		})
 	}
 }
 
-func TestParseGitHubRepositoriesRefusals(t *testing.T) {
+func TestSetGitHubRepositoriesRefusals(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, entry, want string }{
@@ -48,9 +49,9 @@ func TestParseGitHubRepositoriesRefusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := ParseGitHubRepositories([]string{tc.entry})
+			err := SetGitHubRepositories(map[string]string{}, []string{tc.entry})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ParseGitHubRepositories(%q) = %v, want %q", tc.entry, err, tc.want)
+				t.Fatalf("SetGitHubRepositories(%q) = %v, want %q", tc.entry, err, tc.want)
 			}
 		})
 	}
@@ -65,7 +66,7 @@ func TestGitHubBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.RegisterTarget(ctx, "orders", "static", map[string]string{
-		"dsn": "x", ConfigGitHubRepositories: "acme/orders,acme/pay:db",
+		"dsn": "x", configGitHubRepositories: "acme/orders,acme/pay:db",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestGitHubBindingsRowFailure(t *testing.T) {
 	t.Parallel()
 	mock, s := newMockStore(t)
 
-	mock.ExpectQuery("SELECT name, config").WithArgs(ConfigGitHubRepositories).
+	mock.ExpectQuery("SELECT name, config").WithArgs(configGitHubRepositories).
 		WillReturnRows(pgxmock.NewRows([]string{"name", "config"}).
 			AddRow("orders", "acme/orders").RowError(0, errBoom))
 

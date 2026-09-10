@@ -28,7 +28,7 @@ The App removes even that. There is no per-repository secret; the only evidence 
 
 **A repository bound to nothing gets nothing — not even a plan.** Installing the App changes no behaviour at all until an operator binds something. This is the fail-closed default, and it is the entire answer to "any repository in the installation could name another team's production database". It is also checked before any GitHub call, so a repository that gets nothing costs nothing.
 
-**A repository asking for a target it is not bound to is refused, and the refusal does not say whether that target exists.** It names the repository and the name that was asked for, and says to ask an operator. A webhook caller holds no token and so has no `ListTargets`; a refusal that distinguished "not yours" from "no such target" would hand it one. `Bindings.Grant` is that check, and it is here rather than with the file fetch precisely so the file fetch cannot ship without it.
+**A repository asking for a target it is not bound to is refused, and the refusal does not say whether that target exists.** It names the repository and the name that was asked for, and says to ask an operator. A webhook caller holds no token and so has no `ListTargets`; a refusal that distinguished "not yours" from "no such target" would hand it one. `bindings.grant` is that check, and it is here rather than with the file fetch precisely so the file fetch cannot ship without it.
 
 **A fork's pull request gets nothing.** The Action's fork story rests on GitHub withholding secrets from a fork's `pull_request` run. The server holds the credentials unconditionally, so the same event would give a fork a live plan — which means executing the fork's DDL on a scratch database ([0009](0009-scratch-databases-are-not-the-store.md)). Bounded in reach, unbounded in cost, and a capability the Action never had. A per-binding opt-in is the obvious next question and is not taken here.
 
@@ -79,7 +79,7 @@ An installation is not a token spec and does not become one. It resolves to a pr
 
 ### Where this stops
 
-The receiver ends at one internal entry point that takes a verified, de-duplicated, authorised command and writes the audit entry saying what it would have run. Nothing reads the repository's files, nothing creates a run, and nothing is posted back to the pull request. `push` and `check_run` are not routed, because they are events that ask for work rather than events that carry a command. The half that fetches `<dir>` from the head sha by blob, checks the admission limits against the listing before downloading anything, calls `Bindings.Grant` with the name `godwit.yaml` asked for, and reports through Check Runs is a separate change, and is the one that makes the App do anything.
+The receiver ends at one internal entry point that takes a verified, de-duplicated, authorised command and writes the audit entry saying what it would have run. Nothing reads the repository's files, nothing creates a run, and nothing is posted back to the pull request. `push` and `check_run` are not routed, because they are events that ask for work rather than events that carry a command. The half that fetches `<dir>` from the head sha by blob, checks the admission limits against the listing before downloading anything, calls `bindings.grant` with the name `godwit.yaml` asked for, and reports through Check Runs is a separate change, and is the one that makes the App do anything.
 
 ## What it costs
 

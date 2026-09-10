@@ -9,11 +9,10 @@ import (
 	"github.com/SamuelMolling/godwit/internal/comment"
 )
 
-// Events this receiver acts on; anything else is answered and dropped.
 const (
-	EventIssueComment = "issue_comment"
-	EventReview       = "pull_request_review"
-	EventPullRequest  = "pull_request"
+	eventIssueComment = "issue_comment"
+	eventReview       = "pull_request_review"
+	eventPullRequest  = "pull_request"
 )
 
 var planActions = map[string]bool{"opened": true, "synchronize": true, "reopened": true, "ready_for_review": true}
@@ -95,11 +94,11 @@ func parse(event string, p *payload) (*request, *outcome) {
 	}
 	req := &request{event: event, repository: p.Repository.FullName}
 	switch event {
-	case EventIssueComment:
+	case eventIssueComment:
 		return commentRequest(req, p)
-	case EventReview:
+	case eventReview:
 		return reviewRequest(req, p)
-	case EventPullRequest:
+	case eventPullRequest:
 		return pullRequest(req, p)
 	}
 

@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-var forbiddenAssociations = []string{"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE"}
-
-// DefaultAssociations narrows who may command before the permission lookup authorises them.
-var DefaultAssociations = []string{"OWNER", "MEMBER", "COLLABORATOR"}
+var (
+	forbiddenAssociations = []string{"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "MANNEQUIN", "NONE"}
+	defaultAssociations   = []string{"OWNER", "MEMBER", "COLLABORATOR"}
+)
 
 func parseAssociations(values []string) (map[string]bool, error) {
 	out := map[string]bool{}
@@ -20,7 +20,7 @@ func parseAssociations(values []string) (map[string]bool, error) {
 			continue
 		case slices.Contains(forbiddenAssociations, v):
 			return nil, &configError{"author association " + v + " is not access to a repository: anyone who opened a pull request carries it"}
-		case !slices.Contains(DefaultAssociations, v):
+		case !slices.Contains(defaultAssociations, v):
 			return nil, &configError{"unknown author association " + v + " (want OWNER, MEMBER or COLLABORATOR)"}
 		}
 		out[v] = true
@@ -36,18 +36,17 @@ type configError struct{ msg string }
 
 func (e *configError) Error() string { return e.msg }
 
-var needsApproval = map[string]bool{"apply": true, "confirm": true}
-
-var wantsOpen = map[string]bool{"plan": true, "apply": true, "confirm": true}
+var (
+	needsApproval = map[string]bool{"apply": true, "confirm": true}
+	wantsOpen     = map[string]bool{"plan": true, "apply": true, "confirm": true}
+)
 
 type authorizer struct {
-	// open mints the installation token only once the association has narrowed, so a comment nobody could
-	// have commanded with spends no GitHub budget.
-	open    func(ctx context.Context) (Repo, error)
+	// open mints the token only after the association narrowed, so an idle comment spends no GitHub budget.
+	open    func(ctx context.Context) (repoView, error)
 	allowed map[string]bool
 }
 
-// authorize reproduces the Action's guards server-side and returns the head the command would run at.
 func (a authorizer) authorize(ctx context.Context, req *request) (string, *outcome, error) {
 	if !a.allowed[req.association] {
 		return "", refused("godwit %s by %s refused: author association %s is not allowed",
@@ -60,16 +59,16 @@ func (a authorizer) authorize(ctx context.Context, req *request) (string, *outco
 	if out, err := permitted(ctx, repo, req.commander, "commander"); out != nil || err != nil {
 		return "", out, err
 	}
-	pr, err := repo.PullRequest(ctx, req.number)
+	pr, err := repo.pullRequest(ctx, req.number)
 	if err != nil {
 		return "", nil, err
 	}
-	if !validSHA(pr.Head) {
+	if !validSHA(pr.head) {
 		return "", refused("could not read the head of pull request #%d", req.number), nil
 	}
-	if pr.HeadRepo != req.repository {
+	if pr.headRepo != req.repository {
 		return "", refused("godwit %s on pull request #%d refused: its head is in %s, not %s; a fork may not reach "+
-			"the targets of %s", req.name, req.number, orNone(pr.HeadRepo), req.repository, req.repository), nil
+			"the targets of %s", req.name, req.number, orNone(pr.headRepo), req.repository, req.repository), nil
 	}
 	if out := anchored(req, pr); out != nil {
 		return "", out, nil
@@ -80,12 +79,12 @@ func (a authorizer) authorize(ctx context.Context, req *request) (string, *outco
 		}
 	}
 
-	return pr.Head, nil, nil
+	return pr.head, nil, nil
 }
 
-func anchored(req *request, pr PullRequest) *outcome {
+func anchored(req *request, pr pull) *outcome {
 	if req.name == "revert" {
-		if pr.Merged {
+		if pr.merged {
 			return refused("pull request #%d was merged: its migrations belong to the base branch now, "+
 				"revert them from a new pull request", req.number)
 		}
@@ -93,28 +92,28 @@ func anchored(req *request, pr PullRequest) *outcome {
 		return nil
 	}
 	switch {
-	case wantsOpen[req.name] && pr.State != "open":
-		return refused("pull request #%d is %s: nothing to %s", req.number, orNone(pr.State), req.name)
-	case req.reviewSHA != "" && req.reviewSHA != pr.Head:
+	case wantsOpen[req.name] && pr.state != "open":
+		return refused("pull request #%d is %s: nothing to %s", req.number, orNone(pr.state), req.name)
+	case req.reviewSHA != "" && req.reviewSHA != pr.head:
 		return refused("the review is on %s but pull request #%d is at %s: the head moved after the review, "+
-			"so godwit %s would run commits nobody reviewed", short(req.reviewSHA), req.number, short(pr.Head), req.name)
-	case req.cmd != nil && req.cmd.Sha != "" && !strings.HasPrefix(pr.Head, req.cmd.Sha):
+			"so godwit %s would run commits nobody reviewed", short(req.reviewSHA), req.number, short(pr.head), req.name)
+	case req.cmd != nil && req.cmd.Sha != "" && !strings.HasPrefix(pr.head, req.cmd.Sha):
 		return refused("godwit %s names %s but pull request #%d is at %s: the head moved after the comment",
-			req.name, req.cmd.Sha, req.number, short(pr.Head))
+			req.name, req.cmd.Sha, req.number, short(pr.head))
 	}
 
 	return nil
 }
 
-func approved(ctx context.Context, repo Repo, req *request, pr PullRequest) (*outcome, error) {
-	reviews, err := repo.Reviews(ctx, req.number)
+func approved(ctx context.Context, repo repoView, req *request, pr pull) (*outcome, error) {
+	all, err := repo.reviews(ctx, req.number)
 	if err != nil {
 		return nil, err
 	}
-	approver := standingApproval(reviews, pr.Head, pr.Author)
+	approver := standingApproval(all, pr.head, pr.author)
 	if approver == "" {
 		return refused("godwit %s on pull request #%d refused: no approving review by anyone other than %s "+
-			"stands on %s", req.name, req.number, orNone(pr.Author), short(pr.Head)), nil
+			"stands on %s", req.name, req.number, orNone(pr.author), short(pr.head)), nil
 	}
 	if !validLogin(approver) {
 		return refused("%q is not a github login", approver), nil
@@ -123,20 +122,20 @@ func approved(ctx context.Context, repo Repo, req *request, pr PullRequest) (*ou
 	return permitted(ctx, repo, approver, "approver")
 }
 
-func standingApproval(reviews []Review, head, author string) string {
+func standingApproval(all []review, head, author string) string {
 	last := map[string]string{}
 	var order []string
-	for _, r := range reviews {
-		switch r.State {
+	for _, r := range all {
+		switch r.state {
 		case "APPROVED":
-			last[r.Login] = r.CommitID
+			last[r.login] = r.commitID
 		case "CHANGES_REQUESTED", "DISMISSED":
-			last[r.Login] = ""
+			last[r.login] = ""
 		default:
 			continue
 		}
-		if !slices.Contains(order, r.Login) {
-			order = append(order, r.Login)
+		if !slices.Contains(order, r.login) {
+			order = append(order, r.login)
 		}
 	}
 	for _, login := range order {
@@ -148,8 +147,8 @@ func standingApproval(reviews []Review, head, author string) string {
 	return ""
 }
 
-func permitted(ctx context.Context, repo Repo, login, role string) (*outcome, error) {
-	perm, err := repo.Permission(ctx, login)
+func permitted(ctx context.Context, repo repoView, login, role string) (*outcome, error) {
+	perm, err := repo.permission(ctx, login)
 	if err != nil {
 		return nil, err
 	}

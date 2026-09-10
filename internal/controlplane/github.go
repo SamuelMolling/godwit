@@ -9,11 +9,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ConfigGitHubRepositories lists the repositories a GitHub App delivery may reach this target from.
-const ConfigGitHubRepositories = "github_repositories"
+const configGitHubRepositories = "github_repositories"
 
-// ParseGitHubRepositories renders bindings into their stored form, refusing anything but owner/repo[:dir].
-func ParseGitHubRepositories(entries []string) (string, error) {
+// SetGitHubRepositories records the repositories a GitHub App delivery may reach this target from.
+func SetGitHubRepositories(config map[string]string, entries []string) error {
+	spec, err := joinRepositories(entries)
+	if err != nil || spec == "" {
+		return err
+	}
+	config[configGitHubRepositories] = spec
+
+	return nil
+}
+
+func joinRepositories(entries []string) (string, error) {
 	out := make([]string, 0, len(entries))
 	seen := map[string]bool{}
 	for _, raw := range entries {
@@ -58,7 +67,7 @@ func validRepository(entry string) error {
 // GitHubBindings returns the stored repository binding of every target that carries one, by target name.
 func (s *Store) GitHubBindings(ctx context.Context) (map[string]string, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT name, config ->> $1 FROM cp_targets WHERE config ? $1`, ConfigGitHubRepositories)
+		`SELECT name, config ->> $1 FROM cp_targets WHERE config ? $1`, configGitHubRepositories)
 	if err != nil {
 		return nil, fmt.Errorf("list github bindings: %w", err)
 	}

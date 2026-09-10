@@ -242,7 +242,7 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 		}
 		sum.Timeouts, sum.SearchPath = TargetTimeouts(config), config[ConfigSearchPath]
 		sum.RequirePlan, sum.KeepOld = config[ConfigRequirePlan] == "true", config[ConfigKeepOld] != "false"
-		sum.GitHubRepositories = splitRepositories(config[ConfigGitHubRepositories])
+		sum.GitHubRepositories = splitRepositories(config[configGitHubRepositories])
 		sum.LastRun = last[sum.Name]
 		out = append(out, sum)
 

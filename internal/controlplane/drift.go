@@ -25,8 +25,7 @@ type DriftMonitor struct {
 	// Metrics receives check outcomes; replace it before Run to share a registry.
 	Metrics *metrics.Metrics
 	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
-	PlanRetention time.Duration
-	// DeliveryRetention is how long a recorded webhook delivery id is remembered; zero keeps them forever.
+	PlanRetention     time.Duration
 	DeliveryRetention time.Duration
 
 	store    *Store

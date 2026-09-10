@@ -45,7 +45,7 @@ func TestUnverifiedRequestLearnsNothing(t *testing.T) {
 			t.Parallel()
 
 			f := newFixture(t, bound, writer(t))
-			rec := f.send(t, EventIssueComment, "d1", body, tc.signature)
+			rec := f.send(t, eventIssueComment, "d1", body, tc.signature)
 			check(t, rec, http.StatusUnauthorized, "")
 			if rec.Body.Len() != 0 {
 				t.Fatalf("body = %q, want nothing", rec.Body.String())
@@ -64,27 +64,27 @@ func TestVerifiedRequestIsAccepted(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-	rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 	check(t, rec, http.StatusAccepted, "godwit apply accepted")
 	if len(f.runner.got) != 1 {
 		t.Fatalf("runner saw %d commands, want 1", len(f.runner.got))
 	}
 	cmd := f.runner.got[0]
-	if cmd.Name != "apply" || cmd.Login != "alice" || cmd.Head != testHead || cmd.Delivery != "d1" {
+	if cmd.name != "apply" || cmd.login != "alice" || cmd.head != testHead || cmd.delivery != "d1" {
 		t.Fatalf("command = %+v", cmd)
 	}
-	if cmd.Source != "github.com/"+testRepo+"@"+testHead {
-		t.Fatalf("source = %q", cmd.Source)
+	if cmd.source != "github.com/"+testRepo+"@"+testHead {
+		t.Fatalf("source = %q", cmd.source)
 	}
-	if cmd.Principal.Name != "github:"+testRepo || cmd.Principal.Scope != "pipeline" {
-		t.Fatalf("principal = %+v", cmd.Principal)
+	if cmd.principal.Name != "github:"+testRepo || cmd.principal.Scope != "pipeline" {
+		t.Fatalf("principal = %+v", cmd.principal)
 	}
 }
 
 func approvedBy(t *testing.T, login, commit string) *fakeRepo {
 	t.Helper()
 	repo := writer(t)
-	repo.reviews = []Review{{Login: login, State: "APPROVED", CommitID: commit}}
+	repo.submitted = []review{{login: login, state: "APPROVED", commitID: commit}}
 
 	return repo
 }
@@ -94,7 +94,7 @@ func TestBodyOverTheLimitIsRefusedByCount(t *testing.T) {
 
 	f := newFixture(t, bound, writer(t))
 	f.receiver.cfg.MaxBodyBytes = 16
-	rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 	check(t, rec, http.StatusRequestEntityTooLarge, "")
 	if rec.Body.Len() != 0 {
 		t.Fatalf("body = %q, want nothing", rec.Body.String())
@@ -108,10 +108,10 @@ func TestUnreadableBody(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	req := httptest.NewRequest(http.MethodPost, Path, &reader{err: errBroken})
-	req.Header.Set(eventHeader, EventIssueComment)
+	req := httptest.NewRequest(http.MethodPost, webhookPath, &reader{err: errBroken})
+	req.Header.Set(eventHeader, eventIssueComment)
 	rec := httptest.NewRecorder()
-	f.receiver.ServeHTTP(rec, req)
+	f.receiver.serve(rec, req)
 	check(t, rec, http.StatusBadRequest, "")
 }
 
@@ -119,7 +119,7 @@ func TestOnlyPostIsAnswered(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	req := httptest.NewRequest(http.MethodGet, Path, stringBody(""))
+	req := httptest.NewRequest(http.MethodGet, webhookPath, stringBody(""))
 	req.Header.Set(signatureHeader, sign(testSecret, ""))
 	rec := httptest.NewRecorder()
 	f.receiver.Handler().ServeHTTP(rec, req)
@@ -130,7 +130,7 @@ func TestDeliveryHeaderIsRequired(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	rec := f.send(t, EventIssueComment, "", "{}", sign(testSecret, "{}"))
+	rec := f.send(t, eventIssueComment, "", "{}", sign(testSecret, "{}"))
 	check(t, rec, http.StatusBadRequest, deliveryHeader)
 }
 
@@ -138,7 +138,7 @@ func TestUnparsablePayload(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	rec := f.post(t, EventIssueComment, "d1", "not json")
+	rec := f.post(t, eventIssueComment, "d1", "not json")
 	check(t, rec, http.StatusBadRequest, "not a github payload")
 }
 
@@ -147,8 +147,8 @@ func TestReplayedDeliveryEnqueuesNothing(t *testing.T) {
 
 	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
 	body := commentBody("godwit apply", "MEMBER", "alice", now)
-	check(t, f.post(t, EventIssueComment, "replayed", body), http.StatusAccepted, "accepted")
-	check(t, f.post(t, EventIssueComment, "replayed", body), http.StatusAccepted, "already handled")
+	check(t, f.post(t, eventIssueComment, "replayed", body), http.StatusAccepted, "accepted")
+	check(t, f.post(t, eventIssueComment, "replayed", body), http.StatusAccepted, "already handled")
 	if len(f.runner.got) != 1 {
 		t.Fatalf("runner saw %d commands, want 1", len(f.runner.got))
 	}
@@ -161,8 +161,8 @@ func TestUnboundRepositoryGetsNothing(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, event, body string }{
-		{"a plan", EventPullRequest, pullBodyJSON("opened", testRepo, testHead)},
-		{"an apply", EventIssueComment, commentBody("godwit apply", "MEMBER", "alice", now)},
+		{"a plan", eventPullRequest, pullBodyJSON("opened", testRepo, testHead)},
+		{"an apply", eventIssueComment, commentBody("godwit apply", "MEMBER", "alice", now)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -187,9 +187,9 @@ func TestRefusalDoesNotSayWhetherTheTargetExists(t *testing.T) {
 	t.Parallel()
 
 	b := bind(map[string]string{"orders": testRepo}, testRepo)
-	missing := b.Grant(testRepo, "db/migrations", "payments").Error()
+	missing := b.grant(testRepo, "db/migrations", "payments").Error()
 	elsewhere := bind(map[string]string{"orders": testRepo, "payments": "other/repo"}, testRepo).
-		Grant(testRepo, "db/migrations", "payments").Error()
+		grant(testRepo, "db/migrations", "payments").Error()
 	if missing != elsewhere {
 		t.Fatalf("an unregistered target reads %q and a registered one %q", missing, elsewhere)
 	}
@@ -201,7 +201,7 @@ func TestCommanderWithoutWriteIsRefused(t *testing.T) {
 	repo := approvedBy(t, "bob", testHead)
 	repo.perm = map[string]string{"bob": "admin"}
 	f := newFixture(t, bound, repo)
-	rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 	check(t, rec, http.StatusAccepted, `commander alice has permission "none"`)
 	if len(f.runner.got) != 0 {
 		t.Fatal("a commander without write reached the runner")
@@ -213,28 +213,28 @@ func TestApprovalMustStandOnTheHead(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		reviews []Review
+		reviews []review
 	}{
 		{"no review at all", nil},
-		{"approval of an older commit", []Review{{Login: "bob", State: "APPROVED", CommitID: testOther}}},
-		{"the author's own approval", []Review{{Login: "carol", State: "APPROVED", CommitID: testHead}}},
+		{"approval of an older commit", []review{{login: "bob", state: "APPROVED", commitID: testOther}}},
+		{"the author's own approval", []review{{login: "carol", state: "APPROVED", commitID: testHead}}},
 		{
 			"an approval later withdrawn",
-			[]Review{{Login: "bob", State: "APPROVED", CommitID: testHead}, {Login: "bob", State: "CHANGES_REQUESTED"}},
+			[]review{{login: "bob", state: "APPROVED", commitID: testHead}, {login: "bob", state: "CHANGES_REQUESTED"}},
 		},
 		{
 			"a dismissed approval",
-			[]Review{{Login: "bob", State: "APPROVED", CommitID: testHead}, {Login: "bob", State: "DISMISSED"}},
+			[]review{{login: "bob", state: "APPROVED", commitID: testHead}, {login: "bob", state: "DISMISSED"}},
 		},
-		{"a comment is not an approval", []Review{{Login: "bob", State: "COMMENTED", CommitID: testHead}}},
+		{"a comment is not an approval", []review{{login: "bob", state: "COMMENTED", commitID: testHead}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			repo := writer(t)
-			repo.reviews = tc.reviews
+			repo.submitted = tc.reviews
 			f := newFixture(t, bound, repo)
-			rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+			rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 			check(t, rec, http.StatusAccepted, "no approving review")
 			if len(f.runner.got) != 0 {
 				t.Fatal("an unapproved apply reached the runner")
@@ -247,12 +247,12 @@ func TestApprovalOutlivesAWithdrawalItPredates(t *testing.T) {
 	t.Parallel()
 
 	repo := writer(t)
-	repo.reviews = []Review{
-		{Login: "bob", State: "CHANGES_REQUESTED"},
-		{Login: "bob", State: "APPROVED", CommitID: testHead},
+	repo.submitted = []review{
+		{login: "bob", state: "CHANGES_REQUESTED"},
+		{login: "bob", state: "APPROVED", commitID: testHead},
 	}
 	f := newFixture(t, bound, repo)
-	check(t, f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, "accepted")
 }
 
@@ -261,7 +261,7 @@ func TestStaleDeliveryIsRefused(t *testing.T) {
 
 	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
 	old := now.Add(-2 * time.Hour)
-	rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", old))
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", old))
 	check(t, rec, http.StatusAccepted, "past the 1h0m0s a command may be acted on within")
 	if got := f.result(t); got != resultStale {
 		t.Fatalf("result = %s, want %s", got, resultStale)
@@ -276,26 +276,26 @@ func TestIgnoredDeliveries(t *testing.T) {
 
 	for _, tc := range []struct{ name, event, body, want string }{
 		{
-			"an edited comment", EventIssueComment, strings.Replace(
+			"an edited comment", eventIssueComment, strings.Replace(
 				commentBody("godwit apply", "MEMBER", "alice", now), `"action":"created"`, `"action":"edited"`, 1),
 			"not what a comment now says",
 		},
 		{
-			"a comment on an issue", EventIssueComment, strings.Replace(
+			"a comment on an issue", eventIssueComment, strings.Replace(
 				commentBody("godwit apply", "MEMBER", "alice", now), `"pull_request":{"url":"x"}`, `"pull_request":null`, 1),
 			"not a pull request",
 		},
 		{
-			"prose", EventIssueComment, commentBody("looks good, godwit apply later", "MEMBER", "alice", now),
+			"prose", eventIssueComment, commentBody("looks good, godwit apply later", "MEMBER", "alice", now),
 			"names no godwit command",
 		},
 		{
-			"a review that is not submitted", EventReview, strings.Replace(
+			"a review that is not submitted", eventReview, strings.Replace(
 				reviewBodyJSON("godwit apply", testHead, now), `"action":"submitted"`, `"action":"dismissed"`, 1),
 			"review dismissed ignored",
 		},
 		{
-			"a pull request label", EventPullRequest, pullBodyJSON("labeled", testRepo, testHead),
+			"a pull request label", eventPullRequest, pullBodyJSON("labeled", testRepo, testHead),
 			"pull request labeled ignored",
 		},
 		{
@@ -322,7 +322,7 @@ func TestMalformedCommandIsRefusedNotIgnored(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply --unknown", "MEMBER", "alice", now))
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply --unknown", "MEMBER", "alice", now))
 	check(t, rec, http.StatusAccepted, "does not understand '--unknown'")
 	if got := f.result(t); got != resultRefused {
 		t.Fatalf("result = %s, want %s", got, resultRefused)
@@ -333,25 +333,25 @@ func TestPayloadsThatNameNothing(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, event, body, want string }{
-		{"no repository", EventIssueComment, `{"installation":{"id":7}}`, "names no repository"},
+		{"no repository", eventIssueComment, `{"installation":{"id":7}}`, "names no repository"},
 		{
-			"a repository that is not owner/repo", EventIssueComment,
+			"a repository that is not owner/repo", eventIssueComment,
 			`{"repository":{"full_name":"orders"},"installation":{"id":7}}`, "names no repository",
 		},
-		{"no installation", EventIssueComment, `{"repository":{"full_name":"acme/orders"}}`, "names no installation"},
-		{"a comment with no login", EventIssueComment, strings.Replace(
+		{"no installation", eventIssueComment, `{"repository":{"full_name":"acme/orders"}}`, "names no installation"},
+		{"a comment with no login", eventIssueComment, strings.Replace(
 			commentBody("godwit apply", "MEMBER", "", now), `"login":""`, `"login":"a b"`, 1), "is not a github login"},
 		{
-			"a comment with no pull request number", EventIssueComment, strings.Replace(
+			"a comment with no pull request number", eventIssueComment, strings.Replace(
 				commentBody("godwit apply", "MEMBER", "alice", now), `"number":3`, `"number":0`, 1),
 			"carries no pull request number",
 		},
 		{
-			"a pull request with no head", EventPullRequest, pullBodyJSON("opened", testRepo, "abc"),
+			"a pull request with no head", eventPullRequest, pullBodyJSON("opened", testRepo, "abc"),
 			"carries no head commit",
 		},
 		{
-			"a pull request with no number", EventPullRequest, strings.Replace(
+			"a pull request with no number", eventPullRequest, strings.Replace(
 				pullBodyJSON("opened", testRepo, testHead), `"number":3`, `"number":0`, 1),
 			"carries no pull request number",
 		},
@@ -372,16 +372,16 @@ func TestForkGetsNothing(t *testing.T) {
 		t.Parallel()
 
 		f := newFixture(t, bound, writer(t))
-		rec := f.post(t, EventPullRequest, "d1", pullBodyJSON("opened", "fork/orders", testHead))
+		rec := f.post(t, eventPullRequest, "d1", pullBodyJSON("opened", "fork/orders", testHead))
 		check(t, rec, http.StatusAccepted, "a fork's pull request is not planned")
 	})
 	t.Run("a command on a fork's head is refused", func(t *testing.T) {
 		t.Parallel()
 
 		repo := approvedBy(t, "bob", testHead)
-		repo.pull.HeadRepo = "fork/orders"
+		repo.pr.headRepo = "fork/orders"
 		f := newFixture(t, bound, repo)
-		rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+		rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 		check(t, rec, http.StatusAccepted, "a fork may not reach the targets")
 	})
 }
@@ -390,13 +390,13 @@ func TestPullRequestPlanCostsNoGitHubCall(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	check(t, f.post(t, EventPullRequest, "d1", pullBodyJSON("synchronize", testRepo, testHead)),
+	check(t, f.post(t, eventPullRequest, "d1", pullBodyJSON("synchronize", testRepo, testHead)),
 		http.StatusAccepted, "godwit plan accepted")
 	if len(f.api.scoped) != 0 {
 		t.Fatalf("a plan spent %d github calls", len(f.api.scoped))
 	}
 	cmd := f.runner.got[0]
-	if cmd.Login != "" || cmd.Principal.Scope != "read" || cmd.Comment != nil {
+	if cmd.login != "" || cmd.principal.Scope != "read" || cmd.cmd != nil {
 		t.Fatalf("command = %+v", cmd)
 	}
 }
@@ -405,7 +405,7 @@ func TestTheInstallationTokenIsNarrowedToTheRepositoryTheDeliveryNamed(t *testin
 	t.Parallel()
 
 	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-	f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+	f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 	if len(f.api.scoped) != 1 || f.api.scoped[0] != "7/42/"+testRepo {
 		t.Fatalf("token scoped %v, want one narrowed to installation 7, repository 42 (%s)", f.api.scoped, testRepo)
 	}
@@ -418,14 +418,14 @@ func TestReviewBodyCommands(t *testing.T) {
 		t.Parallel()
 
 		f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-		check(t, f.post(t, EventReview, "d1", reviewBodyJSON("godwit apply", testHead, now)),
+		check(t, f.post(t, eventReview, "d1", reviewBodyJSON("godwit apply", testHead, now)),
 			http.StatusAccepted, "accepted")
 	})
 	t.Run("on a head that moved", func(t *testing.T) {
 		t.Parallel()
 
 		f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-		check(t, f.post(t, EventReview, "d1", reviewBodyJSON("godwit apply", testOther, now)),
+		check(t, f.post(t, eventReview, "d1", reviewBodyJSON("godwit apply", testOther, now)),
 			http.StatusAccepted, "the head moved after the review")
 	})
 }
@@ -451,7 +451,7 @@ func TestFailuresBelowTheReceiverFailClosed(t *testing.T) {
 
 			f := newFixture(t, bound, approvedBy(t, "bob", testHead))
 			tc.break_(f)
-			rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
+			rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 			check(t, rec, http.StatusInternalServerError, "could not answer this delivery")
 			if len(f.runner.got) != 0 {
 				t.Fatal("a failure enqueued work anyway")
@@ -467,10 +467,10 @@ func TestPullRequestHeadIsNotTrustedForACommand(t *testing.T) {
 	t.Parallel()
 
 	repo := approvedBy(t, "bob", testOther)
-	repo.pull.Head = testOther
+	repo.pr.head = testOther
 	f := newFixture(t, bound, repo)
 	body := strings.Replace(commentBody("godwit apply "+testHead, "MEMBER", "alice", now), "", "", 1)
-	check(t, f.post(t, EventIssueComment, "d1", body), http.StatusAccepted, "the head moved after the comment")
+	check(t, f.post(t, eventIssueComment, "d1", body), http.StatusAccepted, "the head moved after the comment")
 }
 
 func TestPullRequestStateGuards(t *testing.T) {
@@ -478,28 +478,28 @@ func TestPullRequestStateGuards(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, command, want string
-		mutate              func(pr *PullRequest)
+		mutate              func(pr *pull)
 	}{
 		{
 			"a closed pull request has nothing to apply", "godwit apply", "is closed: nothing to apply",
-			func(pr *PullRequest) { pr.State = "closed" },
+			func(pr *pull) { pr.state = "closed" },
 		},
 		{
 			"a merged pull request cannot be reverted", "godwit revert", "was merged",
-			func(pr *PullRequest) { pr.Merged = true },
+			func(pr *pull) { pr.merged = true },
 		},
 		{
 			"a head that is not a commit", "godwit apply", "could not read the head",
-			func(pr *PullRequest) { pr.Head = "" },
+			func(pr *pull) { pr.head = "" },
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			repo := approvedBy(t, "bob", testHead)
-			tc.mutate(&repo.pull)
+			tc.mutate(&repo.pr)
 			f := newFixture(t, bound, repo)
-			check(t, f.post(t, EventIssueComment, "d1", commentBody(tc.command, "MEMBER", "alice", now)),
+			check(t, f.post(t, eventIssueComment, "d1", commentBody(tc.command, "MEMBER", "alice", now)),
 				http.StatusAccepted, tc.want)
 		})
 	}
@@ -509,7 +509,7 @@ func TestRevertNeedsNoApproval(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
-	check(t, f.post(t, EventIssueComment, "d1", commentBody("godwit revert", "MEMBER", "alice", now)),
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit revert", "MEMBER", "alice", now)),
 		http.StatusAccepted, "godwit revert accepted")
 }
 
@@ -517,7 +517,7 @@ func TestAssociationNarrows(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-	rec := f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "CONTRIBUTOR", "alice", now))
+	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "CONTRIBUTOR", "alice", now))
 	check(t, rec, http.StatusAccepted, "author association CONTRIBUTOR is not allowed")
 	if len(f.api.scoped) != 0 {
 		t.Fatal("a refused association still reached github")
@@ -529,7 +529,7 @@ func TestAnApproverWithoutWriteIsRefused(t *testing.T) {
 
 	repo := approvedBy(t, "dave", testHead)
 	f := newFixture(t, bound, repo)
-	check(t, f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, `approver dave has permission "none"`)
 }
 
@@ -538,7 +538,7 @@ func TestAnApproverGitHubNamesStrangelyIsRefused(t *testing.T) {
 
 	repo := approvedBy(t, "not a login", testHead)
 	f := newFixture(t, bound, repo)
-	check(t, f.post(t, EventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, "is not a github login")
 }
 
@@ -560,7 +560,7 @@ func TestEventLabelIsBounded(t *testing.T) {
 	if got := eventLabel(strings.Repeat("x", 5000)); got != "other" {
 		t.Fatalf("eventLabel = %q, want other", got)
 	}
-	if got := eventLabel(EventReview); got != EventReview {
-		t.Fatalf("eventLabel = %q, want %s", got, EventReview)
+	if got := eventLabel(eventReview); got != eventReview {
+		t.Fatalf("eventLabel = %q, want %s", got, eventReview)
 	}
 }

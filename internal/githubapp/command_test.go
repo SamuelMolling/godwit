@@ -28,12 +28,12 @@ func TestAuditEntrySaysWhoAskedAndWhichDelivery(t *testing.T) {
 	t.Parallel()
 
 	store := newStore(nil)
-	cmd := Command{
-		Delivery: "d1", Event: EventIssueComment, Repository: testRepo, Number: 3, Head: testHead,
-		Login: "alice", Name: "apply", Bindings: Bindings{{Target: "orders"}},
-		Principal: api.Principal{Name: "github:" + testRepo, Scope: api.ScopePipeline},
+	cmd := command{
+		delivery: "d1", event: eventIssueComment, repository: testRepo, number: 3, head: testHead,
+		login: "alice", name: "apply", bound: bindings{{target: "orders"}},
+		principal: api.Principal{Name: "github:" + testRepo, Scope: api.ScopePipeline},
 	}
-	if err := (Recorder{Log: testLog}).Enqueue(context.Background(), store, cmd); err != nil {
+	if err := (recorder{log: testLog}).enqueue(context.Background(), store, cmd); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.audits) != 1 {
@@ -54,8 +54,8 @@ func TestAPlanCarriesNoCommandingLogin(t *testing.T) {
 	t.Parallel()
 
 	store := newStore(nil)
-	cmd := Command{Delivery: "d2", Name: "plan", Principal: api.Principal{Scope: api.ScopeRead}}
-	if err := (Recorder{Log: testLog}).Enqueue(context.Background(), store, cmd); err != nil {
+	cmd := command{delivery: "d2", name: "plan", principal: api.Principal{Scope: api.ScopeRead}}
+	if err := (recorder{log: testLog}).enqueue(context.Background(), store, cmd); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(store.audits[0].Detail, "login=") {
@@ -68,7 +68,7 @@ func TestRecorderPassesTheStoreFailureUp(t *testing.T) {
 
 	store := newStore(nil)
 	store.auditErr = errBroken
-	if err := (Recorder{Log: testLog}).Enqueue(context.Background(), store, Command{}); err == nil {
+	if err := (recorder{log: testLog}).enqueue(context.Background(), store, command{}); err == nil {
 		t.Fatal("no error")
 	}
 }

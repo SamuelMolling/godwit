@@ -18,21 +18,18 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
-// Path is the only path the webhook listener serves.
-const Path = "/github/webhook"
-
 const (
+	webhookPath     = "/github/webhook"
 	signatureHeader = "X-Hub-Signature-256"
 	deliveryHeader  = "X-GitHub-Delivery"
 	eventHeader     = "X-GitHub-Event"
 	signaturePrefix = "sha256="
 )
 
-// DefaultMaxBodyBytes bounds what one delivery may make this process buffer before it is verified.
-const DefaultMaxBodyBytes = 1 << 20
-
-// DefaultMaxAge is how old a command's own timestamp may be before its delivery is refused.
-const DefaultMaxAge = time.Hour
+const (
+	defaultMaxBodyBytes = 1 << 20
+	defaultMaxAge       = time.Hour
+)
 
 const (
 	resultAccepted  = "accepted"
@@ -46,37 +43,34 @@ const (
 	resultError     = "error"
 )
 
-// Tx is the store inside the transaction that records a delivery and enqueues whatever it asked for.
-type Tx interface {
+type txn interface {
 	RecordDelivery(ctx context.Context, id, event, repository string) (bool, error)
 	Audit(ctx context.Context, e controlplane.AuditEntry) error
 }
 
-// Store is the receiver's view of the control plane.
-type Store interface {
+type store interface {
 	GitHubBindings(ctx context.Context) (map[string]string, error)
-	Transact(ctx context.Context, fn func(Tx) error) error
+	transact(ctx context.Context, fn func(txn) error) error
 }
 
-type store struct{ *controlplane.Store }
+type storeAdapter struct{ *controlplane.Store }
 
-// Transact narrows the control plane's own transaction to the two writes a receipt makes.
-func (s store) Transact(ctx context.Context, fn func(Tx) error) error {
-	return s.Store.Transact(ctx, func(tx *controlplane.Store) error { return fn(tx) })
+func (s storeAdapter) transact(ctx context.Context, fn func(txn) error) error {
+	return s.Transact(ctx, func(tx *controlplane.Store) error { return fn(tx) })
 }
 
-// Adapt returns the receiver's view of the control-plane store.
-func Adapt(s *controlplane.Store) Store { return store{s} }
+// Adapt returns the receiver's view of the control-plane store, for Config.Store.
+func Adapt(s *controlplane.Store) store { return storeAdapter{s} }
 
-// Config is everything the receiver needs to answer a delivery.
+// Config is everything the receiver needs to answer a delivery; New fills in what is left zero.
 type Config struct {
 	Secret       string
 	MaxBodyBytes int
 	MaxAge       time.Duration
 	Associations []string
-	Store        Store
-	API          API
-	Runner       Runner
+	Store        store
+	API          forge
+	Runner       runner
 	Record       func(event, result string)
 	Log          *slog.Logger
 	Now          func() time.Time
@@ -97,20 +91,20 @@ func New(cfg Config) (*Receiver, error) {
 		return nil, &configError{"the github receiver needs a store, an api client and a logger"}
 	}
 	if len(cfg.Associations) == 0 {
-		cfg.Associations = DefaultAssociations
+		cfg.Associations = defaultAssociations
 	}
 	allowed, err := parseAssociations(cfg.Associations)
 	if err != nil {
 		return nil, err
 	}
 	if cfg.MaxBodyBytes <= 0 {
-		cfg.MaxBodyBytes = DefaultMaxBodyBytes
+		cfg.MaxBodyBytes = defaultMaxBodyBytes
 	}
 	if cfg.MaxAge <= 0 {
-		cfg.MaxAge = DefaultMaxAge
+		cfg.MaxAge = defaultMaxAge
 	}
 	if cfg.Runner == nil {
-		cfg.Runner = Recorder{Log: cfg.Log}
+		cfg.Runner = recorder{log: cfg.Log}
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -122,15 +116,15 @@ func New(cfg Config) (*Receiver, error) {
 	return &Receiver{cfg: cfg, allowed: allowed}, nil
 }
 
-// Handler serves the receiver at Path and nothing else.
+// Handler serves the App at /github/webhook and answers 404 everywhere else.
 func (r *Receiver) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle(Path, r)
+	mux.HandleFunc(webhookPath, r.serve)
 
 	return mux
 }
 
-var knownEvents = []string{EventIssueComment, EventReview, EventPullRequest}
+var knownEvents = []string{eventIssueComment, eventReview, eventPullRequest}
 
 func eventLabel(event string) string {
 	if slices.Contains(knownEvents, event) {
@@ -140,8 +134,7 @@ func eventLabel(event string) string {
 	return "other"
 }
 
-// ServeHTTP answers one delivery; a request that fails the signature reaches no JSON, no store and no body.
-func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *Receiver) serve(w http.ResponseWriter, req *http.Request) {
 	status, result, message := r.receive(w, req)
 	r.cfg.Record(eventLabel(req.Header.Get(eventHeader)), result)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -165,7 +158,7 @@ func (r *Receiver) receive(w http.ResponseWriter, req *http.Request) (int, strin
 		return http.StatusUnauthorized, resultUnsigned, ""
 	}
 	if req.Method != http.MethodPost {
-		return http.StatusMethodNotAllowed, resultMalformed, "godwit answers " + Path + " on POST"
+		return http.StatusMethodNotAllowed, resultMalformed, "godwit answers " + webhookPath + " on POST"
 	}
 	delivery := req.Header.Get(deliveryHeader)
 	if delivery == "" {
@@ -186,7 +179,7 @@ func (r *Receiver) handle(ctx context.Context, event, delivery string, body []by
 	if err := json.Unmarshal(body, &p); err != nil {
 		return http.StatusBadRequest, resultMalformed, "the delivery body is not a github payload"
 	}
-	cmd, out, err := r.command(ctx, event, delivery, &p)
+	cmd, out, err := r.accept(ctx, event, delivery, &p)
 	switch {
 	case err != nil:
 		r.cfg.Log.Error("webhook delivery failed", "delivery", delivery, "event", event,
@@ -203,10 +196,10 @@ func (r *Receiver) handle(ctx context.Context, event, delivery string, body []by
 	return r.enqueue(ctx, delivery, event, *cmd)
 }
 
-func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd Command) (int, string, string) {
+func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd command) (int, string, string) {
 	duplicate := false
-	err := r.cfg.Store.Transact(ctx, func(tx Tx) error {
-		first, err := tx.RecordDelivery(ctx, delivery, event, cmd.Repository)
+	err := r.cfg.Store.transact(ctx, func(tx txn) error {
+		first, err := tx.RecordDelivery(ctx, delivery, event, cmd.repository)
 		if err != nil {
 			return err
 		}
@@ -216,7 +209,7 @@ func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd Comm
 			return nil
 		}
 
-		return r.cfg.Runner.Enqueue(ctx, tx, cmd)
+		return r.cfg.Runner.enqueue(ctx, tx, cmd)
 	})
 	switch {
 	case err != nil:
@@ -227,10 +220,10 @@ func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd Comm
 		return http.StatusAccepted, resultDuplicate, "delivery " + delivery + " was already handled"
 	}
 
-	return http.StatusAccepted, resultAccepted, "godwit " + cmd.Name + " accepted at " + short(cmd.Head)
+	return http.StatusAccepted, resultAccepted, "godwit " + cmd.name + " accepted at " + short(cmd.head)
 }
 
-func (r *Receiver) command(ctx context.Context, event, delivery string, p *payload) (*Command, *outcome, error) {
+func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, error) {
 	req, out := parse(event, p)
 	if out != nil {
 		return nil, out, nil
@@ -242,8 +235,8 @@ func (r *Receiver) command(ctx context.Context, event, delivery string, p *paylo
 	if err != nil {
 		return nil, nil, err
 	}
-	bindings := bind(stored, req.repository)
-	if len(bindings) == 0 {
+	bound := bind(stored, req.repository)
+	if len(bound) == 0 {
 		return nil, refused("repository %s is bound to no godwit target, so it gets nothing here — not an apply "+
 			"and not a plan; ask a godwit operator to bind it (godwit target add <target> --github-repo %s)",
 			req.repository, req.repository), nil
@@ -253,16 +246,15 @@ func (r *Receiver) command(ctx context.Context, event, delivery string, p *paylo
 		return nil, out, err
 	}
 
-	return &Command{
-		Delivery: delivery, Event: event, Repository: req.repository, Installation: p.Installation.ID,
-		Number: req.number, Head: head, Login: req.commander,
-		Principal: api.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
-		Bindings:  bindings, Name: req.name, Comment: req.cmd,
-		Source: "github.com/" + req.repository + "@" + head,
+	return &command{
+		delivery: delivery, event: event, repository: req.repository, installation: p.Installation.ID,
+		number: req.number, head: head, login: req.commander,
+		principal: api.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
+		bound:     bound, name: req.name, cmd: req.cmd,
+		source: "github.com/" + req.repository + "@" + head,
 	}, nil, nil
 }
 
-// resolve leaves a pull request event with no commander, so a plan spends no installation budget.
 func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (string, *outcome, error) {
 	if req.commander == "" {
 		if req.headRepo != req.repository {
@@ -272,8 +264,8 @@ func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (strin
 
 		return req.headSHA, nil, nil
 	}
-	open := func(ctx context.Context) (Repo, error) {
-		return r.cfg.API.Repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
+	open := func(ctx context.Context) (repoView, error) {
+		return r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
 	}
 
 	return authorizer{open: open, allowed: r.allowed}.authorize(ctx, req)

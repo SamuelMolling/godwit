@@ -14,7 +14,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
-	"github.com/SamuelMolling/godwit/internal/githubapp"
 	"github.com/SamuelMolling/godwit/internal/server"
 )
 
@@ -159,15 +158,15 @@ func newServeCmd() *cobra.Command {
 		"serve /ui with no authentication at all, at this scope: read, pipeline, operator or admin (or GODWIT_UI_ANONYMOUS_SCOPE). "+
 			"Anyone who reaches the listener may then do whatever it allows, audited as ui:anonymous; empty keeps /ui behind basic auth")
 	cmd.Flags().StringVar(&githubAddr, "github-webhook-addr", os.Getenv("GODWIT_GITHUB_WEBHOOK_ADDR"),
-		"address for the GitHub App webhook, on its own listener serving "+githubapp.Path+" and nothing else "+
+		"address for the GitHub App webhook, on its own listener serving /github/webhook and nothing else "+
 			"(or GODWIT_GITHUB_WEBHOOK_ADDR); empty leaves the App off")
 	cmd.Flags().StringVar(&githubKeyFile, "github-private-key-file", os.Getenv("GODWIT_GITHUB_PRIVATE_KEY_FILE"),
 		"PEM file holding the GitHub App's private key (or GODWIT_GITHUB_PRIVATE_KEY_FILE, or the key itself in GODWIT_GITHUB_PRIVATE_KEY)")
-	cmd.Flags().DurationVar(&githubMaxAge, "github-webhook-max-age", githubapp.DefaultMaxAge,
+	cmd.Flags().DurationVar(&githubMaxAge, "github-webhook-max-age", time.Hour,
 		"how old a comment or review may be before its delivery is refused as a replay")
-	cmd.Flags().IntVar(&githubMaxBodyBytes, "github-webhook-max-bytes", githubapp.DefaultMaxBodyBytes,
+	cmd.Flags().IntVar(&githubMaxBodyBytes, "github-webhook-max-bytes", 1<<20,
 		"largest delivery body read before the signature is verified")
-	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", githubapp.DefaultAssociations,
+	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		"author associations that may command godwit from a comment: OWNER, MEMBER or COLLABORATOR")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),
 		"scheme://host[:port] origins /ui is reached at; a form post from anywhere else and a request for another host are refused (or GODWIT_UI_ORIGIN)")

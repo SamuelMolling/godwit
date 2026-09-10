@@ -10,7 +10,7 @@ func TestNewRefusesAConfigurationThatCouldNotBeSafe(t *testing.T) {
 	t.Parallel()
 
 	base := func() Config {
-		return Config{Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Log: testLog, Associations: DefaultAssociations}
+		return Config{Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Log: testLog, Associations: defaultAssociations}
 	}
 	for _, tc := range []struct {
 		name string
@@ -48,10 +48,10 @@ func TestNewFillsInTheDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.cfg.MaxBodyBytes != DefaultMaxBodyBytes || r.cfg.MaxAge != DefaultMaxAge {
+	if r.cfg.MaxBodyBytes != defaultMaxBodyBytes || r.cfg.MaxAge != defaultMaxAge {
 		t.Fatalf("limits = %d, %s", r.cfg.MaxBodyBytes, r.cfg.MaxAge)
 	}
-	if _, ok := r.cfg.Runner.(Recorder); !ok {
+	if _, ok := r.cfg.Runner.(recorder); !ok {
 		t.Fatalf("runner = %T, want the recorder that only writes what it would have run", r.cfg.Runner)
 	}
 	if r.cfg.Now().IsZero() {

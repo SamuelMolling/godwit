@@ -22,10 +22,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/SamuelMolling/godwit/internal/controlplane"
-	"github.com/SamuelMolling/godwit/internal/githubapp"
 )
 
 const (
+	webhookPath   = "/github/webhook"
 	webhookSecret = "s3cret"
 	webhookRepo   = "acme/orders"
 	webhookHead   = "1111111111111111111111111111111111111111"
@@ -80,7 +80,7 @@ func startWithWebhook(t *testing.T, storeDSN string, app GitHubApp) string {
 	})
 	select {
 	case addr := <-ready:
-		return "http://" + addr.String() + githubapp.Path
+		return "http://" + addr.String() + webhookPath
 	case <-time.After(15 * time.Second):
 		t.Fatal("the webhook listener never came up")
 	}
@@ -172,7 +172,7 @@ func TestWebhookListenerIsOffByDefault(t *testing.T) {
 	t.Parallel()
 
 	url := startService(t, newDatabase(t, "nowebhook"), "r1", nil)
-	resp, err := http.Get(url + githubapp.Path) //nolint:noctx // a one-line probe of a listener under test
+	resp, err := http.Get(url + webhookPath) //nolint:noctx // a one-line probe of a listener under test
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func (s *fakeStore) GitHubBindings(context.Context) (map[string]string, error) {
 	return s.bindings, s.bindErr
 }
 
-func (s *fakeStore) Transact(ctx context.Context, fn func(Tx) error) error {
+func (s *fakeStore) transact(ctx context.Context, fn func(txn) error) error {
 	if s.txErr != nil {
 		return s.txErr
 	}
@@ -81,13 +81,13 @@ func (s *fakeStore) Audit(_ context.Context, e controlplane.AuditEntry) error {
 type fakeRepo struct {
 	perm       map[string]string
 	permErr    error
-	pull       PullRequest
+	pr         pull
 	pullErr    error
-	reviews    []Review
+	submitted  []review
 	reviewsErr error
 }
 
-func (r *fakeRepo) Permission(_ context.Context, login string) (string, error) {
+func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
 	if r.permErr != nil {
 		return "", r.permErr
 	}
@@ -98,12 +98,12 @@ func (r *fakeRepo) Permission(_ context.Context, login string) (string, error) {
 	return "none", nil
 }
 
-func (r *fakeRepo) PullRequest(context.Context, int) (PullRequest, error) {
-	return r.pull, r.pullErr
+func (r *fakeRepo) pullRequest(context.Context, int) (pull, error) {
+	return r.pr, r.pullErr
 }
 
-func (r *fakeRepo) Reviews(context.Context, int) ([]Review, error) {
-	return r.reviews, r.reviewsErr
+func (r *fakeRepo) reviews(context.Context, int) ([]review, error) {
+	return r.submitted, r.reviewsErr
 }
 
 type fakeAPI struct {
@@ -112,7 +112,7 @@ type fakeAPI struct {
 	scoped []string
 }
 
-func (a *fakeAPI) Repository(_ context.Context, installation, repositoryID int64, repository string) (Repo, error) {
+func (a *fakeAPI) repository(_ context.Context, installation, repositoryID int64, repository string) (repoView, error) {
 	a.scoped = append(a.scoped, fmt.Sprintf("%d/%d/%s", installation, repositoryID, repository))
 	if a.err != nil {
 		return nil, a.err
@@ -132,11 +132,11 @@ type fixture struct {
 }
 
 type fakeRunner struct {
-	got []Command
+	got []command
 	err error
 }
 
-func (r *fakeRunner) Enqueue(_ context.Context, _ Tx, cmd Command) error {
+func (r *fakeRunner) enqueue(_ context.Context, _ txn, cmd command) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -150,7 +150,7 @@ func newFixture(t *testing.T, bindings map[string]string, repo *fakeRepo) *fixtu
 	f := &fixture{store: newStore(bindings), api: &fakeAPI{repo: repo}, runner: &fakeRunner{}}
 	r, err := New(Config{
 		Secret: testSecret, Store: f.store, API: f.api, Runner: f.runner, Log: testLog,
-		Associations: DefaultAssociations,
+		Associations: defaultAssociations,
 		Record:       func(event, result string) { f.counts = append(f.counts, counted{event, result}) },
 		Now:          func() time.Time { return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC) },
 	})
@@ -177,7 +177,7 @@ func (f *fixture) post(t *testing.T, event, delivery, body string) *httptest.Res
 
 func (f *fixture) send(t *testing.T, event, delivery, body, signature string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, Path, stringBody(body))
+	req := httptest.NewRequest(http.MethodPost, webhookPath, stringBody(body))
 	req.Header.Set(eventHeader, event)
 	req.Header.Set(deliveryHeader, delivery)
 	req.Header.Set(signatureHeader, signature)
@@ -237,7 +237,7 @@ func writer(t *testing.T) *fakeRepo {
 
 	return &fakeRepo{
 		perm: map[string]string{"alice": "write", "bob": "admin"},
-		pull: PullRequest{Head: testHead, HeadRepo: testRepo, State: "open", Author: "carol"},
+		pr:   pull{head: testHead, headRepo: testRepo, state: "open", author: "carol"},
 	}
 }
 
