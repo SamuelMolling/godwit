@@ -150,7 +150,7 @@ knob for the path.
 
 ## Amendment — the audience is a constant, `godwit`
 
-Amended in #<PR>. What stands: the token godwit presents is minted for an audience, read inside the
+Amended in #145. What stands: the token godwit presents is minted for an audience, read inside the
 login on every fetch, and `--vault-host` / `GODWIT_VAULT_HOSTS` / `stores.allowedHosts` stay deleted.
 What is withdrawn: that the audience is a **property of a store**, and everything that followed from
 it — `stores.audiences`, `stores.tokenExpirationSeconds`, the `k8s_audience` column, the required
