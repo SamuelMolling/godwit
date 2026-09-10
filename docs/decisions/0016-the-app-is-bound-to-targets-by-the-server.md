@@ -1,6 +1,6 @@
 # 0016 — The GitHub App is bound to its targets by the server, not by the repository
 
-Shipped in #PR — the receiver and its authorisation only. Fetching the migration files, the Check Runs and the report are not built; where this record describes them it says so.
+Shipped in #126 — the receiver and its authorisation only. Fetching the migration files, the Check Runs and the report are not built; where this record describes them it says so.
 
 ## The open question
 
