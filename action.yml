@@ -16,7 +16,7 @@ inputs:
     description: "author_association values whose comment or review may command plan, apply, confirm or revert; it narrows, it does not authorise — the commander must also hold write or admin permission on the repository. Only OWNER, MEMBER and COLLABORATOR are accepted"
     default: OWNER,MEMBER,COLLABORATOR
   require-approval:
-    description: "apply and confirm need an approving review, by someone other than the pull request author who holds write or admin permission, standing on the exact commit being applied"
+    description: "apply and confirm need GitHub to report the pull request as approved, by a reviewer who holds write or admin permission. To make a push withdraw the approval, enable 'Dismiss stale pull request approvals when new commits are pushed' on the branch protection rule"
     default: "true"
   dir:
     description: "Migration directory (default: dir from godwit.yaml, else migrations)"

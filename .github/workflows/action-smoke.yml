@@ -557,8 +557,12 @@ jobs:
           GH_STUB_COMMENT_IDS=42 context; expect rc=1
           grep -qF "api --method DELETE repos/${GITHUB_REPOSITORY}/issues/comments/42" "${GH_STUB_LOG}"
           GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" context; expect rc=0; expect skipped=false
-          GH_STUB_REVIEWS="$(approval APPROVED "${OTHER_SHA}" rev)" context; expect rc=1; says 'no approving review'
-          GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" pr-author)" context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="$(approval APPROVED "${OTHER_SHA}" rev)" context; expect rc=0; expect skipped=false
+          GH_STUB_REVIEWS="$(approval COMMENTED "${HEAD_SHA}" rev)" context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="$(approval CHANGES_REQUESTED "${HEAD_SHA}" rev)" context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="$(approval DISMISSED "${HEAD_SHA}" rev)" context; expect rc=1; says 'no approving review'
+          GH_STUB_REVIEWS="[{\"state\":\"DISMISSED\",\"commit_id\":\"${OTHER_SHA}\",\"user\":{\"login\":\"rev\"}},{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}}]" \
+            context; expect rc=0; expect skipped=false
           GH_STUB_REVIEWS="[{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}},{\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}}]" \
             context; expect rc=1; says 'no approving review'
           GH_STUB_REVIEWS="[{\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}},{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}}]" \

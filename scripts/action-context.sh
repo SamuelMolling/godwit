@@ -161,16 +161,16 @@ approved() {
   if ! reviews="$(gh api --paginate "repos/${REPOSITORY}/pulls/${number}/reviews")"; then
     refuse "${want} refused: could not read the reviews of pull request #${number}"
   fi
-  approver="$(printf '%s' "${reviews}" | jq -r --arg head "${head}" --arg author "${author}" '
+  approver="$(printf '%s' "${reviews}" | jq -r '
     [.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")]
     | group_by(.user.login) | map(last)
-    | map(select(.state == "APPROVED" and .commit_id == $head and .user.login != $author) | .user.login)
+    | map(select(.state == "APPROVED") | .user.login)
     | first // ""')"
   if [ -z "${approver}" ]; then
-    refuse "${want} on pull request #${number} refused: no approving review by anyone other than ${author:-its author} stands on ${head:0:7}; approve that commit and command ${want} again, or set require-approval: \"false\" to apply without one"
+    refuse "${want} on pull request #${number} refused: GitHub reports no approving review standing on it; approve it and command ${want} again, or set require-approval: \"false\" to apply without one"
   fi
   permitted "${approver}" approver
-  echo "godwit: ${head:0:7} is approved by ${approver}"
+  echo "godwit: pull request #${number} is approved by ${approver}"
 }
 wants_on() {
   case ",${APPLY_ON// /}," in
@@ -229,7 +229,6 @@ pr="$(gh api "repos/${REPOSITORY}/pulls/${number}")"
 head="$(printf '%s' "${pr}" | jq -r '.head.sha // ""')"
 state="$(printf '%s' "${pr}" | jq -r .state)"
 merged="$(printf '%s' "${pr}" | jq -r .merged)"
-author="$(printf '%s' "${pr}" | jq -r '.user.login // ""')"
 if ! hex "${head}"; then
   refuse "could not read the head of pull request #${number}"
 fi
