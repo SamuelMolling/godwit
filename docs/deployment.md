@@ -496,6 +496,22 @@ Both are upstream kinds and neither carries an implementation's annotations. The
 
 Nothing publishes godwit for the PreSync and PostSync hooks: those run in the cluster and reach `http://godwit.<namespace>.svc:8474` over the Service. A route exists for the browser UI and for a CLI on somebody's laptop, and a deployment that wants neither can leave both off.
 
+### Publishing the GitHub App webhook
+
+Different question, different answer. The API's route is for people inside; the App's webhook is the one address that has to be reachable from GitHub, and it must publish nothing else.
+
+`serve.githubApp.enabled: true` opens a second listener serving `/github/webhook` and 404, and renders it a Service of its own — `<release>-webhook`, carrying `serve.githubApp.port` and no API port. Give it its own hostname on whatever Gateway faces the internet, one exact path, and a `backendRef` naming that Service:
+
+```yaml
+rules:
+  - matches: [{ path: { type: Exact, value: /github/webhook } }]
+    backendRefs: [{ name: godwit-webhook, port: 8475 }]
+```
+
+Two Services rather than two ports on one is the point: a Service is what a route attaches to, and this one has no API port, so the failure that matters — a public hostname that reaches the API — needs someone to name the other Service, not to mistype a port. [ci/platform-github-app-values.yaml](../deploy/helm/godwit/ci/platform-github-app-values.yaml) is the whole shape, route and NetworkPolicy included.
+
+With `serve.githubApp.enabled: false` (the default) none of it is rendered: no flag, no second container port, no Service. Registering the App itself is [CI/CD](ci-cd.md#registering-the-app).
+
 ### Replicas and the lease
 
 Two replicas is a floor, not a preference. The crash-safety story is a leased scheduler: a replica that dies mid-run loses its lease after `--lease-ttl` (30s) and *another replica* claims the run and resumes it from the journal in the target. With one replica there is no other replica, and the run waits for the pod to come back.

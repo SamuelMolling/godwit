@@ -1,0 +1,108 @@
+# The GitHub App switched on: two listeners, two Services, two hostnames. The API keeps its internal
+# route; the webhook Service is the only thing the public Gateway is pointed at, and it carries no
+# API port, so the public hostname cannot reach the API however the route's port is written.
+replicaCount: 2
+
+image:
+  tag: sha-1a2b3c4
+  pullPolicy: IfNotPresent
+
+existingSecret:
+  name: godwit
+  keys:
+    tokens: GODWIT_TOKENS
+    storeDSN: GODWIT_STORE_DSN
+    scratchDSN: GODWIT_SCRATCH_DSN
+    githubWebhookSecret: GODWIT_GITHUB_WEBHOOK_SECRET
+    githubPrivateKey: github-private-key.pem
+
+serve:
+  scratch:
+    enabled: true
+  ui:
+    enabled: true
+    origins: ["https://godwit.example.internal"]
+  githubApp:
+    enabled: true
+    appId: "1234567"
+    maxAge: 30m
+    allowedAssociations: [OWNER, MEMBER]
+    emojiReaction: rocket
+    service:
+      annotations:
+        cloud.google.com/neg: '{"ingress": true}'
+
+# The App's check runs link back here, so it is what makes `details_url` point at anything.
+notifications:
+  publicUrl: https://godwit.example.internal
+
+# The API's route: internal hostname, internal Gateway, backed by the API Service.
+httpRoute:
+  enabled: true
+  parentRefs:
+    - name: internal
+      namespace: gateway-system
+      sectionName: https
+  hostnames:
+    - godwit.example.internal
+
+serviceMonitor:
+  enabled: true
+
+# The webhook's route is not the API's: another hostname on another Gateway, one exact path, and a
+# backendRef naming the webhook Service. The chart does not model it because the Gateway, the
+# certificate and the listener are the platform's.
+extraObjects:
+  - |
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: {{ include "godwit.fullname" . }}-webhook
+      labels:
+        {{- include "godwit.labels" . | nindent 4 }}
+    spec:
+      parentRefs:
+        - name: public
+          namespace: gateway-system
+          sectionName: https
+      hostnames:
+        - godwit-webhook.example.com
+      rules:
+        - matches:
+            - path: { type: Exact, value: /github/webhook }
+          backendRefs:
+            - name: {{ include "godwit.fullname" . }}-webhook
+              port: {{ .Values.serve.githubApp.service.port }}
+  - |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: {{ include "godwit.fullname" . }}-webhook
+      labels:
+        {{- include "godwit.labels" . | nindent 4 }}
+    spec:
+      podSelector:
+        matchLabels:
+          {{- include "godwit.selectorLabels" . | nindent 6 }}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: gateway-system
+          ports:
+            - port: {{ .Values.serve.githubApp.port }}
+
+# The binding lives on the target, not in the repository: this is what lets acme/orders command
+# godwit against `orders`, and nothing else.
+targets:
+  enabled: true
+  tokenSecret:
+    name: godwit-admin
+    key: GODWIT_ADMIN_TOKEN
+  list:
+    - name: orders
+      provider: kubernetes
+      secretPath: /secrets/orders/dsn
+      requirePlan: true
+      githubRepos: [acme/orders]

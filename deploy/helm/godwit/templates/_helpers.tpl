@@ -90,6 +90,9 @@ args:
   {{- with $t.searchPath }}
   - {{ printf "--search-path=%s" . | quote }}
   {{- end }}
+  {{- range $t.githubRepos }}
+  - {{ printf "--github-repo=%s" . | quote }}
+  {{- end }}
   {{- with $t.lockTimeout }}
   - {{ printf "--lock-timeout=%s" . | quote }}
   {{- end }}

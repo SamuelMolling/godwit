@@ -466,8 +466,29 @@ One App per godwit deployment, registered by the operator — never a shared, pu
 1. **New GitHub App**, under the organisation that owns the repositories. Webhook URL is `https://<host><path>` where the path is `/github/webhook`; set a webhook secret and keep it wherever the master key lives.
 2. **Repository permissions**: `Metadata: read` (the collaborator permission lookup), `Pull requests: **write**` (the pull request and its reviews, the emoji reaction on a command, and the comment saying why godwit did nothing), `Contents: read` (the project file, and the migration files once the App fetches them), `Checks: write` (the report, once the App writes one). Nothing needs `write` on contents, and the App never asks for it: a service that can write to the repository can write the migration it is about to apply.
 3. **Subscribe to** `Issue comment`, `Pull request` and `Pull request review`. Anything else is answered `202` and dropped.
-4. **Generate a private key** and install the App on the repositories that will use it. Installing it grants nothing on its own — see the binding below.
+4. **Generate a private key** and install the App on the repositories that will use it — *Only select repositories*, not all of them. Installing it grants nothing on its own — see the binding below.
 5. Point `--github-webhook-addr` at a port only the tunnel or ingress reaches, and give the service `GODWIT_GITHUB_APP_ID`, `GODWIT_GITHUB_WEBHOOK_SECRET` and the key ([configuration](configuration.md#github-app)). Without `--github-webhook-addr` the listener does not exist.
+
+**Publish that listener on a hostname of its own.** It is the only part of godwit that has to be reachable from GitHub, and it is a second listener rather than a path on the API's so that publishing it publishes nothing else — a route that reaches `/github/webhook` must not be able to reach `/godwit.v1.GodwitService` by changing its path. The Helm chart renders the App its own Service, `<release>-webhook`, carrying the webhook port and nothing else: point the public route at that Service by name and a wrong port number cannot reach the API ([chart README](../deploy/helm/godwit/README.md#the-github-app-listener)).
+
+**The private key goes in as a file**, `--github-private-key-file`, not as `GODWIT_GITHUB_PRIVATE_KEY`. It is multi-line, and unlike a DSN it is the App's whole identity — it mints an installation token for every repository the App is installed on — so it belongs outside the process environment, which a sidecar, a core dump and `kubectl exec -- env` all read. The chart mounts `existingSecret.keys.githubPrivateKey` at `serve.githubApp.privateKeyPath` for exactly this; `GODWIT_GITHUB_PRIVATE_KEY` is there for a local run.
+
+With the chart, steps 5 and 6 are:
+
+```yaml
+existingSecret:
+  keys:
+    githubWebhookSecret: GODWIT_GITHUB_WEBHOOK_SECRET
+    githubPrivateKey: github-private-key.pem
+serve:
+  githubApp:
+    enabled: true
+    appId: "1234567"
+notifications:
+  publicUrl: https://godwit.example.internal   # or the App's links point nowhere
+```
+
+`serve.githubApp.enabled: false` is the default, and off means the listener never binds: no `--github-webhook-addr`, no second container port and no webhook Service in the rendered manifests.
 
 ### Binding a repository to a target
 
@@ -478,6 +499,8 @@ godwit target add orders --provider vault --vault-path database/creds/orders \
   --github-repo acme/orders \
   --github-repo acme/monorepo:services/orders
 ```
+
+The chart's [declarative target registration](../deploy/helm/godwit/README.md#declarative-target-registration) carries the same list as `targets.list[].githubRepos`, which is how a GitOps deployment binds a repository without an operator running the command by hand.
 
 Each entry is `owner/repo`, whose project is the repository root, or `owner/repo:dir`, where `dir` is the directory holding that project's `godwit.yaml`. It is **not** the migration directory — `dir:` inside that file names those, relative to it. `godwit targets` prints the bindings in its `GITHUB` column. `target add` replaces the whole target configuration, so a later `target add` that omits `--github-repo` unbinds it — pass the full list every time.
 

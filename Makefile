@@ -39,6 +39,7 @@ helm-lint:
 	  helm lint $(HELM_CHART) -f $$f || exit 1; \
 	  helm template godwit $(HELM_CHART) -f $$f > /dev/null || exit 1; \
 	done
+	./scripts/helm-assert.sh $(HELM_CHART)
 
 release-snapshot:
 	goreleaser release --snapshot --clean --skip=publish
