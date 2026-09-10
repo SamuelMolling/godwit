@@ -859,8 +859,8 @@ jobs:
           grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=2 to apply -f target_url=${comment}$" "${GH_STUB_LOG}"
           grep -q "^api --method POST ${statuses}failure -f context=godwit/applied -f description=mode apply-on-pr never applies outside the pull request" "${GH_STUB_LOG}"
           grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/plan " "${GH_STUB_LOG}" | grep -qx 6
-          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 35
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 41
+          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 11
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 17
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
           grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews$" "${GH_STUB_LOG}"
