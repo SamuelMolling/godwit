@@ -4,19 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
-	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/authz"
+	"github.com/SamuelMolling/godwit/internal/admission"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
-	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
 var errPlanDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("stored plans are not enabled"))
@@ -25,120 +22,65 @@ var errPlanDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("st
 // with persist the plan is stored together with an observation of the target so a later CreateRun binds to it.
 func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
 	m := req.Msg
-	spec, err := s.upSpec(m.Target, m.Rollout, m.Files)
+	set, err := s.upSet(m.Target, m.Rollout, m.Files)
 	if err != nil {
 		return nil, err
 	}
-	if spec, err = s.stopAt(ctx, m.Target, spec, m.ToVersion); err != nil {
-		return nil, err
+	g := s.gate()
+	if set, err = g.StopAt(ctx, m.Target, set, m.ToVersion); err != nil {
+		return nil, admitErr(err)
 	}
 	if m.Persist && s.Inspector == nil {
 		return nil, errPlanDisabled
 	}
 	var obs controlplane.Observation
 	if m.Persist {
-		if err := s.checkIdle(ctx, m.Target); err != nil {
-			return nil, err
+		if err := g.CheckIdle(ctx, m.Target); err != nil {
+			return nil, admitErr(err)
 		}
 		if obs, err = s.Inspector.Observe(ctx, m.Target); err != nil {
 			return nil, rpcErr(err)
 		}
-		if err := s.checkReconciled(ctx, m.Target, obs); err != nil {
-			return nil, err
+		if err := g.CheckReconciled(ctx, m.Target, obs); err != nil {
+			return nil, admitErr(err)
 		}
 	}
-	adm, err := s.admit(ctx, m.Target, spec.plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder, obs.SearchPath)
+	adm, err := g.Admit(ctx, m.Target, set.Plans, m.AcknowledgeHazards, m.SkipValidation, m.AllowOutOfOrder, obs.SearchPath)
 	if err != nil {
-		return nil, err
+		return nil, admitErr(err)
 	}
-	if err := checkRollout(spec.rollout, adm.expanded(spec)); err != nil {
-		return nil, err
+	if err := admission.CheckRollout(set.Rollout, adm.Expanded(set)); err != nil {
+		return nil, admitErr(err)
 	}
-	migs := controlplane.BuildPlanMigrations(spec.rollout, adm.expanded(spec), adm.applied, adm.expansions)
-	controlplane.AttachChanges(migs, adm.validation)
 	out := &godwitv1.PlanRunResponse{
-		Target: m.Target, Rollout: spec.rollout, Validated: adm.validated,
-		Migrations: migrationsToProto(withWithheld(migs, spec, adm.applied)),
+		Target: m.Target, Rollout: set.Rollout, Validated: adm.Validated,
+		Migrations: migrationsToProto(adm.Migrations(set)),
 	}
 	if !m.Persist {
-		s.Log.Info("run planned", "target", m.Target, "rollout", spec.rollout, "files", len(spec.files),
-			"acked", m.AcknowledgeHazards, "validated", adm.validated, "allow_out_of_order", m.AllowOutOfOrder,
-			"to_version", m.ToVersion, "withheld", len(spec.withheld))
+		s.Log.Info("run planned", "target", m.Target, "rollout", set.Rollout, "files", len(set.Files),
+			"acked", m.AcknowledgeHazards, "validated", adm.Validated, "allow_out_of_order", m.AllowOutOfOrder,
+			"to_version", m.ToVersion, "withheld", len(set.Withheld))
 
 		return connect.NewResponse(out), nil
 	}
-	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied, obs.Repeatables)
+	p, pending, err := g.Save(ctx, planRequest(m), set, adm, obs)
 	if err != nil {
-		return nil, invalid(err.Error())
+		return nil, admitErr(err)
 	}
-	p := controlplane.Plan{
-		ID: s.newID(), Target: m.Target, Key: controlplane.PlanKey(m.Target, spec.rollout, pending), Rollout: spec.rollout,
-		Validated: adm.validated, Acked: m.AcknowledgeHazards, AllowOutOfOrder: m.AllowOutOfOrder,
-		CreatedBy: authz.Actor(ctx), Source: m.Source, Expansions: adm.expansions,
-	}
-	var detected bool
-	if p.Migrations, p.Drift, detected = planMigrations(spec, adm, obs); !detected {
-		if p.Drift, err = s.driftSince(ctx, m.Target, obs); err != nil {
-			return nil, rpcErr(err)
-		}
-	}
-	p = observed(p, obs)
 	out.Migrations = migrationsToProto(p.Migrations)
-	if err := s.store.SavePlan(ctx, p, spec.files); err != nil {
-		return nil, rpcErr(err)
-	}
-	s.Log.Info("plan stored", "plan", p.ID, "key", p.Key, "target", m.Target, "rollout", spec.rollout, "pending", len(pending),
-		"acked", m.AcknowledgeHazards, "validated", adm.validated, "source", m.Source)
 	s.audit(ctx, controlplane.AuditPlanCreate, "", m.Target,
-		fmt.Sprintf("plan=%s key=%s rollout=%s pending=%d acked=%s source=%s", p.ID, p.Key, spec.rollout, len(pending),
+		fmt.Sprintf("plan=%s key=%s rollout=%s pending=%d acked=%s source=%s", p.ID, p.Key, set.Rollout, pending,
 			strings.Join(m.AcknowledgeHazards, ","), m.Source))
 	out.PlanId, out.PlanKey, out.Drift, out.Observed = p.ID, p.Key, p.Drift, observationToProto(obs)
 
 	return connect.NewResponse(out), nil
 }
 
-func observed(p controlplane.Plan, obs controlplane.Observation) controlplane.Plan {
-	p.HistoryHash, p.Applied, p.Repeatables = obs.HistoryHash(), obs.Applied, obs.Repeatables
-	p.SchemaFingerprint, p.SchemaDefinition = obs.Fingerprint, obs.Definition
-	p.SearchPath = obs.SearchPath
-
-	return p
-}
-
-func planMigrations(spec runSpec, adm admission, obs controlplane.Observation) (migs []controlplane.PlanMigration, drift string, detected bool) {
-	plans := adm.expanded(spec)
-	migs = controlplane.BuildPlanMigrations(spec.rollout, plans, adm.applied, adm.expansions)
-	controlplane.AttachChanges(migs, adm.validation)
-	if adm.validation == nil {
-		return withWithheld(migs, spec, adm.applied), "", false
+func planRequest(m *godwitv1.PlanRunRequest) admission.Request {
+	return admission.Request{
+		Target: m.Target, Source: m.Source, Acked: m.AcknowledgeHazards,
+		SkipValidation: m.SkipValidation, AllowOutOfOrder: m.AllowOutOfOrder,
 	}
-	drift = controlplane.Detect(migs, plans, *adm.validation, obs)
-
-	return withWithheld(migs, spec, adm.applied), drift, true
-}
-
-func (s *Server) driftSince(ctx context.Context, target string, obs controlplane.Observation) (string, error) {
-	snap, err := s.store.SnapshotFor(ctx, target)
-	if errors.Is(err, controlplane.ErrNotFound) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if snap.Fingerprint == obs.Fingerprint || !engine.SameFormat(snap.Definition) {
-		return "", nil
-	}
-
-	return strings.Join(engine.DiffSchemas(snap.Definition, obs.Definition), "\n"), nil
-}
-
-func migrations(plans []engine.Plan) []engine.Migration {
-	out := make([]engine.Migration, 0, len(plans))
-	for _, p := range plans {
-		out = append(out, p.Migration)
-	}
-
-	return out
 }
 
 func migrationsToProto(migs []controlplane.PlanMigration) []*godwitv1.PlannedMigration {
@@ -206,258 +148,6 @@ func observationToProto(obs controlplane.Observation) *godwitv1.PlanObservation 
 	return out
 }
 
-type binding struct {
-	planID          string
-	expansions      map[string]controlplane.Expansion
-	searchPath      string
-	acked           []string
-	allowOutOfOrder bool
-	superseded      string
-	reattached      string
-	adm             *admission
-}
-
-func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec runSpec) (binding, error) {
-	b := binding{acked: m.AcknowledgeHazards, allowOutOfOrder: m.AllowOutOfOrder}
-	if s.Inspector == nil {
-		return b, nil
-	}
-	obs, err := s.Inspector.Observe(ctx, m.Target)
-	if err != nil {
-		return b, rpcErr(err)
-	}
-	b.searchPath = obs.SearchPath
-	if err := s.checkIdle(ctx, m.Target); err != nil {
-		return b, err
-	}
-	if run, ok, err := s.reattach(ctx, m, spec, obs); err != nil || ok {
-		b.reattached, b.planID = run.ID, run.PlanID
-
-		return b, err
-	}
-	pending, err := controlplane.Pending(migrations(spec.plans), obs.Applied, obs.Repeatables)
-	if err != nil {
-		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{Plan: controlplane.Plan{Target: m.Target}, Reason: controlplane.StaleContent, Hint: err.Error()})
-	}
-	plan, err := s.lookup(ctx, m, spec, pending)
-	if err != nil {
-		return b, err
-	}
-	// A stored plan accounts for the target's history itself: what it cannot explain is refused as stale below.
-	if plan.ID == "" {
-		return b, s.checkReconciled(ctx, m.Target, obs)
-	}
-	b.planID, b.expansions = plan.ID, plan.Expansions
-	b.acked = union(plan.Acked, m.AcknowledgeHazards)
-	b.allowOutOfOrder = plan.AllowOutOfOrder || m.AllowOutOfOrder
-	if plan.HistoryHash == obs.HistoryHash() && plan.SchemaFingerprint == obs.Fingerprint && !plan.PathMoved(obs) {
-		return b, nil
-	}
-	d, err := s.attribute(ctx, plan, obs)
-	if err != nil {
-		return b, rpcErr(err)
-	}
-	baseline, err := s.baselineFingerprint(ctx, m.Target)
-	if err != nil {
-		return b, rpcErr(err)
-	}
-	if !d.Explained(baseline, obs.Fingerprint) {
-		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{Plan: plan, Reason: d.Reason(), Diff: d, Hint: staleHint(d.Reason(), m.Target)})
-	}
-	adm, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, obs.SearchPath)
-	if err != nil {
-		return b, s.replanFailure(ctx, plan, d, err)
-	}
-	next := observed(plan, obs)
-	next.ID, next.CreatedBy, next.Source, next.Validated = s.newID(), authz.Actor(ctx), m.Source, adm.validated
-	next.Expansions = adm.expansions
-	migs, drift, detected := planMigrations(spec, adm, obs)
-	next.Migrations = migs
-	if detected {
-		next.Drift = drift
-	}
-	if !controlplane.SameStatements(plan.Pending(), next.Pending()) {
-		return b, s.refuse(ctx, m.Target, &controlplane.PlanStale{
-			Plan: plan, Reason: controlplane.StaleHistory, Diff: d, Hint: "statements changed after re-plan; push to the pull request (re-plan)",
-		})
-	}
-	if err := s.store.SupersedePlan(ctx, plan.ID, next, spec.files); err != nil {
-		return b, rpcErr(err)
-	}
-	s.Log.Info("plan superseded", "plan", plan.ID, "by", next.ID, "target", m.Target, "history_added", len(d.Added))
-	s.audit(ctx, controlplane.AuditPlanSupersede, "", m.Target, fmt.Sprintf("plan=%s by=%s key=%s", plan.ID, next.ID, plan.Key))
-	b.planID, b.superseded, b.adm, b.expansions = next.ID, plan.ID, &adm, adm.expansions
-
-	return b, nil
-}
-
-var errUnreconciled = errors.New("target records migrations the ledger does not")
-
-// checkReconciled refuses to plan against a target whose own journal is ahead of the control plane's
-// ledger. The journal is what says a migration is applied; the ledger is the control plane's copy of it,
-// and it is what the order guard and the scratch replay read. Planning over a ledger that cannot see an
-// out-of-band apply plans against a history the target does not have.
-func (s *Server) checkReconciled(ctx context.Context, target string, obs controlplane.Observation) error {
-	applied, err := s.store.Applied(ctx, target)
-	if err != nil {
-		return rpcErr(err)
-	}
-	missing := controlplane.Unreconciled(obs, applied)
-	if len(missing) == 0 {
-		return nil
-	}
-	refusal := fmt.Errorf("%w: %s records %s; run `godwit target adopt %s --from-journal --dir <migrations>` to adopt what it already has",
-		errUnreconciled, target, strings.Join(missing, ", "), target)
-	s.Log.Warn("run refused by the reconcile gate", "target", target, "missing", missing)
-
-	return connect.NewError(connect.CodeFailedPrecondition, refusal)
-}
-
-func (s *Server) observedSearchPath(ctx context.Context, target string) (string, error) {
-	if s.Inspector == nil {
-		return "", nil
-	}
-	obs, err := s.Inspector.Observe(ctx, target)
-	if err != nil {
-		return "", rpcErr(err)
-	}
-
-	return obs.SearchPath, nil
-}
-
-func (b binding) detail() string {
-	switch {
-	case b.superseded != "":
-		return join(fmt.Sprintf("plan %s superseded by %s", notify.ShortID(b.superseded), notify.ShortID(b.planID)), b.expanded())
-	case b.planID != "":
-		return join("plan "+notify.ShortID(b.planID), b.expanded())
-	default:
-		return b.expanded()
-	}
-}
-
-func join(a, b string) string {
-	if b == "" {
-		return a
-	}
-
-	return a + ", " + b
-}
-
-// expanded names what godwit generated for this run, so an implicit run without a stored plan still
-// leaves the expansion in the audit trail and the notification.
-func (b binding) expanded() string {
-	ids := make([]string, 0, len(b.expansions))
-	for id, e := range b.expansions {
-		ids = append(ids, id+" "+notify.ShortID(e.Hash))
-	}
-	if len(ids) == 0 {
-		return ""
-	}
-	slices.Sort(ids)
-
-	return "expands " + strings.Join(ids, ", ")
-}
-
-func (s *Server) planSince() time.Time {
-	if s.PlanTTL <= 0 {
-		return time.Time{}
-	}
-
-	return time.Now().Add(-s.PlanTTL)
-}
-
-func (s *Server) noPlan(ctx context.Context, target, key string, pending []engine.Migration) error {
-	required, err := s.requiresPlan(ctx, target)
-	if err != nil {
-		return rpcErr(err)
-	}
-	if !required {
-		return nil
-	}
-	nearest, err := s.store.ListPlans(ctx, target, 3)
-	if err != nil {
-		return rpcErr(err)
-	}
-
-	return s.refuse(ctx, target, &controlplane.PlanRequired{Target: target, Key: key, Pending: pending, Nearest: nearest})
-}
-
-func (s *Server) requiresPlan(ctx context.Context, target string) (bool, error) {
-	_, config, err := s.store.Target(ctx, target)
-	if err != nil {
-		return false, err
-	}
-
-	return s.RequirePlan || config[controlplane.ConfigRequirePlan] == "true", nil
-}
-
-func (s *Server) attribute(ctx context.Context, plan controlplane.Plan, obs controlplane.Observation) (controlplane.PlanDiff, error) {
-	d := controlplane.StaleDiff(plan, obs)
-	if len(d.Added) == 0 {
-		return d, nil
-	}
-	runs, err := s.store.RunsApplying(ctx, plan.Target, plan.CreatedAt)
-	if err != nil {
-		return d, err
-	}
-	for i := range d.Added {
-		d.Added[i].RunID = runs[d.Added[i].String()]
-	}
-
-	return d, nil
-}
-
-func (s *Server) baselineFingerprint(ctx context.Context, target string) (string, error) {
-	snap, err := s.store.SnapshotFor(ctx, target)
-	if errors.Is(err, controlplane.ErrNotFound) {
-		return "", nil
-	}
-
-	return snap.Fingerprint, err
-}
-
-func (s *Server) replanFailure(ctx context.Context, plan controlplane.Plan, d controlplane.PlanDiff, err error) error {
-	stale := &controlplane.PlanStale{Plan: plan, Diff: d}
-	switch {
-	case errors.Is(err, errOutOfOrder):
-		stale.Reason, stale.Hint = controlplane.StaleOrder, "pass allow_out_of_order or renumber the migration above the newest applied version"
-	case errors.Is(err, controlplane.ErrValidationFailed):
-		stale.Reason, stale.Hint = controlplane.StaleValidation, "the set no longer validates on the target's history: "+errMessage(err)
-	default:
-		return err
-	}
-
-	return s.refuse(ctx, plan.Target, stale)
-}
-
-func errMessage(err error) string {
-	var cerr *connect.Error
-	if errors.As(err, &cerr) {
-		return cerr.Message()
-	}
-
-	return err.Error()
-}
-
-func staleHint(reason, target string) string {
-	if reason == controlplane.StaleSchema {
-		return fmt.Sprintf("push to the pull request (re-plan) or `godwit drift accept %s` if the schema changes are intended", target)
-	}
-
-	return "push to the pull request (re-plan) after checking who changed godwit.migrations on " + target
-}
-
-func (s *Server) refuse(ctx context.Context, target string, reason error) error {
-	s.Log.Warn("run refused by plan contract", "target", target, "actor", authz.Actor(ctx), "error", reason.Error())
-	cerr := connect.NewError(connect.CodeFailedPrecondition, reason)
-	if detail, err := connect.NewErrorDetail(planDetail(reason)); err == nil {
-		cerr.AddDetail(detail)
-	}
-
-	return cerr
-}
-
 func planDetail(reason error) proto.Message {
 	var stale *controlplane.PlanStale
 	if errors.As(reason, &stale) {
@@ -476,17 +166,6 @@ func planDetail(reason error) proto.Message {
 	out := &godwitv1.PlanRequired{Target: required.Target, Key: required.Key, FilesDiff: required.FilesDiff()}
 	for _, p := range required.Nearest {
 		out.NearestPlanIds = append(out.NearestPlanIds, p.ID)
-	}
-
-	return out
-}
-
-func union(a, b []string) []string {
-	out := slices.Clone(a)
-	for _, s := range b {
-		if !slices.Contains(out, s) {
-			out = append(out, s)
-		}
 	}
 
 	return out

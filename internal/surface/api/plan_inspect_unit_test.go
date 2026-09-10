@@ -32,11 +32,15 @@ func expectPlanByID(mock pgxmock.PgxPoolIface, row storedPlanRow) {
 
 func readyRow(t *testing.T) storedPlanRow {
 	t.Helper()
-	spec, err := (&Server{}).upSpec("app", "", planFiles())
+	set, err := (&Server{}).upSet("app", "", planFiles())
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := controlplane.Pending(migrations(spec.plans), nil, nil)
+	migs := make([]engine.Migration, 0, len(set.Plans))
+	for _, p := range set.Plans {
+		migs = append(migs, p.Migration)
+	}
+	pending, err := controlplane.Pending(migs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

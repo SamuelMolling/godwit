@@ -35,7 +35,7 @@ func (s *Server) GetTargetStatus(ctx context.Context, req *connect.Request[godwi
 	if err != nil {
 		return nil, rpcErr(err)
 	}
-	ready, err := s.store.ReadyPlanCount(ctx, m.Target, s.planSince())
+	ready, err := s.store.ReadyPlanCount(ctx, m.Target, s.gate().PlanSince())
 	if err != nil {
 		return nil, rpcErr(err)
 	}
@@ -48,7 +48,7 @@ func (s *Server) GetTargetStatus(ctx context.Context, req *connect.Request[godwi
 // ListTargets summarises every registered target from the control plane alone: its settings, what it has applied,
 // its last run, open drift and the plans still bindable on it.
 func (s *Server) ListTargets(ctx context.Context, _ *connect.Request[godwitv1.ListTargetsRequest]) (*connect.Response[godwitv1.ListTargetsResponse], error) {
-	targets, err := s.store.ListTargets(ctx, s.planSince())
+	targets, err := s.store.ListTargets(ctx, s.gate().PlanSince())
 	if err != nil {
 		return nil, rpcErr(err)
 	}
