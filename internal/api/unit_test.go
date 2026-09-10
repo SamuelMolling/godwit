@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +16,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
@@ -50,120 +50,39 @@ func TestAuthActor(t *testing.T) {
 	if p, ok := newAuth(nil).actor(""); !ok || p != anonymousAdmin {
 		t.Fatalf("empty token set = %+v %v, want anonymous admin", p, ok)
 	}
-	locked := newAuth([]Token{{Name: "ci", Scope: ScopePipeline, Secret: "t1"}})
+	locked := newAuth([]authz.Token{{Name: "ci", Scope: authz.ScopePipeline, Secret: "t1"}})
 	for _, h := range []string{"", "Bearer nope", "t1"} {
 		if _, ok := locked.actor(h); ok {
 			t.Fatalf("header %q must be rejected", h)
 		}
 	}
-	if p, ok := locked.actor("Bearer t1"); !ok || p != (Principal{Name: "ci", Scope: ScopePipeline}) {
+	if p, ok := locked.actor("Bearer t1"); !ok || p != (authz.Principal{Name: "ci", Scope: authz.ScopePipeline}) {
 		t.Fatalf("valid token = %+v %v, want ci/pipeline", p, ok)
-	}
-	if Actor(context.Background()) != AnonymousActor || Caller(context.Background()) != (Principal{}) {
-		t.Fatal("bare context must carry no scope and be named anonymous")
-	}
-	if err := Authorize(godwitv1connect.GodwitServiceListRunsProcedure, Caller(context.Background())); err == nil {
-		t.Fatal("a context without a principal must be refused")
-	}
-}
-
-func TestParseTokens(t *testing.T) {
-	t.Parallel()
-
-	got, err := ParseTokens([]string{"s3", "bot:read:s4", "deploy:pipeline:s5", "ops:operator:s6", "root:admin:s7", "ci:admin:s8:with:colons"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []Token{
-		{Name: AnonymousActor, Scope: ScopeAdmin, Secret: "s3"},
-		{Name: "bot", Scope: ScopeRead, Secret: "s4"},
-		{Name: "deploy", Scope: ScopePipeline, Secret: "s5"},
-		{Name: "ops", Scope: ScopeOperator, Secret: "s6"},
-		{Name: "root", Scope: ScopeAdmin, Secret: "s7"},
-		{Name: "ci", Scope: ScopeAdmin, Secret: "s8:with:colons"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("tokens = %+v, want %+v", got, want)
-	}
-	for _, specs := range [][]string{{""}, {":s"}, {"ci:"}, {"ci:read:"}, {"ci:admin:same", "ops:admin:same"}, {"ci:root:same"}, {"ci::same"}} {
-		_, err := ParseTokens(specs)
-		if err == nil || strings.Contains(err.Error(), "same") {
-			t.Fatalf("ParseTokens(%q) = %v, want an error without the secret", specs, err)
-		}
-	}
-	if _, err := ParseTokens([]string{"ci:root:s"}); err == nil || !strings.Contains(err.Error(), `unknown scope "root"`) {
-		t.Fatalf("unknown scope: %v", err)
-	}
-}
-
-// The two-field form used to mean an admin token whose secret was the second field, so
-// GODWIT_TOKENS=deploy:pipeline silently granted admin. It is refused, and the refusal names no secret.
-func TestParseTokensRefusesTwoFields(t *testing.T) {
-	t.Parallel()
-
-	_, err := ParseTokens([]string{"deploy:pipeline"})
-	if err == nil || !strings.Contains(err.Error(), "two fields") || !strings.Contains(err.Error(), "name:scope:secret") {
-		t.Fatalf("two-field spec = %v", err)
-	}
-	if strings.Contains(err.Error(), "pipeline") {
-		t.Fatalf("the refusal must not echo the second field: %v", err)
-	}
-}
-
-func TestScopeTableCoversEveryProcedure(t *testing.T) {
-	t.Parallel()
-
-	svc := godwitv1.File_godwit_v1_godwit_proto.Services().ByName("GodwitService")
-	methods := svc.Methods()
-	if methods.Len() != len(procedureScopes) {
-		t.Fatalf("scope table has %d procedures, service has %d", len(procedureScopes), methods.Len())
-	}
-	for i := range methods.Len() {
-		procedure := "/" + string(svc.FullName()) + "/" + string(methods.Get(i).Name())
-		if _, ok := procedureScopes[procedure]; !ok {
-			t.Fatalf("%s has no scope in the auth table", procedure)
-		}
-	}
-}
-
-func TestScopeAllows(t *testing.T) {
-	t.Parallel()
-
-	ordered := []Scope{ScopeRead, ScopePipeline, ScopeOperator, ScopeAdmin}
-	for i, have := range ordered {
-		for j, need := range ordered {
-			if have.allows(need) != (i >= j) {
-				t.Fatalf("%s.allows(%s) = %v", have, need, i >= j)
-			}
-		}
-		if have.allows("") || have.allows("root") {
-			t.Fatalf("%s must not allow an unknown scope", have)
-		}
 	}
 }
 
 func TestAuthorizeByScope(t *testing.T) {
 	t.Parallel()
 
-	a := newAuth([]Token{
-		{Name: "bot", Scope: ScopeRead, Secret: "r"},
-		{Name: "deploy", Scope: ScopePipeline, Secret: "p"},
-		{Name: "ops", Scope: ScopeOperator, Secret: "o"},
-		{Name: "root", Scope: ScopeAdmin, Secret: "a"},
+	a := newAuth([]authz.Token{
+		{Name: "bot", Scope: authz.ScopeRead, Secret: "r"},
+		{Name: "deploy", Scope: authz.ScopePipeline, Secret: "p"},
+		{Name: "ops", Scope: authz.ScopeOperator, Secret: "o"},
+		{Name: "root", Scope: authz.ScopeAdmin, Secret: "a"},
 	})
-	allowed := map[string][]Scope{
-		godwitv1connect.GodwitServiceListRunsProcedure:       {ScopeRead, ScopePipeline, ScopeOperator, ScopeAdmin},
-		godwitv1connect.GodwitServiceCreateRunProcedure:      {ScopePipeline, ScopeOperator, ScopeAdmin},
-		godwitv1connect.GodwitServiceResumeRunProcedure:      {ScopeOperator, ScopeAdmin},
-		godwitv1connect.GodwitServiceRegisterTargetProcedure: {ScopeAdmin},
+	allowed := map[string][]authz.Scope{
+		godwitv1connect.GodwitServiceListRunsProcedure:       {authz.ScopeRead, authz.ScopePipeline, authz.ScopeOperator, authz.ScopeAdmin},
+		godwitv1connect.GodwitServiceCreateRunProcedure:      {authz.ScopePipeline, authz.ScopeOperator, authz.ScopeAdmin},
+		godwitv1connect.GodwitServiceResumeRunProcedure:      {authz.ScopeOperator, authz.ScopeAdmin},
+		godwitv1connect.GodwitServiceRegisterTargetProcedure: {authz.ScopeAdmin},
 		"/godwit.v1.GodwitService/Unlisted":                  {},
 	}
 	for procedure, scopes := range allowed {
-		for secret, scope := range map[string]Scope{"r": ScopeRead, "p": ScopePipeline, "o": ScopeOperator, "a": ScopeAdmin} {
+		for secret, scope := range map[string]authz.Scope{"r": authz.ScopeRead, "p": authz.ScopePipeline, "o": authz.ScopeOperator, "a": authz.ScopeAdmin} {
 			ctx, err := a.authorize(context.Background(), procedure, "Bearer "+secret)
 			if slices.Contains(scopes, scope) {
-				if err != nil || Caller(ctx).Scope != scope {
-					t.Fatalf("%s with %s: err = %v, caller = %+v", procedure, scope, err, Caller(ctx))
+				if err != nil || authz.Caller(ctx).Scope != scope {
+					t.Fatalf("%s with %s: err = %v, caller = %+v", procedure, scope, err, authz.Caller(ctx))
 				}
 
 				continue
@@ -171,8 +90,8 @@ func TestAuthorizeByScope(t *testing.T) {
 			if connect.CodeOf(err) != connect.CodePermissionDenied {
 				t.Fatalf("%s with %s: err = %v, want permission denied", procedure, scope, err)
 			}
-			if Caller(ctx) != (Principal{}) {
-				t.Fatalf("denied call must not carry the principal: %+v", Caller(ctx))
+			if authz.Caller(ctx) != (authz.Principal{}) {
+				t.Fatalf("denied call must not carry the principal: %+v", authz.Caller(ctx))
 			}
 		}
 	}
@@ -188,7 +107,7 @@ func TestAuthorizeByScope(t *testing.T) {
 func TestAuthInterceptorDenies(t *testing.T) {
 	t.Parallel()
 
-	a := newAuth([]Token{{Name: "bot", Scope: ScopeRead, Secret: "r"}})
+	a := newAuth([]authz.Token{{Name: "bot", Scope: authz.ScopeRead, Secret: "r"}})
 	unary := a.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
 		t.Fatal("handler must not run")
 
@@ -327,7 +246,7 @@ func TestHealthAndReadiness(t *testing.T) {
 
 		return rec
 	}
-	up := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return nil }}, []Token{{Name: "ops", Secret: "secret"}})
+	up := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return nil }}, []authz.Token{{Name: "ops", Secret: "secret"}})
 	down := Handler(&Server{Metrics: metrics.New(), ready: func(context.Context) error { return errors.New("boom") }}, nil)
 
 	if rec := get(up, "/healthz"); rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
@@ -360,7 +279,7 @@ func TestWatchRunCancelledWhileSleeping(t *testing.T) {
 	mock.ExpectQuery("SELECT id, seq, target, state").WithArgs("r1").
 		WillReturnRows(pgxmock.NewRows(
 			[]string{"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
-			AddRow("r1", int64(1), "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", "", 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
+			AddRow("r1", int64(1), "app", controlplane.StateRunning, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), authz.AnonymousActor, "", "", 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
 
 	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	s.watchInterval = time.Hour
@@ -585,7 +504,7 @@ func TestCreateRunInternalErrors(t *testing.T) {
 	mock.ExpectQuery("SELECT DISTINCT left").WithArgs("app").WillReturnRows(pgxmock.NewRows([]string{"version"}))
 	expectNoRepeatables(mock)
 	mock.ExpectBegin()
-	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "", AnonymousActor, "", "", pgxmock.AnyArg()).WillReturnError(errors.New("insert down"))
+	mock.ExpectExec("WITH r AS \\(INSERT INTO cp_runs").WithArgs(pgxmock.AnyArg(), "app", pgxmock.AnyArg(), pgxmock.AnyArg(), controlplane.RolloutDirect, "", "", authz.AnonymousActor, "", "", pgxmock.AnyArg()).WillReturnError(errors.New("insert down"))
 	mock.ExpectRollback()
 	s = NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 	if _, err := s.CreateRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal {

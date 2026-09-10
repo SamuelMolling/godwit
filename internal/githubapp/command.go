@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/comment"
 )
 
 // scopes hold nothing above pipeline, so no webhook can reach the RPC that binds a repository to a target.
-var scopes = map[string]api.Scope{
-	"plan":    api.ScopeRead,
-	"apply":   api.ScopePipeline,
-	"confirm": api.ScopePipeline,
-	"revert":  api.ScopePipeline,
+var scopes = map[string]authz.Scope{
+	"plan":    authz.ScopeRead,
+	"apply":   authz.ScopePipeline,
+	"confirm": authz.ScopePipeline,
+	"revert":  authz.ScopePipeline,
 }
 
 type command struct {
@@ -26,7 +26,7 @@ type command struct {
 	number       int
 	head         string
 	login        string
-	principal    api.Principal
+	principal    authz.Principal
 	bound        bindings
 	name         string
 	cmd          *comment.Command

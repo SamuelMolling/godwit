@@ -12,7 +12,7 @@ func TestNewRefusesAConfigurationThatCouldNotBeSafe(t *testing.T) {
 	base := func() Config {
 		return Config{
 			Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Runner: &fakeRunner{},
-			Log: testLog, Associations: defaultAssociations,
+			Log: testLog, Associations: []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		}
 	}
 	for _, tc := range []struct {
@@ -59,21 +59,6 @@ func TestNewFillsInTheDefaults(t *testing.T) {
 		t.Fatal("Now returned the zero time")
 	}
 	r.cfg.Record("push", "ignored")
-	if !r.allowed["MEMBER"] || r.allowed["NONE"] {
-		t.Fatalf("allowed = %v", r.allowed)
-	}
-}
-
-func TestAssociationsAreReadCaseInsensitively(t *testing.T) {
-	t.Parallel()
-
-	allowed, err := parseAssociations([]string{" owner ", "MEMBER"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !allowed["OWNER"] || !allowed["MEMBER"] || len(allowed) != 2 {
-		t.Fatalf("allowed = %v", allowed)
-	}
 }
 
 func TestShortAndOrNone(t *testing.T) {

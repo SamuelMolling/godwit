@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
 const (
@@ -36,8 +38,8 @@ type repoView interface {
 	startCheck(ctx context.Context, c checkRun) (int64, error)
 	endCheck(ctx context.Context, id int64, c checkRun) error
 	permission(ctx context.Context, login string) (string, error)
-	pullRequest(ctx context.Context, number int) (pull, error)
-	reviews(ctx context.Context, number int) ([]review, bool, error)
+	pullRequest(ctx context.Context, number int) (authz.PullRequest, error)
+	reviews(ctx context.Context, number int) ([]authz.Review, bool, error)
 	changed(ctx context.Context, number int) (listing, error)
 	file(ctx context.Context, path, ref string) ([]byte, error)
 	directory(ctx context.Context, path, ref string) (contents, error)
@@ -46,21 +48,6 @@ type repoView interface {
 
 type forge interface {
 	repository(ctx context.Context, installation, repositoryID int64, repository string) (repoView, error)
-}
-
-type pull struct {
-	head     string
-	headRepo string
-	state    string
-	merged   bool
-	author   string
-	// files is what GitHub says the pull request changes, which is how a truncated listing is caught.
-	files int
-}
-
-type review struct {
-	login string
-	state string
 }
 
 // Client authenticates as the App: a JWT to mint an installation token, and that token for everything else.
@@ -122,10 +109,7 @@ type pullBody struct {
 	State        string `json:"state"`
 	Merged       bool   `json:"merged"`
 	ChangedFiles int    `json:"changed_files"`
-	User         struct {
-		Login string `json:"login"`
-	} `json:"user"`
-	Head struct {
+	Head         struct {
 		SHA  string `json:"sha"`
 		Repo struct {
 			FullName string `json:"full_name"`
@@ -133,15 +117,15 @@ type pullBody struct {
 	} `json:"head"`
 }
 
-func (r *repoClient) pullRequest(ctx context.Context, number int) (pull, error) {
+func (r *repoClient) pullRequest(ctx context.Context, number int) (authz.PullRequest, error) {
 	var out pullBody
 	if _, err := r.client.call(ctx, http.MethodGet, r.url("/pulls/"+strconv.Itoa(number)), r.token, nil, &out); err != nil {
-		return pull{}, err
+		return authz.PullRequest{}, err
 	}
 
-	return pull{
-		head: out.Head.SHA, headRepo: out.Head.Repo.FullName,
-		state: out.State, merged: out.Merged, author: out.User.Login, files: out.ChangedFiles,
+	return authz.PullRequest{
+		Head: out.Head.SHA, HeadRepo: out.Head.Repo.FullName,
+		State: out.State, Merged: out.Merged, Files: out.ChangedFiles,
 	}, nil
 }
 
@@ -153,9 +137,9 @@ type reviewBody struct {
 }
 
 // reviews reports whether it read all of them: GitHub lists oldest first, so a short read drops the dismissals.
-func (r *repoClient) reviews(ctx context.Context, number int) ([]review, bool, error) {
+func (r *repoClient) reviews(ctx context.Context, number int) ([]authz.Review, bool, error) {
 	url := r.url("/pulls/" + strconv.Itoa(number) + "/reviews?per_page=100")
-	var all []review
+	var all []authz.Review
 	for url != "" {
 		var page []reviewBody
 		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
@@ -163,7 +147,7 @@ func (r *repoClient) reviews(ctx context.Context, number int) ([]review, bool, e
 			return nil, false, err
 		}
 		for _, p := range page {
-			all = append(all, review{login: p.User.Login, state: p.State})
+			all = append(all, authz.Review{Login: p.User.Login, State: p.State})
 		}
 		if len(all) >= reviewsCap {
 			return nil, false, nil

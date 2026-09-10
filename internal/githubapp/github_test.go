@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
 var testKey = mustKey()
@@ -179,7 +181,7 @@ func TestPullRequestRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := pull{head: testHead, headRepo: testRepo, state: "open", merged: true, author: "carol"}
+	want := authz.PullRequest{Head: testHead, HeadRepo: testRepo, State: "open", Merged: true}
 	if pr != want {
 		t.Fatalf("PullRequest = %+v, want %+v", pr, want)
 	}
@@ -216,7 +218,7 @@ func TestReviewsFollowThePages(t *testing.T) {
 	if err != nil || !whole {
 		t.Fatalf("reviews = %t, %v", whole, err)
 	}
-	if len(reviews) != 2 || reviews[1].state != "APPROVED" || reviews[1].login != "bob" {
+	if len(reviews) != 2 || reviews[1].State != "APPROVED" || reviews[1].Login != "bob" {
 		t.Fatalf("reviews = %+v", reviews)
 	}
 }

@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
 func repoWith(t *testing.T, touched []string, files map[string]string) *fakeRepo {
 	t.Helper()
 	repo := writer(t)
 	repo.touched, repo.files = touched, files
-	repo.submitted = []review{{login: "bob", state: "APPROVED"}}
+	repo.submitted = []authz.Review{{Login: "bob", State: "APPROVED"}}
 
 	return repo
 }
@@ -381,7 +383,7 @@ func TestTruncationIsCaughtFromTheApiCountOnACommand(t *testing.T) {
 	t.Parallel()
 
 	repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": ordersYAML})
-	repo.pr.files = 4000
+	repo.pr.Files = 4000
 	f := newFixture(t, bound, repo)
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, "listed 1 of the 4000 files")

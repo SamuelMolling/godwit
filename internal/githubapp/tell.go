@@ -8,7 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/link"
 	"github.com/SamuelMolling/godwit/internal/report"
@@ -76,7 +76,7 @@ func (w *Worker) outcome(ctx context.Context, g controlplane.GitHubRun) {
 
 func (w *Worker) rendered(ctx context.Context, g controlplane.GitHubRun) (body, conclusion, url string, err error) {
 	// The reporter reads; it never reaches a procedure a command's own scope had to be checked against.
-	ctx = api.WithPrincipal(ctx, api.Principal{Name: "github:" + g.Repository, Scope: api.ScopeRead})
+	ctx = authz.WithPrincipal(ctx, authz.Principal{Name: "github:" + g.Repository, Scope: authz.ScopeRead})
 	got, err := w.cfg.Service.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: g.RunID}))
 	if err != nil {
 		return "", "", "", err

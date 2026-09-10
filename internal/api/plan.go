@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/notify"
@@ -73,7 +74,7 @@ func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.Plan
 	p := controlplane.Plan{
 		ID: s.newID(), Target: m.Target, Key: controlplane.PlanKey(m.Target, spec.rollout, pending), Rollout: spec.rollout,
 		Validated: adm.validated, Acked: m.AcknowledgeHazards, AllowOutOfOrder: m.AllowOutOfOrder,
-		CreatedBy: Actor(ctx), Source: m.Source, Expansions: adm.expansions,
+		CreatedBy: authz.Actor(ctx), Source: m.Source, Expansions: adm.expansions,
 	}
 	var detected bool
 	if p.Migrations, p.Drift, detected = planMigrations(spec, adm, obs); !detected {
@@ -268,7 +269,7 @@ func (s *Server) bind(ctx context.Context, m *godwitv1.CreateRunRequest, spec ru
 		return b, s.replanFailure(ctx, plan, d, err)
 	}
 	next := observed(plan, obs)
-	next.ID, next.CreatedBy, next.Source, next.Validated = s.newID(), Actor(ctx), m.Source, adm.validated
+	next.ID, next.CreatedBy, next.Source, next.Validated = s.newID(), authz.Actor(ctx), m.Source, adm.validated
 	next.Expansions = adm.expansions
 	migs, drift, detected := planMigrations(spec, adm, obs)
 	next.Migrations = migs
@@ -448,7 +449,7 @@ func staleHint(reason, target string) string {
 }
 
 func (s *Server) refuse(ctx context.Context, target string, reason error) error {
-	s.Log.Warn("run refused by plan contract", "target", target, "actor", Actor(ctx), "error", reason.Error())
+	s.Log.Warn("run refused by plan contract", "target", target, "actor", authz.Actor(ctx), "error", reason.Error())
 	cerr := connect.NewError(connect.CodeFailedPrecondition, reason)
 	if detail, err := connect.NewErrorDetail(planDetail(reason)); err == nil {
 		cerr.AddDetail(detail)

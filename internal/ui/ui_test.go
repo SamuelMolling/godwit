@@ -16,7 +16,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
@@ -42,7 +42,7 @@ type stub struct {
 }
 
 func (s *stub) call(ctx context.Context, name string) error {
-	s.actor = api.Actor(ctx)
+	s.actor = authz.Actor(ctx)
 	s.calls = append(s.calls, name)
 
 	return s.err
@@ -151,7 +151,7 @@ func (s *stub) AcceptBaseline(ctx context.Context, req *connect.Request[godwitv1
 // which TestAnonymousScopeIsRead covers.
 func newUI(s godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	if cfg.AnonymousScope == "" {
-		cfg.AnonymousScope = api.ScopeOperator
+		cfg.AnonymousScope = authz.ScopeOperator
 	}
 	h := New(s, cfg)
 	h.now = func() time.Time { return now }
@@ -470,10 +470,10 @@ func TestBasicAuth(t *testing.T) {
 	}
 }
 
-var uiTokens = []api.Token{
-	{Name: "viewer", Scope: api.ScopeRead, Secret: "s-read"},
-	{Name: "ci", Scope: api.ScopePipeline, Secret: "s-pipe"},
-	{Name: "sam", Scope: api.ScopeOperator, Secret: "s-op"},
+var uiTokens = []authz.Token{
+	{Name: "viewer", Scope: authz.ScopeRead, Secret: "s-read"},
+	{Name: "ci", Scope: authz.ScopePipeline, Secret: "s-pipe"},
+	{Name: "sam", Scope: authz.ScopeOperator, Secret: "s-op"},
 }
 
 const noAction = `method="post"`
@@ -557,7 +557,7 @@ func TestScopeRefusesAction(t *testing.T) {
 func TestSharedIdentityScope(t *testing.T) {
 	t.Parallel()
 	s := fixture()
-	h := newUI(s, Config{Tokens: uiTokens, User: "sam", Password: "pw", Scope: api.ScopeRead})
+	h := newUI(s, Config{Tokens: uiTokens, User: "sam", Password: "pw", Scope: authz.ScopeRead})
 
 	rec := do(h, http.MethodGet, "/ui/", nil, "Authorization", basic("sam", "pw"))
 	want(t, rec, http.StatusOK, "Signed in as", "sam", `class="chip">read<`)
@@ -574,11 +574,11 @@ func TestSharedIdentityScope(t *testing.T) {
 		t.Fatalf("a password-less shared identity must not sign in: code = %d", rec.Code)
 	}
 
-	admin := newUI(fixture(), Config{User: "sam", Password: "pw", Scope: api.ScopeAdmin})
+	admin := newUI(fixture(), Config{User: "sam", Password: "pw", Scope: authz.ScopeAdmin})
 	want(t, do(admin, http.MethodGet, "/ui/runs/r-bad-00001", nil, "Authorization", basic("sam", "pw")),
 		http.StatusOK, "/ui/runs/r-bad-00001/resume")
 
-	open := newUI(fixture(), Config{AnonymousScope: api.ScopeRead})
+	open := newUI(fixture(), Config{AnonymousScope: authz.ScopeRead})
 	rec = do(open, http.MethodGet, "/ui/", nil)
 	want(t, rec, http.StatusOK, "No sign-in configured")
 	absent(t, rec, noAction)
@@ -588,8 +588,8 @@ func TestAnonymousServesWithoutAuthentication(t *testing.T) {
 	t.Parallel()
 	s := fixture()
 	h := newUI(s, Config{
-		Tokens: uiTokens, User: "sam", Password: "pw", Scope: api.ScopeRead,
-		Anonymous: true, AnonymousScope: api.ScopeOperator,
+		Tokens: uiTokens, User: "sam", Password: "pw", Scope: authz.ScopeRead,
+		Anonymous: true, AnonymousScope: authz.ScopeOperator,
 	})
 
 	rec := do(h, http.MethodGet, "/ui/", nil)
@@ -602,14 +602,14 @@ func TestAnonymousServesWithoutAuthentication(t *testing.T) {
 		t.Fatalf("actor = %q, want ui:anonymous", s.actor)
 	}
 	if p, ok := h.principal(httptest.NewRequest(http.MethodGet, "/ui/", nil)); !ok ||
-		p != (api.Principal{Name: "ui:anonymous", Scope: api.ScopeOperator}) {
+		p != (authz.Principal{Name: "ui:anonymous", Scope: authz.ScopeOperator}) {
 		t.Fatalf("principal = %+v %v", p, ok)
 	}
 
 	cross := do(h, http.MethodPost, "/ui/drift/app/check", nil, "Sec-Fetch-Site", "cross-site")
 	want(t, cross, http.StatusForbidden, "cross-site request refused")
 
-	read := newUI(fixture(), Config{Tokens: uiTokens, Anonymous: true, AnonymousScope: api.ScopeRead})
+	read := newUI(fixture(), Config{Tokens: uiTokens, Anonymous: true, AnonymousScope: authz.ScopeRead})
 	rec = do(read, http.MethodGet, "/ui/drift", nil)
 	want(t, rec, http.StatusOK, "Unauthenticated", "Actions on this page need a wider scope")
 	absent(t, rec, noAction)
@@ -621,7 +621,7 @@ func TestAnonymousServesWithoutAuthentication(t *testing.T) {
 func TestAnonymousWithoutAScopeStaysRead(t *testing.T) {
 	t.Parallel()
 
-	h := New(fixture(), Config{Tokens: uiTokens, Anonymous: true, Scope: api.ScopeAdmin})
+	h := New(fixture(), Config{Tokens: uiTokens, Anonymous: true, Scope: authz.ScopeAdmin})
 	h.now = func() time.Time { return now }
 	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusOK, `class="chip">read<`)
 }
@@ -631,12 +631,12 @@ func TestAnonymousWithoutAScopeStaysRead(t *testing.T) {
 func TestAnonymousScopeIsRead(t *testing.T) {
 	t.Parallel()
 
-	h := New(fixture(), Config{Scope: api.ScopeAdmin})
+	h := New(fixture(), Config{Scope: authz.ScopeAdmin})
 	h.now = func() time.Time { return now }
 	rec := do(h, http.MethodGet, "/ui/", nil)
 	want(t, rec, http.StatusOK, `class="chip">read<`)
 	absent(t, rec, noAction)
-	if p, ok := h.principal(httptest.NewRequest(http.MethodGet, "/ui/", nil)); !ok || p.Scope != api.ScopeRead {
+	if p, ok := h.principal(httptest.NewRequest(http.MethodGet, "/ui/", nil)); !ok || p.Scope != authz.ScopeRead {
 		t.Fatalf("anonymous principal = %+v %v, want read", p, ok)
 	}
 }

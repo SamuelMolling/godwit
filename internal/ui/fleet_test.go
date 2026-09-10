@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
 func (s *stub) ListMigrations(ctx context.Context, req *connect.Request[godwitv1.ListMigrationsRequest]) (*connect.Response[godwitv1.ListMigrationsResponse], error) {
@@ -111,7 +111,7 @@ func TestFleetPageEmptyAndErrors(t *testing.T) {
 
 func TestFleetPageScope(t *testing.T) {
 	t.Parallel()
-	h := newUI(fleetFixture(), Config{AnonymousScope: api.ScopeRead})
+	h := newUI(fleetFixture(), Config{AnonymousScope: authz.ScopeRead})
 
 	want(t, do(h, http.MethodGet, "/ui/migrations", nil), http.StatusOK, "Every migration")
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
@@ -368,7 +369,7 @@ func TestAuditTruncatesDetail(t *testing.T) {
 	t.Cleanup(mock.Close)
 	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
-	mock.ExpectExec("INSERT INTO cp_audit").WithArgs(AnonymousActor, "x", "", "app", strings.Repeat("é", auditDetailLimit)+"…").
+	mock.ExpectExec("INSERT INTO cp_audit").WithArgs(authz.AnonymousActor, "x", "", "app", strings.Repeat("é", auditDetailLimit)+"…").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	s.audit(context.Background(), "x", "", "app", strings.Repeat("é", auditDetailLimit+1))
 	if err := mock.ExpectationsWereMet(); err != nil {
