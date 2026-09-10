@@ -10,7 +10,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/engine"
-	"github.com/SamuelMolling/godwit/internal/ui/link"
+	"github.com/SamuelMolling/godwit/internal/link"
 )
 
 // Run is what one run did to its target, read against the plan it was bound to.

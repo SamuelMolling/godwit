@@ -10,8 +10,8 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/link"
 	"github.com/SamuelMolling/godwit/internal/report"
-	"github.com/SamuelMolling/godwit/internal/ui/link"
 )
 
 func (w *Worker) tell(ctx context.Context) {

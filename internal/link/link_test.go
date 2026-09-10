@@ -3,7 +3,7 @@ package link_test
 import (
 	"testing"
 
-	"github.com/SamuelMolling/godwit/internal/ui/link"
+	"github.com/SamuelMolling/godwit/internal/link"
 )
 
 func TestLinksAreEmptyWithoutABaseOrAnID(t *testing.T) {
