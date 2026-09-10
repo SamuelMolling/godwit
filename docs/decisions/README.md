@@ -29,6 +29,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0019](0019-the-app-reads-the-migrations-at-the-head.md) | The App reads the migrations at the head, and the listing decides before the bodies | #134 |
 | [0020](0020-a-run-is-bound-to-the-pull-request-that-asked-for-it.md) | A run is bound to the pull request that asked for it, and whoever sees it settle reports it | #135 |
 | [0021](0021-a-target-names-the-vault-its-credentials-live-in.md) | A target names the Vault its credentials live in, and there is no other one | #136 |
+| [0022](0022-control-plane-data-is-not-chart-configuration.md) | Control-plane data is not chart configuration: targets and stores are registered, not declared | #138 |
 
 ## Open questions
 

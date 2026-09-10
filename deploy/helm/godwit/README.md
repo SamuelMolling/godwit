@@ -46,8 +46,8 @@ The release prints the in-cluster URL and the first commands to run. Every value
 | File | Shape |
 |---|---|
 | [ci/full-values.yaml](ci/full-values.yaml) | every optional block on at once, which no real deployment does |
-| [ci/platform-ingress-values.yaml](ci/platform-ingress-values.yaml) | ingress-nginx, a `Secret` created by hand, targets registered by an operator |
-| [ci/platform-gitops-values.yaml](ci/platform-gitops-values.yaml) | Gateway API, a `Secret` produced by External Secrets, targets declared in git, ArgoCD hooks |
+| [ci/platform-ingress-values.yaml](ci/platform-ingress-values.yaml) | ingress-nginx, a `Secret` created by hand |
+| [ci/platform-gitops-values.yaml](ci/platform-gitops-values.yaml) | Gateway API, a `Secret` produced by External Secrets, ArgoCD hooks |
 | [ci/platform-internal-values.yaml](ci/platform-internal-values.yaml) | no ingress at all: Service-only access, a Vault Agent sidecar writing the credential file |
 
 ## What gets rendered
@@ -62,7 +62,6 @@ The release prints the in-cluster URL and the first commands to run. Every value
 | ServiceMonitor | off by default; scrapes `/metrics` through the Service |
 | Ingress | off by default; an ordinary HTTP backend carries the whole API, and a gRPC backend would stop the same host serving `/ui` |
 | HTTPRoute | off by default; the Gateway API alternative to the Ingress, for a cluster that routes that way |
-| Job | off by default; one `godwit target add` per entry of `targets.list` |
 | anything in `extraObjects` | raw manifests, templated with the release context |
 
 ## Routing
@@ -127,38 +126,29 @@ extraObjects:
 
 It is also where a NetworkPolicy belongs. The chart has no `networkPolicy` block on purpose: godwit's egress set is the union of every registered target's database, plus Vault, plus Slack and the webhook, so a chart-authored policy would either be a guess or be `to: []`. The ingress side is expressible in six lines with the selector labels the chart hands you — see [ci/platform-gitops-values.yaml](ci/platform-gitops-values.yaml).
 
-## Declarative target registration
+## Targets and credential stores are not chart values
 
-`targets.list` turns a target's `godwit target add` line into a values entry, and the chart renders one Job that runs them:
+**The chart registers neither, and has no key for either.** A target is a row in `cp_targets` and a credential store is a row in `cp_credential_stores`: control-plane data, written by `RegisterTarget` / `RegisterCredentialStore` under an `admin` token, audited in `cp_audit`, and referenced by every run and plan that follows. Declaring the same row in a values file gives it two owners, and the values file wins by force — `RegisterTarget` replaces the whole config map rather than patching it, so a sync would silently drop whatever anyone registered against the API. [Decision 0022](../../../docs/decisions/0022-control-plane-data-is-not-chart-configuration.md) has the reasoning.
 
-```yaml
-targets:
-  enabled: true
-  tokenSecret:
-    name: godwit-admin
-    key: GODWIT_ADMIN_TOKEN
-  list:
-    - name: orders
-      provider: vault
-      vaultPath: secret/data/orders/db
-      vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
-      lockTimeout: 5s
-      requirePlan: true
+Register them against the API instead, with an `admin` token that belongs to whatever registers ([deployment](../../../docs/deployment.md#registering-a-target)):
+
+```bash
+godwit credential-store add production \
+  --vault-addr https://vault.production.internal:8200 --vault-k8s-role godwit
+
+godwit target add orders --provider vault --credential-store production \
+  --vault-path secret/data/orders/db \
+  --vault-template 'postgres://{{username}}:{{password}}@orders-db:5432/orders' \
+  --lock-timeout 5s --require-plan
 ```
 
-`godwit target add` registers one target per invocation and the image is distroless, so there is no shell to loop in: every entry but the last is an init container and the last is the pod's container. They run in order, and a failure names the target that failed. `stores.list` is registered by the same Job, ahead of every target, because a `vault` target naming a store nobody registered is refused.
+A pipeline that wants this reconciled runs the same commands from a Job of its own, in the repository that owns the target, with the full `target add` line — the upsert makes re-running it free, and keeping the line where the target is owned is what stops a shorter one dropping settings. `extraObjects` takes such a Job if you want it in this release; the chart does not model it, because the set of targets is not a property of the deployment.
 
-`RegisterTarget` is an upsert that replaces the whole config map rather than patching it, which cuts both ways. It is what makes re-running the Job on every sync safe — that is the point of the Job, not a hazard. It is also what makes this list *authoritative*: a setting somebody added by hand with a shorter `target add` is gone at the next sync. Register a target from this list or from somewhere else, never both.
-
-The Job needs an `admin` token, the only scope `RegisterTarget` accepts. Keep it in a Secret of its own rather than reusing an entry of `GODWIT_TOKENS` that humans also hold. A `static` target's DSN goes in `dsnSecret` (passed as `GODWIT_TARGET_DSN`, never as an argument) rather than `dsn`, which would put the credential in the pod spec.
-
-By default the Job is a Helm `post-install,post-upgrade` hook. `targets.helmHook: false` drops those annotations for a deployment tool that drives the Job itself; `targets.annotations` adds its own (`argocd.argoproj.io/hook: Sync`, `hook-delete-policy: BeforeHookCreation`). The service may still be rolling out when the Job starts — `targets.backoffLimit` covers that, and the registration does not touch the target database, so a retry costs nothing.
-
-Registration is not adoption. A database that already has a schema still needs `godwit target adopt` — `--version` or `--from-journal` — before its first plan ([deployment](../../../docs/deployment.md#adopting-an-existing-database)); the chart does not do that for you, because getting it wrong writes history.
+Registration is not adoption. A database that already has a schema still needs `godwit target adopt` — `--version` or `--from-journal` — before its first plan ([deployment](../../../docs/deployment.md#adopting-an-existing-database)).
 
 ## Credential providers
 
-- `vault`: list the Vaults under `stores.list`, one entry per Vault, and give each target a `credentialStore`. A target's Vault is the store it names and nothing else — no chart value reaches every target, and a `vault` target whose store is missing refuses its runs. With `vaultK8sRole` the service logs in at that Vault with its own ServiceAccount token (`vaultK8sJwt` moves the file); `vaultTokenEnv` names an environment variable of the service holding a token instead, whose name must begin with `VAULT_TOKEN` and which `extraEnv` / `extraEnvFrom` brings in from a Secret. `stores.allowedHosts` is the allowlist of hosts a store may point at, and a deployment where more than one person holds an admin token should set it ([security](../../../docs/security.md#credential-stores)).
+- `vault`: every `vault` target names a credential store, registered with `godwit credential-store add`, and that store is the only thing that says which Vault the secret is read from — no chart value reaches any target, and a target whose store is missing refuses its runs. With `--vault-k8s-role` the service logs in at that Vault with its own ServiceAccount token (`--vault-k8s-jwt` moves the file); `--vault-token-env` names an environment variable of the service holding a token instead, whose name must begin with `VAULT_TOKEN` and which `extraEnv` / `extraEnvFrom` brings in from a Secret. `stores.allowedHosts` is the chart's one key here, and it is not a store: it is the allowlist of hosts an admin may register one at, which belongs in the reviewed pod spec rather than behind the admin token. A deployment where more than one person holds that token should set it ([security](../../../docs/security.md#credential-stores)).
 - **`serve.keyProvider.vaultAddr` and its siblings are not that.** They configure the `vault-transit` key provider, where godwit seals the DSNs of `static` targets; leave them empty unless `serve.keyProvider.name` is `vault-transit`.
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
 - `static`: the only one that needs a key, and the chart configures none by default. Set `existingSecret.keys.masterKey` (or a `serve.keyProvider` of `gcpkms` / `vault-transit`) before registering one; the DSN is sealed with it.

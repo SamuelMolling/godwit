@@ -79,24 +79,9 @@ Runs, plans, drift events and the target's applied history are untouched — onl
 
 `RegisterTarget` is the only RPC that needs `admin`. Give the admin secret to whatever registers targets and to nothing else; applications and pipelines get `pipeline`, humans get `operator`, pull requests get `read` ([token spec](configuration.md#token-spec)).
 
-Whatever registers them should be a Job rather than a person, and the Helm chart renders one from values so the set of targets is declared rather than typed. `targets.list` is a list of `target add` lines, `targets.tokenSecret` names the Secret holding the admin token, and the chart runs one invocation per entry — every entry but the last as an init container, since `target add` takes one target at a time and the image is distroless. It is idempotent by construction: the upsert makes re-running it on every sync the point rather than a hazard.
+Once there is more than one, whatever registers them should be a Job rather than a person: put the full `target add` line in the repository that owns the target and run it from a Job with an `admin` token, and the upsert makes re-running it on every sync the point rather than a hazard.
 
-```yaml
-targets:
-  enabled: true
-  tokenSecret:
-    name: godwit-admin
-    key: GODWIT_ADMIN_TOKEN
-  list:
-    - name: orders
-      provider: vault
-      vaultPath: secret/data/orders/db
-      vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
-      lockTimeout: 5s
-      requirePlan: true
-```
-
-The Job is a Helm `post-install,post-upgrade` hook by default; `targets.helmHook: false` plus `targets.annotations: {argocd.argoproj.io/hook: Sync, argocd.argoproj.io/hook-delete-policy: BeforeHookCreation}` makes it an ArgoCD hook instead. Because the upsert replaces the whole row, that list has to be the *only* place those targets are registered — the row it writes is the row you get, and a flag somebody added by hand from a laptop is gone at the next sync.
+**Not the godwit Helm chart, which declares no target and no store.** They are control-plane rows, and a values file that also holds them makes the values authoritative by force — the upsert replaces the whole row, so a sync drops whatever anyone registered against the API, silently. [Decision 0022](decisions/0022-control-plane-data-is-not-chart-configuration.md) states the rule and what it cost to learn.
 
 Registering is not adopting: a target whose database already has a schema still needs `godwit target adopt` before its first plan, and the chart does not do it for you.
 
@@ -276,22 +261,16 @@ A store is a row, not process configuration: changing an address is `credential-
 Kubernetes auth presents **the pod's own projected ServiceAccount token**, at whichever Vault the store names, and `--vault-k8s-jwt` moves the file for a store that needs a differently-audienced token:
 
 ```yaml
+# the chart's whole part in this: the allowlist, and the token the provider presents
 stores:
   allowedHosts: [vault.production.internal, vault.staging.internal]
-  list:
-    - name: production
-      vaultAddr: https://vault.production.internal:8200
-      vaultK8sRole: godwit
-    - name: staging
-      vaultAddr: https://vault.staging.internal:8200
-      vaultK8sRole: godwit
 
 serviceAccount:
   create: true
   automountServiceAccountToken: true   # the default; the provider reads the projected token
 ```
 
-The chart's register Job applies `stores.list` ahead of `targets.list`, so a target may name a store in the same sync.
+Register a store before the targets that name it: a `vault` target whose store does not exist is refused.
 
 The JWT is re-read from disk on every login, so a projected token Kubernetes rotates is picked up without a restart. That is the reason to prefer a role over `--vault-token-env`: godwit never renews a static token, so the day its TTL runs out every target on that store stops resolving at once.
 
@@ -582,7 +561,7 @@ So, for an `infra-tools`-style stack:
 | the `godwit` Secret (master key, tokens, store and scratch DSNs) | the `orders-godwit` Secret holding that application's `pipeline` token |
 | the Vault policy and Kubernetes auth role | the Vault path holding the application database's credential |
 | the route, ServiceMonitor and alert rules | the `godwit.yaml` in the application repository, and its GitHub Action steps |
-| the registration Job (`godwit target add` per target, admin token) | — |
+| — | the Job that registers this target (`credential-store add`, `target add`, admin token) |
 
 Sync the shared stack first — [examples/argocd/application.yaml](../examples/argocd/application.yaml) puts `sync-wave: "-1"` on the godwit Application, because the PreSync hook fails the application's sync when the service is not there yet.
 
@@ -662,7 +641,7 @@ godwit target status orders    # this one actually reaches Vault and the databas
 
 `target status` failing here is the point of running it: `names no credential store` means the target was registered without `--credential-store`, `credential store "x": not found` means it names one nobody registered, `status 403` means the policy or the Kubernetes auth role, `no field for x` means the template, and a connection error means the host in the template.
 
-Register the first one by hand — the feedback loop is faster and `target status` is the whole point. Once it answers, move both lines into `stores.list` and `targets.list` in the values so the next sync owns them, and remember that each list then replaces its row entirely: whatever you typed here has to be in it.
+Register the first one by hand — the feedback loop is faster and `target status` is the whole point. Once it answers, keep those two lines in the repository that owns the target and run them from a Job, not from a laptop. They do not go into the chart's values: the row they write is control-plane data, and the values file is not its second home ([decision 0022](decisions/0022-control-plane-data-is-not-chart-configuration.md)).
 
 **5b. Adopt what the database already has.** Skip only if it is genuinely empty; see [adopting an existing database](#adopting-an-existing-database).
 

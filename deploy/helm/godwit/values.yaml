@@ -385,71 +385,14 @@ topologySpreadConstraints: []
 podAntiAffinity: soft
 affinity: {}
 
-# Declarative target registration. Each entry of `list` becomes one `godwit target
-# add` in a Job: the entries before the last run as init containers, in order, so a
-# failure names the target that failed. The image is distroless, so there is no
-# shell to loop in — this is what one-target-per-invocation looks like in a pod.
-#
-# RegisterTarget is an upsert that replaces the whole config map rather than
-# patching it (docs/deployment.md#re-registering-replaces-the-whole-row). That is
-# what makes re-running the Job on every upgrade safe *and* what makes this list
-# authoritative: a setting someone added by hand with `godwit target add` is gone
-# on the next sync unless it is written here too. Registering the same target from
-# both this list and another job is the way to lose settings.
-#
-# The Job needs an `admin` token — the only scope RegisterTarget accepts. Keep it
-# in a Secret of its own rather than reusing an entry of GODWIT_TOKENS the humans
-# also hold.
-# The Vault each vault target reads its secret from, registered ahead of the targets; see the README.
+# godwit registers no credential store and no target. Both are control-plane rows —
+# `cp_credential_stores` and `cp_targets` — created through the API with an `admin` token
+# and audited there, so declaring them here would give one row two owners. Register them
+# with `godwit credential-store add` and `godwit target add` (chart README).
 stores:
-  # GODWIT_VAULT_HOSTS: hosts a store may point at; empty accepts any, and a store is sent godwit's token.
+  # --vault-host / GODWIT_VAULT_HOSTS: the hosts a credential store may point at. This is the
+  # guardrail on that registration and not the registration: it moves which Vaults godwit may
+  # authenticate at out of the admin token, which lives in a Secret, and into the pod spec,
+  # which is reviewed. Empty accepts any host an admin registers; set it wherever more than
+  # one person holds an admin token. See docs/security.md#credential-stores.
   allowedHosts: []
-  list: []
-
-targets:
-  enabled: false
-  list: []
-  # - name: orders
-  #   provider: vault
-  #   vaultPath: secret/data/orders/db
-  #   vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
-  #   credentialStore: production
-  #   lockTimeout: 5s
-  #   statementTimeout: 15m
-  #   requirePlan: true
-  #   searchPath: app,public
-  #   keepOld: true
-  #   # Repositories a GitHub App delivery may reach this target from, owner/repo or owner/repo:dir.
-  #   # Like the rest of this list it is authoritative: `target add` replaces the whole set.
-  #   githubRepos: [acme/orders]
-  #   extraArgs: []
-  # - name: billing
-  #   provider: kubernetes
-  #   secretPath: /secrets/billing/dsn
-  # - name: legacy
-  #   provider: static
-  #   # dsn puts the credential in the pod spec; dsnSecret passes it as GODWIT_TARGET_DSN
-  #   # from a Secret instead, never as an argument. Prefer dsnSecret.
-  #   dsnSecret:
-  #     name: legacy-dsn
-  #     key: dsn
-  tokenSecret:
-    name: ""
-    key: GODWIT_ADMIN_TOKEN
-  # Where the Job reaches the API; empty is the release's own Service.
-  server: ""
-  # Run the Job as a Helm post-install/post-upgrade hook. Turn it off when the
-  # deployment tool drives the Job itself — an ArgoCD release sets
-  # `argocd.argoproj.io/hook: Sync` and `hook-delete-policy: BeforeHookCreation`
-  # in annotations below, and a reconciled Job wants neither.
-  helmHook: true
-  annotations: {}
-  podAnnotations: {}
-  podLabels: {}
-  # The service may still be rolling out when the Job starts; retries cover that.
-  backoffLimit: 6
-  ttlSecondsAfterFinished: ""
-  resources: {}
-  extraEnv: []
-  extraVolumes: []
-  extraVolumeMounts: []

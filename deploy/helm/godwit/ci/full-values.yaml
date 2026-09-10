@@ -36,14 +36,6 @@ serve:
     origins: ["https://godwit.example.com"]
   extraArgs: ["--drift-interval=2m"]
 stores:
-  list:
-    - name: production
-      vaultAddr: https://vault.production.example.com
-      vaultK8sRole: godwit
-      vaultK8sMount: kubernetes-prod
-    - name: staging
-      vaultAddr: https://vault.staging.example.com
-      vaultTokenEnv: VAULT_TOKEN_STAGING
   allowedHosts: [vault.production.example.com, vault.staging.example.com]
 
 notifications:
@@ -182,50 +174,3 @@ httpRoute:
         - name: godwit-canary
           port: 80
           weight: 10
-targets:
-  enabled: true
-  server: http://godwit.godwit.svc:9000
-  tokenSecret:
-    name: godwit-admin
-    key: GODWIT_ADMIN_TOKEN
-  backoffLimit: 3
-  ttlSecondsAfterFinished: 600
-  podAnnotations:
-    sidecar.istio.io/inject: "false"
-  podLabels:
-    job: register-targets
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-  extraEnv:
-    - name: HTTPS_PROXY
-      value: http://proxy:3128
-  extraVolumes:
-    - name: targets
-      secret:
-        secretName: godwit-targets
-  extraVolumeMounts:
-    - name: targets
-      mountPath: /secrets/targets
-      readOnly: true
-  list:
-    - name: orders
-      provider: vault
-      vaultPath: secret/data/orders/db
-      vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
-      credentialStore: production
-      lockTimeout: 5s
-      statementTimeout: 15m
-      requirePlan: true
-      searchPath: app,public
-      keepOld: false
-      extraArgs: ["--json"]
-    - name: billing
-      provider: kubernetes
-      secretPath: /secrets/targets/billing
-    - name: legacy
-      provider: static
-      dsnSecret:
-        name: legacy-dsn
-        key: dsn

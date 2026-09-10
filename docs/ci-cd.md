@@ -500,7 +500,7 @@ godwit target add orders --provider vault --credential-store production --vault-
   --github-repo acme/monorepo:services/orders
 ```
 
-The chart's [declarative target registration](../deploy/helm/godwit/README.md#declarative-target-registration) carries the same list as `targets.list[].githubRepos`, which is how a GitOps deployment binds a repository without an operator running the command by hand.
+A GitOps deployment runs that same line from a Job rather than by hand — the binding is part of the target's row, so it is registered the way the rest of the row is, and never declared in the chart's values ([decision 0022](decisions/0022-control-plane-data-is-not-chart-configuration.md)).
 
 Each entry is `owner/repo`, whose project is the repository root, or `owner/repo:dir`, where `dir` is the directory holding that project's `godwit.yaml`. It is **not** the migration directory — `dir:` inside that file names those, relative to it. `godwit targets` prints the bindings in its `GITHUB` column. `target add` replaces the whole target configuration, so a later `target add` that omits `--github-repo` unbinds it — pass the full list every time.
 
