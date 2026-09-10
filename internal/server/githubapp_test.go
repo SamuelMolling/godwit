@@ -51,6 +51,10 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 			_, _ = io.WriteString(w, `{"permission":"write"}`)
 		case strings.HasSuffix(r.URL.Path, "/collaborators/bob/permission"):
 			_, _ = io.WriteString(w, `{"permission":"admin"}`)
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			_, _ = io.WriteString(w, `[{"filename":"db/migrations/20260101000000_a.up.sql"}]`)
+		case strings.Contains(r.URL.Path, "/contents/godwit.yaml"):
+			_, _ = io.WriteString(w, `{"type":"file","size":40,"encoding":"base64","content":"ZGlyOiBkYi9taWdyYXRpb25zCnRhcmdldDogb3JkZXJzCg=="}`)
 		case strings.HasSuffix(r.URL.Path, "/reviews"):
 			_, _ = io.WriteString(w, `[{"state":"APPROVED","commit_id":"`+webhookHead+`","user":{"login":"bob"}}]`)
 		case strings.Contains(r.URL.Path, "/pulls/"):

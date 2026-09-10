@@ -17,6 +17,7 @@ Project file for the CLI. Looked up from the working directory upward until a di
 | `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `plan`, `migrate` |
 | `plan.format` | `schema` \| `statements` | `schema` | `GODWIT_PLAN_FORMAT` | `plan`, `plan show`, `migrate --dry-run` (flag: `--plan-format`) |
 | `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff`, `lint` |
+| `autoplan` | block ([below](#autoplan)) | — | — | the [GitHub App](ci-cd.md#what-makes-a-pull-request-worth-planning) only; the CLI parses it and ignores it |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
 
@@ -46,6 +47,23 @@ plan:
 `statements` is the SQL the run would execute, in order, with the transaction mode and the hazard recipes. Reach for it when you are auditing the exact statements or reading a run that failed on one.
 
 Neither changes `--format json`: the JSON is the API contract and carries both the statements and, when there is one, the schema delta under `changes`.
+
+### `autoplan`
+
+What this project asks the GitHub App to plan it for. The CLI reads the block so a project carrying one still loads, and does nothing with it; the App is the only consumer.
+
+```yaml
+autoplan:
+  enabled: true                  # default true; false stops the automatic plan, not a godwit comment
+  when_modified: ["prisma/**"]   # added to the default, never replacing it
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | bool | `true` | whether a pull request event plans this project at all |
+| `when_modified` | list of globs | — | extra paths, relative to the directory holding this file, that also plan it |
+
+The default trigger is `<dir>/**/*.sql` and `godwit.yaml`, both relative to this file. `*` does not cross `/` and `**` does; a pattern may not begin with `/` or contain `..`. [CI/CD](ci-cd.md#what-makes-a-pull-request-worth-planning) has the table of what plans and what does not, and [decision 0017](decisions/0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) says why it widens rather than replaces.
 
 ### `schema_source`
 
@@ -270,7 +288,7 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 | `require_plan` | `--require-plan` | bool | `false` | refuse runs whose migration set has no stored plan |
 | `keep_old` | `--keep-old` | bool | `true` | `-- godwit: change-type` on this target keeps the pre-swap column as the rollback; a directive's own `keep-old=` still wins |
 | `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([concepts](concepts.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
-| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](ci-cd.md#binding-a-repository-to-a-target) delivery may reach this target from. Empty means none may: an unbound repository gets no apply and no plan. `target add` replaces the whole list |
+| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](ci-cd.md#binding-a-repository-to-a-target) delivery may reach this target from; `dir` is the directory holding that project's `godwit.yaml`. Empty means none may: an unbound repository gets no apply and no plan. `target add` replaces the whole list |
 | `ignore_adopted_tables` | `--ignore-adopted-tables` | bool | `true` | leave the bookkeeping tables of the migration tool this database was adopted from out of the schema snapshot, and so out of drift ([concepts](concepts.md#drift)); `false` puts them back |
 
 A setting the target does not carry is printed as `none` by `godwit target status` and `godwit targets`; it means "nothing registered", not "no limit". An unregistered `lock_timeout` still runs under the executor's own 5s default, and an unregistered `statement_timeout` is genuinely disabled.

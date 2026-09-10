@@ -31,7 +31,17 @@ type command struct {
 	bound        bindings
 	name         string
 	cmd          *comment.Command
+	projects     []project
 	source       string
+}
+
+func (c command) projectNames() string {
+	out := make([]string, 0, len(c.projects))
+	for _, p := range c.projects {
+		out = append(out, p.String())
+	}
+
+	return strings.Join(out, ", ")
 }
 
 func (c command) detail() string {
@@ -43,6 +53,7 @@ func (c command) detail() string {
 		"scope=" + string(c.principal.Scope),
 		"delivery=" + c.delivery,
 		"bound=" + strings.Join(c.bound.targets(), "|"),
+		"projects=" + c.projectNames(),
 	}
 	if c.login != "" {
 		parts = append(parts, "login="+c.login)

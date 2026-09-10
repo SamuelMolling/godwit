@@ -348,3 +348,29 @@ func TestPlanFormatIsOneOfTwo(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestDecode(t *testing.T) {
+	t.Parallel()
+
+	empty, err := Decode(nil)
+	if err != nil || empty.Dir != "migrations" {
+		t.Fatalf("Decode(nil) = %+v, %v", empty, err)
+	}
+	cfg, err := Decode([]byte("dir: db/migrations\ntarget: orders\nautoplan:\n  enabled: false\n  when_modified: [\"prisma/**\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dir != "db/migrations" || cfg.Target != "orders" {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+	if cfg.Autoplan == nil || cfg.Autoplan.Enabled == nil || *cfg.Autoplan.Enabled ||
+		len(cfg.Autoplan.WhenModified) != 1 {
+		t.Fatalf("autoplan = %+v", cfg.Autoplan)
+	}
+	if _, err := Decode([]byte("nope: 1\n")); err == nil {
+		t.Fatal("an unknown key decoded")
+	}
+	if _, err := Decode([]byte("plan:\n  format: yaml\n")); err == nil {
+		t.Fatal("an invalid plan format decoded")
+	}
+}

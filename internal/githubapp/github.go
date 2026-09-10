@@ -21,12 +21,17 @@ import (
 const (
 	defaultAPIBaseURL = "https://api.github.com"
 	responseLimit     = 8 << 20
+	// GitHub answers at most 3000 files for a pull request and says nothing when it truncates.
+	filesCap   = 3000
+	reviewsCap = 3000
 )
 
 type repoView interface {
 	permission(ctx context.Context, login string) (string, error)
 	pullRequest(ctx context.Context, number int) (pull, error)
-	reviews(ctx context.Context, number int) ([]review, error)
+	reviews(ctx context.Context, number int) ([]review, bool, error)
+	changed(ctx context.Context, number int) (listing, error)
+	file(ctx context.Context, path, ref string) ([]byte, error)
 }
 
 type forge interface {
@@ -39,6 +44,8 @@ type pull struct {
 	state    string
 	merged   bool
 	author   string
+	// files is what GitHub says the pull request changes, which is how a truncated listing is caught.
+	files int
 }
 
 type review struct {
@@ -103,9 +110,10 @@ func (r *repoClient) permission(ctx context.Context, login string) (string, erro
 }
 
 type pullBody struct {
-	State  string `json:"state"`
-	Merged bool   `json:"merged"`
-	User   struct {
+	State        string `json:"state"`
+	Merged       bool   `json:"merged"`
+	ChangedFiles int    `json:"changed_files"`
+	User         struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	Head struct {
@@ -124,7 +132,7 @@ func (r *repoClient) pullRequest(ctx context.Context, number int) (pull, error) 
 
 	return pull{
 		head: out.Head.SHA, headRepo: out.Head.Repo.FullName,
-		state: out.State, merged: out.Merged, author: out.User.Login,
+		state: out.State, merged: out.Merged, author: out.User.Login, files: out.ChangedFiles,
 	}, nil
 }
 
@@ -136,22 +144,105 @@ type reviewBody struct {
 	} `json:"user"`
 }
 
-func (r *repoClient) reviews(ctx context.Context, number int) ([]review, error) {
+// reviews reports whether it read all of them: GitHub lists oldest first, so a short read drops the dismissals.
+func (r *repoClient) reviews(ctx context.Context, number int) ([]review, bool, error) {
 	url := r.url("/pulls/" + strconv.Itoa(number) + "/reviews?per_page=100")
 	var all []review
 	for url != "" {
 		var page []reviewBody
 		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		for _, p := range page {
 			all = append(all, review{login: p.User.Login, state: p.State, commitID: p.CommitID})
 		}
+		if len(all) >= reviewsCap {
+			return nil, false, nil
+		}
 		url = next
 	}
 
-	return all, nil
+	return all, true, nil
+}
+
+type changedFile struct {
+	Filename         string `json:"filename"`
+	PreviousFilename string `json:"previous_filename"`
+}
+
+// listing is a pull request's changed paths and whether godwit read the whole of it.
+type listing struct {
+	paths  []string
+	listed int
+	capped bool
+}
+
+// whole reports whether the listing may be concluded from; files is GitHub's own count, zero when unknown.
+func (l listing) whole(files int) bool {
+	return !l.capped && (files <= 0 || l.listed >= files)
+}
+
+func (r *repoClient) changed(ctx context.Context, number int) (listing, error) {
+	url := r.url("/pulls/" + strconv.Itoa(number) + "/files?per_page=100")
+	var out listing
+	for url != "" {
+		var page []changedFile
+		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
+		if err != nil {
+			return listing{}, err
+		}
+		for _, f := range page {
+			out.listed++
+			out.paths = append(out.paths, f.Filename)
+			if f.PreviousFilename != "" {
+				out.paths = append(out.paths, f.PreviousFilename)
+			}
+		}
+		if out.listed >= filesCap {
+			out.capped = true
+
+			return out, nil
+		}
+		url = next
+	}
+
+	return out, nil
+}
+
+// errAbsent marks a path the repository does not carry at that commit, which is not a failure.
+var errAbsent = errors.New("absent")
+
+const maxConfigBytes = 64 << 10
+
+func (r *repoClient) file(ctx context.Context, path, ref string) ([]byte, error) {
+	var out struct {
+		Type     string `json:"type"`
+		Size     int    `json:"size"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	url := r.url("/contents/" + path + "?ref=" + ref)
+	if _, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &out); errors.Is(err, errNotFound) {
+		return nil, errAbsent
+	} else if err != nil {
+		return nil, err
+	}
+	if out.Type != "file" {
+		return nil, fmt.Errorf("%s is a %s, not a file", path, orNone(out.Type))
+	}
+	if out.Size > maxConfigBytes {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d a project file may be", path, out.Size, maxConfigBytes)
+	}
+	if out.Encoding != "base64" {
+		return nil, fmt.Errorf("%s came back %s-encoded", path, orNone(out.Encoding))
+	}
+	body, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(out.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	return body, nil
 }
 
 func (r *repoClient) url(path string) string {

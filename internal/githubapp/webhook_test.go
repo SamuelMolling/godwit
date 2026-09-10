@@ -386,18 +386,18 @@ func TestForkGetsNothing(t *testing.T) {
 	})
 }
 
-func TestPullRequestPlanCostsNoGitHubCall(t *testing.T) {
+func TestPullRequestPlansTheProjectItTouched(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
 	check(t, f.post(t, eventPullRequest, "d1", pullBodyJSON("synchronize", testRepo, testHead)),
-		http.StatusAccepted, "godwit plan accepted")
-	if len(f.api.scoped) != 0 {
-		t.Fatalf("a plan spent %d github calls", len(f.api.scoped))
-	}
+		http.StatusAccepted, "godwit plan accepted at 1111111 for orders")
 	cmd := f.runner.got[0]
 	if cmd.login != "" || cmd.principal.Scope != "read" || cmd.cmd != nil {
 		t.Fatalf("command = %+v", cmd)
+	}
+	if len(cmd.projects) != 1 || cmd.projects[0].target != "orders" || cmd.projects[0].dir != "db/migrations" {
+		t.Fatalf("projects = %+v", cmd.projects)
 	}
 }
 

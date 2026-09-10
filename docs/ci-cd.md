@@ -404,12 +404,52 @@ One App per godwit deployment, registered by the operator — never a shared, pu
 ```bash
 godwit target add orders --provider vault --vault-path database/creds/orders \
   --github-repo acme/orders \
-  --github-repo acme/monorepo:services/orders/db/migrations
+  --github-repo acme/monorepo:services/orders
 ```
 
-Each entry is `owner/repo`, which binds every migration directory in that repository, or `owner/repo:dir`, which binds one. `godwit targets` prints the bindings in its `GITHUB` column. `target add` replaces the whole target configuration, so a later `target add` that omits `--github-repo` unbinds it — pass the full list every time.
+Each entry is `owner/repo`, whose project is the repository root, or `owner/repo:dir`, where `dir` is the directory holding that project's `godwit.yaml`. It is **not** the migration directory — `dir:` inside that file names those, relative to it. `godwit targets` prints the bindings in its `GITHUB` column. `target add` replaces the whole target configuration, so a later `target add` that omits `--github-repo` unbinds it — pass the full list every time.
 
 `godwit.yaml` still names the target, and is still where a repository says what it wants. It is now a request: the server reads the name from the head sha and looks it up in the binding. A name the binding does not carry is refused in words that do not say whether that target exists, because a webhook caller has no `ListTargets` and a refusal should not become one.
+
+### What makes a pull request worth planning
+
+The Action leaves this to the workflow's `paths:` filter. With no workflow, the App decides it from the changed files, the way [Atlantis's `autoplan.when_modified`](https://www.runatlantis.io/docs/repo-level-atlantis-yaml.html#autoplan) does — [decision 0017](decisions/0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) has the comparison and what godwit does differently.
+
+A project's default trigger is **its own migrations, and the file that says where they go**:
+
+| Changed file | |
+|---|---|
+| `db/migrations/20260101000000_add_col.up.sql` | plans |
+| `godwit.yaml` | plans — it names the target and the rollout |
+| `db/migrations/README.md` | nothing |
+| `db/seeds/reference.sql` | nothing — `.sql` outside the migration directory is not a migration |
+| `src/app.js` | nothing |
+
+A project widens that with `autoplan` in its own `godwit.yaml`:
+
+```yaml
+dir: db/migrations
+target: orders
+autoplan:
+  enabled: true                     # false stops the automatic plan; a godwit comment still works
+  when_modified: ["prisma/**"]      # added to the default, never replacing it
+```
+
+Patterns are globs relative to the project's directory — `*` does not cross `/`, `**` does. They may not begin with `/` or contain `..`: a project's trigger stays inside the project, which is also what lets the server skip a project a pull request did not touch without reading its file at all. **`when_modified` adds to the default rather than replacing it**, so a project cannot stop planning the migrations it owns except by saying `enabled: false`. Atlantis replaces, and its own docs call the resulting mistake the common one.
+
+Nothing here needs an operator's permission, and nothing here grants any: the trigger says when godwit looks at a project, and the [binding](#binding-a-repository-to-a-target) says which database that project may reach. A repository that widens its own trigger gets more plans of its own target.
+
+**A pull request touching several bound projects plans all of them**, ordered by target name. **One touching none is silence** — no plan, no comment, nothing, which is the point of having a trigger. A `godwit apply` comment on such a pull request is refused instead, because a person asked and is owed an answer.
+
+**A pull request godwit cannot see the whole of is refused, never called empty.** `GET /pulls/{n}/files` answers with at most 3000 files and does not say when it truncated, so godwit compares what it listed against the count the pull request itself reports and stops believing a listing that falls short of it. Concluding "nothing to plan" there would report a migration as absent when it is in the pull request and the reviewer would merge on it, so instead every command is refused with what was listed, what was expected, and the advice to split the pull request or land the migrations in one of their own. The same rule refuses an apply whose review list hit its cap: GitHub lists reviews oldest first, so a truncated read drops exactly the dismissals that withdraw an approval.
+
+### What the App does not do: `godwit diff`
+
+"I changed my Go model — how does godwit know to write a migration?" is not the App's question, and it will not become one.
+
+Deriving a desired schema from an ORM means running the repository's own toolchain: compiling a Go package, running `npx prisma`, running `manage.py`. A central App would be building and executing arbitrary code from any repository in its installation, in the process that holds every target's credential — the surface the App exists to remove. So `godwit diff` and `lint`'s `E005` stay [Action-only](#github-action), in a job that already has a checkout and needs only a `read` token. A schema-source change is therefore not a trigger either; a project that wants a re-plan when its schema moves can name it in `when_modified`.
+
+The App's job starts at the committed migration. `godwit diff` writes the file, the author pushes it, and the App plans it.
 
 ### Who may command through the App
 
@@ -431,7 +471,7 @@ Beyond those: the pull request must be open (`plan`, `apply`, `confirm`) and unm
 | `413`, empty | the body is over `--github-webhook-max-bytes` |
 | `400` | not a `POST`, no `X-GitHub-Delivery`, or a body that is not JSON |
 | `202 accepted` | verified, authorised, recorded |
-| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing), refused (unbound, unauthorised, stale, a fork), or a duplicate delivery id |
+| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing, a pull request no bound project plans), refused (unbound, unauthorised, stale, a fork, a listing godwit could not read the whole of), or a duplicate delivery id |
 | `500` | the store or GitHub could not be reached. Nothing was recorded, so GitHub's redelivery is a fresh attempt |
 
 Every delivery increments `godwit_webhook_deliveries_total{event,result}`.

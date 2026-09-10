@@ -48,8 +48,9 @@ type payload struct {
 		Association string    `json:"author_association"`
 	} `json:"review"`
 	PullRequest struct {
-		Number int `json:"number"`
-		Head   struct {
+		Number       int `json:"number"`
+		ChangedFiles int `json:"changed_files"`
+		Head         struct {
 			SHA  string `json:"sha"`
 			Repo struct {
 				FullName string `json:"full_name"`
@@ -70,6 +71,7 @@ type request struct {
 	reviewSHA   string
 	headSHA     string
 	headRepo    string
+	files       int
 }
 
 type outcome struct {
@@ -134,6 +136,7 @@ func pullRequest(req *request, p *payload) (*request, *outcome) {
 	}
 	req.number, req.name = p.PullRequest.Number, "plan"
 	req.headSHA, req.headRepo = p.PullRequest.Head.SHA, p.PullRequest.Head.Repo.FullName
+	req.files = p.PullRequest.ChangedFiles
 	if !validSHA(req.headSHA) {
 		return nil, refused("the pull_request payload carries no head commit")
 	}

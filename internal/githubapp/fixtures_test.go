@@ -79,12 +79,19 @@ func (s *fakeStore) Audit(_ context.Context, e controlplane.AuditEntry) error {
 }
 
 type fakeRepo struct {
-	perm       map[string]string
-	permErr    error
-	pr         pull
-	pullErr    error
-	submitted  []review
-	reviewsErr error
+	perm          map[string]string
+	permErr       error
+	pr            pull
+	pullErr       error
+	submitted     []review
+	reviewsErr    error
+	reviewsCapped bool
+	filesCapped   bool
+	touched       []string
+	changedErr    error
+	files         map[string]string
+	fileErr       error
+	read          []string
 }
 
 func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
@@ -102,8 +109,25 @@ func (r *fakeRepo) pullRequest(context.Context, int) (pull, error) {
 	return r.pr, r.pullErr
 }
 
-func (r *fakeRepo) reviews(context.Context, int) ([]review, error) {
-	return r.submitted, r.reviewsErr
+func (r *fakeRepo) reviews(context.Context, int) ([]review, bool, error) {
+	return r.submitted, !r.reviewsCapped, r.reviewsErr
+}
+
+func (r *fakeRepo) changed(context.Context, int) (listing, error) {
+	return listing{paths: r.touched, listed: len(r.touched), capped: r.filesCapped}, r.changedErr
+}
+
+func (r *fakeRepo) file(_ context.Context, path, _ string) ([]byte, error) {
+	r.read = append(r.read, path)
+	if r.fileErr != nil {
+		return nil, r.fileErr
+	}
+	body, ok := r.files[path]
+	if !ok {
+		return nil, errAbsent
+	}
+
+	return []byte(body), nil
 }
 
 type fakeAPI struct {
@@ -236,8 +260,10 @@ func writer(t *testing.T) *fakeRepo {
 	t.Helper()
 
 	return &fakeRepo{
-		perm: map[string]string{"alice": "write", "bob": "admin"},
-		pr:   pull{head: testHead, headRepo: testRepo, state: "open", author: "carol"},
+		perm:    map[string]string{"alice": "write", "bob": "admin"},
+		pr:      pull{head: testHead, headRepo: testRepo, state: "open", author: "carol"},
+		touched: []string{"db/migrations/20260101000000_x.up.sql"},
+		files:   map[string]string{"godwit.yaml": "dir: db/migrations\ntarget: orders\n"},
 	}
 }
 
