@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Env: GODWIT_BIN COMMAND MODE DRY_RUN APPLY_ON ALLOWED_ASSOCIATIONS REQUIRE_APPROVAL ACK EVENT_NAME EVENT_PATH REPOSITORY GH_TOKEN GITHUB_SHA GITHUB_OUTPUT RUN_URL
+# Env: GODWIT_BIN COMMAND MODE DRY_RUN APPLY_ON ALLOWED_ASSOCIATIONS REQUIRE_APPROVAL ACK COMMENT EVENT_NAME EVENT_PATH REPOSITORY GH_TOKEN GITHUB_SHA GITHUB_OUTPUT RUN_URL
 ACK="${ACK:-}"
 out() { printf '%s=%s\n' "$1" "$2" >>"${GITHUB_OUTPUT}"; }
 emit() {
@@ -16,6 +16,7 @@ skip() {
 }
 refuse() {
   echo "::error::godwit: $1"
+  MESSAGE="$1" "$(dirname "$0")/action-refuse.sh" || true
   exit "${2:-1}"
 }
 event() { jq -r "$1" "${EVENT_PATH}"; }

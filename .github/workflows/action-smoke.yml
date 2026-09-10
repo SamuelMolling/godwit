@@ -7,6 +7,7 @@ on:
       - scripts/action-context.sh
       - scripts/action-run.sh
       - scripts/action-comment.sh
+      - scripts/action-refuse.sh
       - scripts/action-status.sh
       - internal/cli/**
       - internal/comment/**
@@ -61,6 +62,7 @@ jobs:
               done
               case "$*" in *"/comments"*) printf '%s\n' "${GH_STUB_COMMENT_URL:-}" ;; esac
               ;;
+            *"/comments"*) printf '%s\n' "${GH_STUB_COMMENT_IDS:-}" ;;
           esac
           EOF
           chmod +x "${stub}/gh"
@@ -379,6 +381,7 @@ jobs:
         env:
           GODWIT_BIN: ${{ runner.temp }}/godwit
           GH_TOKEN: stub
+          GH_STUB_LOG: ${{ runner.temp }}/context-gh.log
           MODE: apply-on-pr
           DRY_RUN: "false"
           ALLOWED_ASSOCIATIONS: OWNER,MEMBER,COLLABORATOR
@@ -395,14 +398,27 @@ jobs:
           export GITHUB_OUTPUT="${out}"
           context() {
             : >"${out}"
+            : >"${GH_STUB_LOG}"
             local rc=0
             ./scripts/action-context.sh >"${log}" 2>&1 || rc=$?
             cat "${log}"
+            cat "${GH_STUB_LOG}"
             printf 'rc=%s\n' "${rc}" >>"${out}"
           }
           expect() { grep -qx "$1" "${out}"; }
           absent() { if grep -q "$1" "${out}"; then exit 1; fi; }
           says() { grep -qF "$1" "${log}"; }
+          answered() {
+            grep -qF "api --method POST repos/${GITHUB_REPOSITORY}/issues/7/comments -F body=@" "${GH_STUB_LOG}"
+            grep -qxF '<!-- godwit:refused -->' "${GH_STUB_LOG}"
+            grep -qF "$1" "${GH_STUB_LOG}"
+            if [ -n "${2:-}" ]; then
+              grep -qF "statuses/${3:-${HEAD_SHA}} -f state=failure -f context=$2 -f description=" "${GH_STUB_LOG}"
+            elif grep -q '/statuses/' "${GH_STUB_LOG}"; then
+              exit 1
+            fi
+          }
+          mute() { if grep -q -- '--method POST' "${GH_STUB_LOG}"; then exit 1; fi; }
           comment() {
             printf '{"action":"%s","issue":{"number":7%s},"comment":{"body":"%s","author_association":"%s","user":{"login":"dev"}}}' \
               "$1" "$2" "$3" "$4" >"${EVENT_PATH}"
@@ -427,19 +443,19 @@ jobs:
           comment created ',"pull_request":{"url":"x"}' '/godwit apply --ack H001' MEMBER
           context; expect rc=0; expect skipped=false; expect ack=H001
           comment created ',"pull_request":{"url":"x"}' 'godwitapply' MEMBER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           comment created ',"pull_request":{"url":"x"}' '  godwit apply\r\n' OWNER
           context; expect rc=0; expect skipped=false
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' CONTRIBUTOR
-          context; expect rc=1; absent '^skipped='
+          context; expect rc=1; absent '^skipped='; answered 'author association CONTRIBUTOR is not in' godwit/applied
           comment created ',"pull_request":{"url":"x"}' 'looks good' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           comment created ',"pull_request":{"url":"x"}' 'please godwit apply' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           comment created '' 'godwit apply' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           comment edited ',"pull_request":{"url":"x"}' 'godwit apply' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           APPLY_ON=approve comment created ',"pull_request":{"url":"x"}' 'godwit apply' OWNER
           APPLY_ON=approve context; expect rc=0; expect skipped=true
           COMMAND=revert comment created ',"pull_request":{"url":"x"}' 'godwit revert' COLLABORATOR
@@ -459,8 +475,10 @@ jobs:
           context; expect rc=0; expect skipped=false
           comment created ',"pull_request":{"url":"x"}' "godwit apply ${OTHER_SHA}" OWNER
           context; expect rc=1; says 'the head moved after the comment'
+          answered 'the head moved after the comment' godwit/applied
           comment created ',"pull_request":{"url":"x"}' 'godwit apply notasha' OWNER
           context; expect rc=2; says "does not understand 'notasha'"
+          answered "does not understand 'notasha'" godwit/applied
 
           comment created ',"pull_request":{"url":"x"}' 'godwit apply --ack H001' OWNER
           context; expect rc=0; expect skipped=false; expect ack=H001
@@ -481,6 +499,7 @@ jobs:
           context; expect rc=2; says 'does not take --force'
           comment created ',"pull_request":{"url":"x"}' 'godwit apply --unknown' OWNER
           context; expect rc=2; says "does not understand '--unknown'"
+          answered "does not understand '--unknown'" godwit/applied
           COMMAND=confirm comment created ',"pull_request":{"url":"x"}' 'godwit confirm --ack H001' MEMBER
           COMMAND=confirm context; expect rc=2; says 'does not take --ack'
           COMMAND=revert comment created ',"pull_request":{"url":"x"}' 'godwit revert --ack H002 --allow-data-loss --force' OWNER
@@ -501,7 +520,7 @@ jobs:
           comment created ',"pull_request":{"url":"x"}' 'godwit apply\n\nthanks' OWNER
           context; expect rc=0; expect skipped=true
           comment created ',"pull_request":{"url":"x"}' 'note:\ngodwit apply --unknown' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           comment created ',"pull_request":{"url":"x"}' 'godwit apply\n\n' OWNER
           context; expect rc=0; expect skipped=false
           comment created ',"pull_request":{"url":"x"}' "\`godwit apply\`" OWNER
@@ -511,23 +530,32 @@ jobs:
 
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' MEMBER
           GH_STUB_PERMISSION="read" context; expect rc=1; says "has permission 'read'"
+          answered "has permission 'read'" godwit/applied
           GH_STUB_PERMISSION="none" context; expect rc=1; says "has permission 'none'"
           GH_STUB_PERMISSION="admin" context; expect rc=0; expect skipped=false
           printf '{"action":"created","issue":{"number":7,"pull_request":{"url":"x"}},"comment":{"body":"godwit apply","author_association":"OWNER","user":{"login":"dev;id"}}}' >"${EVENT_PATH}"
           context; expect rc=1; says 'is not a GitHub login'
+          answered 'is not a GitHub login' godwit/applied
           printf '{"action":"created","issue":{"number":"7x","pull_request":{"url":"x"}},"comment":{"body":"godwit apply","author_association":"OWNER","user":{"login":"dev"}}}' >"${EVENT_PATH}"
           context; expect rc=1; says 'carries no pull request number'
+          mute; says 'names no pull request to answer on'
 
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' OWNER
           ALLOWED_ASSOCIATIONS=OWNER,CONTRIBUTOR context; expect rc=2; says 'must not contain CONTRIBUTOR'
+          answered 'must not contain CONTRIBUTOR' godwit/applied
           ALLOWED_ASSOCIATIONS=NONE context; expect rc=2
           ALLOWED_ASSOCIATIONS=owner context; expect rc=2; says 'unknown value'
           ALLOWED_ASSOCIATIONS='' context; expect rc=2; says 'allowed-associations is empty'
+          answered 'allowed-associations is empty' godwit/applied
           REQUIRE_APPROVAL=maybe context; expect rc=2; says 'unknown require-approval'
+          answered 'unknown require-approval' godwit/applied
 
           export REQUIRE_APPROVAL=true GH_STUB_REVIEWS='[]'
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' OWNER
           context; expect rc=1; says 'no approving review'
+          answered 'no approving review' godwit/applied
+          GH_STUB_COMMENT_IDS=42 context; expect rc=1
+          grep -qF "api --method DELETE repos/${GITHUB_REPOSITORY}/issues/comments/42" "${GH_STUB_LOG}"
           GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" context; expect rc=0; expect skipped=false
           GH_STUB_REVIEWS="$(approval APPROVED "${OTHER_SHA}" rev)" context; expect rc=1; says 'no approving review'
           GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" pr-author)" context; expect rc=1; says 'no approving review'
@@ -536,6 +564,7 @@ jobs:
           GH_STUB_REVIEWS="[{\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}},{\"state\":\"APPROVED\",\"commit_id\":\"${HEAD_SHA}\",\"user\":{\"login\":\"rev\"}}]" \
             context; expect rc=0; expect skipped=false
           GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" GH_STUB_APPROVER_PERMISSION="read" context; expect rc=1; says 'approver rev'
+          answered 'approver rev' godwit/applied
           COMMAND=confirm comment created ',"pull_request":{"url":"x"}' 'godwit confirm' OWNER
           COMMAND=confirm context; expect rc=1; says 'no approving review'
           COMMAND=confirm GH_STUB_REVIEWS="$(approval APPROVED "${HEAD_SHA}" rev)" context; expect rc=0; expect skipped=false
@@ -556,16 +585,18 @@ jobs:
           context; expect rc=1; says 'the head moved after the comment'
           comment created ',"pull_request":{"url":"x"}' 'godwit plan --rollout fast' OWNER
           context; expect rc=2; says "'fast' is not a rollout policy"
+          answered "'fast' is not a rollout policy" godwit/plan
           comment created ',"pull_request":{"url":"x"}' 'godwit plan --rollout' OWNER
           context; expect rc=2; says 'names no rollout policy'
           comment created ',"pull_request":{"url":"x"}' 'godwit plan --ack H001' OWNER
           context; expect rc=2; says 'does not take --ack'
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' OWNER
-          context; expect rc=0; expect skipped=true
+          context; expect rc=0; expect skipped=true; mute
           comment created ',"pull_request":{"url":"x"}' 'godwit plan' CONTRIBUTOR
-          context; expect rc=1
+          context; expect rc=1; answered 'author association CONTRIBUTOR is not in' godwit/plan
           comment created ',"pull_request":{"url":"x"}' 'godwit plan' OWNER
           GH_STUB_PERMISSION="read" context; expect rc=1; says "has permission 'read'"
+          answered "has permission 'read'" godwit/plan
           REQUIRE_APPROVAL=true GH_STUB_REVIEWS='[]' context; expect rc=0; expect skipped=false
           APPLY_ON=approve context; expect rc=0; expect skipped=false
           MODE=apply-on-merge context; expect rc=0; expect skipped=false
@@ -594,48 +625,58 @@ jobs:
           APPLY_ON=approve context; expect rc=0; expect skipped=true
           review approved '' COLLABORATOR "${OTHER_SHA}"
           APPLY_ON=approve context; expect rc=1; says 'the head moved after the review'
+          answered 'the head moved after the review' godwit/applied
           review commented 'godwit apply' MEMBER "${OTHER_SHA}"
           context; expect rc=1; says 'the head moved after the review'
 
           export EVENT_NAME=issue_comment
           comment created ',"pull_request":{"url":"x"}' 'godwit apply' OWNER
           GH_STUB_PR="{\"head\":{\"sha\":\"${OTHER_SHA}\"},\"state\":\"open\",\"merged\":false,\"user\":{\"login\":\"pr-author\"}}" context; expect rc=1
+          answered 'is not the head of pull request #7' godwit/applied "${OTHER_SHA}"
           GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true,\"user\":{\"login\":\"pr-author\"}}" context; expect rc=1
+          answered 'nothing to apply' godwit/applied
           comment created ',"pull_request":{"url":"x"}' 'godwit revert' OWNER
           GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":true,\"user\":{\"login\":\"pr-author\"}}" COMMAND=revert context; expect rc=1
+          answered 'was merged' godwit/applied
           GH_STUB_PR="{\"head\":{\"sha\":\"${HEAD_SHA}\"},\"state\":\"closed\",\"merged\":false,\"user\":{\"login\":\"pr-author\"}}" COMMAND=revert context; expect rc=0; expect skipped=false
-          EVENT_NAME=push context; expect rc=1
-          APPLY_ON=never context; expect rc=2
-          MODE=apply-on-merge context; expect rc=2
+          EVENT_NAME=push context; expect rc=1; mute; says 'names no pull request to answer on'
+          APPLY_ON=never context; expect rc=2; answered 'enables nothing' godwit/applied
+          MODE=apply-on-merge context; expect rc=2; answered 'needs mode: apply-on-pr' godwit/applied
           MODE=apply-on-merge COMMAND=revert context; expect rc=2
           MODE=apply-on-merge COMMAND=confirm context; expect rc=2
           MODE=apply-on-merge COMMAND=migrate context; expect rc=0; expect skipped=false; expect "head-sha=${GITHUB_SHA}"
-          MODE=other context; expect rc=2
-          COMMAND=other context; expect rc=2
+          MODE=other context; expect rc=2; answered "unknown mode 'other'" godwit/applied
+          COMMAND=other context; expect rc=2; answered "unknown command 'other'"
 
           export EVENT_NAME=pull_request COMMAND=lint
           pull
-          context; expect rc=0; expect skipped=false; expect pr-number=7; expect "head-sha=${HEAD_SHA}"
+          context; expect rc=0; expect skipped=false; expect pr-number=7; expect "head-sha=${HEAD_SHA}"; mute
           COMMAND=plan context; expect rc=0; expect skipped=false; expect pr-number=7; absent '^rollout='
           pull "${HEAD_SHA}" someone/fork
           context; expect rc=0; expect skipped=false
           EVENT_NAME=pull_request_target context; expect rc=1; says 'would run that fork'
+          answered 'would run that fork'
           pull
           EVENT_NAME=pull_request_target context; expect rc=0; expect skipped=false
           pull abc
           context; expect rc=1; says 'carries no head commit'
+          answered 'carries no head commit'
           pull "${HEAD_SHA}" ''
           COMMAND=apply context; expect rc=1; says 'a fork may not apply'
+          answered 'a fork may not apply' godwit/applied
           pull "${HEAD_SHA}" someone/fork
           COMMAND=apply context; expect rc=1; says 'a fork may not apply'
           MODE=apply-on-merge COMMAND=migrate context; expect rc=1; says 'a fork may not apply'
+          answered 'a fork may not apply' godwit/applied
           MODE=apply-on-merge COMMAND=migrate DRY_RUN=true context; expect rc=0; expect skipped=false
           pull
           COMMAND=apply context; expect rc=0; expect skipped=false
           COMMAND=apply EVENT_NAME=pull_request_target context; expect rc=2; says 'refused on pull_request_target'
+          answered 'refused on pull_request_target' godwit/applied
           COMMAND=confirm EVENT_NAME=pull_request_target context; expect rc=2
           COMMAND=revert EVENT_NAME=pull_request_target context; expect rc=2
           MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request_target context; expect rc=2; says 'refused on pull_request_target'
+          answered 'refused on pull_request_target' godwit/applied
           MODE=apply-on-merge COMMAND=migrate EVENT_NAME=pull_request_target DRY_RUN=true context; expect rc=0; expect skipped=false
 
       - name: Check outputs
@@ -816,16 +857,19 @@ jobs:
           grep -c "^api --method POST ${statuses}pending -f context=godwit/plan -f description=2 to apply, 1 hazard to acknowledge -f target_url=${comment}$" "${GH_STUB_LOG}" | grep -qx 2
           grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=nothing to apply -f target_url=${runs}" "${GH_STUB_LOG}"
           grep -q "^api --method POST ${statuses}success -f context=godwit/plan -f description=2 to apply -f target_url=${comment}$" "${GH_STUB_LOG}"
+          grep -q "^api --method POST ${statuses}failure -f context=godwit/applied -f description=mode apply-on-pr never applies outside the pull request" "${GH_STUB_LOG}"
           grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/plan " "${GH_STUB_LOG}" | grep -qx 6
-          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 34
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 40
+          grep -c "^api --method POST ${statuses}[a-z]* -f context=godwit/applied " "${GH_STUB_LOG}" | grep -qx 11
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/" "${GH_STUB_LOG}" | grep -qx 17
           absent "^api --method POST repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA} "
 
           grep -q "^api --paginate repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews$" "${GH_STUB_LOG}"
           grep -q "^api repos/${GITHUB_REPOSITORY}/collaborators/reviewer/permission --jq .permission$" "${GH_STUB_LOG}"
           absent "^api repos/${GITHUB_REPOSITORY}/collaborators/pr-author/permission"
 
-          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 12
+          grep -c "^api --method POST repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments -F body=@" "${GH_STUB_LOG}" | grep -qx 13
+          grep -c '^<!-- godwit:refused -->$' "${GH_STUB_LOG}" | grep -qx 1
+          grep -A1 '^<!-- godwit:refused -->$' "${GH_STUB_LOG}" | grep -qx '## godwit migrate refused'
           grep -c '^<!-- godwit:diff -->$' "${GH_STUB_LOG}" | grep -qx 2
           grep -q '^<!-- godwit:plan -->$' "${GH_STUB_LOG}"
           grep -c '^<!-- godwit:migrate -->$' "${GH_STUB_LOG}" | grep -qx 6
