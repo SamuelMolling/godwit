@@ -56,7 +56,8 @@ jobs:
   # runs the down files of that run when the pull request is abandoned. The command has to be the
   # whole comment: prose around it means nothing fires. The commander must hold
   # write or admin permission on this repository (allowed-associations only narrows further), and
-  # apply and confirm additionally need an approving review standing on the exact head commit.
+  # apply and confirm additionally need GitHub to report the pull request as approved. To make a
+  # push withdraw that approval, enable stale-approval dismissal on the branch protection rule.
   # Other events end the job as skipped.
   apply:
     if: >-
@@ -81,7 +82,7 @@ jobs:
           target: orders
           rollout: expand-contract
           # ack: H003
-          # require-approval: "false"   # apply without an approving review on the head (not advised)
+          # require-approval: "false"   # apply without an approving review (not advised)
 
       # With rollout: expand-contract the apply above can end in awaiting_contract: the expand phase
       # is applied and godwit/applied stays pending. Deploy the application version that reads both
