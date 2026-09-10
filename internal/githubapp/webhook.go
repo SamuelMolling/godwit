@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/api"
@@ -220,7 +221,8 @@ func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd comm
 		return http.StatusAccepted, resultDuplicate, "delivery " + delivery + " was already handled"
 	}
 
-	return http.StatusAccepted, resultAccepted, "godwit " + cmd.name + " accepted at " + short(cmd.head)
+	return http.StatusAccepted, resultAccepted,
+		fmt.Sprintf("godwit %s accepted at %s for %s", cmd.name, short(cmd.head), cmd.projectNames())
 }
 
 func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, error) {
@@ -241,34 +243,57 @@ func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payloa
 			"and not a plan; ask a godwit operator to bind it (godwit target add <target> --github-repo %s)",
 			req.repository, req.repository), nil
 	}
-	head, out, err := r.resolve(ctx, req, p)
+	head, repo, out, err := r.resolve(ctx, req, p)
 	if out != nil || err != nil {
 		return nil, out, err
+	}
+	res, err := resolve(ctx, repo, bound, req, head)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(res.planned) == 0 {
+		return nil, nothingToDo(req, res), nil
 	}
 
 	return &command{
 		delivery: delivery, event: event, repository: req.repository, installation: p.Installation.ID,
 		number: req.number, head: head, login: req.commander,
 		principal: api.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
-		bound:     bound, name: req.name, cmd: req.cmd,
+		bound:     bound, name: req.name, cmd: req.cmd, projects: res.planned,
 		source: "github.com/" + req.repository + "@" + head,
 	}, nil, nil
 }
 
-func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (string, *outcome, error) {
-	if req.commander == "" {
-		if req.headRepo != req.repository {
-			return "", refused("pull request #%d has its head in %s, not %s: a fork's pull request is not planned "+
-				"against the targets of %s", req.number, orNone(req.headRepo), req.repository, req.repository), nil
-		}
-
-		return req.headSHA, nil, nil
+// nothingToDo is silence for a pull request that touched no project, and a reason for a person who asked.
+func nothingToDo(req *request, res resolution) *outcome {
+	if req.commander == "" && len(res.skipped) == 0 {
+		return ignored("no bound project of %s has a when_modified the changed files match", req.repository)
 	}
+	if len(res.skipped) == 0 {
+		return refused("godwit %s: this pull request changes nothing any bound project of %s plans",
+			req.name, req.repository)
+	}
+
+	return refused("%s", strings.Join(res.skipped, "; "))
+}
+
+func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (string, repoView, *outcome, error) {
 	open := func(ctx context.Context) (repoView, error) {
 		return r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
 	}
+	if req.commander != "" {
+		return authorizer{open: open, allowed: r.allowed}.authorize(ctx, req)
+	}
+	if req.headRepo != req.repository {
+		return "", nil, refused("pull request #%d has its head in %s, not %s: a fork's pull request is not planned "+
+			"against the targets of %s", req.number, orNone(req.headRepo), req.repository, req.repository), nil
+	}
+	repo, err := open(ctx)
+	if err != nil {
+		return "", nil, nil, err
+	}
 
-	return authorizer{open: open, allowed: r.allowed}.authorize(ctx, req)
+	return req.headSHA, repo, nil, nil
 }
 
 // fresh ages a delivery by GitHub's own timestamp inside a body GitHub signed, never by a committer date.

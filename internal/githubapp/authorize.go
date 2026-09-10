@@ -47,39 +47,39 @@ type authorizer struct {
 	allowed map[string]bool
 }
 
-func (a authorizer) authorize(ctx context.Context, req *request) (string, *outcome, error) {
+func (a authorizer) authorize(ctx context.Context, req *request) (string, repoView, *outcome, error) {
 	if !a.allowed[req.association] {
-		return "", refused("godwit %s by %s refused: author association %s is not allowed",
+		return "", nil, refused("godwit %s by %s refused: author association %s is not allowed",
 			req.name, req.commander, orNone(req.association)), nil
 	}
 	repo, err := a.open(ctx)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if out, err := permitted(ctx, repo, req.commander, "commander"); out != nil || err != nil {
-		return "", out, err
+		return "", nil, out, err
 	}
 	pr, err := repo.pullRequest(ctx, req.number)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	if !validSHA(pr.head) {
-		return "", refused("could not read the head of pull request #%d", req.number), nil
+		return "", nil, refused("could not read the head of pull request #%d", req.number), nil
 	}
 	if pr.headRepo != req.repository {
-		return "", refused("godwit %s on pull request #%d refused: its head is in %s, not %s; a fork may not reach "+
+		return "", nil, refused("godwit %s on pull request #%d refused: its head is in %s, not %s; a fork may not reach "+
 			"the targets of %s", req.name, req.number, orNone(pr.headRepo), req.repository, req.repository), nil
 	}
 	if out := anchored(req, pr); out != nil {
-		return "", out, nil
+		return "", nil, out, nil
 	}
 	if needsApproval[req.name] {
 		if out, err := approved(ctx, repo, req, pr); out != nil || err != nil {
-			return "", out, err
+			return "", nil, out, err
 		}
 	}
 
-	return pr.head, nil, nil
+	return pr.head, repo, nil, nil
 }
 
 func anchored(req *request, pr pull) *outcome {

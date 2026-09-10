@@ -305,3 +305,97 @@ func (brokenBody) RoundTrip(*http.Request) (*http.Response, error) {
 		Header:     http.Header{},
 	}, nil
 }
+
+func TestChangedFilesFollowThePages(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+srv.URL+`/next?page=2>; rel="next"`)
+			_, _ = io.WriteString(w, `[{"filename":"db/migrations/a.up.sql"}]`)
+
+			return
+		}
+		_, _ = io.WriteString(w, `[{"filename":"db/migrations/c.up.sql","previous_filename":"db/old/c.up.sql"}]`)
+	}))
+	t.Cleanup(srv.Close)
+	r := &repoClient{
+		client: &Client{BaseURL: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return now }},
+		token:  "ghs_x", repository: testRepo,
+	}
+	got, err := r.changed(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"db/migrations/a.up.sql", "db/migrations/c.up.sql", "db/old/c.up.sql"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("changed = %v, want %v", got, want)
+	}
+}
+
+func TestChangedFilesFail(t *testing.T) {
+	t.Parallel()
+
+	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if _, err := r.changed(context.Background(), 3); err == nil {
+		t.Fatal("no error")
+	}
+}
+
+func TestFileAtACommit(t *testing.T) {
+	t.Parallel()
+
+	var gotURL string
+	r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+		gotURL = req.URL.String()
+		_, _ = io.WriteString(w, `{"type":"file","size":9,"encoding":"base64","content":"dGFyZ2V0OiB4\n"}`)
+	})
+	body, err := r.file(context.Background(), "godwit.yaml", testHead)
+	if err != nil || string(body) != "target: x" {
+		t.Fatalf("file = %q, %v", body, err)
+	}
+	if gotURL != "/repos/"+testRepo+"/contents/godwit.yaml?ref="+testHead {
+		t.Fatalf("url = %s", gotURL)
+	}
+}
+
+func TestFileRefusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, answer, want string }{
+		{"a directory", `{"type":"dir"}`, "is a dir, not a file"},
+		{"nothing godwit understands", `{"type":""}`, "is a none, not a file"},
+		{"too large", `{"type":"file","size":999999}`, "over the"},
+		{"another encoding", `{"type":"file","size":1,"encoding":"none"}`, "came back none-encoded"},
+		{"content that is not base64", `{"type":"file","size":1,"encoding":"base64","content":"!!"}`, "godwit.yaml:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tc.answer) })
+			_, err := r.file(context.Background(), "godwit.yaml", testHead)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFileAbsentIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+	if _, err := r.file(context.Background(), "godwit.yaml", testHead); !errors.Is(err, errAbsent) {
+		t.Fatalf("err = %v, want errAbsent", err)
+	}
+}
+
+func TestFileTransportFailure(t *testing.T) {
+	t.Parallel()
+
+	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if _, err := r.file(context.Background(), "godwit.yaml", testHead); err == nil {
+		t.Fatal("no error")
+	}
+}

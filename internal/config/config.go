@@ -3,7 +3,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,6 +44,13 @@ type Config struct {
 	AllowOutOfOrder  bool          `yaml:"allow_out_of_order"`
 	SchemaSource     *SchemaSource `yaml:"schema_source"`
 	Plan             *PlanSection  `yaml:"plan"`
+	Autoplan         *Autoplan     `yaml:"autoplan"`
+}
+
+// Autoplan is what this project asks the GitHub App to plan it for; the App decides what it is allowed.
+type Autoplan struct {
+	Enabled      *bool    `yaml:"enabled"`
+	WhenModified []string `yaml:"when_modified"`
 }
 
 const (
@@ -131,14 +140,35 @@ func find(dir string) string {
 	}
 }
 
+// Decode reads a godwit.yaml body without the filesystem or the environment, leaving its paths relative.
+func Decode(raw []byte) (Config, error) {
+	cfg := Defaults()
+	if err := cfg.decode(raw); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.validate(); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func (c *Config) decode(raw []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(c); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+
+	return nil
+}
+
 func (c *Config) readFile(path string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true)
-	if err := dec.Decode(c); err != nil {
+	if err := c.decode(raw); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	if !filepath.IsAbs(c.Dir) {

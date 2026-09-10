@@ -27,6 +27,8 @@ type repoView interface {
 	permission(ctx context.Context, login string) (string, error)
 	pullRequest(ctx context.Context, number int) (pull, error)
 	reviews(ctx context.Context, number int) ([]review, error)
+	changed(ctx context.Context, number int) ([]string, error)
+	file(ctx context.Context, path, ref string) ([]byte, error)
 }
 
 type forge interface {
@@ -152,6 +154,67 @@ func (r *repoClient) reviews(ctx context.Context, number int) ([]review, error) 
 	}
 
 	return all, nil
+}
+
+type changedFile struct {
+	Filename         string `json:"filename"`
+	PreviousFilename string `json:"previous_filename"`
+}
+
+func (r *repoClient) changed(ctx context.Context, number int) ([]string, error) {
+	url := r.url("/pulls/" + strconv.Itoa(number) + "/files?per_page=100")
+	var all []string
+	for url != "" {
+		var page []changedFile
+		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range page {
+			all = append(all, f.Filename)
+			if f.PreviousFilename != "" {
+				all = append(all, f.PreviousFilename)
+			}
+		}
+		url = next
+	}
+
+	return all, nil
+}
+
+// errAbsent marks a path the repository does not carry at that commit, which is not a failure.
+var errAbsent = errors.New("absent")
+
+const maxConfigBytes = 64 << 10
+
+func (r *repoClient) file(ctx context.Context, path, ref string) ([]byte, error) {
+	var out struct {
+		Type     string `json:"type"`
+		Size     int    `json:"size"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	url := r.url("/contents/" + path + "?ref=" + ref)
+	if _, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &out); errors.Is(err, errNotFound) {
+		return nil, errAbsent
+	} else if err != nil {
+		return nil, err
+	}
+	if out.Type != "file" {
+		return nil, fmt.Errorf("%s is a %s, not a file", path, orNone(out.Type))
+	}
+	if out.Size > maxConfigBytes {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d a project file may be", path, out.Size, maxConfigBytes)
+	}
+	if out.Encoding != "base64" {
+		return nil, fmt.Errorf("%s came back %s-encoded", path, orNone(out.Encoding))
+	}
+	body, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(out.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	return body, nil
 }
 
 func (r *repoClient) url(path string) string {
