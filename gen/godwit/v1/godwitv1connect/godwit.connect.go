@@ -79,6 +79,8 @@ const (
 	// GodwitServiceGetTargetStatusProcedure is the fully-qualified name of the GodwitService's
 	// GetTargetStatus RPC.
 	GodwitServiceGetTargetStatusProcedure = "/godwit.v1.GodwitService/GetTargetStatus"
+	// GodwitServiceGetTargetProcedure is the fully-qualified name of the GodwitService's GetTarget RPC.
+	GodwitServiceGetTargetProcedure = "/godwit.v1.GodwitService/GetTarget"
 	// GodwitServiceListTargetsProcedure is the fully-qualified name of the GodwitService's ListTargets
 	// RPC.
 	GodwitServiceListTargetsProcedure = "/godwit.v1.GodwitService/ListTargets"
@@ -120,6 +122,8 @@ type GodwitServiceClient interface {
 	// Repairs the ledger from the target's own journal, without writing to the target.
 	ReconcileTarget(context.Context, *connect.Request[v1.ReconcileTargetRequest]) (*connect.Response[v1.ReconcileTargetResponse], error)
 	GetTargetStatus(context.Context, *connect.Request[v1.GetTargetStatusRequest]) (*connect.Response[v1.GetTargetStatusResponse], error)
+	// Returns one target's registration, without its credential.
+	GetTarget(context.Context, *connect.Request[v1.GetTargetRequest]) (*connect.Response[v1.GetTargetResponse], error)
 	// Summarises every registered target from the control plane alone, without opening a connection to any of them.
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
 	// Answers, per migration and content, which targets hold it and which do not, from the control plane's
@@ -253,6 +257,12 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(godwitServiceMethods.ByName("GetTargetStatus")),
 			connect.WithClientOptions(opts...),
 		),
+		getTarget: connect.NewClient[v1.GetTargetRequest, v1.GetTargetResponse](
+			httpClient,
+			baseURL+GodwitServiceGetTargetProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("GetTarget")),
+			connect.WithClientOptions(opts...),
+		),
 		listTargets: connect.NewClient[v1.ListTargetsRequest, v1.ListTargetsResponse](
 			httpClient,
 			baseURL+GodwitServiceListTargetsProcedure,
@@ -318,6 +328,7 @@ type godwitServiceClient struct {
 	baselineTarget          *connect.Client[v1.BaselineTargetRequest, v1.BaselineTargetResponse]
 	reconcileTarget         *connect.Client[v1.ReconcileTargetRequest, v1.ReconcileTargetResponse]
 	getTargetStatus         *connect.Client[v1.GetTargetStatusRequest, v1.GetTargetStatusResponse]
+	getTarget               *connect.Client[v1.GetTargetRequest, v1.GetTargetResponse]
 	listTargets             *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
 	listMigrations          *connect.Client[v1.ListMigrationsRequest, v1.ListMigrationsResponse]
 	listAudit               *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
@@ -417,6 +428,11 @@ func (c *godwitServiceClient) GetTargetStatus(ctx context.Context, req *connect.
 	return c.getTargetStatus.CallUnary(ctx, req)
 }
 
+// GetTarget calls godwit.v1.GodwitService.GetTarget.
+func (c *godwitServiceClient) GetTarget(ctx context.Context, req *connect.Request[v1.GetTargetRequest]) (*connect.Response[v1.GetTargetResponse], error) {
+	return c.getTarget.CallUnary(ctx, req)
+}
+
 // ListTargets calls godwit.v1.GodwitService.ListTargets.
 func (c *godwitServiceClient) ListTargets(ctx context.Context, req *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {
 	return c.listTargets.CallUnary(ctx, req)
@@ -474,6 +490,8 @@ type GodwitServiceHandler interface {
 	// Repairs the ledger from the target's own journal, without writing to the target.
 	ReconcileTarget(context.Context, *connect.Request[v1.ReconcileTargetRequest]) (*connect.Response[v1.ReconcileTargetResponse], error)
 	GetTargetStatus(context.Context, *connect.Request[v1.GetTargetStatusRequest]) (*connect.Response[v1.GetTargetStatusResponse], error)
+	// Returns one target's registration, without its credential.
+	GetTarget(context.Context, *connect.Request[v1.GetTargetRequest]) (*connect.Response[v1.GetTargetResponse], error)
 	// Summarises every registered target from the control plane alone, without opening a connection to any of them.
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
 	// Answers, per migration and content, which targets hold it and which do not, from the control plane's
@@ -603,6 +621,12 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(godwitServiceMethods.ByName("GetTargetStatus")),
 		connect.WithHandlerOptions(opts...),
 	)
+	godwitServiceGetTargetHandler := connect.NewUnaryHandler(
+		GodwitServiceGetTargetProcedure,
+		svc.GetTarget,
+		connect.WithSchema(godwitServiceMethods.ByName("GetTarget")),
+		connect.WithHandlerOptions(opts...),
+	)
 	godwitServiceListTargetsHandler := connect.NewUnaryHandler(
 		GodwitServiceListTargetsProcedure,
 		svc.ListTargets,
@@ -683,6 +707,8 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 			godwitServiceReconcileTargetHandler.ServeHTTP(w, r)
 		case GodwitServiceGetTargetStatusProcedure:
 			godwitServiceGetTargetStatusHandler.ServeHTTP(w, r)
+		case GodwitServiceGetTargetProcedure:
+			godwitServiceGetTargetHandler.ServeHTTP(w, r)
 		case GodwitServiceListTargetsProcedure:
 			godwitServiceListTargetsHandler.ServeHTTP(w, r)
 		case GodwitServiceListMigrationsProcedure:
@@ -776,6 +802,10 @@ func (UnimplementedGodwitServiceHandler) ReconcileTarget(context.Context, *conne
 
 func (UnimplementedGodwitServiceHandler) GetTargetStatus(context.Context, *connect.Request[v1.GetTargetStatusRequest]) (*connect.Response[v1.GetTargetStatusResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.GetTargetStatus is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) GetTarget(context.Context, *connect.Request[v1.GetTargetRequest]) (*connect.Response[v1.GetTargetResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.GetTarget is not implemented"))
 }
 
 func (UnimplementedGodwitServiceHandler) ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {

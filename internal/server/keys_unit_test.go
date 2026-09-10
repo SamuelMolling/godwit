@@ -61,8 +61,8 @@ func TestSettleKeysNamesStrandedTargets(t *testing.T) {
 
 	log, buf := capturingLog()
 	store := &fakeTargets{summaries: []controlplane.TargetSummary{
-		{Name: "app", Provider: "static"},
-		{Name: "jobs", Provider: "vault"},
+		{TargetRegistration: controlplane.TargetRegistration{Name: "app", Provider: "static"}},
+		{TargetRegistration: controlplane.TargetRegistration{Name: "jobs", Provider: "vault"}},
 	}}
 	settleKeys(context.Background(), store, creds.Keyring{}, log)
 	if !strings.Contains(buf.String(), `"targets":"app"`) {
@@ -93,7 +93,7 @@ func TestSettleKeysReseals(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &fakeTargets{
-		summaries: []controlplane.TargetSummary{{Name: "app", Provider: "static"}},
+		summaries: []controlplane.TargetSummary{{TargetRegistration: controlplane.TargetRegistration{Name: "app", Provider: "static"}}},
 		configs:   map[string]map[string]string{"app": {"dsn": sealed}},
 	}
 	ring := envRing(testKey, old)
@@ -130,7 +130,7 @@ func TestResealFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	summaries := []controlplane.TargetSummary{{Name: "app", Provider: "static"}}
+	summaries := []controlplane.TargetSummary{{TargetRegistration: controlplane.TargetRegistration{Name: "app", Provider: "static"}}}
 	configs := func() map[string]map[string]string { return map[string]map[string]string{"app": {"dsn": sealed}} }
 
 	for _, tc := range []struct {

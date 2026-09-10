@@ -146,7 +146,8 @@ func TestAPullRequestIsPlannedFromTheAppAlone(t *testing.T) {
 		Addr: "127.0.0.1:0", Secret: webhookSecret, AppID: "1", PrivateKeyPEM: rsaPEM(t), APIBaseURL: gh.srv.URL,
 	})
 	if _, err := newClient(apiURL, "").RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-		Name: "orders", Provider: "static", Dsn: targetDSN, GithubRepositories: []string{webhookRepo},
+		Name: "orders", Provider: "static", Dsn: targetDSN,
+		GithubRepositories: &godwitv1.TargetRepositories{Values: []string{webhookRepo}},
 	})); err != nil {
 		t.Fatal(err)
 	}

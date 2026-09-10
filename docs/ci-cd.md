@@ -502,7 +502,7 @@ godwit target add orders --provider vault --credential-store production --vault-
 
 A GitOps deployment runs that same line from a Job rather than by hand — the binding is part of the target's row, so it is registered the way the rest of the row is, and never declared in the chart's values ([decision 0022](decisions/0022-control-plane-data-is-not-chart-configuration.md)).
 
-Each entry is `owner/repo`, whose project is the repository root, or `owner/repo:dir`, where `dir` is the directory holding that project's `godwit.yaml`. It is **not** the migration directory — `dir:` inside that file names those, relative to it. `godwit targets` prints the bindings in its `GITHUB` column. `target add` replaces the whole target configuration, so a later `target add` that omits `--github-repo` unbinds it — pass the full list every time.
+Each entry is `owner/repo`, whose project is the repository root, or `owner/repo:dir`, where `dir` is the directory holding that project's `godwit.yaml`. It is **not** the migration directory — `dir:` inside that file names those, relative to it. `godwit targets` prints the bindings in its `GITHUB` column, `godwit target show` alongside the rest of the registration. `--github-repo` replaces the whole list when you pass it, so pass every repository at once; a `target add` that omits it leaves the bindings alone, and `--github-repo=""` unbinds them all.
 
 `godwit.yaml` still names the target, and is still where a repository says what it wants. It is now a request: the server reads the name from the head sha and looks it up in the binding. A name the binding does not carry is refused in words that do not say whether that target exists, because a webhook caller has no `ListTargets` and a refusal should not become one.
 

@@ -25,6 +25,8 @@
             {{end}}
           </tbody>
         </table></div>
+        {{else if .Status.Unreachable}}
+        <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Not read</b><p>{{.Status.Unreachable}}</p></div>
         {{else}}
         <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Never migrated</b><p>{{.Target}} is registered but its <span class="mono">godwit.migrations</span> journal is empty. The first run bootstraps it.</p></div>
         {{end}}

@@ -583,6 +583,13 @@ docker compose exec -T target-db psql -U app -d legacy \
   -c "SELECT table_name FROM information_schema.tables WHERE table_name IN ('shipments', 'carriers');"
 
 echo
+echo "==> one target's registration, read back: where its credential comes from, and the settings its runs inherit"
+docker compose exec -T godwit-2 /godwit target show app-vault --server http://localhost:8474 --token demo-token
+echo "==> changing one setting sends only that setting: the vault path, template and store are not resent and do not move"
+rpc RegisterTarget '{"name": "app-vault", "lockTimeout": "9s"}'
+docker compose exec -T godwit-2 /godwit target show app-vault --server http://localhost:8474 --token demo-token
+
+echo
 echo "==> every registered target, from the control plane alone: settings, applied count, ready plans, drift, last run"
 docker compose exec -T godwit-2 /godwit targets --server http://localhost:8474 --token demo-token
 

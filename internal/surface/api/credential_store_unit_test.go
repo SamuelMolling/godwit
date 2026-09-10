@@ -38,6 +38,10 @@ func TestCredentialStoreStoreFailures(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM cp_targets").WithArgs("app").
+		WillReturnRows(pgxmock.NewRows([]string{"provider", "credential_store", "config"}))
+	mock.ExpectRollback()
 	if _, err := s.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
 		Name: "app", Provider: "vault", VaultPath: "secret/data/app",
 	})); connect.CodeOf(err) != connect.CodeInvalidArgument ||

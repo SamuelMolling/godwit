@@ -28,7 +28,7 @@ func settleKeys(ctx context.Context, store targetStore, keys creds.Keyring, log 
 	}
 	var stranded []string
 	for _, t := range targets {
-		if t.Provider != "static" {
+		if t.Provider != creds.ProviderStatic {
 			continue
 		}
 		if !keys.Configured() {
@@ -51,10 +51,10 @@ func reseal(ctx context.Context, store targetStore, keys creds.Keyring, name str
 
 		return
 	}
-	if !keys.NeedsReseal(config["dsn"]) {
+	if !keys.NeedsReseal(config[creds.DSNKey]) {
 		return
 	}
-	dsn, err := keys.Open(ctx, config["dsn"])
+	dsn, err := keys.Open(ctx, config[creds.DSNKey])
 	if err != nil {
 		log.Warn("static target is sealed under another key and was left alone", "target", name, "error", err)
 
@@ -66,7 +66,7 @@ func reseal(ctx context.Context, store targetStore, keys creds.Keyring, name str
 
 		return
 	}
-	config["dsn"] = sealed
+	config[creds.DSNKey] = sealed
 	if err := store.RegisterTarget(ctx, name, provider, config); err != nil {
 		log.Warn("static target not resealed", "target", name, "error", err)
 

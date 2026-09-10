@@ -977,7 +977,7 @@ What the diff covers is what pg-schema-diff covers: schemas, extensions, enums, 
 
 ## Target status
 
-`GetTargetStatus` reads `godwit.migrations` and `godwit.repeatables` on the live target without creating them (a never-migrated database reports nothing), compares against optional files (pending versions, `checksum_mismatch` when an applied migration's up file changed, repeatables listed as applied when their content matches and as pending when it does not), and adds the last run, the drift baseline (`taken_at`, the run that took it, whether drift is open), the provider and the registered timeouts. Repeatable rows carry `repeatable = true` and no version.
+`GetTargetStatus` reads `godwit.migrations` and `godwit.repeatables` on the live target without creating them (a never-migrated database reports nothing), compares against optional files (pending versions, `checksum_mismatch` when an applied migration's up file changed, repeatables listed as applied when their content matches and as pending when it does not), and adds the last run, the drift baseline (`taken_at`, the run that took it, whether drift is open), the provider and the registered timeouts. Repeatable rows carry `repeatable = true` and no version. A target whose credential does not resolve is answered from the control plane alone, with `unreachable` saying why its journal was not read and what to do about it, rather than refused.
 
 ## The fleet view
 

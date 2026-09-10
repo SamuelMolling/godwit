@@ -18,6 +18,8 @@ type TargetStatus struct {
 	LastRun     *Run
 	Snapshot    *Snapshot
 	OpenDrift   bool
+	// Unreachable is why the target's own journal was not read, when its credential does not resolve.
+	Unreachable string
 }
 
 // Inspector reads a target's applied versions, last run and drift baseline without changing anything.
@@ -30,19 +32,23 @@ func NewInspector(sched *Scheduler) *Inspector {
 	return &Inspector{sched: sched}
 }
 
-// Status resolves the target's credentials, lists what its database has applied and adds the control plane's view.
+// Status lists what the target's database has applied next to the control plane's view of it. A target
+// whose credential does not resolve is still described: that is the state an operator is in while fixing
+// the registration, and the whole answer is worth more than the one part of it that could not be read.
 func (i *Inspector) Status(ctx context.Context, name string) (TargetStatus, error) {
-	tg, err := i.sched.target(ctx, name)
-	if err != nil {
-		return TargetStatus{}, err
-	}
-	applied, reps, err := i.sched.engine.Applied(ctx, tg.dsn)
+	provider, config, err := i.sched.store.Target(ctx, name)
 	if err != nil {
 		return TargetStatus{}, err
 	}
 	st := TargetStatus{
-		Target: name, Provider: tg.provider, Timeouts: tg.timeouts, SearchPath: tg.searchPath,
-		Applied: applied, Repeatables: reps,
+		Target: name, Provider: provider,
+		Timeouts: TargetTimeouts(config), SearchPath: config[ConfigSearchPath],
+	}
+	tg, err := i.sched.resolve(ctx, name, provider, config)
+	if err != nil {
+		st.Unreachable = err.Error()
+	} else if st.Applied, st.Repeatables, err = i.sched.engine.Applied(ctx, tg.dsn); err != nil {
+		return TargetStatus{}, err
 	}
 
 	last, ok, err := i.sched.store.LastRun(ctx, name)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
@@ -22,14 +23,14 @@ func TestAPITimeoutValidation(t *testing.T) {
 	}{
 		{"register bad lock", func() error {
 			_, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-				Name: "a", Provider: "kubernetes", SecretPath: "/s", LockTimeout: "0",
+				Name: "a", Provider: "kubernetes", SecretPath: "/s", LockTimeout: proto.String("0"),
 			}))
 
 			return err
 		}},
 		{"register bad statement", func() error {
 			_, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-				Name: "a", Provider: "kubernetes", SecretPath: "/s", StatementTimeout: "later",
+				Name: "a", Provider: "kubernetes", SecretPath: "/s", StatementTimeout: proto.String("later"),
 			}))
 
 			return err
@@ -63,7 +64,7 @@ func TestAPITimeoutsEnforced(t *testing.T) {
 
 	targetDSN := newDatabase(t, "tg")
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-		Name: "app", Provider: "static", Dsn: targetDSN, LockTimeout: "2s", StatementTimeout: "1m",
+		Name: "app", Provider: "static", Dsn: targetDSN, LockTimeout: proto.String("2s"), StatementTimeout: proto.String("1m"),
 	})); err != nil {
 		t.Fatal(err)
 	}

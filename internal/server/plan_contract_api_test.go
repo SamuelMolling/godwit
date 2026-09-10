@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
@@ -302,7 +303,7 @@ func TestCreateRun_RequirePlanRefuses(t *testing.T) {
 	ctx := context.Background()
 	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-		Name: "app", Provider: "static", Dsn: newDatabase(t, "tg"), RequirePlan: true,
+		Name: "app", Provider: "static", Dsn: newDatabase(t, "tg"), RequirePlan: proto.Bool(true),
 	})); err != nil {
 		t.Fatal(err)
 	}

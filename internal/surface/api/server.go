@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -201,98 +200,6 @@ func timeouts(lock, statement string) (controlplane.Timeouts, error) {
 	}
 
 	return t, nil
-}
-
-// RegisterTarget stores a target with its credential provider config.
-func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwitv1.RegisterTargetRequest]) (*connect.Response[godwitv1.RegisterTargetResponse], error) {
-	m := req.Msg
-	if m.Name == "" {
-		return nil, invalid("name is required")
-	}
-	if m.CredentialStore != "" && m.Provider != "vault" {
-		return nil, invalid("credential_store names the Vault a secret is read from, and provider " +
-			m.Provider + " reads no Vault")
-	}
-	var config map[string]string
-	switch m.Provider {
-	case "static":
-		if m.Dsn == "" {
-			return nil, invalid("static provider requires dsn")
-		}
-		if !s.keys.Configured() {
-			return nil, invalid("static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY")
-		}
-		enc, err := s.keys.Seal(ctx, m.Dsn)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
-		}
-		config = map[string]string{"dsn": enc}
-	case "kubernetes":
-		if m.SecretPath == "" {
-			return nil, invalid("kubernetes provider requires secret_path")
-		}
-		config = map[string]string{"path": m.SecretPath}
-	case "vault":
-		if m.VaultPath == "" {
-			return nil, invalid("vault provider requires vault_path")
-		}
-		config = map[string]string{"path": m.VaultPath}
-		if m.VaultTemplate != "" {
-			config["template"] = m.VaultTemplate
-		}
-		if m.CredentialStore == "" {
-			return nil, invalid("vault provider requires credential_store, the registered Vault this target's " +
-				"secret lives in; `godwit credential-stores` lists them and `godwit credential-store add` registers one")
-		}
-		if _, err := s.store.VaultStore(ctx, m.CredentialStore); err != nil {
-			return nil, invalid(fmt.Sprintf("credential store %q: %v", m.CredentialStore, err))
-		}
-		config[creds.StoreConfigKey] = m.CredentialStore
-	default:
-		return nil, invalid("unknown provider " + m.Provider)
-	}
-	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
-	if err != nil {
-		return nil, err
-	}
-	if t.Lock != "" {
-		config[controlplane.ConfigLockTimeout] = t.Lock
-	}
-	if t.Statement != "" {
-		config[controlplane.ConfigStatementTimeout] = t.Statement
-	}
-	if m.RequirePlan {
-		config[controlplane.ConfigRequirePlan] = "true"
-	}
-	if m.KeepOld != nil {
-		config[controlplane.ConfigKeepOld] = strconv.FormatBool(*m.KeepOld)
-	}
-	if m.IgnoreAdoptedTables != nil {
-		config[controlplane.ConfigIgnoreAdopted] = strconv.FormatBool(*m.IgnoreAdoptedTables)
-	}
-	searchPath, err := controlplane.ParseSearchPath(m.SearchPath)
-	if err != nil {
-		return nil, invalid(err.Error())
-	}
-	if searchPath != "" {
-		config[controlplane.ConfigSearchPath] = searchPath
-	}
-	if err := controlplane.SetGitHubRepositories(config, m.GithubRepositories); err != nil {
-		return nil, invalid(err.Error())
-	}
-	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
-		return nil, rpcErr(err)
-	}
-	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider, "credential_store", m.CredentialStore,
-		"lock_timeout", t.Lock, "statement_timeout", t.Statement, "require_plan", m.RequirePlan, "search_path", searchPath)
-	detail := fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s require_plan=%t search_path=%s",
-		m.Provider, t.Lock, t.Statement, m.RequirePlan, searchPath)
-	if m.CredentialStore != "" {
-		detail += " credential_store=" + m.CredentialStore
-	}
-	s.audit(ctx, controlplane.AuditTargetRegister, "", m.Name, detail)
-
-	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
 
 // CreateRun validates and queues a run.

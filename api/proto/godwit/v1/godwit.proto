@@ -67,37 +67,78 @@ message RunProgress {
   int32 batches = 6;
 }
 
+// TargetRepositories is a whole repository list, so that leaving it out and clearing it are different requests.
+message TargetRepositories {
+  // Each "owner/repo" or "owner/repo:dir"; empty leaves no repository able to reach the target.
+  repeated string values = 1;
+}
+
+// RegisterTargetRequest registers a target and changes a registered one: every field it leaves out keeps
+// the value the target already has. A field whose empty value means something — no timeout, no search_path,
+// no template, require_plan off — carries presence and is cleared by sending it empty; the rest, which are
+// never validly empty, read empty as "unchanged".
 message RegisterTargetRequest {
+  reserved 13;
   string name = 1;
   // Credential provider: "static" (dsn, encrypted at rest), "kubernetes" (secret_path) or "vault" (vault_path and credential_store).
+  // Required for a target that is not registered yet.
   string provider = 2;
   string dsn = 3;
   string secret_path = 4;
   // Vault secret path under /v1, e.g. secret/data/app or database/creds/app.
   string vault_path = 5;
-  // Optional DSN template over the secret's fields, e.g. postgres://{{username}}:{{password}}@db/app; default {{dsn}}.
-  string vault_template = 6;
+  // DSN template over the secret's fields, e.g. postgres://{{username}}:{{password}}@db/app; empty is {{dsn}}.
+  // It is registered configuration, readable through GetTarget, so a literal password in it is refused.
+  optional string vault_template = 6;
   // lock_timeout for every statement on this target ("5s", "2m"); default 5s.
-  string lock_timeout = 7;
+  optional string lock_timeout = 7;
   // statement_timeout for every statement on this target; default 0 (disabled).
-  string statement_timeout = 8;
+  optional string statement_timeout = 8;
   // Refuse runs whose migration set has no stored plan.
-  bool require_plan = 9;
+  optional bool require_plan = 9;
   // Default for `-- godwit: change-type` on this target: keep the pre-swap column as the rollback (true, godwit's
   // own default) or drop it in the contract phase. A directive's own keep-old= still wins. Unset leaves the default.
   optional bool keep_old = 11;
   // search_path for every session godwit opens on this target, e.g. "app,public"; unquoted schema names, comma separated.
   // Empty keeps the target role's own default; "godwit" is refused, the journal lives there and is always qualified.
-  string search_path = 10;
+  optional string search_path = 10;
   // Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
   optional bool ignore_adopted_tables = 12;
-  // Repositories a GitHub App delivery may reach this target from, each "owner/repo" or "owner/repo:dir"; none may when empty.
-  repeated string github_repositories = 13;
   // Registered credential store the secret is read from; required by, and only by, the vault provider.
   string credential_store = 14;
+  // Repositories a GitHub App delivery may reach this target from.
+  TargetRepositories github_repositories = 15;
 }
 
 message RegisterTargetResponse {}
+
+message GetTargetRequest {
+  string name = 1;
+}
+
+// GetTargetResponse is a target as it was registered: where its credential is read from and the settings
+// every run on it inherits. The credential itself is not part of it.
+message GetTargetResponse {
+  string name = 1;
+  string provider = 2;
+  string credential_store = 3;
+  // vault provider: the secret's path under /v1, and the DSN template over the secret's fields ({{dsn}} when empty).
+  string vault_path = 4;
+  string vault_template = 5;
+  // kubernetes provider: the mounted secret file.
+  string secret_path = 6;
+  // static provider: whether a DSN is sealed in the target's configuration. The DSN is never returned, and
+  // a registration that changes another setting keeps it.
+  bool dsn_registered = 7;
+  string lock_timeout = 8;
+  string statement_timeout = 9;
+  // As registered; `serve --require-plan` requires one on every target regardless.
+  bool require_plan = 10;
+  bool keep_old = 11;
+  bool ignore_adopted_tables = 12;
+  string search_path = 13;
+  repeated string github_repositories = 14;
+}
 
 message RegisterCredentialStoreRequest {
   reserved 7, 8;
@@ -610,6 +651,9 @@ message GetTargetStatusResponse {
   int32 ready_plans = 9;
   // The search_path declared on the target; empty when it inherits the role's default.
   string search_path = 10;
+  // Why the target's own journal could not be read, when its credential does not resolve: everything the
+  // control plane holds is still answered, and applied and pending are empty rather than absent.
+  string unreachable = 11;
 }
 
 message ListAuditRequest {
@@ -764,6 +808,8 @@ service GodwitService {
   // Repairs the ledger from the target's own journal, without writing to the target.
   rpc ReconcileTarget(ReconcileTargetRequest) returns (ReconcileTargetResponse);
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
+  // Returns one target's registration, without its credential.
+  rpc GetTarget(GetTargetRequest) returns (GetTargetResponse);
   // Summarises every registered target from the control plane alone, without opening a connection to any of them.
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
   // Answers, per migration and content, which targets hold it and which do not, from the control plane's

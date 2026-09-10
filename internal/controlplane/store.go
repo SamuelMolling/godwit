@@ -166,7 +166,8 @@ func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration,
 	return applyPlans(ctx, db, engine.Options{}, plans, nil, append(extra, engine.WithAtomic())...)
 }
 
-// RegisterTarget upserts a target and its credential config.
+// RegisterTarget upserts a target, replacing whatever config the row held; merging a change into the
+// current registration is the caller's, over a LockTarget in the same transaction.
 // The credential store is a column, not a config key, so a foreign key refuses a dangling one.
 func (s *Store) RegisterTarget(ctx context.Context, name, provider string, config map[string]string) error {
 	rest := make(map[string]string, len(config))
@@ -190,43 +191,56 @@ func (s *Store) RegisterTarget(ctx context.Context, name, provider string, confi
 
 // Target returns a target's provider name and config.
 func (s *Store) Target(ctx context.Context, name string) (string, map[string]string, error) {
-	var provider, store string
-	var cfg []byte
-	err := s.pool.QueryRow(ctx,
-		`SELECT provider, coalesce(credential_store, ''), config FROM cp_targets WHERE name = $1`,
-		name).Scan(&provider, &store, &cfg)
-	if errors.Is(err, pgx.ErrNoRows) {
+	provider, config, found, err := s.target(ctx, name, "")
+	switch {
+	case err != nil:
+		return "", nil, err
+	case !found:
 		return "", nil, fmt.Errorf("target %q: %w", name, ErrNotFound)
-	}
-	if err != nil {
-		return "", nil, fmt.Errorf("load target: %w", err)
-	}
-	var config map[string]string
-	if err := json.Unmarshal(cfg, &config); err != nil {
-		return "", nil, fmt.Errorf("target %q config: %w", name, err)
-	}
-	if store != "" {
-		config[creds.StoreConfigKey] = store
 	}
 
 	return provider, config, nil
 }
 
+// LockTarget is Target inside a transaction, holding the row against a concurrent registration; a target
+// that is not registered yet is an empty provider and an empty config rather than a refusal.
+func (s *Store) LockTarget(ctx context.Context, name string) (string, map[string]string, error) {
+	provider, config, _, err := s.target(ctx, name, " FOR UPDATE")
+
+	return provider, config, err
+}
+
+func (s *Store) target(ctx context.Context, name, lock string) (string, map[string]string, bool, error) {
+	var provider, store string
+	var cfg []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT provider, coalesce(credential_store, ''), config FROM cp_targets WHERE name = $1`+lock,
+		name).Scan(&provider, &store, &cfg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", map[string]string{}, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("load target: %w", err)
+	}
+	var config map[string]string
+	if err := json.Unmarshal(cfg, &config); err != nil {
+		return "", nil, false, fmt.Errorf("target %q config: %w", name, err)
+	}
+	if store != "" {
+		config[creds.StoreConfigKey] = store
+	}
+
+	return provider, config, true, nil
+}
+
 // TargetSummary is the control plane's own view of a registered target, assembled without connecting to it.
 type TargetSummary struct {
-	Name               string
-	Provider           string
-	Timeouts           Timeouts
-	SearchPath         string
-	RequirePlan        bool
-	KeepOld            bool
-	LastRun            *Run
-	AttentionRuns      int
-	UnresolvedDrift    bool
-	ReadyPlans         int
-	AppliedCount       int
-	GitHubRepositories []string
-	CredentialStore    string
+	TargetRegistration
+	LastRun         *Run
+	AttentionRuns   int
+	UnresolvedDrift bool
+	ReadyPlans      int
+	AppliedCount    int
 }
 
 // ListTargets summarises every target by name, counting ready plans created at or after since.
@@ -248,20 +262,20 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 	}
 	var out []TargetSummary
 	var sum TargetSummary
+	var name, provider, store string
 	var cfg []byte
 	fields := []any{
-		&sum.Name, &sum.Provider, &sum.CredentialStore, &cfg,
+		&name, &provider, &store, &cfg,
 		&sum.AppliedCount, &sum.AttentionRuns, &sum.ReadyPlans, &sum.UnresolvedDrift,
 	}
 	if _, err := pgx.ForEachRow(rows, fields, func() error {
 		var config map[string]string
 		if err := json.Unmarshal(cfg, &config); err != nil {
-			return fmt.Errorf("target %q config: %w", sum.Name, err)
+			return fmt.Errorf("target %q config: %w", name, err)
 		}
-		sum.Timeouts, sum.SearchPath = TargetTimeouts(config), config[ConfigSearchPath]
-		sum.RequirePlan, sum.KeepOld = config[ConfigRequirePlan] == "true", config[ConfigKeepOld] != "false"
-		sum.GitHubRepositories = splitRepositories(config[configGitHubRepositories])
-		sum.LastRun = last[sum.Name]
+		config[creds.StoreConfigKey] = store
+		sum.TargetRegistration = RegistrationOf(name, provider, config)
+		sum.LastRun = last[name]
 		out = append(out, sum)
 
 		return nil

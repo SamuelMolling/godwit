@@ -13,7 +13,7 @@ type Kubernetes struct{}
 
 // DSN implements Provider.
 func (Kubernetes) DSN(_ context.Context, config map[string]string) (string, error) {
-	path, ok := config["path"]
+	path, ok := config[PathKey]
 	if !ok {
 		return "", errors.New(`kubernetes target config missing "path"`)
 	}

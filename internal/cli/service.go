@@ -24,7 +24,7 @@ func newTargetCmd() *cobra.Command {
 		Use:   "target",
 		Short: "Manage targets on the service",
 	}
-	cmd.AddCommand(newTargetAddCmd(), newTargetAdoptCmd(), newTargetStatusCmd())
+	cmd.AddCommand(newTargetAddCmd(), newTargetAdoptCmd(), newTargetShowCmd(), newTargetStatusCmd())
 
 	return cmd
 }
@@ -111,49 +111,73 @@ func adoptedFromJournalLine(target string, resp *godwitv1.ReconcileTargetRespons
 func newTargetAddCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.RegisterTargetRequest{}
-	var keepOld, ignoreAdopted bool
+	var set targetSettings
 	cmd := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Register a target with its credential provider",
-		Args:  cobra.ExactArgs(1),
+		Short: "Register a target, or change on a registered one only the settings you pass",
+		Long: "A setting you leave out keeps the value the target already has, so moving one of them needs\n" +
+			"neither the others nor the DSN. Passing a flag empty clears it: --search-path=\"\" puts the target\n" +
+			"back on its role's own path, --github-repo=\"\" leaves no repository able to reach it.\n" +
+			"`godwit target show <name>` prints what a target is registered with.",
+		Args: cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
 			req.Name = args[0]
-			if cmd.Flags().Changed("keep-old") {
-				req.KeepOld = &keepOld
-			}
-			if cmd.Flags().Changed("ignore-adopted-tables") {
-				req.IgnoreAdoptedTables = &ignoreAdopted
+			req.LockTimeout, req.StatementTimeout = changed(cmd, "lock-timeout", set.lock), changed(cmd, "statement-timeout", set.statement)
+			req.VaultTemplate, req.SearchPath = changed(cmd, "vault-template", set.template), changed(cmd, "search-path", set.searchPath)
+			req.RequirePlan, req.KeepOld = changed(cmd, "require-plan", set.requirePlan), changed(cmd, "keep-old", set.keepOld)
+			req.IgnoreAdoptedTables = changed(cmd, "ignore-adopted-tables", set.ignoreAdopted)
+			if cmd.Flags().Changed("github-repo") {
+				req.GithubRepositories = &godwitv1.TargetRepositories{Values: set.repositories}
 			}
 			resp, err := client.RegisterTarget(cmd.Context(), connect.NewRequest(req))
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, fmt.Sprintf("target %s: registered (%s)", req.Name, req.Provider))
+			flags.print(cmd, resp.Msg, fmt.Sprintf("target %s: registered", req.Name))
 
 			return nil
 		}),
 	}
 	flags.register(cmd)
-	cmd.Flags().StringVar(&req.Provider, "provider", "", "credential provider: static, kubernetes or vault")
+	cmd.Flags().StringVar(&req.Provider, "provider", "", "credential provider: static, kubernetes or vault; required for a target that is not registered yet")
 	cmd.Flags().StringVar(&req.Dsn, "dsn", os.Getenv("GODWIT_TARGET_DSN"),
 		"target DSN, static provider (or GODWIT_TARGET_DSN, which keeps the password out of the process arguments)")
 	cmd.Flags().StringVar(&req.SecretPath, "secret-path", "", "mounted secret file (kubernetes provider)")
 	cmd.Flags().StringVar(&req.VaultPath, "vault-path", "", "Vault secret path under /v1 (vault provider)")
-	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
+	cmd.Flags().StringVar(&set.template, "vault-template", "", "DSN template over the Vault secret's fields")
 	cmd.Flags().StringVar(&req.CredentialStore, "credential-store", "",
 		"registered credential store holding this target's secret; required by the vault provider, which reads no other Vault")
-	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
-	cmd.Flags().StringVar(&req.SearchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
-	cmd.Flags().StringSliceVar(&req.GithubRepositories, "github-repo", nil,
+	cmd.Flags().BoolVar(&set.requirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
+	cmd.Flags().StringVar(&set.searchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
+	cmd.Flags().StringSliceVar(&set.repositories, "github-repo", nil,
 		"repository a GitHub App delivery may reach this target from, owner/repo or owner/repo:dir; repeatable, "+
-			"and the whole list is replaced on every target add")
-	cmd.Flags().BoolVar(&keepOld, "keep-old", true, "change-type on this target keeps the pre-swap column as the rollback")
-	cmd.Flags().BoolVar(&ignoreAdopted, "ignore-adopted-tables", true,
+			"and the whole list is replaced when you pass it")
+	cmd.Flags().BoolVar(&set.keepOld, "keep-old", true, "change-type on this target keeps the pre-swap column as the rollback")
+	cmd.Flags().BoolVar(&set.ignoreAdopted, "ignore-adopted-tables", true,
 		"leave the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and its drift")
-	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for runs on this target")
-	_ = cmd.MarkFlagRequired("provider")
+	timeoutFlags(cmd, &set.lock, &set.statement, "for runs on this target")
 
 	return cmd
+}
+
+// targetSettings holds the flags that mean one thing empty and another absent, so only those passed travel.
+type targetSettings struct {
+	lock          string
+	statement     string
+	template      string
+	searchPath    string
+	repositories  []string
+	requirePlan   bool
+	keepOld       bool
+	ignoreAdopted bool
+}
+
+func changed[T any](cmd *cobra.Command, name string, v T) *T {
+	if !cmd.Flags().Changed(name) {
+		return nil
+	}
+
+	return &v
 }
 
 func newMigrateCmd() *cobra.Command {

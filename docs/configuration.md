@@ -285,7 +285,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 ### Target settings
 
-Registered with the target and stored in `cp_targets.config`; they are not `godwit.yaml` keys.
+Registered with the target and stored in `cp_targets.config`; they are not `godwit.yaml` keys. `godwit target add` changes only the ones you pass and keeps the rest, and passing one empty clears it; `godwit target show` prints them all back.
 
 | Setting | Flag | Type | Default | Meaning |
 |---|---|---|---|---|
@@ -294,12 +294,12 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 | `require_plan` | `--require-plan` | bool | `false` | refuse runs whose migration set has no stored plan |
 | `keep_old` | `--keep-old` | bool | `true` | `-- godwit: change-type` on this target keeps the pre-swap column as the rollback; a directive's own `keep-old=` still wins |
 | `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([concepts](concepts.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
-| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](ci-cd.md#binding-a-repository-to-a-target) delivery may reach this target from; `dir` is the directory holding that project's `godwit.yaml`. Empty means none may: an unbound repository gets no apply and no plan. `target add` replaces the whole list |
+| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](ci-cd.md#binding-a-repository-to-a-target) delivery may reach this target from; `dir` is the directory holding that project's `godwit.yaml`. Empty means none may: an unbound repository gets no apply and no plan. Passing `--github-repo` replaces the whole list, and `--github-repo=""` empties it |
 | `ignore_adopted_tables` | `--ignore-adopted-tables` | bool | `true` | leave the bookkeeping tables of the migration tool this database was adopted from out of the schema snapshot, and so out of drift ([concepts](concepts.md#drift)); `false` puts them back |
 
 A setting the target does not carry is printed as `none` by `godwit target status` and `godwit targets`; it means "nothing registered", not "no limit". An unregistered `lock_timeout` still runs under the executor's own 5s default, and an unregistered `statement_timeout` is genuinely disabled.
 
-`godwit target status <name>` prints the provider and three of them — `lock_timeout`, `statement_timeout` and `search_path`. `require_plan` and `keep_old` are in `godwit targets` and in `ListTargets`. `ignore_adopted_tables` is reported where it acts: the plan says which tables it left out.
+`godwit target show <name>` prints all of them for one target, with where its credential is read from. `godwit target status <name>` prints the provider and three — `lock_timeout`, `statement_timeout` and `search_path`; `require_plan` and `keep_old` are also in `godwit targets`. `ignore_adopted_tables` is reported where it acts: the plan says which tables it left out.
 
 `migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `revert` prints the plan it is about to run — the down statements per migration and anything the plan would destroy — before it streams; `--dry-run` prints that and stops. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` or `R__<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
 

@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/protobuf/proto"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
@@ -23,7 +24,7 @@ func TestAPISearchPathValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-			Name: "a", Provider: "kubernetes", SecretPath: "/s", SearchPath: tc.path,
+			Name: "a", Provider: "kubernetes", SecretPath: "/s", SearchPath: proto.String(tc.path),
 		}))
 		if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%s: err = %v", tc.name, err)
@@ -62,7 +63,7 @@ func targetScan(t *testing.T, dsn, sql string, into any) {
 func registerWithSearchPath(t *testing.T, client godwitv1connect.GodwitServiceClient, dsn, path string) {
 	t.Helper()
 	if _, err := client.RegisterTarget(context.Background(), connect.NewRequest(&godwitv1.RegisterTargetRequest{
-		Name: "app", Provider: "static", Dsn: dsn, SearchPath: path,
+		Name: "app", Provider: "static", Dsn: dsn, SearchPath: proto.String(path),
 	})); err != nil {
 		t.Fatal(err)
 	}

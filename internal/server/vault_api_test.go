@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
@@ -36,7 +37,7 @@ func TestVaultTargetEndToEnd(t *testing.T) {
 		{Name: "app", Provider: "vault", CredentialStore: "demo", VaultPath: "secret/data/app"},
 		{
 			Name: "templated", Provider: "vault", CredentialStore: "demo", VaultPath: "database/creds/app",
-			VaultTemplate: "postgres://{{username}}:{{password}}@db/app",
+			VaultTemplate: proto.String("postgres://{{username}}:{{password}}@db/app"),
 		},
 	} {
 		if _, err := client.RegisterTarget(ctx, connect.NewRequest(req)); err != nil {

@@ -35,6 +35,8 @@ type stubService struct {
 	adopted      []string
 	statused     *godwitv1.GetTargetStatusRequest
 	status       *godwitv1.GetTargetStatusResponse
+	shown        string
+	target       *godwitv1.GetTargetResponse
 	summaries    []*godwitv1.TargetSummary
 	created      *godwitv1.CreateRunRequest
 	planned      *godwitv1.PlanRunRequest
@@ -123,6 +125,15 @@ func (s *stubService) ReconcileTarget(_ context.Context, req *connect.Request[go
 	}
 
 	return connect.NewResponse(&godwitv1.ReconcileTargetResponse{RunId: "c1", Adopted: s.adopted}), nil
+}
+
+func (s *stubService) GetTarget(_ context.Context, req *connect.Request[godwitv1.GetTargetRequest]) (*connect.Response[godwitv1.GetTargetResponse], error) {
+	s.shown = req.Msg.Name
+	if err := s.record(req.Header()); err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(s.target), nil
 }
 
 func (s *stubService) GetTargetStatus(_ context.Context, req *connect.Request[godwitv1.GetTargetStatusRequest]) (*connect.Response[godwitv1.GetTargetStatusResponse], error) {
@@ -287,15 +298,15 @@ func TestTargetAdd(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if out != "target app: registered (vault)\n" {
+	if out != "target app: registered\n" {
 		t.Fatalf("out = %q", out)
 	}
 	if stub.auth != "Bearer tok" {
 		t.Fatalf("auth = %q", stub.auth)
 	}
 	r := stub.registered
-	if r.Name != "app" || r.Provider != "vault" || r.Dsn != "d" || r.SecretPath != "s" || r.VaultPath != "v" || r.VaultTemplate != "tpl" ||
-		r.LockTimeout != "2s" || r.StatementTimeout != "1m" || r.SearchPath != "app,public" {
+	if r.Name != "app" || r.Provider != "vault" || r.Dsn != "d" || r.SecretPath != "s" || r.VaultPath != "v" ||
+		r.GetVaultTemplate() != "tpl" || r.GetLockTimeout() != "2s" || r.GetStatementTimeout() != "1m" || r.GetSearchPath() != "app,public" {
 		t.Fatalf("request = %v", r)
 	}
 }
@@ -769,8 +780,34 @@ func TestTargetAdd_RequirePlan(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if !stub.registered.RequirePlan {
+	if !stub.registered.GetRequirePlan() {
 		t.Fatalf("request = %v", stub.registered)
+	}
+}
+
+func TestTargetAddSendsOnlyTheFlagsGiven(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{}
+	url := startStub(t, stub)
+
+	code, _, errOut := runCLI("target", "add", "app", "--server", url, "--search-path", "app")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	r := stub.registered
+	if r.Provider != "" || r.GetSearchPath() != "app" || r.LockTimeout != nil || r.StatementTimeout != nil ||
+		r.VaultTemplate != nil || r.RequirePlan != nil || r.KeepOld != nil || r.IgnoreAdoptedTables != nil ||
+		r.GithubRepositories != nil {
+		t.Fatalf("request = %v", r)
+	}
+
+	if code, _, errOut := runCLI("target", "add", "app", "--server", url,
+		"--search-path", "", "--github-repo", "", "--keep-old=false"); code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	r = stub.registered
+	if r.GetSearchPath() != "" || r.SearchPath == nil || r.GetKeepOld() || len(r.GithubRepositories.Values) != 0 {
+		t.Fatalf("clearing request = %v", r)
 	}
 }
 
