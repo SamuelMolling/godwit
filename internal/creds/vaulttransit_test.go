@@ -70,7 +70,7 @@ func TestVaultTransitRoundTrip(t *testing.T) {
 
 func TestVaultTransitFromEnv(t *testing.T) {
 	t.Setenv("GODWIT_KMS_KEY", "godwit")
-	t.Setenv("VAULT_ADDR", "https://vault.example")
+	t.Setenv("GODWIT_VAULT_TRANSIT_ADDR", "https://vault.example")
 	t.Setenv("GODWIT_VAULT_TRANSIT_MOUNT", "kms")
 
 	p, err := VaultTransitFromEnv()

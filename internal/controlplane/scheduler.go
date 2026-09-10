@@ -576,7 +576,7 @@ func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, er
 	}
 	dsn, err := provider.DSN(ctx, config)
 	if err != nil {
-		return resolvedTarget{}, err
+		return resolvedTarget{}, fmt.Errorf("target %s: %w", name, err)
 	}
 
 	return resolvedTarget{

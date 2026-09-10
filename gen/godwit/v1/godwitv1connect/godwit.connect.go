@@ -36,6 +36,12 @@ const (
 	// GodwitServiceRegisterTargetProcedure is the fully-qualified name of the GodwitService's
 	// RegisterTarget RPC.
 	GodwitServiceRegisterTargetProcedure = "/godwit.v1.GodwitService/RegisterTarget"
+	// GodwitServiceRegisterCredentialStoreProcedure is the fully-qualified name of the GodwitService's
+	// RegisterCredentialStore RPC.
+	GodwitServiceRegisterCredentialStoreProcedure = "/godwit.v1.GodwitService/RegisterCredentialStore"
+	// GodwitServiceListCredentialStoresProcedure is the fully-qualified name of the GodwitService's
+	// ListCredentialStores RPC.
+	GodwitServiceListCredentialStoresProcedure = "/godwit.v1.GodwitService/ListCredentialStores"
 	// GodwitServiceCreateRunProcedure is the fully-qualified name of the GodwitService's CreateRun RPC.
 	GodwitServiceCreateRunProcedure = "/godwit.v1.GodwitService/CreateRun"
 	// GodwitServicePlanRunProcedure is the fully-qualified name of the GodwitService's PlanRun RPC.
@@ -95,6 +101,8 @@ const (
 // GodwitServiceClient is a client for the godwit.v1.GodwitService service.
 type GodwitServiceClient interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
+	RegisterCredentialStore(context.Context, *connect.Request[v1.RegisterCredentialStoreRequest]) (*connect.Response[v1.RegisterCredentialStoreResponse], error)
+	ListCredentialStores(context.Context, *connect.Request[v1.ListCredentialStoresRequest]) (*connect.Response[v1.ListCredentialStoresResponse], error)
 	CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error)
 	// Runs CreateRun's admission (hazard gate, order guard, scratch validation) and returns the plan without queueing anything.
 	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
@@ -141,6 +149,18 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			httpClient,
 			baseURL+GodwitServiceRegisterTargetProcedure,
 			connect.WithSchema(godwitServiceMethods.ByName("RegisterTarget")),
+			connect.WithClientOptions(opts...),
+		),
+		registerCredentialStore: connect.NewClient[v1.RegisterCredentialStoreRequest, v1.RegisterCredentialStoreResponse](
+			httpClient,
+			baseURL+GodwitServiceRegisterCredentialStoreProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("RegisterCredentialStore")),
+			connect.WithClientOptions(opts...),
+		),
+		listCredentialStores: connect.NewClient[v1.ListCredentialStoresRequest, v1.ListCredentialStoresResponse](
+			httpClient,
+			baseURL+GodwitServiceListCredentialStoresProcedure,
+			connect.WithSchema(godwitServiceMethods.ByName("ListCredentialStores")),
 			connect.WithClientOptions(opts...),
 		),
 		createRun: connect.NewClient[v1.CreateRunRequest, v1.CreateRunResponse](
@@ -280,34 +300,46 @@ func NewGodwitServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 
 // godwitServiceClient implements GodwitServiceClient.
 type godwitServiceClient struct {
-	registerTarget  *connect.Client[v1.RegisterTargetRequest, v1.RegisterTargetResponse]
-	createRun       *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
-	planRun         *connect.Client[v1.PlanRunRequest, v1.PlanRunResponse]
-	getRun          *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns        *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	watchRun        *connect.Client[v1.WatchRunRequest, v1.WatchRunResponse]
-	resumeRun       *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
-	parkRun         *connect.Client[v1.ParkRunRequest, v1.ParkRunResponse]
-	confirmRollout  *connect.Client[v1.ConfirmRolloutRequest, v1.ConfirmRolloutResponse]
-	revertRun       *connect.Client[v1.RevertRunRequest, v1.RevertRunResponse]
-	checkDrift      *connect.Client[v1.CheckDriftRequest, v1.CheckDriftResponse]
-	listDriftEvents *connect.Client[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse]
-	acceptBaseline  *connect.Client[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse]
-	baselineTarget  *connect.Client[v1.BaselineTargetRequest, v1.BaselineTargetResponse]
-	reconcileTarget *connect.Client[v1.ReconcileTargetRequest, v1.ReconcileTargetResponse]
-	getTargetStatus *connect.Client[v1.GetTargetStatusRequest, v1.GetTargetStatusResponse]
-	listTargets     *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
-	listMigrations  *connect.Client[v1.ListMigrationsRequest, v1.ListMigrationsResponse]
-	listAudit       *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
-	getPlan         *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
-	listPlans       *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
-	diff            *connect.Client[v1.DiffRequest, v1.DiffResponse]
-	checkpoint      *connect.Client[v1.CheckpointRequest, v1.CheckpointResponse]
+	registerTarget          *connect.Client[v1.RegisterTargetRequest, v1.RegisterTargetResponse]
+	registerCredentialStore *connect.Client[v1.RegisterCredentialStoreRequest, v1.RegisterCredentialStoreResponse]
+	listCredentialStores    *connect.Client[v1.ListCredentialStoresRequest, v1.ListCredentialStoresResponse]
+	createRun               *connect.Client[v1.CreateRunRequest, v1.CreateRunResponse]
+	planRun                 *connect.Client[v1.PlanRunRequest, v1.PlanRunResponse]
+	getRun                  *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns                *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	watchRun                *connect.Client[v1.WatchRunRequest, v1.WatchRunResponse]
+	resumeRun               *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	parkRun                 *connect.Client[v1.ParkRunRequest, v1.ParkRunResponse]
+	confirmRollout          *connect.Client[v1.ConfirmRolloutRequest, v1.ConfirmRolloutResponse]
+	revertRun               *connect.Client[v1.RevertRunRequest, v1.RevertRunResponse]
+	checkDrift              *connect.Client[v1.CheckDriftRequest, v1.CheckDriftResponse]
+	listDriftEvents         *connect.Client[v1.ListDriftEventsRequest, v1.ListDriftEventsResponse]
+	acceptBaseline          *connect.Client[v1.AcceptBaselineRequest, v1.AcceptBaselineResponse]
+	baselineTarget          *connect.Client[v1.BaselineTargetRequest, v1.BaselineTargetResponse]
+	reconcileTarget         *connect.Client[v1.ReconcileTargetRequest, v1.ReconcileTargetResponse]
+	getTargetStatus         *connect.Client[v1.GetTargetStatusRequest, v1.GetTargetStatusResponse]
+	listTargets             *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
+	listMigrations          *connect.Client[v1.ListMigrationsRequest, v1.ListMigrationsResponse]
+	listAudit               *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
+	getPlan                 *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
+	listPlans               *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
+	diff                    *connect.Client[v1.DiffRequest, v1.DiffResponse]
+	checkpoint              *connect.Client[v1.CheckpointRequest, v1.CheckpointResponse]
 }
 
 // RegisterTarget calls godwit.v1.GodwitService.RegisterTarget.
 func (c *godwitServiceClient) RegisterTarget(ctx context.Context, req *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error) {
 	return c.registerTarget.CallUnary(ctx, req)
+}
+
+// RegisterCredentialStore calls godwit.v1.GodwitService.RegisterCredentialStore.
+func (c *godwitServiceClient) RegisterCredentialStore(ctx context.Context, req *connect.Request[v1.RegisterCredentialStoreRequest]) (*connect.Response[v1.RegisterCredentialStoreResponse], error) {
+	return c.registerCredentialStore.CallUnary(ctx, req)
+}
+
+// ListCredentialStores calls godwit.v1.GodwitService.ListCredentialStores.
+func (c *godwitServiceClient) ListCredentialStores(ctx context.Context, req *connect.Request[v1.ListCredentialStoresRequest]) (*connect.Response[v1.ListCredentialStoresResponse], error) {
+	return c.listCredentialStores.CallUnary(ctx, req)
 }
 
 // CreateRun calls godwit.v1.GodwitService.CreateRun.
@@ -423,6 +455,8 @@ func (c *godwitServiceClient) Checkpoint(ctx context.Context, req *connect.Reque
 // GodwitServiceHandler is an implementation of the godwit.v1.GodwitService service.
 type GodwitServiceHandler interface {
 	RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error)
+	RegisterCredentialStore(context.Context, *connect.Request[v1.RegisterCredentialStoreRequest]) (*connect.Response[v1.RegisterCredentialStoreResponse], error)
+	ListCredentialStores(context.Context, *connect.Request[v1.ListCredentialStoresRequest]) (*connect.Response[v1.ListCredentialStoresResponse], error)
 	CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error)
 	// Runs CreateRun's admission (hazard gate, order guard, scratch validation) and returns the plan without queueing anything.
 	PlanRun(context.Context, *connect.Request[v1.PlanRunRequest]) (*connect.Response[v1.PlanRunResponse], error)
@@ -465,6 +499,18 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		GodwitServiceRegisterTargetProcedure,
 		svc.RegisterTarget,
 		connect.WithSchema(godwitServiceMethods.ByName("RegisterTarget")),
+		connect.WithHandlerOptions(opts...),
+	)
+	godwitServiceRegisterCredentialStoreHandler := connect.NewUnaryHandler(
+		GodwitServiceRegisterCredentialStoreProcedure,
+		svc.RegisterCredentialStore,
+		connect.WithSchema(godwitServiceMethods.ByName("RegisterCredentialStore")),
+		connect.WithHandlerOptions(opts...),
+	)
+	godwitServiceListCredentialStoresHandler := connect.NewUnaryHandler(
+		GodwitServiceListCredentialStoresProcedure,
+		svc.ListCredentialStores,
+		connect.WithSchema(godwitServiceMethods.ByName("ListCredentialStores")),
 		connect.WithHandlerOptions(opts...),
 	)
 	godwitServiceCreateRunHandler := connect.NewUnaryHandler(
@@ -603,6 +649,10 @@ func NewGodwitServiceHandler(svc GodwitServiceHandler, opts ...connect.HandlerOp
 		switch r.URL.Path {
 		case GodwitServiceRegisterTargetProcedure:
 			godwitServiceRegisterTargetHandler.ServeHTTP(w, r)
+		case GodwitServiceRegisterCredentialStoreProcedure:
+			godwitServiceRegisterCredentialStoreHandler.ServeHTTP(w, r)
+		case GodwitServiceListCredentialStoresProcedure:
+			godwitServiceListCredentialStoresHandler.ServeHTTP(w, r)
 		case GodwitServiceCreateRunProcedure:
 			godwitServiceCreateRunHandler.ServeHTTP(w, r)
 		case GodwitServicePlanRunProcedure:
@@ -658,6 +708,14 @@ type UnimplementedGodwitServiceHandler struct{}
 
 func (UnimplementedGodwitServiceHandler) RegisterTarget(context.Context, *connect.Request[v1.RegisterTargetRequest]) (*connect.Response[v1.RegisterTargetResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.RegisterTarget is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) RegisterCredentialStore(context.Context, *connect.Request[v1.RegisterCredentialStoreRequest]) (*connect.Response[v1.RegisterCredentialStoreResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.RegisterCredentialStore is not implemented"))
+}
+
+func (UnimplementedGodwitServiceHandler) ListCredentialStores(context.Context, *connect.Request[v1.ListCredentialStoresRequest]) (*connect.Response[v1.ListCredentialStoresResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("godwit.v1.GodwitService.ListCredentialStores is not implemented"))
 }
 
 func (UnimplementedGodwitServiceHandler) CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.CreateRunResponse], error) {

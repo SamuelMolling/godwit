@@ -23,14 +23,21 @@ func TestVaultTargetEndToEnd(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"data": map[string]string{"dsn": targetDSN}}})
 	}))
 	t.Cleanup(vault.Close)
-	t.Setenv("VAULT_ADDR", vault.URL)
 	t.Setenv("VAULT_TOKEN", "root")
 
 	ctx := context.Background()
 	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
+	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
+		Name: "demo", VaultAddr: vault.URL, VaultTokenEnv: "VAULT_TOKEN",
+	})); err != nil {
+		t.Fatal(err)
+	}
 	for _, req := range []*godwitv1.RegisterTargetRequest{
-		{Name: "app", Provider: "vault", VaultPath: "secret/data/app"},
-		{Name: "templated", Provider: "vault", VaultPath: "database/creds/app", VaultTemplate: "postgres://{{username}}:{{password}}@db/app"},
+		{Name: "app", Provider: "vault", CredentialStore: "demo", VaultPath: "secret/data/app"},
+		{
+			Name: "templated", Provider: "vault", CredentialStore: "demo", VaultPath: "database/creds/app",
+			VaultTemplate: "postgres://{{username}}:{{password}}@db/app",
+		},
 	} {
 		if _, err := client.RegisterTarget(ctx, connect.NewRequest(req)); err != nil {
 			t.Fatal(err)

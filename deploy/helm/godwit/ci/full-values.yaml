@@ -35,13 +35,17 @@ serve:
     scope: read
     origins: ["https://godwit.example.com"]
   extraArgs: ["--drift-interval=2m"]
-vault:
-  addr: https://vault.example.com
-  k8sRole: godwit
-  k8sMount: kubernetes-prod
-  tokenSecret:
-    name: godwit-vault
-    key: token
+stores:
+  list:
+    - name: production
+      vaultAddr: https://vault.production.example.com
+      vaultK8sRole: godwit
+      vaultK8sMount: kubernetes-prod
+    - name: staging
+      vaultAddr: https://vault.staging.example.com
+      vaultTokenEnv: VAULT_TOKEN_STAGING
+  allowedHosts: [vault.production.example.com, vault.staging.example.com]
+
 notifications:
   webhookUrl: https://hooks.example.com/godwit
   publicUrl: https://godwit.example.com
@@ -210,6 +214,7 @@ targets:
       provider: vault
       vaultPath: secret/data/orders/db
       vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
+      credentialStore: production
       lockTimeout: 5s
       statementTimeout: 15m
       requirePlan: true

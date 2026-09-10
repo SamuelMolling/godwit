@@ -147,6 +147,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--github-emoji-reaction` | `eyes` | emoji added to a pull request comment godwit read as a command, so a command never looks unread; `none` adds none (or `GODWIT_GITHUB_EMOJI_REACTION`) |
 | `--github-workers` | `2` | commands the App carries out at once. Each may build scratch databases, so it spends the scratch server's budget *alongside* `--max-concurrent-diffs` rather than within it: size for the sum |
 | `--github-allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | author associations that may command godwit from a comment or review body. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and `NONE` fail `serve` at start-up: anyone who opened a pull request carries one |
+| `--vault-host` | `GODWIT_VAULT_HOSTS` (comma-separated) | repeatable `host` or `host:port` a [credential store](security.md#credential-stores) may point at. Empty (the default) accepts any host an admin registers, and a store makes godwit present its ServiceAccount token there |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
 `--github-webhook-addr` set without a webhook secret, without an app id, or with a private key that is not PEM, fails `serve` before the store is opened, as does an unknown value in `--github-allowed-associations`.
@@ -205,11 +206,13 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_GITHUB_PRIVATE_KEY_FILE` | no | default for `--github-private-key-file` |
 | `GODWIT_GITHUB_API_URL` | no | REST API base; defaults to `https://api.github.com` |
 | `GODWIT_GITHUB_EMOJI_REACTION` | no | default for `--github-emoji-reaction` |
-| `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
-| `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
-| `VAULT_K8S_ROLE` | without `VAULT_TOKEN` | role for `POST auth/<mount>/login` |
-| `VAULT_K8S_MOUNT` | no | auth mount, default `kubernetes` |
-| `VAULT_K8S_JWT` | no | service-account token file, default `/var/run/secrets/kubernetes.io/serviceaccount/token` |
+| `GODWIT_VAULT_HOSTS` | no | comma-separated default for `--vault-host` |
+| `GODWIT_VAULT_TRANSIT_ADDR` | with `GODWIT_KEY_PROVIDER=vault-transit` | the Vault holding the transit key. It is the key provider's own and reaches no target: a `vault` target reads from the [credential store](security.md#credential-stores) it names |
+| `GODWIT_VAULT_TRANSIT_TOKEN` | no | a token for that Vault; without it the Kubernetes auth method is used |
+| `GODWIT_VAULT_TRANSIT_K8S_ROLE` | without the token | role for `POST auth/<mount>/login` at that Vault |
+| `GODWIT_VAULT_TRANSIT_K8S_MOUNT` | no | auth mount there, default `kubernetes` |
+| `GODWIT_VAULT_TRANSIT_K8S_JWT` | no | service-account token file for that login, default `/var/run/secrets/kubernetes.io/serviceaccount/token` |
+| `VAULT_TOKEN`, `VAULT_TOKEN_*` | no | godwit reads no variable of this name on its own; a credential store may *name* one with `--vault-token-env`, and the name must begin with `VAULT_TOKEN` |
 
 The replica's lease holder name is the hostname; there is no flag for it.
 
@@ -228,10 +231,10 @@ Rules, enforced at start-up: exactly one or three colon-separated fields; name a
 
 | Scope | Allows |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListDriftEvents`, `ListAudit`, `ListCredentialStores` |
 | `pipeline` | read + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | pipeline + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget` |
-| `admin` | operator + `RegisterTarget` |
+| `admin` | operator + `RegisterTarget`, `RegisterCredentialStore` |
 
 A procedure missing from the table is denied to everyone. With tokens configured, a missing or unknown bearer is `unauthenticated`; a known one below the required scope is `permission_denied: <Method> requires scope X; token <name> has scope Y`.
 
@@ -259,7 +262,9 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 | Command | Flags | Scope |
 |---|---|---|
-| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path`, `--ignore-adopted-tables`, `--github-repo` (repeatable) | admin |
+| `godwit credential-store add <name>` (alias `store`) | `--vault-addr` (required), and exactly one of `--vault-k8s-role` (with `--vault-k8s-mount`, `--vault-k8s-jwt`) or `--vault-token-env` | admin |
+| `godwit credential-stores` (alias `stores`) | | read; every registered store with its address, how godwit authenticates there, and how many targets read from it |
+| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--credential-store` (required by `vault`, refused by the others), `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path`, `--ignore-adopted-tables`, `--github-repo` (repeatable) | admin |
 | `godwit target adopt <name>` | `--dir`, exactly one of `--version <N>` or `--from-journal` | operator; records the migrations the database already has as a succeeded run without executing them. `--version` takes your word for the newest one present; `--from-journal` reads the target's own `godwit` journal and needs no version. Neither flag, or both, is refused |
 | `godwit target status <name>` | `--dir` (a directory that does not exist compares against nothing) | read |
 | `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them. The applied count is versioned migrations only; `target status` also lists the repeatables, so its `applied (N)` is the larger number |

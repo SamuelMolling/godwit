@@ -28,6 +28,8 @@ type stubService struct {
 	mu           sync.Mutex
 	auth         string
 	registered   *godwitv1.RegisterTargetRequest
+	store        *godwitv1.RegisterCredentialStoreRequest
+	stores       []*godwitv1.CredentialStore
 	baselined    *godwitv1.BaselineTargetRequest
 	reconciled   *godwitv1.ReconcileTargetRequest
 	adopted      []string

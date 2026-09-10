@@ -53,7 +53,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&configPath, "config", "", "path to godwit.yaml (default: nearest godwit.yaml up to the repo root)")
 	root.AddCommand(newVersionCmd(), newPlanCmd(), newUpCmd(), newStatusCmd(), newDownCmd(), newServeCmd(),
 		newTargetCmd(), newTargetsCmd(), newMigrationsCmd(), newMigrateCmd(), newRevertCmd(), newRunCmd(), newRunsCmd(),
-		newPlansCmd(), newAuditCmd(),
+		newPlansCmd(), newAuditCmd(), newCredentialStoreCmd(), newCredentialStoresCmd(),
 		newDriftCmd(), newLintCmd(), newNewCmd(), newDiffCmd(), newCheckpointCmd(), newCommentCmd())
 
 	return root

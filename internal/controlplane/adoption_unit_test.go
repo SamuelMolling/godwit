@@ -41,8 +41,9 @@ func mockScheduler(t *testing.T, eng Engine) (pgxmock.PgxPoolIface, *Scheduler) 
 }
 
 func expectTargetRow(mock pgxmock.PgxPoolIface) {
-	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("app").
-		WillReturnRows(pgxmock.NewRows([]string{"provider", "config"}).AddRow("plain", []byte(`{"dsn":"postgres:///x"}`)))
+	mock.ExpectQuery("SELECT provider, coalesce\\(credential_store, ..\\), config FROM cp_targets").WithArgs("app").
+		WillReturnRows(pgxmock.NewRows([]string{"provider", "credential_store", "config"}).
+			AddRow("plain", "", []byte(`{"dsn":"postgres:///x"}`)))
 }
 
 func expectAppliedQuery(mock pgxmock.PgxPoolIface, versions ...int64) {

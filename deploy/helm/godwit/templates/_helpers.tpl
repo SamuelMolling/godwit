@@ -58,6 +58,63 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{- define "godwit.registerOne" -}}
+{{- if .reg.store -}}
+{{- include "godwit.registerStoreContainer" (dict "root" .root "store" .reg.store) -}}
+{{- else -}}
+{{- include "godwit.registerContainer" (dict "root" .root "target" .reg.target) -}}
+{{- end -}}
+{{- end }}
+
+{{- define "godwit.registerStoreContainer" -}}
+{{- $root := .root -}}
+{{- $s := .store -}}
+name: {{ printf "store-%s" ($s.name | lower | replace "_" "-" | replace "." "-") | trunc 63 | trimSuffix "-" }}
+image: {{ include "godwit.image" $root }}
+imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+{{- with $root.Values.securityContext }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+args:
+  - credential-store
+  - add
+  - {{ $s.name | quote }}
+  - {{ printf "--vault-addr=%s" (required "stores.list[].vaultAddr is required" $s.vaultAddr) | quote }}
+  {{- with $s.vaultK8sRole }}
+  - {{ printf "--vault-k8s-role=%s" . | quote }}
+  {{- end }}
+  {{- with $s.vaultK8sMount }}
+  - {{ printf "--vault-k8s-mount=%s" . | quote }}
+  {{- end }}
+  {{- with $s.vaultK8sJwt }}
+  - {{ printf "--vault-k8s-jwt=%s" . | quote }}
+  {{- end }}
+  {{- with $s.vaultTokenEnv }}
+  - {{ printf "--vault-token-env=%s" . | quote }}
+  {{- end }}
+  {{- range $s.extraArgs }}
+  - {{ . | quote }}
+  {{- end }}
+env:
+  - name: GODWIT_SERVER
+    value: {{ include "godwit.serverURL" $root | quote }}
+  {{- with $root.Values.targets.tokenSecret.name }}
+  - name: GODWIT_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: {{ . }}
+        key: {{ $root.Values.targets.tokenSecret.key }}
+  {{- end }}
+  {{- with $root.Values.targets.extraEnv }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- with $root.Values.targets.resources }}
+resources:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
 {{- define "godwit.registerContainer" -}}
 {{- $root := .root -}}
 {{- $t := .target -}}
@@ -86,6 +143,9 @@ args:
   {{- end }}
   {{- with $t.vaultTemplate }}
   - {{ printf "--vault-template=%s" . | quote }}
+  {{- end }}
+  {{- with $t.credentialStore }}
+  - {{ printf "--credential-store=%s" . | quote }}
   {{- end }}
   {{- with $t.searchPath }}
   - {{ printf "--search-path=%s" . | quote }}

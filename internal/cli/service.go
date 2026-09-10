@@ -140,6 +140,8 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.SecretPath, "secret-path", "", "mounted secret file (kubernetes provider)")
 	cmd.Flags().StringVar(&req.VaultPath, "vault-path", "", "Vault secret path under /v1 (vault provider)")
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
+	cmd.Flags().StringVar(&req.CredentialStore, "credential-store", "",
+		"registered credential store holding this target's secret; required by the vault provider, which reads no other Vault")
 	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
 	cmd.Flags().StringVar(&req.SearchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
 	cmd.Flags().StringSliceVar(&req.GithubRepositories, "github-repo", nil,

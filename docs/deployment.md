@@ -7,7 +7,7 @@ The short version:
 - A target is registered by **one API call**, `RegisterTarget`, which the CLI spells `godwit target add`. It needs the `admin` scope. **There is no way to register or edit a target from the web UI** — `/ui/targets` and `/ui/targets/{name}` are read-only pages.
 - What godwit stores per target is a *provider name plus a small config map*, never a live credential unless you chose `static`.
 - **A database that is not empty must be adopted before the first plan** — `godwit target adopt --version` when godwit never journalled it, `godwit target adopt --from-journal` when it carries a journal from elsewhere.
-- For Vault you need `VAULT_ADDR` on the service, a way to authenticate (Kubernetes auth is the one to use), a policy with `read` on exactly one path per target, and a `--vault-template` that turns the secret's fields into a DSN.
+- For Vault you register a **credential store** — a named Vault with its address and its auth — and every `vault` target names one. The service has no Vault address of its own to fall back on. Then a policy with `read` on exactly one path per target, and a `--vault-template` that turns the secret's fields into a DSN.
 - One godwit serving every application's database is the intended shape. Put the service in the shared stack; put the target registration, the migrations and the hook Jobs with the application.
 
 ## Registering a target
@@ -15,9 +15,13 @@ The short version:
 `RegisterTarget` is the only writer of `cp_targets`. Nothing registers a target implicitly: `CreateRun`, `PlanRun` and `GetTargetStatus` on an unknown name all fail with `not_found: target "x": not found`.
 
 ```bash
+godwit credential-store add production \
+  --server https://godwit.internal --token "$GODWIT_ADMIN_TOKEN" \
+  --vault-addr https://vault.internal:8200 --vault-k8s-role godwit
+
 godwit target add orders \
   --server https://godwit.internal --token "$GODWIT_ADMIN_TOKEN" \
-  --provider vault \
+  --provider vault --credential-store production \
   --vault-path secret/data/orders/db \
   --vault-template 'postgres://{{username}}:{{password}}@orders-db.internal:5432/orders' \
   --lock-timeout 5s --statement-timeout 0 --search-path app,public
@@ -63,9 +67,9 @@ The registration does **not** connect to the database. A wrong DSN, an unreadabl
 `RegisterTarget` is an upsert that writes a **new config map**, not a patch. Every setting you do not pass again is dropped:
 
 ```
-$ godwit target add orders --provider vault --vault-path ... --lock-timeout 5s
+$ godwit target add orders --provider vault --credential-store production --vault-path ... --lock-timeout 5s
 $ godwit targets     # LOCK 5s
-$ godwit target add orders --provider vault --vault-path ...          # no --lock-timeout
+$ godwit target add orders --provider vault --credential-store production --vault-path ...   # no --lock-timeout
 $ godwit targets     # LOCK none
 ```
 
@@ -165,7 +169,7 @@ The provider is resolved on **every operation that touches the database**: a run
 |---|---|---|---|
 | Operator supplies | the DSN, once, on `target add` | a mounted Secret + `--secret-path` | a Vault path + a template + auth on the service |
 | godwit stores | the encrypted DSN | the file path | the Vault path |
-| Service needs | a [key provider](security.md#the-key-and-where-it-comes-from): `GODWIT_MASTER_KEY`, or `GODWIT_KEY_PROVIDER` with `GODWIT_KMS_KEY` | the volume mounted in the pod | `VAULT_ADDR` + a token or Kubernetes auth |
+| Service needs | a [key provider](security.md#the-key-and-where-it-comes-from): `GODWIT_MASTER_KEY`, or `GODWIT_KEY_PROVIDER` with `GODWIT_KMS_KEY` | the volume mounted in the pod | a registered credential store, and the ServiceAccount token its login presents |
 | Rotating the credential | re-register the target | `kubectl apply` the Secret; picked up on the next read, no restart | rotate in Vault; picked up on the next read, no restart |
 | Blast radius of a store dump | every DSN, if the key leaks with it (`env`); with a KMS key provider, a live KMS call as well | nothing | nothing |
 
@@ -227,14 +231,15 @@ Two consequences worth knowing before you pick this provider. The file must exis
 
 ### `vault`
 
-The provider reads one secret and renders a template over its fields.
+The provider reads one secret from **the Vault the target's credential store names**, and renders a template over its fields.
 
 ```bash
-godwit target add orders --provider vault \
+godwit target add orders --provider vault --credential-store production \
   --vault-path secret/data/orders/db \
   --vault-template 'postgres://{{username}}:{{password}}@orders-db.internal:5432/orders'
 ```
 
+- `--credential-store` is **required**, and an unregistered name is refused at registration. There is no service-wide `VAULT_ADDR` standing behind a target that names none; a target registered before stores existed fails every run with `target <name>: this target names no credential store`, which is what an upgrade to this version looks like.
 - `--vault-path` is the path **under `/v1/`**, exactly as `vault read` takes it. For KV v2 that means the `data/` segment: a secret written to `secret/orders/db` is read at `secret/data/orders/db`.
 - The response's `data` is unwrapped once when it contains an inner `data` object, so KV v2 (`{"data":{"data":{...},"metadata":{...}}}`) and the flat responses of the database secrets engine both work with the same template.
 - `--vault-template` substitutes `{{field}}` from the secret. Omitted, it defaults to `{{dsn}}` — so a KV secret with a single `dsn` field needs no template at all.
@@ -245,32 +250,56 @@ The full Vault setup is the next section.
 
 ## Vault, end to end
 
-### Service configuration
+### The store, which is where a Vault's address lives
 
-Environment on the godwit pods, read **once at start-up**:
+**The service holds no address for a target's Vault.** It holds a table of credential stores, and every `vault` target names one:
 
-| Variable | Chart value | Meaning |
-|---|---|---|
-| `VAULT_ADDR` | `vault.addr` | base URL; without it every `vault` target fails `vault provider not configured: set VAULT_ADDR` |
-| `VAULT_TOKEN` | `vault.tokenSecret.name` / `.key` | a static token; when set, no login happens |
-| `VAULT_K8S_ROLE` | `vault.k8sRole` | the role for `POST auth/<mount>/login` |
-| `VAULT_K8S_MOUNT` | `vault.k8sMount` | auth mount, default `kubernetes` |
-| `VAULT_K8S_JWT` | — (use `extraEnv`) | service-account token file, default `/var/run/secrets/kubernetes.io/serviceaccount/token` |
+```bash
+godwit credential-store add production \
+  --vault-addr https://vault.production.internal:8200 --vault-k8s-role godwit
+godwit credential-store add staging \
+  --vault-addr https://vault.staging.internal:8200 --vault-k8s-role godwit
 
-Because they are read at start-up, changing `VAULT_ADDR` or `VAULT_TOKEN` needs a pod roll. The *service-account JWT* is different: it is re-read from disk on every login, so a projected token that Kubernetes rotates is picked up without a restart. That alone is a reason to prefer Kubernetes auth over `VAULT_TOKEN`: godwit never renews a static token, so the day its TTL runs out every `vault` target stops resolving at once.
+godwit credential-stores
+```
 
-Leave `vault.tokenSecret.name` empty and set `vault.k8sRole`:
+This is what lets one service reach databases whose credentials live in different Vaults — the shape you get whenever Vault is deployed per environment. [Decision 0021](decisions/0021-a-target-names-the-vault-its-credentials-live-in.md) is the reasoning, including why there is no global default to fall back on.
+
+A store is a row, not process configuration: changing an address is `credential-store add` again, and every target naming it moves at the next resolve. No pod roll, no restart.
+
+| Field | Meaning |
+|---|---|
+| `--vault-addr` | base URL, `http` or `https`. Refused when the service was started with `--vault-host` and the host is not on that list ([security](security.md#credential-stores)) |
+| `--vault-k8s-role`, `--vault-k8s-mount`, `--vault-k8s-jwt` | Kubernetes auth **at that Vault**; the mount defaults to `kubernetes` and the JWT to the projected ServiceAccount token |
+| `--vault-token-env` | instead of Kubernetes auth, the name of an environment variable of the service holding a token for that Vault. It must begin with `VAULT_TOKEN`. For deployments that are not on Kubernetes; prefer the role everywhere else |
+
+Kubernetes auth presents **the pod's own projected ServiceAccount token**, at whichever Vault the store names, and `--vault-k8s-jwt` moves the file for a store that needs a differently-audienced token:
 
 ```yaml
-vault:
-  addr: https://vault.internal:8200
-  k8sRole: godwit
-  k8sMount: kubernetes
+stores:
+  allowedHosts: [vault.production.internal, vault.staging.internal]
+  list:
+    - name: production
+      vaultAddr: https://vault.production.internal:8200
+      vaultK8sRole: godwit
+    - name: staging
+      vaultAddr: https://vault.staging.internal:8200
+      vaultK8sRole: godwit
 
 serviceAccount:
   create: true
   automountServiceAccountToken: true   # the default; the provider reads the projected token
 ```
+
+The chart's register Job applies `stores.list` ahead of `targets.list`, so a target may name a store in the same sync.
+
+The JWT is re-read from disk on every login, so a projected token Kubernetes rotates is picked up without a restart. That is the reason to prefer a role over `--vault-token-env`: godwit never renews a static token, so the day its TTL runs out every target on that store stops resolving at once.
+
+**There is no `VAULT_ADDR` on the service and no `vault:` block in the chart.** `serve.keyProvider.vaultAddr` and its siblings configure a different thing — the [`vault-transit` key provider](security.md#the-key-and-where-it-comes-from), where godwit seals the DSNs of `static` targets — and they reach no target.
+
+**Each Vault a store names needs its own Kubernetes auth mount** that trusts this cluster and accepts the pod token's audience, with a role bound to godwit's ServiceAccount. A Vault that does not know this cluster answers the login with `403`, which is what a run on that store reports.
+
+Nothing here is a chicken and egg: registering a store is an API call carrying an `admin` bearer token, and it writes a row to the control-plane database. No Vault is needed to reach a Vault, and a service that has never had a store starts, serves and answers normally — every `vault` target on it simply refuses until one exists.
 
 ### The KV secret and the template
 
@@ -281,7 +310,7 @@ vault kv put secret/orders/db \
 ```
 
 ```bash
-godwit target add orders --provider vault \
+godwit target add orders --provider vault --credential-store production \
   --vault-path secret/data/orders/db \
   --vault-template 'postgres://{{username}}:{{password}}@orders-db.internal:5432/orders'
 ```
@@ -355,7 +384,7 @@ path "database/creds/godwit-orders" { capabilities = ["read"] }
 ```
 
 ```bash
-godwit target add orders --provider vault \
+godwit target add orders --provider vault --credential-store production \
   --vault-path database/creds/godwit-orders \
   --vault-template 'postgres://{{username}}:{{password}}@orders-db.internal:5432/orders'
 ```
@@ -382,7 +411,7 @@ vault write database/static-roles/godwit-orders \
 ```
 
 ```bash
-godwit target add orders --provider vault \
+godwit target add orders --provider vault --credential-store production \
   --vault-path database/static-creds/godwit-orders \
   --vault-template 'postgres://{{username}}:{{password}}@orders-db.internal:5432/orders'
 ```
@@ -394,7 +423,7 @@ The response shape (`username`, `password`, plus numeric `ttl` / `rotation_perio
 | Vault's answer | godwit's behaviour |
 |---|---|
 | connection refused, DNS failure, timeout | classified transient: the run returns to `queued` with backoff and retries, up to `--max-attempts` |
-| `403` on the read or the login | a plain error: the run finishes `failed`, `godwit run resume` after you fix the policy |
+| `403` on the read or the login | a plain error: the run finishes `failed`, `godwit run resume` after you fix the policy — or the store's role, if the login is what was refused |
 | reachable at admission, gone at claim | the run exists and takes the rows above |
 | gone at admission | `CreateRun` is refused; no run row exists |
 
@@ -607,8 +636,7 @@ vault write auth/kubernetes/role/godwit \
 helm upgrade --install godwit deploy/helm/godwit -n godwit \
   --set image.tag=sha-1a2b3c4 \
   --set serve.scratch.enabled=true \
-  --set vault.addr=https://vault.internal:8200 \
-  --set vault.k8sRole=godwit
+  --set stores.allowedHosts='{vault.internal}'
 kubectl -n godwit logs deploy/godwit | grep -E 'listening|not isolated|no tokens'
 ```
 
@@ -620,7 +648,10 @@ A clean start logs `store migrated` and `listening`. Any `scratch database is no
 kubectl -n godwit port-forward svc/godwit 8474:8474 &
 export GODWIT_SERVER=http://localhost:8474 GODWIT_TOKEN=<the register:admin secret>
 
-godwit target add orders --provider vault \
+godwit credential-store add production \
+  --vault-addr https://vault.internal:8200 --vault-k8s-role godwit
+
+godwit target add orders --provider vault --credential-store production \
   --vault-path secret/data/orders/db \
   --vault-template 'postgres://{{username}}:{{password}}@orders-db.internal:5432/orders' \
   --lock-timeout 5s
@@ -629,9 +660,9 @@ godwit targets                 # the row exists, from the store alone
 godwit target status orders    # this one actually reaches Vault and the database
 ```
 
-`target status` failing here is the point of running it: `vault provider not configured` means `VAULT_ADDR` is unset, `status 403` means the policy or the Kubernetes auth role, `no field for x` means the template, and a connection error means the host in the template.
+`target status` failing here is the point of running it: `names no credential store` means the target was registered without `--credential-store`, `credential store "x": not found` means it names one nobody registered, `status 403` means the policy or the Kubernetes auth role, `no field for x` means the template, and a connection error means the host in the template.
 
-Register the first one by hand — the feedback loop is faster and `target status` is the whole point. Once it answers, move the same line into `targets.list` in the values so the next sync owns it, and remember that the list then replaces the row entirely: whatever you typed here has to be in it.
+Register the first one by hand — the feedback loop is faster and `target status` is the whole point. Once it answers, move both lines into `stores.list` and `targets.list` in the values so the next sync owns them, and remember that each list then replaces its row entirely: whatever you typed here has to be in it.
 
 **5b. Adopt what the database already has.** Skip only if it is genuinely empty; see [adopting an existing database](#adopting-an-existing-database).
 

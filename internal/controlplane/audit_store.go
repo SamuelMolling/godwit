@@ -38,6 +38,7 @@ const (
 	AuditRunReattach     = "run.reattach"
 	AuditCheckpoint      = "checkpoint.generate"
 	AuditWebhookCommand  = "webhook.command"
+	AuditCredentialStore = "credential_store.register"
 )
 
 // AuditEntry is one recorded mutation: who did what to which target or run.

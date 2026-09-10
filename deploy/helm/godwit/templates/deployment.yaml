@@ -138,6 +138,29 @@ spec:
             - name: GODWIT_VAULT_TRANSIT_MOUNT
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.serve.keyProvider.vaultAddr }}
+            - name: GODWIT_VAULT_TRANSIT_ADDR
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serve.keyProvider.vaultK8sRole }}
+            - name: GODWIT_VAULT_TRANSIT_K8S_ROLE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serve.keyProvider.vaultK8sMount }}
+            - name: GODWIT_VAULT_TRANSIT_K8S_MOUNT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serve.keyProvider.vaultK8sJwt }}
+            - name: GODWIT_VAULT_TRANSIT_K8S_JWT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.serve.keyProvider.vaultTokenSecret.name }}
+            - name: GODWIT_VAULT_TRANSIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.serve.keyProvider.vaultTokenSecret.key }}
+            {{- end }}
             {{- end }}
             - name: GODWIT_TOKENS
               valueFrom:
@@ -185,26 +208,9 @@ spec:
                   name: {{ .Values.existingSecret.name }}
                   key: {{ .Values.existingSecret.keys.uiPassword }}
             {{- end }}
-            {{- with .Values.vault }}
-            {{- if .addr }}
-            - name: VAULT_ADDR
-              value: {{ .addr | quote }}
-            {{- end }}
-            {{- if .k8sRole }}
-            - name: VAULT_K8S_ROLE
-              value: {{ .k8sRole | quote }}
-            {{- end }}
-            {{- if .k8sMount }}
-            - name: VAULT_K8S_MOUNT
-              value: {{ .k8sMount | quote }}
-            {{- end }}
-            {{- if .tokenSecret.name }}
-            - name: VAULT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .tokenSecret.name }}
-                  key: {{ .tokenSecret.key }}
-            {{- end }}
+            {{- with .Values.stores.allowedHosts }}
+            - name: GODWIT_VAULT_HOSTS
+              value: {{ join "," . | quote }}
             {{- end }}
             {{- with .Values.notifications }}
             {{- if .webhookUrl }}

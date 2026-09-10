@@ -220,9 +220,17 @@ echo
 echo "==> vault: the same database registered through a Vault KV secret, no DSN in the control plane"
 docker compose exec -T -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN=demo-root vault \
   vault kv put -mount=secret app user=app password=app host=target-db > /dev/null
+echo "==> the Vault a target reads from is a registered store, never a process-wide address"
+rpc RegisterCredentialStore '{
+  "name": "demo",
+  "vaultAddr": "http://vault:8200",
+  "vaultTokenEnv": "VAULT_TOKEN"
+}' 18475
+rpc ListCredentialStores '{}' 18475
 rpc RegisterTarget '{
   "name": "app-vault",
   "provider": "vault",
+  "credentialStore": "demo",
   "vaultPath": "secret/data/app",
   "vaultTemplate": "postgres://{{user}}:{{password}}@{{host}}:5432/app?sslmode=disable",
   "lockTimeout": "2s"

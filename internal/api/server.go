@@ -85,6 +85,8 @@ type Server struct {
 	PlanTTL time.Duration
 	// Limits are the admission bounds; a zero field takes its default. Set them before Handler.
 	Limits Limits
+	// VaultHosts are the hosts a credential store may point at; empty accepts any.
+	VaultHosts []string
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -170,6 +172,10 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if m.Name == "" {
 		return nil, invalid("name is required")
 	}
+	if m.CredentialStore != "" && m.Provider != "vault" {
+		return nil, invalid("credential_store names the Vault a secret is read from, and provider " +
+			m.Provider + " reads no Vault")
+	}
 	var config map[string]string
 	switch m.Provider {
 	case "static":
@@ -197,6 +203,14 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 		if m.VaultTemplate != "" {
 			config["template"] = m.VaultTemplate
 		}
+		if m.CredentialStore == "" {
+			return nil, invalid("vault provider requires credential_store, the registered Vault this target's " +
+				"secret lives in; `godwit credential-stores` lists them and `godwit credential-store add` registers one")
+		}
+		if _, err := s.store.VaultStore(ctx, m.CredentialStore); err != nil {
+			return nil, invalid(fmt.Sprintf("credential store %q: %v", m.CredentialStore, err))
+		}
+		config[creds.StoreConfigKey] = m.CredentialStore
 	default:
 		return nil, invalid("unknown provider " + m.Provider)
 	}
@@ -232,11 +246,14 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider,
+	s.Log.Info("target registered", "target", m.Name, "provider", m.Provider, "credential_store", m.CredentialStore,
 		"lock_timeout", t.Lock, "statement_timeout", t.Statement, "require_plan", m.RequirePlan, "search_path", searchPath)
-	s.audit(ctx, controlplane.AuditTargetRegister, "", m.Name,
-		fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s require_plan=%t search_path=%s",
-			m.Provider, t.Lock, t.Statement, m.RequirePlan, searchPath))
+	detail := fmt.Sprintf("provider=%s lock_timeout=%s statement_timeout=%s require_plan=%t search_path=%s",
+		m.Provider, t.Lock, t.Statement, m.RequirePlan, searchPath)
+	if m.CredentialStore != "" {
+		detail += " credential_store=" + m.CredentialStore
+	}
+	s.audit(ctx, controlplane.AuditTargetRegister, "", m.Name, detail)
 
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }

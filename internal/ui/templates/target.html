@@ -88,6 +88,7 @@
         <h3>Settings</h3>
         <dl class="facts">
           <dt>Provider</dt><dd class="mono">{{.Summary.Provider}}</dd>
+          {{if eq .Summary.Provider "vault"}}<dt>credential_store</dt><dd class="mono">{{or .Summary.CredentialStore "VAULT_ADDR"}}</dd>{{end}}
           <dt>search_path</dt><dd class="mono">{{or .Summary.SearchPath "role default"}}</dd>
           <dt>lock_timeout</dt><dd class="mono">{{or .Summary.LockTimeout "default"}}</dd>
           <dt>statement_timeout</dt><dd class="mono">{{or .Summary.StatementTimeout "default"}}</dd>

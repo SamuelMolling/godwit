@@ -3,6 +3,7 @@ package creds_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -135,7 +136,7 @@ func TestVaultErrors(t *testing.T) {
 		config map[string]string
 		want   string
 	}{
-		{"no address", creds.Vault{Token: "root"}, map[string]string{"path": "x"}, "VAULT_ADDR"},
+		{"no address", creds.Vault{Token: "root"}, map[string]string{"path": "x"}, "no address"},
 		{"jwt missing", creds.Vault{Address: srv.URL, JWTPath: "/nope"}, map[string]string{"path": "x"}, "service account token"},
 		{"login denied", creds.Vault{Address: srv.URL, Mount: "kubernetes", JWTPath: jwt}, map[string]string{"path": "x"}, "status 403"},
 		{"login unreachable", creds.Vault{Address: closed.URL, JWTPath: jwt}, map[string]string{"path": "x"}, "kubernetes login"},
@@ -153,8 +154,6 @@ func TestVaultErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
 			_, err := tc.p.DSN(context.Background(), tc.config)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
@@ -163,21 +162,89 @@ func TestVaultErrors(t *testing.T) {
 	}
 }
 
-func TestVaultFromEnv(t *testing.T) {
-	t.Setenv("VAULT_ADDR", "http://vault:8200")
-	t.Setenv("VAULT_TOKEN", "tok")
-	t.Setenv("VAULT_K8S_ROLE", "role")
-	t.Setenv("VAULT_K8S_MOUNT", "k8s")
-	t.Setenv("VAULT_K8S_JWT", "/jwt")
+func TestNoEnvironmentReachesATargetsVault(t *testing.T) {
+	t.Setenv("GODWIT_KMS_KEY", "godwit")
+	t.Setenv("GODWIT_VAULT_TRANSIT_ADDR", "http://vault:8200")
+	t.Setenv("GODWIT_VAULT_TRANSIT_TOKEN", "tok")
+	t.Setenv("GODWIT_VAULT_TRANSIT_K8S_ROLE", "role")
+	t.Setenv("GODWIT_VAULT_TRANSIT_K8S_MOUNT", "k8s")
+	t.Setenv("GODWIT_VAULT_TRANSIT_K8S_JWT", "/jwt")
+	t.Setenv("VAULT_ADDR", "http://target-vault:8200")
+	t.Setenv("VAULT_TOKEN", "root")
 
-	p, ok := creds.Registry(creds.Keyring{})["vault"].(creds.Vault)
-	if !ok || p.Address != "http://vault:8200" || p.Token != "tok" || p.Role != "role" || p.Mount != "k8s" || p.JWTPath != "/jwt" {
+	transit, err := creds.VaultTransitFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := transit.Vault
+	if p.Address != "http://vault:8200" || p.Token != "tok" || p.Role != "role" || p.Mount != "k8s" || p.JWTPath != "/jwt" {
 		t.Fatalf("vault = %+v", p)
 	}
-	t.Setenv("VAULT_K8S_MOUNT", "")
-	t.Setenv("VAULT_K8S_JWT", "")
-	p = creds.VaultFromEnv()
-	if p.Mount != "kubernetes" || p.JWTPath != "/var/run/secrets/kubernetes.io/serviceaccount/token" {
-		t.Fatalf("defaults = %+v", p)
+
+	_, err = creds.Registry(creds.Keyring{}, nil)["vault"].DSN(
+		context.Background(), map[string]string{"path": "secret/data/app"})
+	if err == nil || !strings.Contains(err.Error(), "names no credential store") {
+		t.Fatalf("a target with no store must be refused whatever the environment holds: %v", err)
+	}
+
+	t.Setenv("GODWIT_VAULT_TRANSIT_K8S_MOUNT", "")
+	t.Setenv("GODWIT_VAULT_TRANSIT_K8S_JWT", "")
+	transit, err = creds.VaultTransitFromEnv()
+	if err != nil || transit.Vault.Mount != "kubernetes" ||
+		transit.Vault.JWTPath != "/var/run/secrets/kubernetes.io/serviceaccount/token" {
+		t.Fatalf("defaults = %+v, err = %v", transit.Vault, err)
+	}
+	t.Setenv("GODWIT_VAULT_TRANSIT_ADDR", "")
+	if _, err := creds.VaultTransitFromEnv(); err == nil ||
+		!strings.Contains(err.Error(), "GODWIT_VAULT_TRANSIT_ADDR") {
+		t.Fatalf("the key provider must name its own variable, not inherit one: %v", err)
+	}
+}
+
+func TestVaultsReadFromTheStoreTheTargetNames(t *testing.T) {
+	srv := fakeVault(t)
+	jwt := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(jwt, []byte("sa-jwt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VAULT_TOKEN_DEMO", "root")
+	lookup := func(_ context.Context, name string) (creds.VaultStore, error) {
+		switch name {
+		case "k8s":
+			return creds.VaultStore{Address: srv.URL, Role: "godwit", JWTPath: jwt}, nil
+		case "token":
+			return creds.VaultStore{Address: srv.URL, TokenEnv: "VAULT_TOKEN_DEMO"}, nil
+		case "empty-token":
+			return creds.VaultStore{Address: srv.URL, TokenEnv: "VAULT_TOKEN_ABSENT"}, nil
+		}
+
+		return creds.VaultStore{}, errors.New("not found")
+	}
+	p := creds.Registry(creds.Keyring{}, lookup)["vault"]
+	credstest.Conformance(t, p,
+		map[string]string{"path": "secret/data/app", creds.StoreConfigKey: "k8s"}, "postgres://vault")
+	got, err := p.DSN(context.Background(), map[string]string{"path": "secret/data/app", creds.StoreConfigKey: "token"})
+	if err != nil || got != "postgres://vault" {
+		t.Fatalf("got %q, err = %v", got, err)
+	}
+
+	cases := []struct {
+		name   string
+		p      creds.Provider
+		config map[string]string
+		want   string
+	}{
+		{"no store", p, map[string]string{"path": "secret/data/app"}, "names no credential store"},
+		{"no lookup", creds.Registry(creds.Keyring{}, nil)["vault"], map[string]string{"path": "x", creds.StoreConfigKey: "k8s"}, "resolves no stores"},
+		{"unknown store", p, map[string]string{"path": "x", creds.StoreConfigKey: "ghost"}, `credential store "ghost": not found`},
+		{"token variable unset", p, map[string]string{"path": "x", creds.StoreConfigKey: "empty-token"}, "VAULT_TOKEN_ABSENT"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.p.DSN(context.Background(), tc.config)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

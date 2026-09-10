@@ -489,15 +489,17 @@ Before that first run it would have listed three under `pending (3):` instead. `
 
 ### `godwit targets`
 
-**One line per database the service manages,** without connecting to any of them. Provider, how many migrations it has, plans waiting, runs needing a human, whether its schema has drifted, and its settings.
+**One line per database the service manages,** without connecting to any of them. Provider, the credential store it reads from, how many migrations it has, plans waiting, runs needing a human, whether its schema has drifted, and its settings.
 
 ```console
 $ godwit targets
-NAME    PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN
-app     static    5        0            0          clean  none         none  none       false         9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed
-dev     static    2        0            0          clean  none         none  none       false         3984dd6f-fce0-4a32-9af2-60c746dc92cd succeeded
-legacy  static    2        0            0          clean  none         none  none       false         c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380 succeeded
+NAME    PROVIDER  STORE       APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN
+app     static    none        5        0            0          clean  none         none  none       false         9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed
+orders  vault     production  2        0            0          clean  none         none  none       false         3984dd6f-fce0-4a32-9af2-60c746dc92cd succeeded
+legacy  static    none        2        0            0          clean  none         none  none       false         c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380 succeeded
 ```
+
+`STORE` is what answers "why can it not reach that database": it names the Vault the target's credentials are read from, and `none` is right for `static` and `kubernetes`, which read no Vault at all. `godwit credential-stores` turns the name into an address.
 
 `APPLIED` counts versioned migrations only, so it is a smaller number than the `applied (N)` in `target status`, which also counts repeatables.
 
@@ -678,7 +680,7 @@ AT                    ACTOR  ACTION           TARGET  RUN                       
 
 **Registers a database with the service under a name.** From then on every other command says `--target app` instead of a connection string, and nobody handling the CLI needs the password.
 
-You also choose here *where the password comes from*: `static` stores the DSN encrypted in the service's own database, `kubernetes` reads it from a mounted secret file at connect time, `vault` fetches it from Vault — including short-lived credentials Vault generates per connection.
+You also choose here *where the password comes from*: `static` stores the DSN encrypted in the service's own database, `kubernetes` reads it from a mounted secret file at connect time, `vault` fetches it from the Vault named by `--credential-store` — including short-lived credentials Vault generates per connection.
 
 Reach for it once per database. Note that it is a full replace, not a patch: running it again with fewer flags resets the settings you left out.
 
@@ -688,6 +690,33 @@ target app: registered (static)
 ```
 
 Per-target settings live on this command too — `--lock-timeout`, `--statement-timeout`, `--search-path`, `--require-plan` — and are listed in [configuration](configuration.md#target-settings). Use `GODWIT_TARGET_DSN` rather than `--dsn` to keep the password out of the process list. [Deployment: registering a target](deployment.md#registering-a-target), [security: credential providers](security.md#credential-providers).
+
+### `godwit credential-store add`
+
+**Registers a Vault, under a name, that `target add --credential-store` can point at.** godwit has no Vault of its own to fall back on, so a `vault` target is registered against a store or it is not registered at all.
+
+```console
+$ godwit credential-store add production \
+    --vault-addr https://vault.production.internal --vault-k8s-role godwit
+credential store production: registered (https://vault.production.internal)
+```
+
+`--vault-k8s-role` logs in at that Vault with the pod's own ServiceAccount token, which is the form to use in Kubernetes: that Vault needs a Kubernetes auth mount trusting this cluster and a role bound to godwit's ServiceAccount. Outside Kubernetes, `--vault-token-env VAULT_TOKEN` names an environment variable of the *service* holding a token instead — the value never travels through this command and is never stored.
+
+Registering a store is a full replace, like `target add`: re-running it with a new address moves every target that names it. [Security: credential stores](security.md#credential-stores).
+
+### `godwit credential-stores`
+
+**Every registered store, and how many targets read from each.**
+
+```console
+$ godwit credential-stores
+NAME        VAULT                                AUTH                          TARGETS
+production  https://vault.production.internal    kubernetes kubernetes as godwit  7
+staging     https://vault.staging.internal       kubernetes kubernetes as godwit  2
+```
+
+Read scope: a store holds an address, a role and the *name* of a variable, never a secret.
 
 ### `godwit target adopt`
 

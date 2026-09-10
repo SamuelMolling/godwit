@@ -69,7 +69,7 @@ message RunProgress {
 
 message RegisterTargetRequest {
   string name = 1;
-  // Credential provider: "static" (dsn, encrypted at rest), "kubernetes" (secret_path) or "vault" (vault_path).
+  // Credential provider: "static" (dsn, encrypted at rest), "kubernetes" (secret_path) or "vault" (vault_path and credential_store).
   string provider = 2;
   string dsn = 3;
   string secret_path = 4;
@@ -93,9 +93,41 @@ message RegisterTargetRequest {
   optional bool ignore_adopted_tables = 12;
   // Repositories a GitHub App delivery may reach this target from, each "owner/repo" or "owner/repo:dir"; none may when empty.
   repeated string github_repositories = 13;
+  // Registered credential store the secret is read from; required by, and only by, the vault provider.
+  string credential_store = 14;
 }
 
 message RegisterTargetResponse {}
+
+message RegisterCredentialStoreRequest {
+  string name = 1;
+  string vault_addr = 2;
+  // Kubernetes auth at that Vault, presenting the pod's own ServiceAccount token; vault_k8s_jwt is empty for the projected one.
+  string vault_k8s_role = 3;
+  string vault_k8s_mount = 4;
+  string vault_k8s_jwt = 7;
+  // An environment variable of the service holding a token, named VAULT_TOKEN*; exactly one of it and vault_k8s_role.
+  string vault_token_env = 5;
+}
+
+message RegisterCredentialStoreResponse {}
+
+message ListCredentialStoresRequest {}
+
+// CredentialStore is one Vault a target's secret can be read from.
+message CredentialStore {
+  string name = 1;
+  string vault_addr = 2;
+  string vault_k8s_role = 3;
+  string vault_k8s_mount = 4;
+  string vault_k8s_jwt = 8;
+  string vault_token_env = 6;
+  int32 targets = 5;
+}
+
+message ListCredentialStoresResponse {
+  repeated CredentialStore stores = 1;
+}
 
 message CreateRunRequest {
   string target = 1;
@@ -465,6 +497,7 @@ message TargetSummary {
   // Runs waiting for a human: needs_attention or awaiting_contract.
   int32 attention_runs = 12;
   repeated string github_repositories = 13;
+  string credential_store = 14;
 }
 
 message ListTargetsResponse {
@@ -709,6 +742,8 @@ message RevertRunResponse {
 
 service GodwitService {
   rpc RegisterTarget(RegisterTargetRequest) returns (RegisterTargetResponse);
+  rpc RegisterCredentialStore(RegisterCredentialStoreRequest) returns (RegisterCredentialStoreResponse);
+  rpc ListCredentialStores(ListCredentialStoresRequest) returns (ListCredentialStoresResponse);
   rpc CreateRun(CreateRunRequest) returns (CreateRunResponse);
   // Runs CreateRun's admission (hazard gate, order guard, scratch validation) and returns the plan without queueing anything.
   rpc PlanRun(PlanRunRequest) returns (PlanRunResponse);

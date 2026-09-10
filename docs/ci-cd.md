@@ -495,7 +495,7 @@ notifications:
 **Installing the App grants nothing.** A repository bound to no target gets no apply and no plan, and the refusal is in GitHub's delivery log and the service's own. An operator binds it with the target:
 
 ```bash
-godwit target add orders --provider vault --vault-path database/creds/orders \
+godwit target add orders --provider vault --credential-store production --vault-path database/creds/orders \
   --github-repo acme/orders \
   --github-repo acme/monorepo:services/orders
 ```

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 )
@@ -166,12 +167,21 @@ func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration,
 }
 
 // RegisterTarget upserts a target and its credential config.
+// The credential store is a column, not a config key, so a foreign key refuses a dangling one.
 func (s *Store) RegisterTarget(ctx context.Context, name, provider string, config map[string]string) error {
-	cfg, _ := json.Marshal(config) // map[string]string cannot fail
+	rest := make(map[string]string, len(config))
+	maps.Copy(rest, config)
+	delete(rest, creds.StoreConfigKey)
+	cfg, _ := json.Marshal(rest) // map[string]string cannot fail
+	var store *string
+	if v := config[creds.StoreConfigKey]; v != "" {
+		store = &v
+	}
 	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO cp_targets (name, provider, config) VALUES ($1, $2, $3)
-		 ON CONFLICT (name) DO UPDATE SET provider = EXCLUDED.provider, config = EXCLUDED.config`,
-		name, provider, cfg); err != nil {
+		`INSERT INTO cp_targets (name, provider, credential_store, config) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (name) DO UPDATE SET provider = EXCLUDED.provider,
+		   credential_store = EXCLUDED.credential_store, config = EXCLUDED.config`,
+		name, provider, store, cfg); err != nil {
 		return fmt.Errorf("register target: %w", err)
 	}
 
@@ -180,10 +190,11 @@ func (s *Store) RegisterTarget(ctx context.Context, name, provider string, confi
 
 // Target returns a target's provider name and config.
 func (s *Store) Target(ctx context.Context, name string) (string, map[string]string, error) {
-	var provider string
+	var provider, store string
 	var cfg []byte
 	err := s.pool.QueryRow(ctx,
-		`SELECT provider, config FROM cp_targets WHERE name = $1`, name).Scan(&provider, &cfg)
+		`SELECT provider, coalesce(credential_store, ''), config FROM cp_targets WHERE name = $1`,
+		name).Scan(&provider, &store, &cfg)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, fmt.Errorf("target %q: %w", name, ErrNotFound)
 	}
@@ -193,6 +204,9 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	var config map[string]string
 	if err := json.Unmarshal(cfg, &config); err != nil {
 		return "", nil, fmt.Errorf("target %q config: %w", name, err)
+	}
+	if store != "" {
+		config[creds.StoreConfigKey] = store
 	}
 
 	return provider, config, nil
@@ -212,6 +226,7 @@ type TargetSummary struct {
 	ReadyPlans         int
 	AppliedCount       int
 	GitHubRepositories []string
+	CredentialStore    string
 }
 
 // ListTargets summarises every target by name, counting ready plans created at or after since.
@@ -221,7 +236,7 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 		return nil, err
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.name, t.provider, t.config,
+		SELECT t.name, t.provider, coalesce(t.credential_store, ''), t.config,
 			(SELECT count(DISTINCT `+appliedEntry+`) FROM cp_run_applied a JOIN cp_runs r ON r.id = a.run_id
 			 WHERE r.target = t.name AND `+standingRow+`),
 			(SELECT count(*) FROM cp_runs r WHERE r.target = t.name AND r.state IN ('needs_attention', 'awaiting_contract')),
@@ -234,7 +249,10 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 	var out []TargetSummary
 	var sum TargetSummary
 	var cfg []byte
-	fields := []any{&sum.Name, &sum.Provider, &cfg, &sum.AppliedCount, &sum.AttentionRuns, &sum.ReadyPlans, &sum.UnresolvedDrift}
+	fields := []any{
+		&sum.Name, &sum.Provider, &sum.CredentialStore, &cfg,
+		&sum.AppliedCount, &sum.AttentionRuns, &sum.ReadyPlans, &sum.UnresolvedDrift,
+	}
 	if _, err := pgx.ForEachRow(rows, fields, func() error {
 		var config map[string]string
 		if err := json.Unmarshal(cfg, &config); err != nil {
