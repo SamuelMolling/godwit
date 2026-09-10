@@ -30,9 +30,10 @@ func newCredentialStoreAddCmd() *cobra.Command {
 		Use:   "add <name>",
 		Short: "Register a Vault a target can name with `target add --credential-store`",
 		Long: "Every vault target names a store, and the store is the only thing that says which Vault its\n" +
-			"credentials are read from. With --vault-k8s-role the service logs in at that Vault with its own\n" +
-			"ServiceAccount token, so that Vault needs a Kubernetes auth mount trusting this cluster and a role\n" +
-			"bound to it; --vault-token-env names an environment variable of the service holding a token instead.",
+			"credentials are read from. With --vault-k8s-role the service logs in at that Vault with a\n" +
+			"ServiceAccount token minted for --vault-audience, so that Vault needs a Kubernetes auth mount\n" +
+			"trusting this cluster, a role bound to it requiring that audience, and a deployment projecting\n" +
+			"a token for it; --vault-token-env names an environment variable holding a token instead.",
 		Args: cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
 			req.Name = args[0]
@@ -49,8 +50,9 @@ func newCredentialStoreAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.VaultAddr, "vault-addr", "", "Vault base URL, e.g. https://vault.production.example")
 	cmd.Flags().StringVar(&req.VaultK8SRole, "vault-k8s-role", "", "Kubernetes auth role godwit logs in as at that Vault")
 	cmd.Flags().StringVar(&req.VaultK8SMount, "vault-k8s-mount", "", "Kubernetes auth mount at that Vault (default kubernetes)")
-	cmd.Flags().StringVar(&req.VaultK8SJwt, "vault-k8s-jwt", "",
-		"ServiceAccount token file this store's Kubernetes login presents (default the projected token)")
+	cmd.Flags().StringVar(&req.VaultAudience, "vault-audience", "",
+		"audience this Vault's Kubernetes auth role requires; the deployment projects a ServiceAccount "+
+			"token for it, and that token is worthless at any other Vault")
 	cmd.Flags().StringVar(&req.VaultTokenEnv, "vault-token-env", "",
 		"instead of Kubernetes auth: an environment variable of the service holding a token for this Vault, named VAULT_TOKEN*")
 	_ = cmd.MarkFlagRequired("vault-addr")
@@ -91,7 +93,7 @@ func credentialStoresTable(stores []*godwitv1.CredentialStore) string {
 	for _, s := range stores {
 		auth := "token from " + s.VaultTokenEnv
 		if s.VaultK8SRole != "" {
-			auth = "kubernetes " + s.VaultK8SMount + " as " + s.VaultK8SRole
+			auth = "kubernetes " + s.VaultK8SMount + " as " + s.VaultK8SRole + " for " + s.VaultAudience
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", s.Name, s.VaultAddr, auth, s.Targets)
 	}

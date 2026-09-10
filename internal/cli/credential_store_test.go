@@ -32,7 +32,8 @@ func TestCredentialStoreAdd(t *testing.T) {
 	url := startStub(t, stub)
 
 	code, out, errOut := runCLI("credential-store", "add", "production", "--server", url, "--token", "tok",
-		"--vault-addr", "https://vault.production.example", "--vault-k8s-role", "godwit", "--vault-k8s-mount", "kubernetes-prod")
+		"--vault-addr", "https://vault.production.example", "--vault-k8s-role", "godwit",
+		"--vault-k8s-mount", "kubernetes-prod", "--vault-audience", "vault.production.example")
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
@@ -41,7 +42,8 @@ func TestCredentialStoreAdd(t *testing.T) {
 	}
 	r := stub.store
 	if r.Name != "production" || r.VaultAddr != "https://vault.production.example" ||
-		r.VaultK8SRole != "godwit" || r.VaultK8SMount != "kubernetes-prod" {
+		r.VaultK8SRole != "godwit" || r.VaultK8SMount != "kubernetes-prod" ||
+		r.VaultAudience != "vault.production.example" {
 		t.Fatalf("request = %v", r)
 	}
 
@@ -90,16 +92,19 @@ func TestCredentialStores(t *testing.T) {
 	}
 
 	stub.stores = []*godwitv1.CredentialStore{
-		{Name: "production", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit", VaultK8SMount: "kubernetes", Targets: 7},
+		{
+			Name: "production", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
+			VaultK8SMount: "kubernetes", VaultAudience: "vault.production.example", Targets: 7,
+		},
 		{Name: "demo", VaultAddr: "http://vault:8200", VaultTokenEnv: "VAULT_TOKEN"},
 	}
 	code, out, errOut = runCLI("stores", "--server", url)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "NAME        VAULT                             AUTH                             TARGETS\n" +
-		"production  https://vault.production.example  kubernetes kubernetes as godwit  7\n" +
-		"demo        http://vault:8200                 token from VAULT_TOKEN           0\n"
+	want := "NAME        VAULT                             AUTH                                                          TARGETS\n" +
+		"production  https://vault.production.example  kubernetes kubernetes as godwit for vault.production.example  7\n" +
+		"demo        http://vault:8200                 token from VAULT_TOKEN                                        0\n"
 	if out != want {
 		t.Fatalf("out = %q\nwant %q", out, want)
 	}

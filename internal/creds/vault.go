@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -34,17 +35,34 @@ type VaultStore struct {
 	Address  string
 	Role     string
 	Mount    string
-	JWTPath  string
+	Audience string
 	TokenEnv string
+}
+
+const audienceTokenDir = "/var/run/secrets/godwit/vault"
+
+var audienceName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// CheckAudience refuses an audience that is not also a file name. The deployment projects an
+// audience's token at that name, and godwit reads it there, so no store can name another file.
+func CheckAudience(audience string) error {
+	if !audienceName.MatchString(audience) {
+		return fmt.Errorf("vault audience %q must be a plain name of letters, digits, dot, dash or "+
+			"underscore, beginning with a letter or digit: it is also the file the deployment projects "+
+			"that audience's token at", audience)
+	}
+
+	return nil
 }
 
 type vaults struct {
 	client *http.Client
 	lookup func(ctx context.Context, name string) (VaultStore, error)
+	dir    string
 }
 
 var errNoStore = errors.New("this target names no credential store, and godwit reads no Vault without one: " +
-	"register the Vault its credentials live in with `godwit credential-store add <store> --vault-addr=... --vault-k8s-role=...`, " +
+	"register the Vault its credentials live in with `godwit credential-store add <store> --vault-addr=... --vault-k8s-role=... --vault-audience=...`, " +
 	"then point the target at it with `godwit target add <target> --provider=vault --vault-path=... --credential-store=<store>`")
 
 // DSN implements Provider.
@@ -61,14 +79,22 @@ func (p vaults) DSN(ctx context.Context, config map[string]string) (string, erro
 		return "", fmt.Errorf("credential store %q: %w", name, err)
 	}
 	v := Vault{
-		Address: store.Address, Role: store.Role, Mount: cmp.Or(store.Mount, "kubernetes"),
-		JWTPath: cmp.Or(store.JWTPath, defaultJWTPath), Client: p.client,
+		Address: store.Address, Role: store.Role, Mount: cmp.Or(store.Mount, "kubernetes"), Client: p.client,
 	}
-	if store.TokenEnv != "" {
+	switch {
+	case store.TokenEnv != "":
 		if v.Token = os.Getenv(store.TokenEnv); v.Token == "" {
 			return "", fmt.Errorf("credential store %q reads its token from %s, and this process has no such value",
 				name, store.TokenEnv)
 		}
+	case store.Audience == "":
+		return "", fmt.Errorf("credential store %q logs in with Kubernetes auth and names no audience: "+
+			"re-register it with --vault-audience, so the token godwit presents is one this Vault alone accepts", name)
+	default:
+		if err := CheckAudience(store.Audience); err != nil {
+			return "", fmt.Errorf("credential store %q: %w", name, err)
+		}
+		v.JWTPath = filepath.Join(cmp.Or(p.dir, audienceTokenDir), store.Audience)
 	}
 
 	return v.DSN(ctx, config)

@@ -32,7 +32,7 @@ serve:
     origins: ["https://godwit.example.internal"]
 
 stores:
-  allowedHosts: [vault.example.internal]
+  audiences: [vault.example.internal]
 
 notifications:
   publicUrl: https://godwit.example.internal
@@ -43,6 +43,7 @@ serviceAccount:
   name: godwit
   annotations:
     iam.gke.io/gcp-service-account: godwit@example.iam.gserviceaccount.com
+  automountServiceAccountToken: false
 
 serviceMonitor:
   enabled: true

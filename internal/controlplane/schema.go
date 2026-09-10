@@ -419,6 +419,19 @@ ALTER TABLE cp_targets ADD COLUMN credential_store text REFERENCES cp_credential
 ALTER TABLE cp_targets DROP COLUMN credential_store;
 DROP TABLE cp_credential_stores;`,
 	},
+	{
+		Version:  20260910000021,
+		Name:     "credential_store_audience",
+		Checksum: "cp-credential-store-audience-v1",
+		// A store registered before this migration named no audience, and no audience can be inferred
+		// from a file path, so those rows resolve to '' and their targets refuse until re-registered.
+		UpSQL: `
+ALTER TABLE cp_credential_stores DROP COLUMN k8s_jwt;
+ALTER TABLE cp_credential_stores ADD COLUMN k8s_audience text NOT NULL DEFAULT '';`,
+		DownSQL: `
+ALTER TABLE cp_credential_stores DROP COLUMN k8s_audience;
+ALTER TABLE cp_credential_stores ADD COLUMN k8s_jwt text NOT NULL DEFAULT '';`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

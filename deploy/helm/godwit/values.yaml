@@ -261,6 +261,8 @@ serviceAccount:
   #   iam.gke.io/gcp-service-account: godwit@project.iam.gserviceaccount.com
   #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/godwit
   annotations: {}
+  # godwit calls no Kubernetes API, so false is safe and takes the generic, audience-less token —
+  # the one every Vault accepts — out of the pod. Set it wherever stores.audiences is set.
   automountServiceAccountToken: true
 
 podAnnotations: {}
@@ -390,9 +392,18 @@ affinity: {}
 # and audited there, so declaring them here would give one row two owners. Register them
 # with `godwit credential-store add` and `godwit target add` (chart README).
 stores:
-  # --vault-host / GODWIT_VAULT_HOSTS: the hosts a credential store may point at. This is the
-  # guardrail on that registration and not the registration: it moves which Vaults godwit may
-  # authenticate at out of the admin token, which lives in a Secret, and into the pod spec,
-  # which is reviewed. Empty accepts any host an admin registers; set it wherever more than
-  # one person holds an admin token. See docs/security.md#credential-stores.
-  allowedHosts: []
+  # The audiences this pod holds a ServiceAccount token for, one projected token each, at
+  # /var/run/secrets/godwit/vault/<audience>. A store registered with --vault-k8s-role names one
+  # with --vault-audience, and godwit presents only that token: a Vault whose Kubernetes auth role
+  # requires the audience rejects every other token, and the generic cluster token — which every
+  # Vault accepts — is never the one godwit sends. The list is the set of Vault identities this
+  # deployment carries, and it lives here, in the reviewed pod spec, rather than behind an admin
+  # token. Each entry must be a plain name (letters, digits, dot, dash, underscore) because it is
+  # also the file name. See docs/security.md#credential-stores.
+  audiences: []
+  # - vault.production.internal
+  # - vault.staging.internal
+  #
+  # How long a projected token is valid; the kubelet rewrites the file well before it expires and
+  # godwit re-reads it on every login. The API server's floor is 600.
+  tokenExpirationSeconds: 3600

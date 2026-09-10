@@ -208,10 +208,6 @@ spec:
                   name: {{ .Values.existingSecret.name }}
                   key: {{ .Values.existingSecret.keys.uiPassword }}
             {{- end }}
-            {{- with .Values.stores.allowedHosts }}
-            - name: GODWIT_VAULT_HOSTS
-              value: {{ join "," . | quote }}
-            {{- end }}
             {{- with .Values.notifications }}
             {{- if .webhookUrl }}
             - name: GODWIT_WEBHOOK_URL
@@ -265,11 +261,16 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or .Values.extraVolumeMounts .Values.serve.githubApp.enabled }}
+          {{- if or .Values.extraVolumeMounts .Values.serve.githubApp.enabled .Values.stores.audiences }}
           volumeMounts:
             {{- if .Values.serve.githubApp.enabled }}
             - name: github-app-key
               mountPath: {{ .Values.serve.githubApp.privateKeyPath }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.stores.audiences }}
+            - name: vault-audience-tokens
+              mountPath: {{ include "godwit.vaultTokenDir" . }}
               readOnly: true
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
@@ -279,8 +280,25 @@ spec:
         {{- with .Values.extraContainers }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- if or .Values.extraVolumes .Values.serve.githubApp.enabled }}
+      {{- if or .Values.extraVolumes .Values.serve.githubApp.enabled .Values.stores.audiences }}
       volumes:
+        {{- if .Values.stores.audiences }}
+        # A serviceAccountToken projection carries one audience, so an audience is one source, not one
+        # volume; the file name is the audience because that is how godwit finds the right token.
+        - name: vault-audience-tokens
+          projected:
+            defaultMode: 0440
+            sources:
+              {{- range .Values.stores.audiences }}
+              {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" .) }}
+              {{- fail (printf "stores.audiences: %q must be a plain name of letters, digits, dot, dash or underscore, beginning with a letter or digit: it is also the file name godwit reads that token at" .) }}
+              {{- end }}
+              - serviceAccountToken:
+                  audience: {{ . | quote }}
+                  expirationSeconds: {{ $.Values.stores.tokenExpirationSeconds }}
+                  path: {{ . | quote }}
+              {{- end }}
+        {{- end }}
         {{- if .Values.serve.githubApp.enabled }}
         - name: github-app-key
           secret:

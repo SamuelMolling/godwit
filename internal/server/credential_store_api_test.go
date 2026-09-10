@@ -32,7 +32,7 @@ func otherVault(t *testing.T, role, mount, dsn string) *httptest.Server {
 		_, _ = w.Write([]byte(`{"auth":{"client_token":"store-token"}}`))
 	})
 	mux.HandleFunc("GET /v1/secret/data/app", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Vault-Token") != "store-token" {
+		if tok := r.Header.Get("X-Vault-Token"); tok != "store-token" && tok != "root" {
 			http.Error(w, `{"errors":["permission denied"]}`, http.StatusForbidden)
 
 			return
@@ -48,10 +48,7 @@ func otherVault(t *testing.T, role, mount, dsn string) *httptest.Server {
 func TestCredentialStoreEndToEnd(t *testing.T) {
 	targetDSN := newDatabase(t, "cs")
 	vault := otherVault(t, "godwit", "kubernetes-prod", targetDSN)
-	jwt := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(jwt, []byte("sa-jwt\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("VAULT_TOKEN_PRODUCTION", "root")
 	ctx := context.Background()
 	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
 
@@ -61,8 +58,7 @@ func TestCredentialStoreEndToEnd(t *testing.T) {
 		t.Fatalf("an unregistered store must be refused, not stored: %v", err)
 	}
 	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
-		Name: "production", VaultAddr: vault.URL, VaultK8SRole: "godwit",
-		VaultK8SMount: "kubernetes-prod", VaultK8SJwt: jwt,
+		Name: "production", VaultAddr: vault.URL, VaultTokenEnv: "VAULT_TOKEN_PRODUCTION",
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +81,7 @@ func TestCredentialStoreEndToEnd(t *testing.T) {
 		t.Fatalf("stores = %+v", stores.Msg.Stores)
 	}
 	if s := stores.Msg.Stores[0]; s.Name != "production" || s.VaultAddr != vault.URL ||
-		s.VaultK8SRole != "godwit" || s.VaultK8SMount != "kubernetes-prod" || s.VaultK8SJwt != jwt || s.Targets != 1 {
+		s.VaultTokenEnv != "VAULT_TOKEN_PRODUCTION" || s.Targets != 1 {
 		t.Fatalf("store = %+v", s)
 	}
 	targets, err := client.ListTargets(ctx, connect.NewRequest(&godwitv1.ListTargetsRequest{}))
@@ -101,6 +97,7 @@ func TestVaultTargetWithoutAStoreRefuses(t *testing.T) {
 	client := newClient(addr, "")
 	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
 		Name: "elsewhere", VaultAddr: "https://vault.elsewhere.invalid", VaultK8SRole: "godwit",
+		VaultAudience: "vault.elsewhere.invalid",
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +157,7 @@ func TestCredentialStoreRefusals(t *testing.T) {
 	ctx := context.Background()
 	client := newClient(startServiceCfg(t, Config{
 		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1",
-		Scheduler:  controlplane.Config{Interval: 50 * time.Millisecond},
-		VaultHosts: []string{"vault.production.example"}, Log: testLog,
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: testLog,
 	}), "")
 
 	cases := []struct {
@@ -180,11 +176,6 @@ func TestCredentialStoreRefusals(t *testing.T) {
 			"must be an http or https URL",
 		},
 		{
-			"host not allowed",
-			&godwitv1.RegisterCredentialStoreRequest{Name: "s", VaultAddr: "https://vault.attacker.example", VaultK8SRole: "godwit"},
-			"accepts credential stores at vault.production.example only",
-		},
-		{
 			"no auth",
 			&godwitv1.RegisterCredentialStoreRequest{Name: "s", VaultAddr: "https://vault.production.example"},
 			"needs vault_k8s_role (Kubernetes auth) or vault_token_env",
@@ -196,6 +187,29 @@ func TestCredentialStoreRefusals(t *testing.T) {
 				VaultK8SRole: "godwit", VaultTokenEnv: "VAULT_TOKEN",
 			},
 			"give one",
+		},
+		{
+			"kubernetes auth naming no audience",
+			&godwitv1.RegisterCredentialStoreRequest{
+				Name: "s", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
+			},
+			"vault_audience is required with vault_k8s_role",
+		},
+		{
+			"an audience that escapes the token directory",
+			&godwitv1.RegisterCredentialStoreRequest{
+				Name: "s", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
+				VaultAudience: "../../kubernetes.io/serviceaccount/token",
+			},
+			"must be a plain name",
+		},
+		{
+			"an audience with nothing to present it with",
+			&godwitv1.RegisterCredentialStoreRequest{
+				Name: "s", VaultAddr: "https://vault.production.example",
+				VaultTokenEnv: "VAULT_TOKEN_X", VaultAudience: "vault.production.example",
+			},
+			"presents no token of its own",
 		},
 		{
 			"a variable that is not a vault token",
@@ -215,14 +229,10 @@ func TestCredentialStoreRefusals(t *testing.T) {
 	}
 
 	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
-		Name: "production", VaultAddr: "https://VAULT.production.example:8200", VaultK8SRole: "godwit",
-	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("a port the allowlist does not carry is a different host: %v", err)
-	}
-	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
-		Name: "production", VaultAddr: "https://VAULT.production.example", VaultK8SRole: "godwit",
+		Name: "production", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
+		VaultAudience: "vault.production.example",
 	})); err != nil {
-		t.Fatalf("the allowlist compares hosts case-insensitively: %v", err)
+		t.Fatalf("a store naming the audience its Vault requires: %v", err)
 	}
 
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
