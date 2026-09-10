@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/link"
 	"github.com/SamuelMolling/godwit/internal/report"
-	"github.com/SamuelMolling/godwit/internal/ui/link"
 )
 
 // planned renders what the CLI renders: `godwit plan` on a laptop, the Action's comment and this one
