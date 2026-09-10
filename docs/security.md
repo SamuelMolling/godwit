@@ -83,34 +83,33 @@ A **credential store** is a named Vault: an address, and how godwit authenticate
 
 ```bash
 godwit credential-store add production \
-  --vault-addr https://vault.production.internal --vault-k8s-role godwit \
-  --vault-audience vault.production.internal
+  --vault-addr https://vault.production.internal --vault-k8s-role godwit
 godwit credential-stores
 ```
 
 | Field | Meaning |
 |---|---|
 | `vault_addr` | base URL; `http` and `https` only |
-| `vault_k8s_role`, `vault_k8s_mount`, `vault_audience` | Kubernetes auth at *that* Vault. The audience is required, and names what that Vault's auth role checks the token was minted for; the deployment projects a token for it at `/var/run/secrets/godwit/vault/<audience>`, which is the only file this store can present |
+| `vault_k8s_role`, `vault_k8s_mount` | Kubernetes auth at *that* Vault. The token presented is the deployment's own, minted for the audience `godwit` and projected at `/var/run/secrets/godwit/vault/token`; that Vault's role must require `audience=godwit` |
 | `vault_token_env` | instead of Kubernetes auth: the name of an environment variable of the service holding a token for that Vault. It must begin with `VAULT_TOKEN` |
 
 Registering a store is `admin`; listing them is `read`, because a store holds no secret — an address, a role, and the *name* of a variable. `godwit targets` shows which store each target reads from, and `godwit credential-stores` shows how many targets read from each.
 
 **What an admin who registers a hostile store obtains.** A store points godwit's credentials at an address, and the first run of any target pointed at it sends them there:
 
-- with `vault_k8s_role`, **the ServiceAccount token minted for `vault_audience`**, POSTed to `<address>/v1/auth/<mount>/login`. It is worthless at a Vault that requires a different audience, and the generic cluster token — the one every Vault accepts, and the real prize — is not reachable from any store: the file name is the audience, and an audience that is not a plain name is refused at registration and again before the read.
+- with `vault_k8s_role`, **the ServiceAccount token minted for the `godwit` audience**, POSTed to `<address>/v1/auth/<mount>/login`. It is worthless at a Vault whose role requires a different audience, or none, and the generic cluster token — the one every Vault accepts, and the real prize — is not reachable from any store: the file godwit reads is a constant, so no field of a store row reaches a path.
 - with `vault_token_env`, the value of a named environment variable. `VAULT_TOKEN` is the prefix the name must carry, and it exists for exactly this reason: without it an admin could name `GODWIT_STORE_DSN` and receive the control plane's own credentials.
 - either way, the store's Vault **chooses the DSN godwit connects with**, so a hostile one can point a production target at a database it controls and receive that target's migrations.
 
 The second and third are not new privilege in kind: an admin can already register a `static` target with a DSN of their choosing.
 
-**The position on constraining addresses.** One constraint at registration — `http` or `https` with a host, so a malformed address fails where the error is legible rather than at run time — and the audience for everything else. [Decision 0023](decisions/0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) is why the host allowlist that used to sit here is gone, and what it did and did not cover. What the audience leaves standing: an admin can still send a *projected* token to an address of their choosing and replay it at the Vault that audience names. What it removes: the credential that works everywhere, and a guardrail that was empty by default. `stores.audiences` is the enumeration that replaces it, and a deployment holds exactly the Vault identities listed there.
+**The position on constraining addresses.** One constraint at registration — `http` or `https` with a host, so a malformed address fails where the error is legible rather than at run time — and the audience for everything else. [Decision 0023](decisions/0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) is why the host allowlist that used to sit here is gone, and what it did and did not cover. What the audience leaves standing: an admin can still send the projected token to an address of their choosing and replay it at any Vault whose role requires `audience=godwit`. What it removes: the credential that works everywhere, and a guardrail that was empty by default.
 
-**What the deployment carries.** `stores.audiences` is the set of Vault identities this pod holds, one projected ServiceAccount token each. It lives in the pod spec — in git, reviewed — rather than behind the admin token, which is where the credential belongs: an audience nobody projected is a store with no token to present, so registering one is not enough to make godwit authenticate anywhere new. A `serviceAccountToken` projection carries exactly one audience, so *n* audiences are *n* sources of one projected volume, each at its own file name; the chart renders that from the list and refuses an entry it cannot use as a file name. Each Vault's Kubernetes auth role must then set `audience=` — without it the role accepts any token the cluster issues for godwit's ServiceAccount, which is the state this is here to leave. `serviceAccount.automountServiceAccountToken: false` finishes the job by taking the generic token out of the pod entirely; godwit calls no Kubernetes API and does not miss it.
+**What the deployment carries.** One identity: the ServiceAccount token minted for the audience `godwit`, projected by the chart with no key to turn it off or aim it elsewhere. The audience is a constant on both sides — the pod spec and `internal/creds` — so nothing an admin token can write chooses which credential godwit presents. Each Vault's Kubernetes auth role must then set `audience="godwit"`, which is the whole operator-facing consequence; without it the role accepts any token the cluster issues for godwit's ServiceAccount, which is the state this is here to leave. `serviceAccount.automountServiceAccountToken: false` finishes the job by taking the generic token out of the pod entirely; godwit calls no Kubernetes API and does not miss it.
 
 Plaintext `http` is **not** refused and is not planned to be: in-cluster Vault addresses such as `http://vault.production.svc` are how these deployments are actually wired, and refusing them would refuse the deployments this exists for. TLS is the platform's.
 
-Vault login (`POST auth/<mount>/login` with the audience's ServiceAccount JWT, at the address the target's store names) happens on every fetch; the file is re-read and the client token is not cached, so a token the kubelet rotates is picked up without a restart. A missing template field fails with `vault secret has no field for x`, naming the template's own keys and never the rendered string — the substitution is one pass over the template, so a field whose value contains `{{...}}` is not rescanned either. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
+Vault login (`POST auth/<mount>/login` with the projected ServiceAccount JWT, at the address the target's store names) happens on every fetch; the file is re-read and the client token is not cached, so a token the kubelet rotates is picked up without a restart. A missing template field fails with `vault secret has no field for x`, naming the template's own keys and never the rendered string — the substitution is one pass over the template, so a field whose value contains `{{...}}` is not rescanned either. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
 
 The DSN, whichever provider produced it, exists only in the replica's memory for the duration of the operation and is never logged or returned by any RPC. Two paths used to break that:
 

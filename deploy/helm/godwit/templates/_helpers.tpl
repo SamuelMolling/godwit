@@ -49,8 +49,3 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "godwit.image" -}}
 {{- printf "%s:%s" .Values.image.repository (include "godwit.imageTag" .) }}
 {{- end }}
-
-{{/* The directory godwit reads an audience's ServiceAccount token from; the binary holds the same constant. */}}
-{{- define "godwit.vaultTokenDir" -}}
-/var/run/secrets/godwit/vault
-{{- end }}

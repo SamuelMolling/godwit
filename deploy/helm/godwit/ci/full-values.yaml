@@ -35,10 +35,6 @@ serve:
     scope: read
     origins: ["https://godwit.example.com"]
   extraArgs: ["--drift-interval=2m"]
-stores:
-  audiences: [vault.production.example.com, vault.staging.example.com]
-  tokenExpirationSeconds: 900
-
 notifications:
   webhookUrl: https://hooks.example.com/godwit
   publicUrl: https://godwit.example.com

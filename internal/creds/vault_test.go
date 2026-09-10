@@ -206,10 +206,6 @@ func TestVaultsReadFromTheStoreTheTargetNames(t *testing.T) {
 	t.Setenv("VAULT_TOKEN_DEMO", "root")
 	lookup := func(_ context.Context, name string) (creds.VaultStore, error) {
 		switch name {
-		case "no-audience":
-			return creds.VaultStore{Address: srv.URL, Role: "godwit"}, nil
-		case "bad-audience":
-			return creds.VaultStore{Address: srv.URL, Role: "godwit", Audience: "../../kubernetes.io/serviceaccount/token"}, nil
 		case "token":
 			return creds.VaultStore{Address: srv.URL, TokenEnv: "VAULT_TOKEN_DEMO"}, nil
 		case "empty-token":
@@ -229,8 +225,6 @@ func TestVaultsReadFromTheStoreTheTargetNames(t *testing.T) {
 		want   string
 	}{
 		{"no store", p, map[string]string{"path": "secret/data/app"}, "names no credential store"},
-		{"kubernetes auth naming no audience", p, map[string]string{"path": "x", creds.StoreConfigKey: "no-audience"}, "names no audience"},
-		{"an audience that escapes the token directory", p, map[string]string{"path": "x", creds.StoreConfigKey: "bad-audience"}, "must be a plain name"},
 		{"no lookup", creds.Registry(creds.Keyring{}, nil)["vault"], map[string]string{"path": "x", creds.StoreConfigKey: "k8s"}, "resolves no stores"},
 		{"unknown store", p, map[string]string{"path": "x", creds.StoreConfigKey: "ghost"}, `credential store "ghost": not found`},
 		{"token variable unset", p, map[string]string{"path": "x", creds.StoreConfigKey: "empty-token"}, "VAULT_TOKEN_ABSENT"},

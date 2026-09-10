@@ -260,7 +260,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 | Command | Flags | Scope |
 |---|---|---|
-| `godwit credential-store add <name>` (alias `store`) | `--vault-addr` (required), and exactly one of `--vault-k8s-role` (with `--vault-k8s-mount`, and `--vault-audience`, required) or `--vault-token-env` | admin |
+| `godwit credential-store add <name>` (alias `store`) | `--vault-addr` (required), and exactly one of `--vault-k8s-role` (with `--vault-k8s-mount`) or `--vault-token-env` | admin |
 | `godwit credential-stores` (alias `stores`) | | read; every registered store with its address, how godwit authenticates there, and how many targets read from it |
 | `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--credential-store` (required by `vault`, refused by the others), `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path`, `--ignore-adopted-tables`, `--github-repo` (repeatable) | admin |
 | `godwit target adopt <name>` | `--dir`, exactly one of `--version <N>` or `--from-journal` | operator; records the migrations the database already has as a succeeded run without executing them. `--version` takes your word for the newest one present; `--from-journal` reads the target's own `godwit` journal and needs no version. Neither flag, or both, is refused |

@@ -12,7 +12,6 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
-	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
 // RegisterCredentialStore stores a Vault targets may read their secrets from.
@@ -24,7 +23,7 @@ func (s *Server) RegisterCredentialStore(ctx context.Context, req *connect.Reque
 	if err := checkVaultAddr(m.VaultAddr); err != nil {
 		return nil, invalid(err.Error())
 	}
-	if err := checkVaultAuth(m.VaultK8SRole, m.VaultTokenEnv, m.VaultAudience); err != nil {
+	if err := checkVaultAuth(m.VaultK8SRole, m.VaultTokenEnv); err != nil {
 		return nil, invalid(err.Error())
 	}
 	store := controlplane.CredentialStore{
@@ -32,17 +31,15 @@ func (s *Server) RegisterCredentialStore(ctx context.Context, req *connect.Reque
 	}
 	if m.VaultK8SRole != "" {
 		store.Mount = cmp.Or(m.VaultK8SMount, "kubernetes")
-		store.Audience = m.VaultAudience
 	}
 	if err := s.store.RegisterCredentialStore(ctx, store); err != nil {
 		return nil, rpcErr(err)
 	}
 	s.Log.Info("credential store registered", "store", store.Name, "vault_addr", store.Address,
-		"vault_k8s_role", store.Role, "vault_k8s_mount", store.Mount, "vault_audience", store.Audience,
-		"vault_token_env", store.TokenEnv)
+		"vault_k8s_role", store.Role, "vault_k8s_mount", store.Mount, "vault_token_env", store.TokenEnv)
 	s.audit(ctx, controlplane.AuditCredentialStore, "", "",
-		fmt.Sprintf("store=%s vault_addr=%s vault_k8s_role=%s vault_k8s_mount=%s vault_audience=%s vault_token_env=%s",
-			store.Name, store.Address, store.Role, store.Mount, store.Audience, store.TokenEnv))
+		fmt.Sprintf("store=%s vault_addr=%s vault_k8s_role=%s vault_k8s_mount=%s vault_token_env=%s",
+			store.Name, store.Address, store.Role, store.Mount, store.TokenEnv))
 
 	return connect.NewResponse(&godwitv1.RegisterCredentialStoreResponse{}), nil
 }
@@ -57,7 +54,7 @@ func (s *Server) ListCredentialStores(ctx context.Context, _ *connect.Request[go
 	for _, st := range stores {
 		out.Stores = append(out.Stores, &godwitv1.CredentialStore{
 			Name: st.Name, VaultAddr: st.Address, VaultK8SRole: st.Role,
-			VaultK8SMount: st.Mount, VaultAudience: st.Audience, VaultTokenEnv: st.TokenEnv,
+			VaultK8SMount: st.Mount, VaultTokenEnv: st.TokenEnv,
 			Targets: int32(st.Targets),
 		})
 	}
@@ -68,7 +65,7 @@ func (s *Server) ListCredentialStores(ctx context.Context, _ *connect.Request[go
 // Without the prefix an admin could name GODWIT_STORE_DSN and have godwit post it to a host of theirs.
 const tokenEnvPrefix = "VAULT_TOKEN"
 
-func checkVaultAuth(role, tokenEnv, audience string) error {
+func checkVaultAuth(role, tokenEnv string) error {
 	switch {
 	case role == "" && tokenEnv == "":
 		return errors.New("a credential store needs vault_k8s_role (Kubernetes auth) or vault_token_env " +
@@ -77,17 +74,9 @@ func checkVaultAuth(role, tokenEnv, audience string) error {
 		return errors.New("vault_k8s_role and vault_token_env are two ways to authenticate at one Vault; give one")
 	case tokenEnv != "" && !strings.HasPrefix(tokenEnv, tokenEnvPrefix):
 		return fmt.Errorf("vault_token_env %q must name a variable beginning with %s", tokenEnv, tokenEnvPrefix)
-	case tokenEnv != "" && audience != "":
-		return errors.New("vault_audience belongs to Kubernetes auth; a store reading vault_token_env presents no token of its own")
-	case role != "" && audience == "":
-		return errors.New("vault_audience is required with vault_k8s_role: it names what this Vault checks the " +
-			"token was minted for, and a token minted for nothing in particular is one any other Vault also accepts")
-	}
-	if role == "" {
-		return nil
 	}
 
-	return creds.CheckAudience(audience)
+	return nil
 }
 
 func checkVaultAddr(addr string) error {

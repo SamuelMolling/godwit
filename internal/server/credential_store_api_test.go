@@ -97,7 +97,6 @@ func TestVaultTargetWithoutAStoreRefuses(t *testing.T) {
 	client := newClient(addr, "")
 	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
 		Name: "elsewhere", VaultAddr: "https://vault.elsewhere.invalid", VaultK8SRole: "godwit",
-		VaultAudience: "vault.elsewhere.invalid",
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -189,29 +188,6 @@ func TestCredentialStoreRefusals(t *testing.T) {
 			"give one",
 		},
 		{
-			"kubernetes auth naming no audience",
-			&godwitv1.RegisterCredentialStoreRequest{
-				Name: "s", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
-			},
-			"vault_audience is required with vault_k8s_role",
-		},
-		{
-			"an audience that escapes the token directory",
-			&godwitv1.RegisterCredentialStoreRequest{
-				Name: "s", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
-				VaultAudience: "../../kubernetes.io/serviceaccount/token",
-			},
-			"must be a plain name",
-		},
-		{
-			"an audience with nothing to present it with",
-			&godwitv1.RegisterCredentialStoreRequest{
-				Name: "s", VaultAddr: "https://vault.production.example",
-				VaultTokenEnv: "VAULT_TOKEN_X", VaultAudience: "vault.production.example",
-			},
-			"presents no token of its own",
-		},
-		{
 			"a variable that is not a vault token",
 			&godwitv1.RegisterCredentialStoreRequest{
 				Name: "s", VaultAddr: "https://vault.production.example", VaultTokenEnv: "GODWIT_STORE_DSN",
@@ -230,9 +206,8 @@ func TestCredentialStoreRefusals(t *testing.T) {
 
 	if _, err := client.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
 		Name: "production", VaultAddr: "https://vault.production.example", VaultK8SRole: "godwit",
-		VaultAudience: "vault.production.example",
 	})); err != nil {
-		t.Fatalf("a store naming the audience its Vault requires: %v", err)
+		t.Fatalf("a store authenticating with Kubernetes auth: %v", err)
 	}
 
 	if _, err := client.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{

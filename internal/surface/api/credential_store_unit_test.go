@@ -25,10 +25,10 @@ func TestCredentialStoreStoreFailures(t *testing.T) {
 	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
 
 	mock.ExpectExec("INSERT INTO cp_credential_stores").
-		WithArgs("production", "https://vault.example", "godwit", "kubernetes", "vault.example", "").
+		WithArgs("production", "https://vault.example", "godwit", "kubernetes", "").
 		WillReturnError(errors.New("stores down"))
 	if _, err := s.RegisterCredentialStore(ctx, connect.NewRequest(&godwitv1.RegisterCredentialStoreRequest{
-		Name: "production", VaultAddr: "https://vault.example", VaultK8SRole: "godwit", VaultAudience: "vault.example",
+		Name: "production", VaultAddr: "https://vault.example", VaultK8SRole: "godwit",
 	})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("err = %v", err)
 	}
