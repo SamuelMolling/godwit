@@ -56,6 +56,7 @@ The release prints the in-cluster URL and the first commands to run. Every value
 |---|---|
 | Deployment | `serve --listen --drift-interval --scratch-template [--skip-validation] [--ui --ui-scope --ui-anonymous-scope]` — the two DSNs arrive as `GODWIT_STORE_DSN` and `GODWIT_SCRATCH_DSN`, never as arguments — env from the Secret, `GODWIT_LOG_FORMAT` / `GODWIT_LOG_LEVEL` from `serve.logFormat` / `serve.logLevel`, readiness `/readyz`, liveness `/healthz`, a `startupProbe` on `/healthz` that gives the store migration five minutes before either of them applies, non-root read-only container, soft pod anti-affinity by default |
 | Service | ClusterIP on `service.port` → container port `serve.port` |
+| Service (webhook) | only with `serve.githubApp.enabled`; a **second** Service, `<release>-webhook`, ClusterIP on `serve.githubApp.service.port` → container port `serve.githubApp.port`, carrying that port and nothing else |
 | ServiceAccount | `serviceAccount.annotations` for Vault Kubernetes auth or cloud workload identity; token mounted by default because the Vault provider reads it |
 | PodDisruptionBudget | `minAvailable: 1` so a drain never takes both replicas |
 | ServiceMonitor | off by default; scrapes `/metrics` through the Service |
@@ -83,6 +84,27 @@ httpRoute:
 The Gateway itself, its listeners, its certificate and any implementation-specific policy (kgateway `ListenerSet`, Istio `VirtualService`, Traefik middleware) are the platform's, not the chart's. Declare them in `extraObjects` if you want them in this release. `httpRoute.apiVersion` drops to `gateway.networking.k8s.io/v1beta1` for a cluster on pre-1.0 CRDs.
 
 Either way the API is connect over HTTP/2: a browser reaching `/ui` is ordinary HTTP, but a CLI needs the gateway to speak h2c to the backend.
+
+## The GitHub App listener
+
+`serve.githubApp.enabled` opens a second listener, on its own port, serving `/github/webhook` and 404 for everything else. It is the only part of godwit that has to be reachable from the internet, and it is a separate listener precisely so that exposing it exposes nothing else.
+
+The chart renders that listener its **own Service**, `<release>-webhook`, rather than a second port on the API's. Point the public route at that Service:
+
+```yaml
+# in the platform's repository, not here
+backendRefs:
+  - name: godwit-webhook
+    port: 8475
+```
+
+A Service is the unit a route attaches to, and this one has no API port on it. So the failure that matters — a public hostname that reaches the API — is not a wrong port number away; it needs someone to name the other Service. `chart/ci/platform-github-app-values.yaml` shows the whole shape, including the route and a NetworkPolicy, and `scripts/helm-assert.sh` asserts the webhook Service never carries `serve.port`.
+
+Off is off: with `serve.githubApp.enabled: false` (the default) the render has no `--github-webhook-addr`, no second container port, no webhook Service and no App environment. The listener is not opened and closed to callers — it never binds.
+
+The App's private key is mounted as a file (`serve.githubApp.privateKeyPath`, read with `--github-private-key-file`) rather than passed as environment. It is multi-line, and unlike a DSN it is the App's whole identity: it mints an installation token for every repository the App is installed on. A file keeps it out of the process environment, which a sidecar, a core dump and `kubectl exec -- env` all read. The webhook secret and the app id are single-line and stay environment; the app id is not a secret at all.
+
+Standing the App up the first time — creating it, its permissions, its events, and binding a repository to a target — is [CI/CD: registering the App](../../../docs/ci-cd.md#registering-the-app).
 
 ## extraObjects
 

@@ -58,6 +58,14 @@ existingSecret:
     slackToken: GODWIT_SLACK_TOKEN
     uiUser: GODWIT_UI_USER
     uiPassword: GODWIT_UI_PASSWORD
+    # Both REQUIRED when serve.githubApp.enabled, and read for nothing else.
+    # githubWebhookSecret is the string configured as the App's webhook secret; every delivery is
+    # HMAC-verified against it before godwit looks at the body.
+    githubWebhookSecret: GODWIT_GITHUB_WEBHOOK_SECRET
+    # githubPrivateKey holds the App's private key, PEM as GitHub downloaded it. It is not named
+    # after an environment variable like the keys above because it never becomes one: it is mounted
+    # as a file. See serve.githubApp.privateKeyPath.
+    githubPrivateKey: github-private-key.pem
 
 # Flags of `godwit serve`; nothing else is accepted by the binary.
 serve:
@@ -146,6 +154,47 @@ serve:
     # --max-concurrent-diffs: Diff, PlanRun, CreateRun, RevertRun and Checkpoint calls admitted at once;
     # each builds scratch databases, so size the scratch server's max_connections and disk for it.
     maxConcurrentDiffs: 4
+  # The GitHub App: godwit receives pull request events itself, so a consuming repository holds
+  # godwit.yaml and no workflow. Off is off — with enabled: false the chart renders no second
+  # container port, no webhook Service and no --github-webhook-addr, so the listener never opens.
+  #
+  # The App answers on a listener of its own rather than on a path of the API's, because exposure is
+  # a property of the process: this is the only port that has to be reachable from the internet, and
+  # it serves /github/webhook and 404. Front it with its own hostname (docs/deployment.md).
+  githubApp:
+    enabled: false
+    # --github-webhook-addr: the port that listener binds.
+    port: 8475
+    # GODWIT_GITHUB_APP_ID: the App's numeric id, from its settings page. Not a secret — godwit puts
+    # it in the `iss` of every JWT it signs — so it is a value here and not a Secret key.
+    appId: ""
+    # GODWIT_GITHUB_API_URL: empty is https://api.github.com; set it for GitHub Enterprise Server.
+    apiUrl: ""
+    # Where existingSecret.keys.githubPrivateKey is mounted, as `<privateKeyPath>/private-key.pem`,
+    # and read from with --github-private-key-file. The PEM is the App's whole identity: it mints an
+    # installation token for every repository the App is installed on. It reaches the process as a
+    # file rather than as GODWIT_GITHUB_PRIVATE_KEY so that it is not in the environment, which a
+    # sidecar, a core dump and `kubectl exec -- env` all read.
+    privateKeyPath: /secrets/github
+    # --github-webhook-max-age: how old the comment or review a delivery carries may be before godwit
+    # refuses it as a replay. GitHub's own timestamp inside the signed body is what is aged.
+    maxAge: 1h
+    # --github-webhook-max-bytes: largest delivery body read before the signature is verified.
+    maxBytes: 1048576
+    # --github-allowed-associations: author_association values whose comment or review may command
+    # godwit. It narrows, it does not authorise — the commander must also hold write or admin on the
+    # repository. Only OWNER, MEMBER and COLLABORATOR are accepted.
+    allowedAssociations: [OWNER, MEMBER, COLLABORATOR]
+    # --github-emoji-reaction: what godwit adds to a comment it read as a command, so a command never
+    # looks unread. `none` adds no reaction.
+    emojiReaction: eyes
+    # The Service the platform's public route attaches to. It is a Service of its own, carrying the
+    # webhook port and nothing else, so a route pointed at it cannot reach the API however its port
+    # is written — see deploy/helm/godwit/README.md.
+    service:
+      type: ClusterIP
+      port: 8475
+      annotations: {}
   # Appended verbatim after the flags above. A flag repeated here wins over the flags above and over
   # the GODWIT_* environment variables, which are only defaults; --store-dsn and --scratch-dsn belong
   # in existingSecret rather than here, because an argument is readable from the pod spec.
@@ -368,6 +417,9 @@ targets:
   #   requirePlan: true
   #   searchPath: app,public
   #   keepOld: true
+  #   # Repositories a GitHub App delivery may reach this target from, owner/repo or owner/repo:dir.
+  #   # Like the rest of this list it is authoritative: `target add` replaces the whole set.
+  #   githubRepos: [acme/orders]
   #   extraArgs: []
   # - name: billing
   #   provider: kubernetes

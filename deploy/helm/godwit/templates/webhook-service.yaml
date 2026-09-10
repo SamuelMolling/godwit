@@ -1,0 +1,22 @@
+{{- if .Values.serve.githubApp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "godwit.fullname" . }}-webhook
+  labels:
+    {{- include "godwit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+  {{- with .Values.serve.githubApp.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.serve.githubApp.service.type }}
+  ports:
+    - name: webhook
+      port: {{ .Values.serve.githubApp.service.port }}
+      targetPort: webhook
+      protocol: TCP
+  selector:
+    {{- include "godwit.selectorLabels" . | nindent 4 }}
+{{- end }}
