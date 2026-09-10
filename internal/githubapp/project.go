@@ -12,9 +12,12 @@ import (
 )
 
 type project struct {
-	root   string
-	dir    string
-	target string
+	root       string
+	dir        string
+	target     string
+	rollout    string
+	format     string
+	outOfOrder bool
 }
 
 func (p project) String() string {
@@ -23,6 +26,11 @@ func (p project) String() string {
 	}
 
 	return p.target + " (" + p.root + ")"
+}
+
+// path is where the migrations are in the repository, which is not p.dir: that is relative to godwit.yaml.
+func (p project) path() string {
+	return path.Join(p.root, p.dir)
 }
 
 func defaultWhenModified(dir string) []string {
@@ -123,7 +131,10 @@ func load(ctx context.Context, repo repoView, bound bindings, repository, root, 
 		return nil, ""
 	}
 
-	return &project{root: root, dir: cfg.Dir, target: cfg.Target}, ""
+	return &project{
+		root: root, dir: cfg.Dir, target: cfg.Target, rollout: cfg.Rollout,
+		format: cfg.PlanFormat(), outOfOrder: cfg.AllowOutOfOrder,
+	}, ""
 }
 
 // trigger widens the default rather than replacing it, so a project cannot stop planning its own migrations.
@@ -156,12 +167,18 @@ func matchAny(when, under []string) bool {
 	return false
 }
 
+// pathChars is what a directory may carry, because godwit puts it in a github url unescaped.
+const pathChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/"
+
 func contained(dir string) error {
 	if dir == "" {
 		return errors.New("is empty")
 	}
 	if strings.HasPrefix(dir, "/") {
 		return errors.New("is absolute; it is read relative to " + config.FileName)
+	}
+	if strings.Trim(dir, pathChars) != "" {
+		return errors.New("carries a character godwit will not read a directory at")
 	}
 	for _, segment := range strings.Split(dir, "/") {
 		if segment == ".." {

@@ -3,12 +3,10 @@ package githubapp
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/comment"
-	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
 // scopes hold nothing above pipeline, so no webhook can reach the RPC that binds a repository to a target.
@@ -23,6 +21,7 @@ type command struct {
 	delivery     string
 	event        string
 	repository   string
+	repositoryID int64
 	installation int64
 	number       int
 	head         string
@@ -64,19 +63,4 @@ func (c command) detail() string {
 
 type runner interface {
 	enqueue(ctx context.Context, tx txn, cmd command) error
-}
-
-type recorder struct {
-	log *slog.Logger
-}
-
-func (r recorder) enqueue(ctx context.Context, tx txn, cmd command) error {
-	r.log.Info("webhook command accepted", "repository", cmd.repository, "command", cmd.name,
-		"delivery", cmd.delivery, "login", cmd.login, "head", cmd.head, "actor", cmd.principal.Name)
-
-	return tx.Audit(ctx, controlplane.AuditEntry{
-		Actor:  cmd.principal.Name,
-		Action: controlplane.AuditWebhookCommand,
-		Detail: cmd.detail(),
-	})
 }

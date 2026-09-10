@@ -28,7 +28,7 @@ func newServeCmd() *cobra.Command {
 	var planTTL, planRetention time.Duration
 	var githubAddr, githubKeyFile, githubReaction string
 	var githubMaxAge time.Duration
-	var githubMaxBodyBytes int
+	var githubMaxBodyBytes, githubWorkers int
 	var githubAssociations []string
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -79,6 +79,7 @@ func newServeCmd() *cobra.Command {
 					MaxAge:        githubMaxAge,
 					Associations:  githubAssociations,
 					Reaction:      githubReaction,
+					Workers:       githubWorkers,
 				},
 				Listen:          listen,
 				StoreDSN:        storeDSN,
@@ -170,6 +171,9 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&githubReaction, "github-emoji-reaction", envOr("GODWIT_GITHUB_EMOJI_REACTION", "eyes"),
 		"emoji godwit adds to a pull request comment it read as a command, so a command never looks unread; "+
 			"none adds no reaction (or GODWIT_GITHUB_EMOJI_REACTION)")
+	cmd.Flags().IntVar(&githubWorkers, "github-workers", 2,
+		"commands the GitHub App carries out at once. Each one may build scratch databases, so it spends "+
+			"the scratch server's budget alongside --max-concurrent-diffs rather than within it")
 	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		"author associations that may command godwit from a comment: OWNER, MEMBER or COLLABORATOR")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),

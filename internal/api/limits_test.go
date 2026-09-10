@@ -16,7 +16,7 @@ import (
 func TestLimitsDefaults(t *testing.T) {
 	t.Parallel()
 
-	l := Limits{}.withDefaults()
+	l := Limits{}.WithDefaults()
 	if l.RequestBytes != DefaultRequestBytes || l.Migrations != DefaultMigrations || l.Files != DefaultFiles ||
 		l.FileBytes != DefaultFileBytes || l.HeavyCalls != DefaultHeavyCalls || l.HeavyWait != DefaultHeavyWait {
 		t.Fatalf("defaults = %+v", l)
@@ -26,7 +26,7 @@ func TestLimitsDefaults(t *testing.T) {
 			DefaultFiles, 2*DefaultMigrations)
 	}
 	set := Limits{RequestBytes: 1, Migrations: 9, Files: 2, FileBytes: 3, HeavyCalls: 4, HeavyWait: time.Second}
-	if got := set.withDefaults(); got != set {
+	if got := set.WithDefaults(); got != set {
 		t.Fatalf("explicit limits = %+v, want %+v", got, set)
 	}
 }
@@ -47,7 +47,7 @@ func directory(n int, body string) []*godwitv1.MigrationFile {
 func TestCheckFiles(t *testing.T) {
 	t.Parallel()
 
-	l := Limits{}.withDefaults()
+	l := Limits{}.WithDefaults()
 	if err := l.checkFiles(directory(200, strings.Repeat("-- migration\n", 600))); err != nil {
 		t.Fatalf("a 200-migration directory must be admitted: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestCheckFiles(t *testing.T) {
 func TestGateAdmitsAndRefuses(t *testing.T) {
 	t.Parallel()
 
-	g := newGate(Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.withDefaults())
+	g := newGate(Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
 	leave, err := g.enter(context.Background(), godwitv1connect.GodwitServiceListRunsProcedure)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestGateAdmitsAndRefuses(t *testing.T) {
 func TestGateInterceptor(t *testing.T) {
 	t.Parallel()
 
-	g := newGate(Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.withDefaults())
+	g := newGate(Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
 	blocked := make(chan struct{})
 	release := make(chan struct{})
 	unary := g.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {

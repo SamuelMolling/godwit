@@ -145,6 +145,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--github-webhook-max-age` | `1h` | how old a comment's `created_at` or a review's `submitted_at` may be before its delivery is refused. A `pull_request` payload carries no timestamp of its own and is not aged |
 | `--github-webhook-max-bytes` | `1048576` (1 MiB) | largest delivery body read before the signature is verified; over it the answer is `413` with no body |
 | `--github-emoji-reaction` | `eyes` | emoji added to a pull request comment godwit read as a command, so a command never looks unread; `none` adds none (or `GODWIT_GITHUB_EMOJI_REACTION`) |
+| `--github-workers` | `2` | commands the App carries out at once. Each may build scratch databases, so it spends the scratch server's budget *alongside* `--max-concurrent-diffs` rather than within it: size for the sum |
 | `--github-allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | author associations that may command godwit from a comment or review body. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and `NONE` fail `serve` at start-up: anyone who opened a pull request carries one |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 

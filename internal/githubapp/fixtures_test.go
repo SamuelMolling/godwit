@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -98,6 +99,17 @@ type fakeRepo struct {
 	noticeErr     error
 	checks        []string
 	checkErr      error
+	listing       map[string]contents
+	listErr       error
+	listed        []string
+	blobs         map[string]string
+	blobErr       error
+	fetched       []string
+	opened        []checkRun
+	openErr       error
+	ended         []checkRun
+	endErr        error
+	mu            sync.Mutex
 }
 
 func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
@@ -152,6 +164,58 @@ func (r *fakeRepo) file(_ context.Context, path, _ string) ([]byte, error) {
 	}
 
 	return []byte(body), nil
+}
+
+func (r *fakeRepo) directory(_ context.Context, path, _ string) (contents, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listed = append(r.listed, path)
+	if r.listErr != nil {
+		return contents{}, r.listErr
+	}
+	c, ok := r.listing[path]
+	if !ok {
+		return contents{}, errAbsent
+	}
+
+	return c, nil
+}
+
+func (r *fakeRepo) blob(_ context.Context, path, _ string, limit int) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fetched = append(r.fetched, path)
+	if r.blobErr != nil {
+		return nil, r.blobErr
+	}
+	body, ok := r.blobs[path]
+	if !ok {
+		return nil, errAbsent
+	}
+	if len(body) > limit {
+		return nil, fmt.Errorf("%s: over the %d bytes a migration file may be", path, limit)
+	}
+
+	return []byte(body), nil
+}
+
+func (r *fakeRepo) startCheck(_ context.Context, c checkRun) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.openErr != nil {
+		return 0, r.openErr
+	}
+	r.opened = append(r.opened, c)
+
+	return int64(len(r.opened)), nil
+}
+
+func (r *fakeRepo) endCheck(_ context.Context, _ int64, c checkRun) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ended = append(r.ended, c)
+
+	return r.endErr
 }
 
 type fakeAPI struct {

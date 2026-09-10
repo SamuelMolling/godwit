@@ -44,7 +44,8 @@ type Limits struct {
 	HeavyWait time.Duration
 }
 
-func (l Limits) withDefaults() Limits {
+// WithDefaults returns the bounds in force: every zero field replaced by its default.
+func (l Limits) WithDefaults() Limits {
 	if l.RequestBytes <= 0 {
 		l.RequestBytes = DefaultRequestBytes
 	}
@@ -67,7 +68,16 @@ func (l Limits) withDefaults() Limits {
 	return l
 }
 
-func (l Limits) checkFiles(in []*godwitv1.MigrationFile) error {
+// Listed is one file a caller means to send, named and sized, which is all a directory listing knows.
+type Listed struct {
+	Name string
+	Size int
+}
+
+// CheckListing is the file, size and migration admission applied to names and sizes alone, so a caller
+// reading a directory over an API can refuse it before it spends requests on the bodies.
+func (l Limits) CheckListing(in []Listed) error {
+	l = l.WithDefaults()
 	if len(in) > l.Files {
 		return invalid(fmt.Sprintf("too many migration files: %d, limit %d", len(in), l.Files))
 	}
@@ -76,8 +86,8 @@ func (l Limits) checkFiles(in []*godwitv1.MigrationFile) error {
 		if len(f.Name) > maxNameBytes {
 			return invalid(fmt.Sprintf("migration file name is %d bytes, limit %d", len(f.Name), maxNameBytes))
 		}
-		if len(f.Body) > l.FileBytes {
-			return invalid(fmt.Sprintf("migration file %s is %d bytes, limit %d", f.Name, len(f.Body), l.FileBytes))
+		if f.Size > l.FileBytes {
+			return invalid(fmt.Sprintf("migration file %s is %d bytes, limit %d", f.Name, f.Size, l.FileBytes))
 		}
 		if strings.HasSuffix(f.Name, upSuffix) {
 			migrations++
@@ -88,6 +98,15 @@ func (l Limits) checkFiles(in []*godwitv1.MigrationFile) error {
 	}
 
 	return nil
+}
+
+func (l Limits) checkFiles(in []*godwitv1.MigrationFile) error {
+	listed := make([]Listed, 0, len(in))
+	for _, f := range in {
+		listed = append(listed, Listed{Name: f.GetName(), Size: len(f.GetBody())})
+	}
+
+	return l.CheckListing(listed)
 }
 
 // heavy names the procedures that build scratch databases, one or more per call.

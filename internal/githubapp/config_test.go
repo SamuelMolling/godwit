@@ -10,7 +10,10 @@ func TestNewRefusesAConfigurationThatCouldNotBeSafe(t *testing.T) {
 	t.Parallel()
 
 	base := func() Config {
-		return Config{Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Log: testLog, Associations: defaultAssociations}
+		return Config{
+			Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Runner: &fakeRunner{},
+			Log: testLog, Associations: defaultAssociations,
+		}
 	}
 	for _, tc := range []struct {
 		name string
@@ -21,6 +24,7 @@ func TestNewRefusesAConfigurationThatCouldNotBeSafe(t *testing.T) {
 		{"no store", func(cfg *Config) { cfg.Store = nil }, "needs a store"},
 		{"no api client", func(cfg *Config) { cfg.API = nil }, "needs a store"},
 		{"no logger", func(cfg *Config) { cfg.Log = nil }, "needs a store"},
+		{"no runner", func(cfg *Config) { cfg.Runner = nil }, "needs a store"},
 		{
 			"an association that is not access", func(cfg *Config) { cfg.Associations = []string{"OWNER", "CONTRIBUTOR"} },
 			"CONTRIBUTOR is not access",
@@ -44,15 +48,12 @@ func TestNewRefusesAConfigurationThatCouldNotBeSafe(t *testing.T) {
 func TestNewFillsInTheDefaults(t *testing.T) {
 	t.Parallel()
 
-	r, err := New(Config{Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Log: testLog})
+	r, err := New(Config{Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Runner: &fakeRunner{}, Log: testLog})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.cfg.MaxBodyBytes != defaultMaxBodyBytes || r.cfg.MaxAge != defaultMaxAge {
 		t.Fatalf("limits = %d, %s", r.cfg.MaxBodyBytes, r.cfg.MaxAge)
-	}
-	if _, ok := r.cfg.Runner.(recorder); !ok {
-		t.Fatalf("runner = %T, want the recorder that only writes what it would have run", r.cfg.Runner)
 	}
 	if r.cfg.Now().IsZero() {
 		t.Fatal("Now returned the zero time")

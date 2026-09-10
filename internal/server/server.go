@@ -172,11 +172,6 @@ func Run(ctx context.Context, cfg Config) error {
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
-	stopWebhook, err := serveWebhook(cfg, githubKey, store, m, log)
-	if err != nil {
-		return err
-	}
-
 	notifier, closeNotifier := newNotifier(cfg, store, log, m.Notified)
 	defer closeNotifier()
 
@@ -230,6 +225,13 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Checkpointer = controlplane.NewCheckpointer(scratch, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	apiSrv.Limits = cfg.Limits
+
+	// After apiSrv: the App carries its commands out against it, in this process.
+	stopWebhook, err := serveWebhook(cfg, githubKey, store, apiSrv, m, log)
+	if err != nil {
+		return err
+	}
+
 	handler := api.Handler(apiSrv, tokens)
 	if cfg.UI {
 		switch {

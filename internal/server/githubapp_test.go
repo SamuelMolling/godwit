@@ -71,9 +71,16 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 
 func startWithWebhook(t *testing.T, storeDSN string, app GitHubApp) string {
 	t.Helper()
+	hook, _ := startWithWebhookAPI(t, storeDSN, app)
+
+	return hook
+}
+
+func startWithWebhookAPI(t *testing.T, storeDSN string, app GitHubApp) (hook, apiURL string) {
+	t.Helper()
 	ready := make(chan net.Addr, 1)
 	app.OnReady = func(addr net.Addr) { ready <- addr }
-	startServiceCfg(t, Config{
+	apiURL = startServiceCfg(t, Config{
 		Listen:    "127.0.0.1:0",
 		StoreDSN:  storeDSN,
 		Keys:      testKeys,
@@ -84,12 +91,12 @@ func startWithWebhook(t *testing.T, storeDSN string, app GitHubApp) string {
 	})
 	select {
 	case addr := <-ready:
-		return "http://" + addr.String() + webhookPath
+		return "http://" + addr.String() + webhookPath, apiURL
 	case <-time.After(15 * time.Second):
 		t.Fatal("the webhook listener never came up")
 	}
 
-	return ""
+	return "", ""
 }
 
 func deliver(t *testing.T, url, event, delivery, body string) *http.Response {
