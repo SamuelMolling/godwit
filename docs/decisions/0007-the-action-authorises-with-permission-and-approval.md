@@ -42,6 +42,8 @@ The Action's `Run godwit` step still puts `GH_TOKEN` and `GODWIT_TOKEN` in the e
 
 ## Amendment — the platform says whether a pull request is approved
 
+Amended in #130, for the Action only; the GitHub App still enforces the rule below.
+
 The rule above — *an `APPROVED` review whose `commit_id` is the head being applied, from a login other than the pull request author* — is withdrawn for the Action. `require-approval` now asks GitHub whether the pull request is approved and takes the answer: `GET /pulls/{n}/reviews`, latest review per reviewer, one of them `APPROVED`. The `commit_id` comparison and the author comparison are gone.
 
 **The commit anchor made godwit disagree with GitHub about the same pull request.** GitHub does not dismiss an approval when new commits arrive unless the repository asks it to, so the ordinary state after a review-then-push is: the pull request shows green, the merge button is live, and `godwit apply` refuses because the approvals sit on an earlier sha. Two sources of truth for one question, and the one nobody configured wins. That is a bug even when the stricter answer is the safer one — an operator who has read "approved" on the page and is told "not approved" by the tool cannot tell a real guard from a broken one, and the guard that fires when nothing is wrong is the guard people route around.

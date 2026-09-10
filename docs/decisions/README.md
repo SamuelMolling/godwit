@@ -14,7 +14,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0004](0004-ui-is-a-scoped-client.md) | The web UI is a scoped API caller, not a privileged surface | #62–#65, #70 |
 | [0005](0005-revert-scoped-to-the-ledger.md) | `revert` undoes what a run applied, read from the ledger, never the directory | #68, #71 |
 | [0006](0006-repeatable-objects-are-desired.md) | What a repeatable declares is part of the desired schema | #73 |
-| [0007](0007-the-action-authorises-with-permission-and-approval.md) | The Action authorises with repository permission and a review anchored to the commit | #81 |
+| [0007](0007-the-action-authorises-with-permission-and-approval.md) | The Action authorises with repository permission and a review anchored to the commit | #81, #130 |
 | [0008](0008-assertions-in-the-plan.md) | A data condition belongs in the plan, not in a hook | #82 |
 | [0009](0009-scratch-databases-are-not-the-store.md) | The scratch database is a sandbox, not a corner of the store | #83 |
 | [0010](0010-checkpoints-collapse-the-replay.md) | A checkpoint is a file in the directory, and what it collapses can never be reverted | #85 |
