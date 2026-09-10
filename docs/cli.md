@@ -24,6 +24,7 @@ What each `godwit` command is *for*, in plain words, with an example you can pas
 | [`godwit migrations`](#godwit-migrations) | A grid: which of your databases has which migration |
 | [`godwit runs`](#godwit-runs) | Every migration attempt, newest first |
 | [`godwit run get`](#godwit-run-get) | Everything about one attempt: what it applied, why it stopped |
+| [`godwit run report`](#godwit-run-report) | The same attempt as a report: what it changed on the database, and where it stopped |
 | [`godwit run watch`](#godwit-run-watch) | Follows an attempt that is still going, and exits when it ends |
 | [`godwit plans`](#godwit-plans) | The reviewed migrations waiting to be applied to one database |
 | [`godwit plan show`](#godwit-plan-show) | One of those in full, including the state of the database when it was reviewed |
@@ -569,6 +570,38 @@ run 9c60b73c-ac42-42ec-9194-498a2c66cbc3: failed (attempt 1): sql: statement 0 o
   finished: 2026-09-08T13:19:43Z
   applied: none
 ```
+
+### `godwit run report`
+
+**What one run did to the database, in the words the plan used to say it would.** `run get` prints the run's
+fields; `report` reads the run *and* the plan it was bound to, and renders the outcome: which migrations reached
+the target's history, what they changed in it, how many statements ran and how long it took, what a held
+`expand-contract` run left for `godwit confirm`, and — when it stopped — the statement it stopped at, that
+statement's SQL, the database's error, and what the failure leaves behind.
+
+This is what the GitHub Action posts as the `## godwit apply` comment ([CI/CD](ci-cd.md#pull-request-apply)).
+Run it by hand for any past run.
+
+```console
+$ godwit run report 9c60b73c-ac42-42ec-9194-498a2c66cbc3
+2 migrations applied to app. 5 statements, in 1.204s.
+run 9c60b73c-ac42-42ec-9194-498a2c66cbc3 https://godwit.example.com/ui/runs/9c60b73c-ac42-42ec-9194-498a2c66cbc3 · plan f27eecc1-d479-4255-ae90-b53247e9230f https://godwit.example.com/ui/plans/f27eecc1-d479-4255-ae90-b53247e9230f · commit 0419cdd https://github.com/acme/orders/commit/0419cdd1c2f3a4b5c6d7e8f90123456789abcdef · finished 2026-09-08T13:19:43Z
++ 20260908150000_create_notes  3 statements
++ 20260908160000_notes_owner_idx  2 statements
+```
+
+`--format markdown` renders the pull-request form. `--command <name>` sets the heading (`apply`, `confirm`),
+which defaults to the run's own kind. `--plan-format statements` prints the SQL instead of the schema change,
+the same knob [`plan`](#godwit-plan) takes.
+
+**The links come from `GODWIT_PUBLIC_URL`** — the same setting the Slack "Open run" button uses
+([configuration](configuration.md#environment)). It is the base of the UI as a reader reaches it, so it belongs
+in the environment of whatever renders the report: the deployment for notifications, and the workflow for the
+Action. Unset, the report names the run and the plan and links neither. A run whose `source` is
+`<host>/<owner>/<repo>@<sha>` also gets a link to that commit; anything else, and the commit is left out.
+
+An implicit run — one no stored plan was bound to — has no plan to read, so the report is the run and its
+ledger: what it applied, and how long it took.
 
 ### `godwit run watch`
 

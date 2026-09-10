@@ -519,7 +519,7 @@ func newRunCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newRunGetCmd(), newRunWatchCmd(), newRunResumeCmd(), newRunConfirmCmd())
+	cmd.AddCommand(newRunGetCmd(), newRunWatchCmd(), newRunResumeCmd(), newRunConfirmCmd(), newRunReportCmd())
 
 	return cmd
 }

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/SamuelMolling/godwit/internal/ui/link"
 )
 
 // Slack message modes.
@@ -216,11 +218,11 @@ func (s Slack) blocks(e Event) []map[string]any {
 	if e.Detail != "" {
 		out = append(out, map[string]any{"type": "section", "text": mrkdwn("```" + truncate(e.Detail) + "```")})
 	}
-	if s.PublicURL != "" && e.RunID != "" {
+	if href := link.Run(s.PublicURL, e.RunID); href != "" {
 		out = append(out, map[string]any{"type": "actions", "elements": []map[string]any{{
 			"type": "button",
 			"text": map[string]any{"type": "plain_text", "text": "Open run"},
-			"url":  strings.TrimRight(s.PublicURL, "/") + "/ui/runs/" + e.RunID,
+			"url":  href,
 		}}})
 	}
 

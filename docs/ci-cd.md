@@ -15,6 +15,67 @@ The CLI outside GitHub comes from the image `ghcr.io/samuelmolling/godwit` (`mai
 
 The Action's last step re-exits with the CLI status after the summary, the comment and the status are written, so a failing lint still posts its report. Exit 1 and exit 2 in the event-reading step happen before anything runs, and both [answer on the pull request](#a-refusal-answers-on-the-pull-request) rather than only in the job log.
 
+## The merge signal
+
+**godwit already gates the merge, and it does it with a commit status.** Every applying command sets
+`godwit/applied` on the pull request head; make it a required status check on the base branch and GitHub will
+not let the pull request merge until the apply has landed. There is nothing else to enable and no godwit
+setting to turn on — the Action sets the status whenever it holds `statuses: write`.
+
+On the base branch's protection rule, require:
+
+- **`godwit/applied`** — the apply is the gate of the merge.
+- **"Require branches to be up to date before merging"** — when the base moves, GitHub re-runs the pull request
+  workflow, so the plan stored last is the one computed on the exact set the pull request applies.
+
+Optionally also **`godwit/plan`**, which carries the plan's verdict and stays `pending` while a hazard is
+unacknowledged ([what each state means](#pull-request-lint-and-plan)). It is a separate choice: `godwit/applied`
+is the check that gates the merge on the apply.
+
+What `godwit/applied` says, and when:
+
+| State | Description | Set by |
+|---|---|---|
+| `pending` | `applying <sha> from pull request #<n>` | the apply, confirm, revert or migrate step, before it runs anything |
+| `success` | `applied by run <id>; merge when the review is done` | an apply that reached `succeeded` |
+| `pending` | `expand applied; comment godwit confirm to run the contract phase` | an apply that reached `awaiting_contract` — half a migration is on the database, so the pull request stays unmergeable |
+| `success` | `contract applied by run <id>; merge when the review is done` | `godwit confirm` |
+| `failure` | `plan stale or missing: re-plan on the pull request, then godwit apply again` | an apply the target moved underneath (exit 3) |
+| `failure` | `apply failed (run <id>); see the pull request comment` | a run that stopped |
+| `failure` | `reverted by run <id>; comment godwit apply to apply again` | `godwit revert` |
+| `failure` | the refusal's own text, cut at 140 characters | a command godwit refused before running it ([a refusal answers on the pull request](#a-refusal-answers-on-the-pull-request)) |
+
+The status is **per commit**. A push after the apply leaves the new head without one, so the pull request
+becomes unmergeable again and the apply has to be commanded on the new head — which is the point: the commit
+that merges is the commit that was applied.
+
+**Auto-merge is GitHub's, and it composes with this.** With "Allow auto-merge" enabled on the repository, a
+reviewer presses *Enable auto-merge* and GitHub merges the pull request the moment every required check is
+green and the reviews are in — `godwit/applied` among them. Nothing about that needs godwit.
+
+### Why godwit does not merge the pull request for you
+
+Atlantis merges after `atlantis apply` (`--automerge`, or `automerge: true` in a repository's `atlantis.yaml`).
+godwit deliberately has no equivalent, for reasons that are about godwit's shape rather than about Atlantis:
+
+- **A godwit apply is not always the end of the migration.** An `expand-contract` apply *ends* at
+  `awaiting_contract` on purpose, with the application deploy and `godwit confirm` still to come. An automerge
+  that fired on a successful apply would merge before the contract phase; one that waited for `succeeded` would
+  do nothing at all on the rollout godwit exists to make safe.
+- **"All of it applied" is not a question godwit can answer from one command.** Atlantis's automerge requires
+  every project in the pull request to be `applied`, and when only some are it returns silently — no comment, no
+  failed status, just a line in the server log. A pull request that touches two targets, or two directories,
+  would land godwit in the same place, and a merge signal that is silent when it declines is worse than none.
+- **GitHub already does it, and it does it better.** Auto-merge waits on *every* required check and on the
+  reviews, not just on the one command that happened to run last. It is per pull request, a reviewer opts into
+  it, and it is visible in the UI. godwit's job is to make `godwit/applied` tell the truth; deciding to merge is
+  the repository's.
+
+If you want the merge automated, enable auto-merge and require `godwit/applied`. If you want it automated
+*without* branch protection, you are asking for a migration to reach `main` without the check that says it was
+applied, and godwit will not build that.
+
+
 ## GitHub Action
 
 ```yaml
@@ -230,9 +291,18 @@ Once the review is done, a collaborator comments `godwit apply` — the **whole 
 2. Authorises the commander — `allowed-associations`, then the real permission lookup and the approval described [below](#who-may-command-an-apply). Every refusal exits 1, says which check failed, and [answers on the pull request](#a-refusal-answers-on-the-pull-request).
 3. Reads the pull request through the API: it must be open, and the checked-out commit must be its head, so the job has to check out `refs/pull/<n>/head` (the default checkout of `issue_comment` is the default branch). This catches a mis-configured checkout. It does **not** catch a push that raced the job: both sides of that comparison move together, which is what `godwit apply <sha>` and the `review.commit_id` check are for.
 4. Sets the commit status `godwit/applied` to `pending` on the head, then runs `godwit migrate` from the pull request files with the same `dir`, `target` and `rollout` as the plan step, so it binds to the stored plan ([concepts: plans](concepts.md#plans)) and refuses when the target moved since (exit 3, `stale=true`).
-5. Posts the `## godwit apply` report on the pull request and sets the status: `success` ("applied by run …; merge when the review is done"), `pending` when the run stopped at `awaiting_contract` ("expand applied; comment godwit confirm to run the contract phase", output `phase=awaiting-contract`), or `failure` with the reason (stale plan → re-plan then command again; SQL error → the run's error is in the comment). The status links to the comment.
+5. Posts the `## godwit apply` report on the pull request and sets the status: `success` ("applied by run …; merge when the review is done"), `pending` when the run stopped at `awaiting_contract` ("expand applied; comment godwit confirm to run the contract phase", output `phase=awaiting-contract`), or `failure` with the reason (stale plan → re-plan then command again; SQL error → the run's error is in the comment). The status links to the comment, and gates the merge ([the merge signal](#the-merge-signal)).
 
-The status is per commit, so a push after the apply leaves the new head without one. Branch protection on the base branch should require the `godwit/applied` status and **"Require branches to be up to date before merging"**: the first makes the apply the gate of the merge, the second makes GitHub re-run the pull request workflow (re-plan) when the base moves, so the plan stored last is the one computed on the exact set the pull request applies. The `source` recorded on the run is `github.com/<owner>/<repo>@<head sha>[:<dir>]`, which `godwit runs`, `godwit audit` and `revert` use.
+The report is [`godwit run report`](cli.md#godwit-run-report) rendered as markdown, so it says what the apply did in the vocabulary the plan comment above it used: the migrations that reached the target's history and what they changed in it, the statements that ran and how long the run took, what a held `expand-contract` run left for `godwit confirm`, and, when the run stopped, the statement it stopped at with its SQL and the database's error. Set `GODWIT_PUBLIC_URL` in the workflow's environment and the report links the run and its plan to their pages in the UI:
+
+```yaml
+env:
+  GODWIT_PUBLIC_URL: https://godwit.internal
+```
+
+It is the same setting the service reads for Slack's "Open run" button, and there is no Action input for it: the report is rendered by the CLI, which reads it from its own environment. Unset, the report names the run and the plan and links neither.
+
+The status is per commit, so a push after the apply leaves the new head without one ([the merge signal](#the-merge-signal)). The `source` recorded on the run is `github.com/<owner>/<repo>@<head sha>[:<dir>]`, which `godwit runs`, `godwit audit` and `revert` use — and which the report turns into the commit link.
 
 ### What counts as commanding
 

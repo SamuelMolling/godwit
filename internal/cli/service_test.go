@@ -55,6 +55,7 @@ type stubService struct {
 	applied      []*godwitv1.RunMigration
 	planID       string
 	planGot      string
+	planErr      error
 	plansListed  *godwitv1.ListPlansRequest
 	stored       *godwitv1.Plan
 	plans        []*godwitv1.Plan

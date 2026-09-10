@@ -19,6 +19,9 @@ func (s *stubService) GetPlan(_ context.Context, req *connect.Request[godwitv1.G
 	if err := s.record(req.Header()); err != nil {
 		return nil, err
 	}
+	if s.planErr != nil {
+		return nil, s.planErr
+	}
 
 	return connect.NewResponse(&godwitv1.GetPlanResponse{Plan: s.stored}), nil
 }

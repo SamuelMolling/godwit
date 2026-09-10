@@ -390,7 +390,10 @@ func statementFacts(i int, p planItem, st engine.Statement, m markup, pauses boo
 	return s
 }
 
-type markup struct{ bold, code, glyph func(string) string }
+type markup struct {
+	bold, code, glyph func(string) string
+	href              func(text, url string) string
+}
 
 func plain(s string) string {
 	return s
@@ -405,9 +408,25 @@ func lead(s string) string {
 }
 
 var (
-	terminal = markup{plain, plain, none}
-	markdown = markup{func(s string) string { return "**" + s + "**" }, func(s string) string { return "`" + s + "`" }, lead}
+	terminal = markup{plain, plain, none, trailing}
+	markdown = markup{func(s string) string { return "**" + s + "**" }, func(s string) string { return "`" + s + "`" }, lead, anchor}
 )
+
+func trailing(text, url string) string {
+	if url == "" {
+		return text
+	}
+
+	return text + " " + url
+}
+
+func anchor(text, url string) string {
+	if url == "" {
+		return text
+	}
+
+	return "[" + text + "](" + url + ")"
+}
 
 func were(n int) string {
 	if n == 1 {
@@ -541,10 +560,26 @@ type reportFlags struct {
 }
 
 func (f *reportFlags) register(cmd *cobra.Command, what string) {
-	cmd.Flags().StringVar(&f.format, "format", "text", strings.TrimSpace(what+" output format: text, markdown or json"))
+	f.registerFormats(cmd, strings.TrimSpace(what+" output format: text, markdown or json"))
+}
+
+func (f *reportFlags) registerRun(cmd *cobra.Command) {
+	f.registerFormats(cmd, "output format: text or markdown")
+}
+
+func (f *reportFlags) registerFormats(cmd *cobra.Command, formats string) {
+	cmd.Flags().StringVar(&f.format, "format", "text", formats)
 	cmd.Flags().StringVar(&f.planFormat, "plan-format", config.PlanFormatSchema,
 		"what the report says: schema (what the migrations do to the database) or statements (the SQL the run would execute)")
 	configKeys(cmd, "plan-format")
+}
+
+func (f *reportFlags) checkPlanFormat() error {
+	if f.planFormat != config.PlanFormatSchema && f.planFormat != config.PlanFormatStatements {
+		return fmt.Errorf("unknown plan format %q (want schema or statements)", f.planFormat)
+	}
+
+	return nil
 }
 
 func (f *reportFlags) writer() (func(io.Writer, planReport), error) {
@@ -552,8 +587,8 @@ func (f *reportFlags) writer() (func(io.Writer, planReport), error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown format %q (want text, markdown or json)", f.format)
 	}
-	if f.planFormat != config.PlanFormatSchema && f.planFormat != config.PlanFormatStatements {
-		return nil, fmt.Errorf("unknown plan format %q (want schema or statements)", f.planFormat)
+	if err := f.checkPlanFormat(); err != nil {
+		return nil, err
 	}
 
 	return func(w io.Writer, r planReport) {

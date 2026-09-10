@@ -19,6 +19,7 @@ permissions:
 
 env:
   GODWIT_SERVER: http://127.0.0.1:8474
+  GODWIT_PUBLIC_URL: http://127.0.0.1:8474
 
 jobs:
   smoke:
@@ -800,7 +801,13 @@ jobs:
           test "${APPLY_PLAN}" = "${REPLAN_ID}"
           test "${APPLY_PR}" = "${PR_NUMBER}"
           test "${APPLY_HEAD}" = "${HEAD_SHA}"
-          grep -q "^run \`${APPLY_RUN}\`: \*\*succeeded\*\* (plan \`${REPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${APPLY_SUMMARY}"
+          grep -q '^## godwit apply$' "${APPLY_SUMMARY}"
+          grep -qF '**2 migrations applied to `app`.**' "${APPLY_SUMMARY}"
+          grep -qF "run [\`${APPLY_RUN}\`](${GODWIT_PUBLIC_URL}/ui/runs/${APPLY_RUN})" "${APPLY_SUMMARY}"
+          grep -qF "plan [\`${REPLAN_ID}\`](${GODWIT_PUBLIC_URL}/ui/plans/${REPLAN_ID})" "${APPLY_SUMMARY}"
+          grep -qF "commit [\`${HEAD_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})" "${APPLY_SUMMARY}"
+          grep -q '^+ 20260901120000_users  1 statement$' "${APPLY_SUMMARY}"
+          grep -qF 'what this changed on <code>app</code>' "${APPLY_SUMMARY}"
 
           test "${VERIFIED_PENDING}" = "0"
           grep -q "^target \`app\`: 2 migrations, all applied$" "${VERIFIED_SUMMARY}"
@@ -831,12 +838,16 @@ jobs:
           test -n "${TWOPLAN_ID}"
           test "${EXPAND_PLAN}" = "${TWOPLAN_ID}"
           test "${EXPAND_PHASE}" = "awaiting-contract"
-          grep -q "^run \`${EXPAND_RUN}\`: \*\*awaiting_contract\*\* (plan \`${TWOPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${EXPAND_SUMMARY}"
-          grep -qF "expand applied; comment \`godwit confirm\` to run the contract phase" "${EXPAND_SUMMARY}"
+          grep -qF '**Expand applied to `two`; the contract phase is held.**' "${EXPAND_SUMMARY}"
+          grep -qF "run [\`${EXPAND_RUN}\`](${GODWIT_PUBLIC_URL}/ui/runs/${EXPAND_RUN})" "${EXPAND_SUMMARY}"
+          grep -qF ', contract phase held' "${EXPAND_SUMMARY}"
+          grep -qF 'godwit confirm` runs the ' "${EXPAND_SUMMARY}"
+          grep -qF 'ALTER TABLE public.people RENAME COLUMN age TO age_old' "${EXPAND_SUMMARY}"
           test "${CONTRACT_RUN}" = "${EXPAND_RUN}"
           test "${CONTRACT_PHASE}" = "contract"
           grep -q "^## godwit confirm$" "${CONTRACT_SUMMARY}"
-          grep -q "^run \`${CONTRACT_RUN}\`: \*\*succeeded\*\* (plan \`${TWOPLAN_ID}\`) at \[\`${HEAD_SHA:0:7}\`\](" "${CONTRACT_SUMMARY}"
+          grep -qF '**2 migrations applied to `two`.**' "${CONTRACT_SUMMARY}"
+          grep -qF "run [\`${CONTRACT_RUN}\`](${GODWIT_PUBLIC_URL}/ui/runs/${CONTRACT_RUN})" "${CONTRACT_SUMMARY}"
           test "${TWOVERIFY_PENDING}" = "0"
           grep -q '^## godwit verify$' "${TWOVERIFY_SUMMARY}"
           grep -q "^target \`two\`: 2 migrations, all applied$" "${TWOVERIFY_SUMMARY}"
