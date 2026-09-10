@@ -52,6 +52,10 @@ func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, 
 	return at{head: pr.Head, repo: view, files: pr.Files}, nil, nil
 }
 
+func eventOf(req *request) authz.Event {
+	return authz.Event{Repository: req.repository, HeadRepo: req.headRepo, Number: req.number}
+}
+
 func commandOf(req *request) authz.Command {
 	c := authz.Command{
 		Name: req.name, Repository: req.repository, Commander: req.commander,
