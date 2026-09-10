@@ -29,6 +29,7 @@ func TestListTargetsEndToEnd(t *testing.T) {
 	if _, err := admin.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
 		Name: "app", Provider: "static", Dsn: newDatabase(t, "tg"), SearchPath: "app,public",
 		LockTimeout: "3s", StatementTimeout: "1m", RequirePlan: true,
+		GithubRepositories: []string{"acme/orders", "acme/orders:db/migrations"},
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +52,14 @@ func TestListTargetsEndToEnd(t *testing.T) {
 		fresh.StatementTimeout != "1m" || !fresh.RequirePlan || !fresh.KeepOld || fresh.LastRun != nil ||
 		fresh.AppliedCount != 0 || fresh.ReadyPlans != 0 || fresh.AttentionRuns != 0 || fresh.UnresolvedDrift {
 		t.Fatalf("never migrated target = %+v", fresh)
+	}
+	if strings.Join(fresh.GithubRepositories, " ") != "acme/orders acme/orders:db/migrations" {
+		t.Fatalf("binding = %v", fresh.GithubRepositories)
+	}
+	if _, err := admin.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
+		Name: "bad", Provider: "static", Dsn: "postgres://x", GithubRepositories: []string{"orders"},
+	})); err == nil || !strings.Contains(err.Error(), "is not owner/repo") {
+		t.Fatalf("a binding that is not owner/repo = %v", err)
 	}
 
 	if _, err := admin.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{

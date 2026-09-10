@@ -501,8 +501,11 @@ type RegisterTargetRequest struct {
 	SearchPath string `protobuf:"bytes,10,opt,name=search_path,json=searchPath,proto3" json:"search_path,omitempty"`
 	// Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
 	IgnoreAdoptedTables *bool `protobuf:"varint,12,opt,name=ignore_adopted_tables,json=ignoreAdoptedTables,proto3,oneof" json:"ignore_adopted_tables,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Repositories a GitHub App delivery may reach this target from, each "owner/repo" or "owner/repo:dir".
+	// A repository not listed here on any target gets nothing from the App, not even a plan.
+	GithubRepositories []string `protobuf:"bytes,13,rep,name=github_repositories,json=githubRepositories,proto3" json:"github_repositories,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RegisterTargetRequest) Reset() {
@@ -617,6 +620,13 @@ func (x *RegisterTargetRequest) GetIgnoreAdoptedTables() bool {
 		return *x.IgnoreAdoptedTables
 	}
 	return false
+}
+
+func (x *RegisterTargetRequest) GetGithubRepositories() []string {
+	if x != nil {
+		return x.GithubRepositories
+	}
+	return nil
 }
 
 type RegisterTargetResponse struct {
@@ -3256,8 +3266,10 @@ type TargetSummary struct {
 	AppliedCount int32 `protobuf:"varint,11,opt,name=applied_count,json=appliedCount,proto3" json:"applied_count,omitempty"`
 	// Runs waiting for a human: needs_attention or awaiting_contract.
 	AttentionRuns int32 `protobuf:"varint,12,opt,name=attention_runs,json=attentionRuns,proto3" json:"attention_runs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Repositories a GitHub App delivery may reach this target from; empty means none may.
+	GithubRepositories []string `protobuf:"bytes,13,rep,name=github_repositories,json=githubRepositories,proto3" json:"github_repositories,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *TargetSummary) Reset() {
@@ -3372,6 +3384,13 @@ func (x *TargetSummary) GetAttentionRuns() int32 {
 		return x.AttentionRuns
 	}
 	return 0
+}
+
+func (x *TargetSummary) GetGithubRepositories() []string {
+	if x != nil {
+		return x.GithubRepositories
+	}
+	return nil
 }
 
 type ListTargetsResponse struct {
@@ -5340,7 +5359,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\trows_done\x18\x04 \x01(\x03R\browsDone\x12\x1d\n" +
 	"\n" +
 	"rows_total\x18\x05 \x01(\x03R\trowsTotal\x12\x18\n" +
-	"\abatches\x18\x06 \x01(\x05R\abatches\"\xd4\x03\n" +
+	"\abatches\x18\x06 \x01(\x05R\abatches\"\x85\x04\n" +
 	"\x15RegisterTargetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x10\n" +
@@ -5357,7 +5376,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\vsearch_path\x18\n" +
 	" \x01(\tR\n" +
 	"searchPath\x127\n" +
-	"\x15ignore_adopted_tables\x18\f \x01(\bH\x01R\x13ignoreAdoptedTables\x88\x01\x01B\v\n" +
+	"\x15ignore_adopted_tables\x18\f \x01(\bH\x01R\x13ignoreAdoptedTables\x88\x01\x01\x12/\n" +
+	"\x13github_repositories\x18\r \x03(\tR\x12githubRepositoriesB\v\n" +
 	"\t_keep_oldB\x18\n" +
 	"\x16_ignore_adopted_tables\"\x18\n" +
 	"\x16RegisterTargetResponse\"\x9b\x03\n" +
@@ -5581,7 +5601,7 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x17ReconcileTargetResponse\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aadopted\x18\x02 \x03(\tR\aadopted\"\x14\n" +
-	"\x12ListTargetsRequest\"\xb1\x03\n" +
+	"\x12ListTargetsRequest\"\xe2\x03\n" +
 	"\rTargetSummary\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x1f\n" +
@@ -5597,7 +5617,8 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	" \x01(\x05R\n" +
 	"readyPlans\x12#\n" +
 	"\rapplied_count\x18\v \x01(\x05R\fappliedCount\x12%\n" +
-	"\x0eattention_runs\x18\f \x01(\x05R\rattentionRuns\"I\n" +
+	"\x0eattention_runs\x18\f \x01(\x05R\rattentionRuns\x12/\n" +
+	"\x13github_repositories\x18\r \x03(\tR\x12githubRepositories\"I\n" +
 	"\x13ListTargetsResponse\x122\n" +
 	"\atargets\x18\x01 \x03(\v2\x18.godwit.v1.TargetSummaryR\atargets\"\xdb\x01\n" +
 	"\x15ListMigrationsRequest\x12\x18\n" +

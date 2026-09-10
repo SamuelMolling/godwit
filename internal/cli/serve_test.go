@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -108,5 +110,25 @@ func TestServeStoreDSNFromEnv(t *testing.T) {
 	code, _, errOut = runCLI("serve", "--listen", "127.0.0.1:0")
 	if code != 1 || strings.Contains(errOut, "is required") {
 		t.Fatalf("env DSN must be accepted: code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestServeGitHubPrivateKeyFile(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	t.Setenv("GODWIT_GITHUB_WEBHOOK_SECRET", "s")
+	t.Setenv("GODWIT_GITHUB_APP_ID", "1")
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--github-private-key-file", "/no/such/key.pem")
+	if code != 1 || !strings.Contains(errOut, "--github-private-key-file") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+
+	path := filepath.Join(t.TempDir(), "key.pem")
+	if err := os.WriteFile(path, []byte("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runCLI("serve", "--store-dsn", "postgres://x", "--listen", "127.0.0.1:0",
+		"--github-webhook-addr", "127.0.0.1:0", "--github-private-key-file", path)
+	if code != 1 || !strings.Contains(errOut, "private key") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 }

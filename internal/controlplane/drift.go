@@ -26,6 +26,8 @@ type DriftMonitor struct {
 	Metrics *metrics.Metrics
 	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
 	PlanRetention time.Duration
+	// DeliveryRetention is how long a recorded webhook delivery id is remembered; zero keeps them forever.
+	DeliveryRetention time.Duration
 
 	store    *Store
 	target   func(ctx context.Context, name string) (resolvedTarget, error)
@@ -66,9 +68,10 @@ func (m *DriftMonitor) Run(ctx context.Context) {
 	}
 }
 
-// Tick checks every baselined target once and sweeps plans past retention.
+// Tick checks every baselined target once and sweeps plans and webhook deliveries past retention.
 func (m *DriftMonitor) Tick(ctx context.Context) {
 	m.sweepPlans(ctx)
+	m.sweepDeliveries(ctx)
 	targets, err := m.store.SnapshotTargets(ctx)
 	if err != nil {
 		m.log.Error("drift tick failed", "error", err)
@@ -94,6 +97,21 @@ func (m *DriftMonitor) sweepPlans(ctx context.Context) {
 	}
 	if n > 0 {
 		m.log.Info("plans swept", "deleted", n, "retention", m.PlanRetention)
+	}
+}
+
+func (m *DriftMonitor) sweepDeliveries(ctx context.Context) {
+	if m.DeliveryRetention <= 0 {
+		return
+	}
+	n, err := m.store.SweepDeliveries(ctx, time.Now().Add(-m.DeliveryRetention))
+	if err != nil {
+		m.log.Error("delivery sweep failed", "error", err)
+
+		return
+	}
+	if n > 0 {
+		m.log.Info("webhook deliveries swept", "deleted", n, "retention", m.DeliveryRetention)
 	}
 }
 

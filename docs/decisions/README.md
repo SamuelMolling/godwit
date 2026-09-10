@@ -23,6 +23,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0013](0013-the-fleet-view-is-keyed-by-content.md) | The fleet view is keyed by content, and answers rather than refuses | #95 |
 | [0014](0014-the-target-journal-is-authoritative.md) | The target's journal is authoritative; the ledger is the control plane's copy of it | #96 |
 | [0015](0015-command-names-say-what-they-do.md) | Command names that say what they do: `plan --save`, one `target adopt`, `apply` → `up` | #109 |
+| [0016](0016-the-app-is-bound-to-targets-by-the-server.md) | The GitHub App is bound to its targets by the server, not by the repository | #PR |
 
 ## Open questions
 

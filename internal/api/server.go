@@ -226,6 +226,13 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	if searchPath != "" {
 		config[controlplane.ConfigSearchPath] = searchPath
 	}
+	repositories, err := controlplane.ParseGitHubRepositories(m.GithubRepositories)
+	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	if repositories != "" {
+		config[controlplane.ConfigGitHubRepositories] = repositories
+	}
 	if err := s.store.RegisterTarget(ctx, m.Name, m.Provider, config); err != nil {
 		return nil, rpcErr(err)
 	}

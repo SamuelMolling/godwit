@@ -18,6 +18,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/githubapp"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
 	"github.com/SamuelMolling/godwit/internal/ui"
@@ -63,6 +64,8 @@ type Config struct {
 	PlanTTL time.Duration
 	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
 	PlanRetention time.Duration
+	// GitHub is the App webhook receiver; an empty Addr leaves it off and exposes nothing.
+	GitHub GitHubApp
 	// UI serves the operator web UI under /ui/. Any Tokens secret is accepted as the basic-auth password;
 	// UIUser and UIPassword add a shared identity whose rights are UIScope (default operator).
 	UI         bool
@@ -131,6 +134,10 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		anonScope = s
 	}
+	githubKey, err := cfg.GitHub.credential()
+	if err != nil {
+		return err
+	}
 	origins, err := ui.ParseOrigins(cfg.UIOrigins)
 	if err != nil {
 		return err
@@ -167,6 +174,11 @@ func Run(ctx context.Context, cfg Config) error {
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
+	stopWebhook, err := serveWebhook(cfg, githubKey, store, m, log)
+	if err != nil {
+		return err
+	}
+
 	notifier, closeNotifier := newNotifier(cfg, store, log, m.Notified)
 	defer closeNotifier()
 
@@ -187,6 +199,9 @@ func Run(ctx context.Context, cfg Config) error {
 
 	drift := controlplane.NewDriftMonitor(store, sched, eng, notifier, cfg.DriftInterval, log)
 	drift.PlanRetention = cfg.PlanRetention
+	if cfg.GitHub.enabled() {
+		drift.DeliveryRetention = DeliveryRetentionFactor * cmp.Or(cfg.GitHub.MaxAge, githubapp.DefaultMaxAge)
+	}
 	go drift.Run(ctx)
 
 	newID := func() string { return strings.ReplaceAll(uuid.NewString(), "-", "") }
@@ -253,6 +268,7 @@ func Run(ctx context.Context, cfg Config) error {
 		log.Info("shutting down", "grace", grace)
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
 		defer cancel()
+		stopWebhook(shutdownCtx)
 		_ = srv.Shutdown(shutdownCtx)
 		awaitRuns(shutdownCtx, sched.Stop, drained, log)
 	}()

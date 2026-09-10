@@ -142,6 +142,9 @@ func newTargetAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.VaultTemplate, "vault-template", "", "DSN template over the Vault secret's fields")
 	cmd.Flags().BoolVar(&req.RequirePlan, "require-plan", false, "refuse runs on this target without a stored plan")
 	cmd.Flags().StringVar(&req.SearchPath, "search-path", "", "search_path for every session on this target (e.g. app,public)")
+	cmd.Flags().StringSliceVar(&req.GithubRepositories, "github-repo", nil,
+		"repository a GitHub App delivery may reach this target from, owner/repo or owner/repo:dir; repeatable, "+
+			"and the whole list is replaced on every target add")
 	cmd.Flags().BoolVar(&keepOld, "keep-old", true, "change-type on this target keeps the pre-swap column as the rollback")
 	cmd.Flags().BoolVar(&ignoreAdopted, "ignore-adopted-tables", true,
 		"leave the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and its drift")

@@ -1,6 +1,6 @@
 # CI/CD
 
-Two integrations ship in the repository: a composite GitHub Action (`action.yml` at the root) and ArgoCD hook Jobs (`deploy/argocd/`). Both are thin wrappers over the CLI; anything they do you can do with `godwit` in any runner. Complete workflows and `Application` manifests to copy are in [examples/](../examples/README.md).
+Three integrations ship in the repository: a composite GitHub Action (`action.yml` at the root), a GitHub App the service receives webhooks for ([below](#github-app)), and ArgoCD hook Jobs (`deploy/argocd/`). Both are thin wrappers over the CLI; anything they do you can do with `godwit` in any runner. Complete workflows and `Application` manifests to copy are in [examples/](../examples/README.md).
 
 The CLI outside GitHub comes from the image `ghcr.io/samuelmolling/godwit` (`main`, `sha-<short commit>`; built by `.github/workflows/publish.yml` on every merge) or, once a `v*` tag exists, from the GitHub release and `brew install SamuelMolling/tap/godwit` (`.github/workflows/release.yml`, GoReleaser).
 
@@ -372,6 +372,61 @@ With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`
 ```
 
 `--allow-none` makes the step a no-op when nothing awaits (a deploy that shipped no migration). Without it the CLI fails with `target orders: no run awaiting contract`. The step waits: `run confirm` streams the contract phase it released and exits with the run, so the deploy fails when the swap fails instead of going green on a phase that was only queued. Add `--no-wait` when the pipeline watches the run somewhere else.
+
+## GitHub App
+
+The Action needs a runner that can reach godwit, and a workflow in every consuming repository. The App inverts that: the service receives the pull request events itself, so a consumer configures a webhook and nothing else. [Decision 0016](decisions/0016-the-app-is-bound-to-targets-by-the-server.md) has the reasoning, what an attacker gains from the webhook secret, and what is deliberately not built.
+
+**What is built today is the receiving half.** A delivery is verified, de-duplicated, authorised and recorded in `cp_audit`, and nothing else happens: no files are read, no run is created, nothing is posted back to the pull request. The App is not yet a replacement for the Action, and a repository that wants a plan on its pull requests still needs the workflow.
+
+### Registering the App
+
+One App per godwit deployment, registered by the operator — never a shared, publicly listed one, because a shared App means one webhook secret across unrelated fleets.
+
+1. **New GitHub App**, under the organisation that owns the repositories. Webhook URL is `https://<host><path>` where the path is `/github/webhook`; set a webhook secret and keep it wherever the master key lives.
+2. **Repository permissions**: `Metadata: read` (the collaborator permission lookup), `Pull requests: read` (the pull request and its reviews), `Contents: read` (the migration files, once the App fetches them), `Checks: write` (the report, once the App writes one). Nothing needs `write` on contents, and the App never asks for it: a service that can write to the repository can write the migration it is about to apply.
+3. **Subscribe to** `Issue comment`, `Pull request` and `Pull request review`. Anything else is answered `202` and dropped.
+4. **Generate a private key** and install the App on the repositories that will use it. Installing it grants nothing on its own — see the binding below.
+5. Point `--github-webhook-addr` at a port only the tunnel or ingress reaches, and give the service `GODWIT_GITHUB_APP_ID`, `GODWIT_GITHUB_WEBHOOK_SECRET` and the key ([configuration](configuration.md#github-app)). Without `--github-webhook-addr` the listener does not exist.
+
+### Binding a repository to a target
+
+**Installing the App grants nothing.** A repository bound to no target gets no apply and no plan, and the refusal is in GitHub's delivery log and the service's own. An operator binds it with the target:
+
+```bash
+godwit target add orders --provider vault --vault-path database/creds/orders \
+  --github-repo acme/orders \
+  --github-repo acme/monorepo:services/orders/db/migrations
+```
+
+Each entry is `owner/repo`, which binds every migration directory in that repository, or `owner/repo:dir`, which binds one. `godwit targets` prints the bindings in its `GITHUB` column. `target add` replaces the whole target configuration, so a later `target add` that omits `--github-repo` unbinds it — pass the full list every time.
+
+`godwit.yaml` still names the target, and is still where a repository says what it wants. It is now a request: the server reads the name from the head sha and looks it up in the binding. A name the binding does not carry is refused in words that do not say whether that target exists, because a webhook caller has no `ListTargets` and a refusal should not become one.
+
+### Who may command through the App
+
+The same three checks as [the Action](#who-may-command-an-apply), run server-side against the same endpoints with an installation token narrowed to the one repository the signed payload named:
+
+1. **`author_association`** must be in `--github-allowed-associations` (default `OWNER,MEMBER,COLLABORATOR`). Naming `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` or `NONE` fails `serve` at start-up rather than at the first comment.
+2. **Repository permission** — `admin` or `write` for the commander, and for the approver. A failed lookup refuses.
+3. **An approving review on the exact head**, by someone other than the pull request author, for `apply` and `confirm`. There is no `require-approval: false` on this path.
+
+A command's grammar is the one on this page: [what counts as commanding](#what-counts-as-commanding) and its [flags](#flags-on-a-command-comment) are the same parser. A comment that names no command is silence, and the App posts nothing about it — the Action's green `skipped=true` tick has no equivalent here.
+
+Beyond those: the pull request must be open (`plan`, `apply`, `confirm`) and unmerged (`revert`); the head must be in the repository the delivery named, so a fork's pull request is refused whatever the command; and a comment or review older than `--github-webhook-max-age` (default one hour) is refused before any of the above, so a redelivered command from yesterday cannot apply today.
+
+### What a delivery is answered with
+
+| Answer | When |
+|---|---|
+| `401`, empty | the signature is missing, malformed or wrong. Nothing but the byte count is learned from such a request |
+| `413`, empty | the body is over `--github-webhook-max-bytes` |
+| `400` | not a `POST`, no `X-GitHub-Delivery`, or a body that is not JSON |
+| `202 accepted` | verified, authorised, recorded |
+| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing), refused (unbound, unauthorised, stale, a fork), or a duplicate delivery id |
+| `500` | the store or GitHub could not be reached. Nothing was recorded, so GitHub's redelivery is a fresh attempt |
+
+Every delivery increments `godwit_webhook_deliveries_total{event,result}`.
 
 ## ArgoCD
 

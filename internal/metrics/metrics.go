@@ -56,6 +56,7 @@ type Metrics struct {
 	apiRequests        *prometheus.CounterVec
 	apiDuration        *prometheus.HistogramVec
 	notifications      *prometheus.CounterVec
+	webhooks           *prometheus.CounterVec
 }
 
 // New builds a Metrics set on its own registry.
@@ -109,6 +110,9 @@ func New() *Metrics {
 		notifications: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "godwit_notifications_total", Help: "Notifications handed to each provider, by outcome.",
 		}, []string{"provider", "result"}),
+		webhooks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "godwit_webhook_deliveries_total", Help: "GitHub App deliveries received, by event and outcome.",
+		}, []string{"event", "result"}),
 	}
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "godwit_build_info", Help: "Build metadata; always 1.",
@@ -116,7 +120,7 @@ func New() *Metrics {
 	buildInfo.WithLabelValues(version.Version, version.Commit).Set(1)
 	m.registry.MustRegister(buildInfo, m.resumes, m.retries, m.attempts, m.heartbeatFailures, m.runDuration,
 		m.statementDuration, m.statementFailures, m.hazards, m.validationFailures, m.driftChecks,
-		m.apiRequests, m.apiDuration, m.notifications)
+		m.apiRequests, m.apiDuration, m.notifications, m.webhooks)
 
 	return m
 }
@@ -225,6 +229,11 @@ func (m *Metrics) DriftChecked(target, result string) {
 // Notified records one notification outcome for a provider.
 func (m *Metrics) Notified(provider, result string) {
 	m.notifications.WithLabelValues(provider, result).Inc()
+}
+
+// WebhookDelivered records one GitHub App delivery, including the ones dropped before they were parsed.
+func (m *Metrics) WebhookDelivered(event, result string) {
+	m.webhooks.WithLabelValues(event, result).Inc()
 }
 
 // Interceptor counts and times every API call.

@@ -69,7 +69,7 @@ func newTargetsCmd() *cobra.Command {
 func targetsTable(targets []*godwitv1.TargetSummary) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPROVIDER\tAPPLIED\tREADY PLANS\tNEEDS YOU\tDRIFT\tSEARCH PATH\tLOCK\tSTATEMENT\tREQUIRE PLAN\tLAST RUN")
+	fmt.Fprintln(w, "NAME\tPROVIDER\tAPPLIED\tREADY PLANS\tNEEDS YOU\tDRIFT\tSEARCH PATH\tLOCK\tSTATEMENT\tREQUIRE PLAN\tGITHUB\tLAST RUN")
 	for _, t := range targets {
 		last := "none"
 		if t.LastRun != nil {
@@ -79,8 +79,9 @@ func targetsTable(targets []*godwitv1.TargetSummary) string {
 		if t.UnresolvedDrift {
 			drift = "drifted"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%t\t%s\n", t.Name, t.Provider, t.AppliedCount, t.ReadyPlans,
-			t.AttentionRuns, drift, orNone(t.SearchPath), orNone(t.LockTimeout), orNone(t.StatementTimeout), t.RequirePlan, last)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n", t.Name, t.Provider, t.AppliedCount, t.ReadyPlans,
+			t.AttentionRuns, drift, orNone(t.SearchPath), orNone(t.LockTimeout), orNone(t.StatementTimeout), t.RequirePlan,
+			orNone(strings.Join(t.GithubRepositories, " ")), last)
 	}
 	_ = w.Flush()
 

@@ -122,7 +122,14 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--ui-password` | `GODWIT_UI_PASSWORD` | basic auth password for that shared identity |
 | `--ui-scope` | `GODWIT_UI_SCOPE` or `operator` | what the shared `--ui-user` identity may do: `read`, `pipeline`, `operator` or `admin`; an anonymous visitor on an open UI is always `read` |
 | `--ui-anonymous-scope` | `GODWIT_UI_ANONYMOUS_SCOPE` | serve `/ui` with **no authentication at all** at this scope: `read`, `pipeline`, `operator` or `admin`. Empty (the default) keeps `/ui` behind basic auth |
+| `--github-webhook-addr` | `GODWIT_GITHUB_WEBHOOK_ADDR` | address for the [GitHub App](#github-app) webhook, on a listener of its own serving `/github/webhook` and nothing else. Empty (the default) leaves the App off entirely |
+| `--github-private-key-file` | `GODWIT_GITHUB_PRIVATE_KEY_FILE` | PEM file holding the App's private key (PKCS#1 or PKCS#8); `GODWIT_GITHUB_PRIVATE_KEY` carries the key itself instead |
+| `--github-webhook-max-age` | `1h` | how old a comment's `created_at` or a review's `submitted_at` may be before its delivery is refused. A `pull_request` payload carries no timestamp of its own and is not aged |
+| `--github-webhook-max-bytes` | `1048576` (1 MiB) | largest delivery body read before the signature is verified; over it the answer is `413` with no body |
+| `--github-allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | author associations that may command godwit from a comment or review body. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and `NONE` fail `serve` at start-up: anyone who opened a pull request carries one |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
+
+`--github-webhook-addr` set without a webhook secret, without an app id, or with a private key that is not PEM, fails `serve` before the store is opened, as does an unknown value in `--github-allowed-associations`.
 
 A bad log format or level, an unknown `--ui-scope` or `--ui-anonymous-scope`, a malformed `--ui-origin`, or a UI user without a password (or the reverse), fails `serve` before anything else starts. A `--scratch-dsn` that does not parse, cannot be reached, or names a role that can act outside its own scratch databases fails it right after the store migration.
 
@@ -171,6 +178,12 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_UI_SCOPE` | no | default for `--ui-scope` |
 | `GODWIT_UI_ANONYMOUS_SCOPE` | no | default for `--ui-anonymous-scope`; set it and `/ui` asks for no credential at all |
 | `GODWIT_UI_ORIGIN` | no | comma-separated default for `--ui-origin` |
+| `GODWIT_GITHUB_WEBHOOK_ADDR` | no | default for `--github-webhook-addr` |
+| `GODWIT_GITHUB_APP_ID` | with `--github-webhook-addr` | the App's numeric id, the `iss` of the JWT it mints installation tokens with |
+| `GODWIT_GITHUB_WEBHOOK_SECRET` | with `--github-webhook-addr` | the App's webhook secret. Every delivery is HMAC-verified against it before anything else; holding it lets someone apply an already-approved pull request in a bound repository, so keep it where the master key is |
+| `GODWIT_GITHUB_PRIVATE_KEY` | with `--github-webhook-addr` | the App's private key as PEM, when it does not come from `--github-private-key-file` |
+| `GODWIT_GITHUB_PRIVATE_KEY_FILE` | no | default for `--github-private-key-file` |
+| `GODWIT_GITHUB_API_URL` | no | REST API base; defaults to `https://api.github.com` |
 | `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
 | `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
 | `VAULT_K8S_ROLE` | without `VAULT_TOKEN` | role for `POST auth/<mount>/login` |
@@ -225,7 +238,7 @@ Lint codes: `E001` directory failed to load, `E002` parse error, `E003` migratio
 
 | Command | Flags | Scope |
 |---|---|---|
-| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path`, `--ignore-adopted-tables` | admin |
+| `godwit target add <name>` | `--provider static\|kubernetes\|vault` (required), `--dsn`, `--secret-path`, `--vault-path`, `--vault-template`, `--lock-timeout`, `--statement-timeout`, `--require-plan`, `--keep-old`, `--search-path`, `--ignore-adopted-tables`, `--github-repo` (repeatable) | admin |
 | `godwit target adopt <name>` | `--dir`, exactly one of `--version <N>` or `--from-journal` | operator; records the migrations the database already has as a succeeded run without executing them. `--version` takes your word for the newest one present; `--from-journal` reads the target's own `godwit` journal and needs no version. Neither flag, or both, is refused |
 | `godwit target status <name>` | `--dir` (a directory that does not exist compares against nothing) | read |
 | `godwit targets` | | read; every registered target with its settings, applied count, ready plans, open drift and last run, without connecting to any of them. The applied count is versioned migrations only; `target status` also lists the repeatables, so its `applied (N)` is the larger number |
@@ -257,6 +270,7 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 | `require_plan` | `--require-plan` | bool | `false` | refuse runs whose migration set has no stored plan |
 | `keep_old` | `--keep-old` | bool | `true` | `-- godwit: change-type` on this target keeps the pre-swap column as the rollback; a directive's own `keep-old=` still wins |
 | `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([concepts](concepts.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
+| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](ci-cd.md#binding-a-repository-to-a-target) delivery may reach this target from. Empty means none may: an unbound repository gets no apply and no plan. `target add` replaces the whole list |
 | `ignore_adopted_tables` | `--ignore-adopted-tables` | bool | `true` | leave the bookkeeping tables of the migration tool this database was adopted from out of the schema snapshot, and so out of drift ([concepts](concepts.md#drift)); `false` puts them back |
 
 A setting the target does not carry is printed as `none` by `godwit target status` and `godwit targets`; it means "nothing registered", not "no limit". An unregistered `lock_timeout` still runs under the executor's own 5s default, and an unregistered `statement_timeout` is genuinely disabled.
@@ -264,6 +278,12 @@ A setting the target does not carry is printed as `none` by `godwit target statu
 `godwit target status <name>` prints the provider and three of them — `lock_timeout`, `statement_timeout` and `search_path`. `require_plan` and `keep_old` are in `godwit targets` and in `ListTargets`. `ignore_adopted_tables` is reported where it acts: the plan says which tables it left out.
 
 `migrate --plan <id>` binds that plan explicitly: target, rollout and files come from the plan unless `--target`, `--rollout` or `--dir` are given (then they must agree with it); it cannot be combined with `--dry-run`. `migrate` prints `plan <id>: bound`, `no stored plan for this set: implicit plan` or `re-attached to run <id>` (a re-run of a job whose files already bound a plan follows that run instead of queueing another) before streaming; a run waiting out a transient failure shows `(retry in Ns)` on its line; a `PlanStale` / `PlanRequired` refusal prints the service's message and exits 3. `revert` prints the plan it is about to run — the down statements per migration and anything the plan would destroy — before it streams; `--dry-run` prints that and stops. `migrate` and `revert` stream the run and return when it settles: exit 0 on `succeeded` or `awaiting_contract`, 1 on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. Files are sent as `<version>_<name>.up.sql` / `.down.sql` or `R__<name>.up.sql` / `.down.sql` bodies; the directory is loaded and validated locally first.
+
+## GitHub App
+
+The webhook listener is off until `--github-webhook-addr` is set, and then serves `/github/webhook` and nothing else on its own port. Registering the App, the installation permissions it needs and how a repository is bound to a target are in [CI/CD](ci-cd.md#github-app); why it is a second listener and what the secret is worth are in [decision 0016](decisions/0016-the-app-is-bound-to-targets-by-the-server.md).
+
+`--github-webhook-max-age` also sets how long a delivery id is remembered for de-duplication: four times the age, which outlasts any delivery the age check would still accept. The ids are swept on the drift ticker.
 
 ## GitHub Action inputs
 
