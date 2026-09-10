@@ -78,7 +78,7 @@ func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, 
 		return at{}, out, nil
 	}
 	if needsApproval[req.name] {
-		if out, err := approved(ctx, repo, req, pr); out != nil || err != nil {
+		if out, err := approved(ctx, repo, req); out != nil || err != nil {
 			return at{}, out, err
 		}
 	}
@@ -120,7 +120,7 @@ func anchored(req *request, pr pull) *outcome {
 	return nil
 }
 
-func approved(ctx context.Context, repo repoView, req *request, pr pull) (*outcome, error) {
+func approved(ctx context.Context, repo repoView, req *request) (*outcome, error) {
 	all, whole, err := repo.reviews(ctx, req.number)
 	if err != nil {
 		return nil, err
@@ -130,10 +130,10 @@ func approved(ctx context.Context, repo repoView, req *request, pr pull) (*outco
 			"first, so the ones that withdraw an approval are the ones it would miss; godwit %s is refused rather "+
 			"than decided on a part of the record", req.number, req.name), nil
 	}
-	approver := standingApproval(all, pr.head, pr.author)
+	approver := standingApproval(all)
 	if approver == "" {
-		return refused("godwit %s on pull request #%d refused: no approving review by anyone other than %s "+
-			"stands on %s", req.name, req.number, orNone(pr.author), short(pr.head)), nil
+		return refused("godwit %s on pull request #%d refused: github reports no approving review standing on it; "+
+			"approve it and command godwit %s again", req.name, req.number, req.name), nil
 	}
 	if !validLogin(approver) {
 		return refused("%q is not a github login", approver), nil
@@ -142,15 +142,18 @@ func approved(ctx context.Context, repo repoView, req *request, pr pull) (*outco
 	return permitted(ctx, repo, approver, "approver")
 }
 
-func standingApproval(all []review, head, author string) string {
-	last := map[string]string{}
+// standingApproval takes GitHub's answer rather than arguing with it (decision 0007's amendment): the
+// latest review per reviewer, approved. A reviewer's later CHANGES_REQUESTED still supersedes their
+// approval, which is the one point godwit stays stricter than Atlantis on, and only because GitHub says so.
+func standingApproval(all []review) string {
+	approved := map[string]bool{}
 	var order []string
 	for _, r := range all {
 		switch r.state {
 		case "APPROVED":
-			last[r.login] = r.commitID
+			approved[r.login] = true
 		case "CHANGES_REQUESTED", "DISMISSED":
-			last[r.login] = ""
+			approved[r.login] = false
 		default:
 			continue
 		}
@@ -159,7 +162,7 @@ func standingApproval(all []review, head, author string) string {
 		}
 	}
 	for _, login := range order {
-		if last[login] == head && login != author {
+		if approved[login] {
 			return login
 		}
 	}

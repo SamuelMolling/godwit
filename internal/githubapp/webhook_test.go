@@ -63,7 +63,7 @@ func TestUnverifiedRequestLearnsNothing(t *testing.T) {
 func TestVerifiedRequestIsAccepted(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
+	f := newFixture(t, bound, approvedBy(t, "bob"))
 	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 	check(t, rec, http.StatusAccepted, "godwit apply accepted")
 	if len(f.runner.got) != 1 {
@@ -81,10 +81,10 @@ func TestVerifiedRequestIsAccepted(t *testing.T) {
 	}
 }
 
-func approvedBy(t *testing.T, login, commit string) *fakeRepo {
+func approvedBy(t *testing.T, login string) *fakeRepo {
 	t.Helper()
 	repo := writer(t)
-	repo.submitted = []review{{login: login, state: "APPROVED", commitID: commit}}
+	repo.submitted = []review{{login: login, state: "APPROVED"}}
 
 	return repo
 }
@@ -145,7 +145,7 @@ func TestUnparsablePayload(t *testing.T) {
 func TestReplayedDeliveryEnqueuesNothing(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
+	f := newFixture(t, bound, approvedBy(t, "bob"))
 	body := commentBody("godwit apply", "MEMBER", "alice", now)
 	check(t, f.post(t, eventIssueComment, "replayed", body), http.StatusAccepted, "accepted")
 	check(t, f.post(t, eventIssueComment, "replayed", body), http.StatusAccepted, "already handled")
@@ -167,7 +167,7 @@ func TestUnboundRepositoryGetsNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			repo := approvedBy(t, "bob", testHead)
+			repo := approvedBy(t, "bob")
 			f := newFixture(t, map[string]string{"payments": "someone/else"}, repo)
 			rec := f.post(t, tc.event, "d1", tc.body)
 			check(t, rec, http.StatusAccepted, "bound to no godwit target")
@@ -205,7 +205,7 @@ func TestRefusalDoesNotSayWhetherTheTargetExists(t *testing.T) {
 func TestCommanderWithoutWriteIsRefused(t *testing.T) {
 	t.Parallel()
 
-	repo := approvedBy(t, "bob", testHead)
+	repo := approvedBy(t, "bob")
 	repo.perm = map[string]string{"bob": "admin"}
 	f := newFixture(t, bound, repo)
 	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
@@ -215,7 +215,7 @@ func TestCommanderWithoutWriteIsRefused(t *testing.T) {
 	}
 }
 
-func TestApprovalMustStandOnTheHead(t *testing.T) {
+func TestGodwitRefusesWhatGitHubDoesNotCallApproved(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -223,17 +223,15 @@ func TestApprovalMustStandOnTheHead(t *testing.T) {
 		reviews []review
 	}{
 		{"no review at all", nil},
-		{"approval of an older commit", []review{{login: "bob", state: "APPROVED", commitID: testOther}}},
-		{"the author's own approval", []review{{login: "carol", state: "APPROVED", commitID: testHead}}},
 		{
 			"an approval later withdrawn",
-			[]review{{login: "bob", state: "APPROVED", commitID: testHead}, {login: "bob", state: "CHANGES_REQUESTED"}},
+			[]review{{login: "bob", state: "APPROVED"}, {login: "bob", state: "CHANGES_REQUESTED"}},
 		},
 		{
 			"a dismissed approval",
-			[]review{{login: "bob", state: "APPROVED", commitID: testHead}, {login: "bob", state: "DISMISSED"}},
+			[]review{{login: "bob", state: "APPROVED"}, {login: "bob", state: "DISMISSED"}},
 		},
-		{"a comment is not an approval", []review{{login: "bob", state: "COMMENTED", commitID: testHead}}},
+		{"a comment is not an approval", []review{{login: "bob", state: "COMMENTED"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -242,7 +240,7 @@ func TestApprovalMustStandOnTheHead(t *testing.T) {
 			repo.submitted = tc.reviews
 			f := newFixture(t, bound, repo)
 			rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
-			check(t, rec, http.StatusAccepted, "no approving review")
+			check(t, rec, http.StatusAccepted, "github reports no approving review")
 			if len(f.runner.got) != 0 {
 				t.Fatal("an unapproved apply reached the runner")
 			}
@@ -256,7 +254,7 @@ func TestApprovalOutlivesAWithdrawalItPredates(t *testing.T) {
 	repo := writer(t)
 	repo.submitted = []review{
 		{login: "bob", state: "CHANGES_REQUESTED"},
-		{login: "bob", state: "APPROVED", commitID: testHead},
+		{login: "bob", state: "APPROVED"},
 	}
 	f := newFixture(t, bound, repo)
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
@@ -266,7 +264,7 @@ func TestApprovalOutlivesAWithdrawalItPredates(t *testing.T) {
 func TestStaleDeliveryIsRefused(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
+	f := newFixture(t, bound, approvedBy(t, "bob"))
 	old := now.Add(-2 * time.Hour)
 	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", old))
 	check(t, rec, http.StatusAccepted, "past the 1h0m0s a command may be acted on within")
@@ -301,7 +299,7 @@ func TestIgnoredDeliveries(t *testing.T) {
 		},
 		{
 			"a review that is not submitted", eventReview, strings.Replace(
-				reviewBodyJSON("godwit apply", testHead, now), `"action":"submitted"`, `"action":"dismissed"`, 1),
+				reviewBodyJSON(testHead, now), `"action":"submitted"`, `"action":"dismissed"`, 1),
 			"review dismissed ignored",
 		},
 		{
@@ -388,7 +386,7 @@ func TestForkGetsNothing(t *testing.T) {
 	t.Run("a command on a fork's head is refused", func(t *testing.T) {
 		t.Parallel()
 
-		repo := approvedBy(t, "bob", testHead)
+		repo := approvedBy(t, "bob")
 		repo.pr.headRepo = "fork/orders"
 		f := newFixture(t, bound, repo)
 		rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
@@ -414,7 +412,7 @@ func TestPullRequestPlansTheProjectItTouched(t *testing.T) {
 func TestTheInstallationTokenIsNarrowedToTheRepositoryTheDeliveryNamed(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
+	f := newFixture(t, bound, approvedBy(t, "bob"))
 	f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 	if len(f.api.scoped) != 1 || f.api.scoped[0] != "7/42/"+testRepo {
 		t.Fatalf("token scoped %v, want one narrowed to installation 7, repository 42 (%s)", f.api.scoped, testRepo)
@@ -427,15 +425,15 @@ func TestReviewBodyCommands(t *testing.T) {
 	t.Run("on the head it approved", func(t *testing.T) {
 		t.Parallel()
 
-		f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-		check(t, f.post(t, eventReview, "d1", reviewBodyJSON("godwit apply", testHead, now)),
+		f := newFixture(t, bound, approvedBy(t, "bob"))
+		check(t, f.post(t, eventReview, "d1", reviewBodyJSON(testHead, now)),
 			http.StatusAccepted, "accepted")
 	})
 	t.Run("on a head that moved", func(t *testing.T) {
 		t.Parallel()
 
-		f := newFixture(t, bound, approvedBy(t, "bob", testHead))
-		check(t, f.post(t, eventReview, "d1", reviewBodyJSON("godwit apply", testOther, now)),
+		f := newFixture(t, bound, approvedBy(t, "bob"))
+		check(t, f.post(t, eventReview, "d1", reviewBodyJSON(testOther, now)),
 			http.StatusAccepted, "the head moved after the review")
 	})
 }
@@ -459,7 +457,7 @@ func TestFailuresBelowTheReceiverFailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			f := newFixture(t, bound, approvedBy(t, "bob", testHead))
+			f := newFixture(t, bound, approvedBy(t, "bob"))
 			tc.break_(f)
 			rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 			check(t, rec, http.StatusInternalServerError, "could not answer this delivery")
@@ -476,7 +474,7 @@ func TestFailuresBelowTheReceiverFailClosed(t *testing.T) {
 func TestPullRequestHeadIsNotTrustedForACommand(t *testing.T) {
 	t.Parallel()
 
-	repo := approvedBy(t, "bob", testOther)
+	repo := approvedBy(t, "bob")
 	repo.pr.head = testOther
 	f := newFixture(t, bound, repo)
 	body := strings.Replace(commentBody("godwit apply "+testHead, "MEMBER", "alice", now), "", "", 1)
@@ -506,7 +504,7 @@ func TestPullRequestStateGuards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			repo := approvedBy(t, "bob", testHead)
+			repo := approvedBy(t, "bob")
 			tc.mutate(&repo.pr)
 			f := newFixture(t, bound, repo)
 			check(t, f.post(t, eventIssueComment, "d1", commentBody(tc.command, "MEMBER", "alice", now)),
@@ -526,7 +524,7 @@ func TestRevertNeedsNoApproval(t *testing.T) {
 func TestAssociationNarrows(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
+	f := newFixture(t, bound, approvedBy(t, "bob"))
 	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "CONTRIBUTOR", "alice", now))
 	check(t, rec, http.StatusAccepted, "author association CONTRIBUTOR is not allowed")
 	if len(f.api.repo.reacted) != 0 {
@@ -540,7 +538,7 @@ func TestAssociationNarrows(t *testing.T) {
 func TestAnApproverWithoutWriteIsRefused(t *testing.T) {
 	t.Parallel()
 
-	repo := approvedBy(t, "dave", testHead)
+	repo := approvedBy(t, "dave")
 	f := newFixture(t, bound, repo)
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, `approver dave has permission "none"`)
@@ -549,7 +547,7 @@ func TestAnApproverWithoutWriteIsRefused(t *testing.T) {
 func TestAnApproverGitHubNamesStrangelyIsRefused(t *testing.T) {
 	t.Parallel()
 
-	repo := approvedBy(t, "not a login", testHead)
+	repo := approvedBy(t, "not a login")
 	f := newFixture(t, bound, repo)
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, "is not a github login")
@@ -576,4 +574,22 @@ func TestEventLabelIsBounded(t *testing.T) {
 	if got := eventLabel(eventReview); got != eventReview {
 		t.Fatalf("eventLabel = %q, want %s", got, eventReview)
 	}
+}
+
+func TestAnApprovalGitHubStillShowsSurvivesAPush(t *testing.T) {
+	t.Parallel()
+
+	repo := approvedBy(t, "bob")
+	repo.pr.head = testOther
+	f := newFixture(t, bound, repo)
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+		http.StatusAccepted, "godwit apply accepted")
+}
+
+func TestTheReviewThatCommandedIsStillCheckedAgainstTheHead(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, approvedBy(t, "bob"))
+	check(t, f.post(t, eventReview, "d1", reviewBodyJSON(testOther, now)),
+		http.StatusAccepted, "the head moved after the review")
 }

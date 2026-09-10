@@ -52,9 +52,8 @@ type pull struct {
 }
 
 type review struct {
-	login    string
-	state    string
-	commitID string
+	login string
+	state string
 }
 
 // Client authenticates as the App: a JWT to mint an installation token, and that token for everything else.
@@ -140,9 +139,8 @@ func (r *repoClient) pullRequest(ctx context.Context, number int) (pull, error) 
 }
 
 type reviewBody struct {
-	State    string `json:"state"`
-	CommitID string `json:"commit_id"`
-	User     struct {
+	State string `json:"state"`
+	User  struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
@@ -158,7 +156,7 @@ func (r *repoClient) reviews(ctx context.Context, number int) ([]review, bool, e
 			return nil, false, err
 		}
 		for _, p := range page {
-			all = append(all, review{login: p.User.Login, state: p.State, commitID: p.CommitID})
+			all = append(all, review{login: p.User.Login, state: p.State})
 		}
 		if len(all) >= reviewsCap {
 			return nil, false, nil

@@ -49,6 +49,14 @@ That is not the shape this record first reached for. Editing one standing commen
 
 **A failed comment is a warning, like a failed reaction.** The delivery already decided; being unable to say so does not change what was decided, and returning `500` would make GitHub redeliver something that was correctly refused.
 
+### The App takes GitHub's answer on approval, like the Action
+
+#130 withdrew the `commit_id` anchor and the author comparison from the Action's `require-approval`, for reasons [0007's amendment](0007-the-action-authorises-with-permission-and-approval.md#amendment--the-platform-says-whether-a-pull-request-is-approved) sets out: godwit was disagreeing with GitHub about the same pull request, and blocked three approved ones in a day. The App enforced the same withdrawn rule, so it is corrected here rather than left to drift — the two paths answer one question and must answer it the same way.
+
+What goes: the comparison of an approving review's `commit_id` against the head, and the `login != author` filter GitHub makes unreachable. What stays: the grouping by reviewer with the latest verdict winning, so a later `CHANGES_REQUESTED` still supersedes an approval; the approver's own permission lookup, because GitHub answers *is it approved* and not *may this person apply migrations to production*; and both guards on the **command** — `godwit apply <sha>`, and the `commit_id` of a review whose body carried the command, which asks whether a push raced the event rather than whether the approval is stale.
+
+**This makes the reviews-truncation guard load-bearing rather than cautious.** `GET /pulls/{n}/reviews` lists oldest first, so a short read drops the newest — the dismissals that withdraw an approval. Before #130 a dropped dismissal usually still failed closed on the sha anchor. Now it is the whole difference between refusing and applying, and the cap that refuses rather than deciding from a prefix of the record is the only thing standing there.
+
 ### What this costs, and it is not nothing
 
 0016 could say an unbound repository costs nothing at all, and 0017 kept that by checking the binding against the store before any GitHub call. **This record spends that property deliberately**: an unbound repository now costs one installation-token mint and up to two API calls per delivery, because it gets a comment saying it is unbound.

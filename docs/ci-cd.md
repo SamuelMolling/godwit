@@ -457,7 +457,7 @@ With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`
 
 The Action needs a runner that can reach godwit, and a workflow in every consuming repository. The App inverts that: the service receives the pull request events itself, so a consumer configures a webhook and nothing else. [Decision 0016](decisions/0016-the-app-is-bound-to-targets-by-the-server.md) has the reasoning, what an attacker gains from the webhook secret, and what is deliberately not built.
 
-**What is built today is the receiving half.** A delivery is verified, de-duplicated, authorised and recorded in `cp_audit`, and nothing else happens: no files are read, no run is created, nothing is posted back to the pull request. The App is not yet a replacement for the Action, and a repository that wants a plan on its pull requests still needs the workflow.
+**What is built today stops short of running anything.** A delivery is verified, de-duplicated, authorised, resolved to the projects the pull request touches and recorded in `cp_audit`; a command is acknowledged and a refusal is answered on the pull request. No run is created and no report is posted, because there is no run yet. The App is not yet a replacement for the Action, and a repository that wants a plan on its pull requests still needs the workflow.
 
 ### Registering the App
 
@@ -529,7 +529,7 @@ The same three checks as [the Action](#who-may-command-an-apply), run server-sid
 
 1. **`author_association`** must be in `--github-allowed-associations` (default `OWNER,MEMBER,COLLABORATOR`). Naming `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` or `NONE` fails `serve` at start-up rather than at the first comment.
 2. **Repository permission** — `admin` or `write` for the commander, and for the approver. A failed lookup refuses.
-3. **An approving review on the exact head**, by someone other than the pull request author, for `apply` and `confirm`. There is no `require-approval: false` on this path.
+3. **An approving review GitHub still reports**, for `apply` and `confirm`: the latest review per reviewer, one of them `APPROVED`, and that approver's own permission checked too. There is no `require-approval: false` on this path. As on the Action's, godwit takes GitHub's answer rather than re-deriving it from commit shas — [the amendment to decision 0007](decisions/0007-the-action-authorises-with-permission-and-approval.md#amendment--the-platform-says-whether-a-pull-request-is-approved) says why, and *Dismiss stale pull request approvals when new commits are pushed* is the branch-protection setting that makes a push withdraw one.
 
 A command's grammar is the one on this page: [what counts as commanding](#what-counts-as-commanding) and its [flags](#flags-on-a-command-comment) are the same parser. A comment that names no command is silence, and the App posts nothing about it — the Action's green `skipped=true` tick has no equivalent here.
 

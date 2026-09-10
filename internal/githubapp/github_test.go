@@ -216,7 +216,7 @@ func TestReviewsFollowThePages(t *testing.T) {
 	if err != nil || !whole {
 		t.Fatalf("reviews = %t, %v", whole, err)
 	}
-	if len(reviews) != 2 || reviews[1].state != "APPROVED" || reviews[1].commitID != testHead {
+	if len(reviews) != 2 || reviews[1].state != "APPROVED" || reviews[1].login != "bob" {
 		t.Fatalf("reviews = %+v", reviews)
 	}
 }

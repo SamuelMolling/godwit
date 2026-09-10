@@ -267,11 +267,11 @@ func commentBody(body, association, login string, at time.Time) string {
 		testRepo, body, eventAt(at), login, association)
 }
 
-func reviewBodyJSON(body, commitID string, at time.Time) string {
+func reviewBodyJSON(commitID string, at time.Time) string {
 	return fmt.Sprintf(`{"action":"submitted","repository":{"id":42,"full_name":%q},"installation":{"id":7},
 		"pull_request":{"number":3},
 		"review":{"body":%q,"commit_id":%q,"submitted_at":%q,"user":{"login":"alice"},"author_association":"MEMBER"}}`,
-		testRepo, body, commitID, eventAt(at))
+		testRepo, "godwit apply", commitID, eventAt(at))
 }
 
 func pullBodyJSON(action, headRepo, head string) string {
