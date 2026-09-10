@@ -20,6 +20,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
@@ -119,7 +120,7 @@ func (s *Server) limits() Limits {
 
 // Handler mounts the connect service with bearer-token auth, admission limits, plus the unauthenticated
 // /metrics, /healthz and /readyz endpoints; serve it with h2c enabled.
-func Handler(s *Server, tokens []Token) http.Handler {
+func Handler(s *Server, tokens []authz.Token) http.Handler {
 	mux := http.NewServeMux()
 	a := newAuth(tokens)
 	l := s.limits()
@@ -300,7 +301,7 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 	}
 
 	id := s.newID()
-	p := controlplane.Provenance{CreatedBy: Actor(ctx), Source: m.Source}
+	p := controlplane.Provenance{CreatedBy: authz.Actor(ctx), Source: m.Source}
 	_, err = s.queue(ctx, notify.RunCreated, b.detail(), func(tx *controlplane.Store) (controlplane.Run, error) {
 		if err := tx.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID, b.expansions); err != nil {
 			return controlplane.Run{}, err
@@ -404,7 +405,7 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	}
 
 	id := s.newID()
-	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
+	p := controlplane.Provenance{CreatedBy: authz.Actor(ctx)}
 	_, err = s.queue(ctx, notify.RunCreated, "reverts run "+notify.ShortID(orig.ID), func(tx *controlplane.Store) (controlplane.Run, error) {
 		if err := tx.CreateRevert(ctx, id, orig, m.Force, t, p); err != nil {
 			return controlplane.Run{}, err
@@ -502,7 +503,7 @@ func lossToProto(losses map[string][]engine.Loss) []*godwitv1.DataLoss {
 
 func (s *Server) emit(ctx context.Context, run controlplane.Run, typ, detail string) {
 	e := controlplane.RunEvent(run, typ, detail)
-	e.Actor = Actor(ctx)
+	e.Actor = authz.Actor(ctx)
 	notify.Emit(ctx, s.Notifier, s.Log, e)
 }
 
@@ -541,7 +542,7 @@ func (s *Server) audit(ctx context.Context, action, runID, target, detail string
 	if r := []rune(detail); len(r) > auditDetailLimit {
 		detail = string(r[:auditDetailLimit]) + "…"
 	}
-	e := controlplane.AuditEntry{Actor: Actor(ctx), Action: action, RunID: runID, Target: target, Detail: detail}
+	e := controlplane.AuditEntry{Actor: authz.Actor(ctx), Action: action, RunID: runID, Target: target, Detail: detail}
 	if err := s.store.Audit(ctx, e); err != nil {
 		s.Log.Error("audit write failed", "actor", e.Actor, "action", action, "run", runID, "target", target, "error", err)
 	}
@@ -984,7 +985,7 @@ func (s *Server) BaselineTarget(ctx context.Context, req *connect.Request[godwit
 	}
 
 	id := s.newID()
-	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
+	p := controlplane.Provenance{CreatedBy: authz.Actor(ctx)}
 	if err := s.Baseliner.Baseline(ctx, id, m.Target, migs, p); err != nil {
 		return nil, rpcErr(err)
 	}
@@ -1020,7 +1021,7 @@ func (s *Server) ReconcileTarget(ctx context.Context, req *connect.Request[godwi
 		return nil, invalid(err.Error())
 	}
 	id := s.newID()
-	p := controlplane.Provenance{CreatedBy: Actor(ctx)}
+	p := controlplane.Provenance{CreatedBy: authz.Actor(ctx)}
 	d, err := s.Reconciler.Reconcile(ctx, id, m.Target, migs, p)
 	if err != nil {
 		return nil, rpcErr(err)

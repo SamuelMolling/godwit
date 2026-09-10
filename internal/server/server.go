@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/metrics"
@@ -116,17 +117,17 @@ func Run(ctx context.Context, cfg Config) error {
 	if (cfg.UIUser == "") != (cfg.UIPassword == "") {
 		return errors.New("ui user and ui password must be set together")
 	}
-	uiScope := api.ScopeOperator
+	uiScope := authz.ScopeOperator
 	if cfg.UIScope != "" {
-		s, err := api.ParseScope(cfg.UIScope)
+		s, err := authz.ParseScope(cfg.UIScope)
 		if err != nil {
 			return fmt.Errorf("ui scope: %w", err)
 		}
 		uiScope = s
 	}
-	var anonScope api.Scope
+	var anonScope authz.Scope
 	if cfg.UIAnonymousScope != "" {
-		s, err := api.ParseScope(cfg.UIAnonymousScope)
+		s, err := authz.ParseScope(cfg.UIAnonymousScope)
 		if err != nil {
 			return fmt.Errorf("ui anonymous scope: %w", err)
 		}
@@ -140,7 +141,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	tokens, err := api.ParseTokens(cfg.Tokens)
+	tokens, err := authz.ParseTokens(cfg.Tokens)
 	if err != nil {
 		return err
 	}

@@ -12,7 +12,8 @@ godwit is a crash-safe PostgreSQL migration service written in Go: a statement-l
 api/proto/godwit/v1/   protobuf API (buf); regenerate with `buf generate`, never edit gen/
 internal/engine/       loader, planner (libpg_query), executor, journal, verifiers
 internal/controlplane/ store, scheduler, rollout policies, drift monitor, validator
-internal/api/          connect handlers and auth
+internal/api/          connect handlers and the bearer-token interceptor
+internal/authz/        scope policy (what a token may call) and forge policy (who may command the App)
 internal/server/       wiring; end-to-end tests live here
 internal/creds/        credential providers + credstest conformance suite
 demo/                  docker compose demo (two replicas, kill -9 recovery)
