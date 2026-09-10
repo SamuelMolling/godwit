@@ -26,9 +26,7 @@ type Vault struct {
 
 const defaultJWTPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
-// Target config keys the providers read: the sealed DSN of a static target, the secret its
-// kubernetes or vault credentials live at, the DSN template over a Vault secret's fields, and
-// the credential store that secret is read from.
+// Target config keys the providers read.
 const (
 	DSNKey         = "dsn"
 	PathKey        = "path"

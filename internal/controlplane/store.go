@@ -166,8 +166,7 @@ func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration,
 	return applyPlans(ctx, db, engine.Options{}, plans, nil, append(extra, engine.WithAtomic())...)
 }
 
-// RegisterTarget upserts a target, replacing whatever config the row held; merging a change into the
-// current registration is the caller's, over a LockTarget in the same transaction.
+// RegisterTarget upserts a target, replacing whatever config the row held.
 // The credential store is a column, not a config key, so a foreign key refuses a dangling one.
 func (s *Store) RegisterTarget(ctx context.Context, name, provider string, config map[string]string) error {
 	rest := make(map[string]string, len(config))
@@ -202,8 +201,7 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 	return provider, config, nil
 }
 
-// LockTarget is Target inside a transaction, holding the row against a concurrent registration; a target
-// that is not registered yet is an empty provider and an empty config rather than a refusal.
+// LockTarget is Target for update, answering an unregistered name with an empty provider and config.
 func (s *Store) LockTarget(ctx context.Context, name string) (string, map[string]string, error) {
 	provider, config, _, err := s.target(ctx, name, " FOR UPDATE")
 

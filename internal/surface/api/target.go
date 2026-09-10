@@ -15,8 +15,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
-// RegisterTarget registers a target and changes a registered one: every setting the request leaves out
-// keeps the value the target already has, and the merged registration is what is validated.
+// RegisterTarget registers a target and changes a registered one, keeping every setting the request leaves out.
 func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwitv1.RegisterTargetRequest]) (*connect.Response[godwitv1.RegisterTargetResponse], error) {
 	m := req.Msg
 	if m.Name == "" {
@@ -50,8 +49,7 @@ func (s *Server) RegisterTarget(ctx context.Context, req *connect.Request[godwit
 	return connect.NewResponse(&godwitv1.RegisterTargetResponse{}), nil
 }
 
-// GetTarget returns a target's registration: the provider, where its credential is read from and the
-// settings its runs inherit, never the credential itself.
+// GetTarget returns a target's registration, never its credential.
 func (s *Server) GetTarget(ctx context.Context, req *connect.Request[godwitv1.GetTargetRequest]) (*connect.Response[godwitv1.GetTargetResponse], error) {
 	if req.Msg.Name == "" {
 		return nil, invalid("name is required")
@@ -87,7 +85,6 @@ func (s *Server) sealDSN(ctx context.Context, dsn string) (string, error) {
 	return enc, nil
 }
 
-// applyTarget merges the request into config, in place, and returns the provider the target ends up with.
 func (s *Server) applyTarget(ctx context.Context, m *godwitv1.RegisterTargetRequest, provider string, config map[string]string, sealed string) (string, error) {
 	if m.Provider != "" && m.Provider != provider {
 		provider = m.Provider
@@ -215,7 +212,6 @@ func setTemplate(config map[string]string, template *string) error {
 	return nil
 }
 
-// passwords are the values a DSN template gives as the password, in URL and in keyword form.
 func passwords(template string) []string {
 	var out []string
 	if _, rest, ok := strings.Cut(template, "://"); ok {
@@ -267,7 +263,6 @@ func value(v *string, current string) string {
 	return *v
 }
 
-// auditDetail is the registration the call left behind; an empty setting is left out to stay inside the audit's own limit.
 func auditDetail(r controlplane.TargetRegistration) string {
 	fields := r.Fields()
 	out := make([]string, 0, len(fields)/2)

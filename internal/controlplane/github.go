@@ -11,8 +11,7 @@ import (
 
 const configGitHubRepositories = "github_repositories"
 
-// SetGitHubRepositories records the repositories a GitHub App delivery may reach this target from, and
-// an empty list leaves none able to.
+// SetGitHubRepositories records the repositories a GitHub App delivery may reach this target from; an empty list clears them.
 func SetGitHubRepositories(config map[string]string, entries []string) error {
 	spec, err := joinRepositories(entries)
 	if err != nil {

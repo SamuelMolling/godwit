@@ -32,9 +32,7 @@ func NewInspector(sched *Scheduler) *Inspector {
 	return &Inspector{sched: sched}
 }
 
-// Status lists what the target's database has applied next to the control plane's view of it. A target
-// whose credential does not resolve is still described: that is the state an operator is in while fixing
-// the registration, and the whole answer is worth more than the one part of it that could not be read.
+// Status lists what the target's database has applied next to the control plane's view, describing rather than refusing a target whose credential does not resolve.
 func (i *Inspector) Status(ctx context.Context, name string) (TargetStatus, error) {
 	provider, config, err := i.sched.store.Target(ctx, name)
 	if err != nil {

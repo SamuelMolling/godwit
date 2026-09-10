@@ -6,9 +6,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
-// TargetRegistration is a target as it was registered: where its credential is read from and the settings
-// every run on it inherits. It holds no credential — a static target's sealed DSN stays in the config map
-// the providers read — so what is built from one can be shown.
+// TargetRegistration is a target as it was registered, and carries no credential.
 type TargetRegistration struct {
 	Name                string
 	Provider            string
@@ -46,8 +44,7 @@ func RegistrationOf(name, provider string, config map[string]string) TargetRegis
 	return r
 }
 
-// Fields is the registration as ordered log attributes, and the only rendering of one: the audit entry
-// and the server log are both built from it.
+// Fields is the registration as ordered log attributes, and the only rendering of one.
 func (r TargetRegistration) Fields() []any {
 	return []any{
 		"provider", r.Provider,

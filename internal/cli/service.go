@@ -160,7 +160,6 @@ func newTargetAddCmd() *cobra.Command {
 	return cmd
 }
 
-// targetSettings holds the flags that mean one thing empty and another absent, so only those passed travel.
 type targetSettings struct {
 	lock          string
 	statement     string
