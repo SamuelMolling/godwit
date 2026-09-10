@@ -283,8 +283,6 @@ spec:
       {{- if or .Values.extraVolumes .Values.serve.githubApp.enabled .Values.stores.audiences }}
       volumes:
         {{- if .Values.stores.audiences }}
-        # A serviceAccountToken projection carries one audience, so an audience is one source, not one
-        # volume; the file name is the audience because that is how godwit finds the right token.
         - name: vault-audience-tokens
           projected:
             defaultMode: 0440
