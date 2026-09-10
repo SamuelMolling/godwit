@@ -10,6 +10,8 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+
+	"github.com/SamuelMolling/godwit/internal/report"
 )
 
 func newAuditCmd() *cobra.Command {
@@ -42,7 +44,7 @@ func auditTable(entries []*godwitv1.AuditEntry) string {
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "AT\tACTOR\tACTION\tTARGET\tRUN\tDETAIL")
 	for _, e := range entries {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", stamp(e.At), e.Actor, e.Action, e.Target, e.RunId, e.Detail)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", report.Stamp(e.At), e.Actor, e.Action, e.Target, e.RunId, e.Detail)
 	}
 	_ = w.Flush()
 

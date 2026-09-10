@@ -1,4 +1,4 @@
-package cli
+package report
 
 import (
 	"io"
@@ -8,7 +8,8 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-type palette struct{ add, del, mod func(string) string }
+// Palette marks a line in a text report by what it does: added, destroyed, or changed in place.
+type Palette struct{ add, del, mod func(string) string }
 
 func ansi(code string) func(string) string {
 	return func(s string) string {
@@ -16,12 +17,13 @@ func ansi(code string) func(string) string {
 	}
 }
 
+// The two palettes a report renders with: Mono writes the marks alone, Coloured adds ANSI escapes.
 var (
-	mono     = palette{plain, plain, plain}
-	coloured = palette{ansi("32"), ansi("31"), ansi("33")}
+	Mono     = Palette{plain, plain, plain}
+	Coloured = Palette{ansi("32"), ansi("31"), ansi("33")}
 )
 
-func (p palette) op(operation, line string) string {
+func (p Palette) op(operation, line string) string {
 	switch operation {
 	case engine.OpCreate:
 		return p.add(line)
@@ -32,7 +34,7 @@ func (p palette) op(operation, line string) string {
 	}
 }
 
-func (p palette) change(d engine.Direction, line string) string {
+func (p Palette) change(d engine.Direction, line string) string {
 	if d == engine.DirectionDown {
 		return p.del("- " + line)
 	}
@@ -40,7 +42,7 @@ func (p palette) change(d engine.Direction, line string) string {
 	return p.add("+ " + line)
 }
 
-func (p palette) diff(line string) string {
+func (p Palette) diff(line string) string {
 	switch {
 	case strings.HasPrefix(line, "+"):
 		return p.add(line)
@@ -51,23 +53,25 @@ func (p palette) diff(line string) string {
 	return line
 }
 
-func colors(w io.Writer) palette {
+// Colors is the palette a report renders with when it is written to w: none at all unless w is a terminal
+// that has not asked to go without.
+func Colors(w io.Writer) Palette {
 	return paletteFor(os.Getenv("GODWIT_COLOR"), os.Getenv("NO_COLOR"), isTTY(w))
 }
 
 // paletteFor: an explicit GODWIT_COLOR outranks the ambient NO_COLOR, and an unknown value falls back to auto.
-func paletteFor(mode, noColor string, tty bool) palette {
+func paletteFor(mode, noColor string, tty bool) Palette {
 	switch mode {
 	case "always":
-		return coloured
+		return Coloured
 	case "never":
-		return mono
+		return Mono
 	}
 	if noColor != "" || !tty {
-		return mono
+		return Mono
 	}
 
-	return coloured
+	return Coloured
 }
 
 func isTTY(w io.Writer) bool {

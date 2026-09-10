@@ -11,12 +11,12 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/report"
 )
 
 func newTargetCmd() *cobra.Command {
@@ -157,7 +157,7 @@ func newTargetAddCmd() *cobra.Command {
 func newMigrateCmd() *cobra.Command {
 	flags := &clientFlags{}
 	req := &godwitv1.CreateRunRequest{}
-	report := &reportFlags{}
+	rep := &reportFlags{}
 	var dir string
 	var dryRun bool
 	cmd := &cobra.Command{
@@ -165,7 +165,7 @@ func newMigrateCmd() *cobra.Command {
 		Short: "Send a migration directory to the service and watch the run",
 		Args:  cobra.NoArgs,
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, _ []string) error {
-			write, err := report.writer()
+			write, err := rep.writer()
 			if err != nil {
 				return err
 			}
@@ -223,7 +223,7 @@ func newMigrateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&req.Source, "source", "", "where the files come from, kept on the run (e.g. github.com/org/repo@<sha>:db/migrations)")
 	cmd.Flags().StringVar(&req.PlanId, "plan", "", "bind this stored plan by id; the plan supplies target, rollout and files unless given explicitly")
 	cmd.Flags().Int64Var(&req.ToVersion, "to", 0, "stop at this migration version: pending ones above it are reported as withheld and left for a later run")
-	report.register(cmd, "dry-run")
+	rep.register(cmd, "dry-run")
 	timeoutFlags(cmd, &req.LockTimeout, &req.StatementTimeout, "for this run, overriding the target's")
 	configKeys(cmd, "target", "dir", "rollout", "allow-out-of-order")
 
@@ -241,7 +241,7 @@ func bindLine(res *godwitv1.CreateRunResponse) string {
 	}
 }
 
-func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, req *godwitv1.CreateRunRequest, write func(io.Writer, planReport)) error {
+func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, req *godwitv1.CreateRunRequest, write func(io.Writer, report.Plan)) error {
 	res, err := client.PlanRun(cmd.Context(), connect.NewRequest(&godwitv1.PlanRunRequest{
 		Target: req.Target, Files: req.Files, AcknowledgeHazards: req.AcknowledgeHazards, SkipValidation: req.SkipValidation,
 		Rollout: req.Rollout, AllowOutOfOrder: req.AllowOutOfOrder, ToVersion: req.ToVersion,
@@ -254,12 +254,12 @@ func (f *clientFlags) dryRun(cmd *cobra.Command, client godwitv1connect.GodwitSe
 
 		return nil
 	}
-	write(cmd.OutOrStdout(), planReportFromProto(res.Msg))
+	write(cmd.OutOrStdout(), report.PlanFromProto(res.Msg))
 
 	return nil
 }
 
-func (f *clientFlags) planRun(cmd *cobra.Command, req *godwitv1.PlanRunRequest, write func(io.Writer, planReport)) error {
+func (f *clientFlags) planRun(cmd *cobra.Command, req *godwitv1.PlanRunRequest, write func(io.Writer, report.Plan)) error {
 	client, err := f.client()
 	if err != nil {
 		return err
@@ -273,75 +273,9 @@ func (f *clientFlags) planRun(cmd *cobra.Command, req *godwitv1.PlanRunRequest, 
 
 		return nil
 	}
-	write(cmd.OutOrStdout(), planReportFromProto(res.Msg))
+	write(cmd.OutOrStdout(), report.PlanFromProto(res.Msg))
 
 	return nil
-}
-
-func planReportFromProto(m *godwitv1.PlanRunResponse) planReport {
-	r := planReport{
-		live: true, target: m.Target, rollout: m.Rollout, validated: m.Validated, items: make([]planItem, 0, len(m.Migrations)),
-		planID: m.PlanId, planKey: m.PlanKey, drift: m.Drift,
-	}
-	r.observed = observationFromProto(m.Observed)
-	for _, pm := range m.Migrations {
-		p := engine.Plan{
-			Migration: engine.Migration{Version: pm.Version, Name: pm.Name, Repeatable: pm.Repeatable, Checksum: pm.Checksum},
-			Direction: engine.DirectionUp,
-		}
-		for _, ps := range pm.Statements {
-			st := engine.Statement{SQL: ps.Sql, NoTx: ps.NoTx, Phase: ps.Phase}
-			if b := ps.Batch; b != nil {
-				st.Batch = &engine.BatchSpec{Key: b.Key, KeyKind: b.Kind, Size: int(b.Size), Pause: parsePause(b.Pause)}
-			}
-			if a := ps.Assert; a != nil {
-				st.Assert = &engine.AssertSpec{Op: a.Op, Kind: a.Kind, Value: a.Value}
-			}
-			for _, h := range ps.Hazards {
-				st.Hazards = append(st.Hazards, engine.Hazard{
-					Code: h.Code, Detail: h.Detail, Recipe: h.Recipe, Object: h.Object, Attribute: h.Attribute,
-				})
-			}
-			p.Statements = append(p.Statements, st)
-		}
-		r.items = append(r.items, planItem{
-			Plan: p, applied: pm.Applied, phase: pm.Phase, alreadyApplied: pm.AlreadyApplied, effect: pm.Effect, note: pm.Note,
-			directives: pm.Directives, expanded: pm.Expanded, notes: pm.Notes, withheld: pm.Withheld,
-			skipped: pm.Skipped, changes: changesFromProto(pm.Changes),
-		})
-	}
-
-	return r
-}
-
-func changesFromProto(in []*godwitv1.SchemaChange) []engine.ObjectChange {
-	out := make([]engine.ObjectChange, 0, len(in))
-	for _, c := range in {
-		oc := engine.ObjectChange{Op: c.Op, Kind: c.Kind, Schema: c.Schema, Name: c.Name, Unchanged: int(c.Unchanged)}
-		for _, a := range c.Attributes {
-			oc.Attrs = append(oc.Attrs, engine.AttrChange{Op: a.Op, Name: a.Name, Old: a.Old, New: a.New})
-		}
-		out = append(out, oc)
-	}
-
-	return out
-}
-
-func parsePause(v string) time.Duration {
-	d, _ := time.ParseDuration(v)
-
-	return d
-}
-
-func observationFromProto(o *godwitv1.PlanObservation) *planObservation {
-	if o == nil {
-		return nil
-	}
-
-	return &planObservation{
-		HistoryHash: o.HistoryHash, SchemaFingerprint: o.SchemaFingerprint,
-		AppliedCount: o.AppliedCount, NewestApplied: o.NewestApplied, At: stamp(o.At), IgnoredTables: o.IgnoredTables,
-	}
 }
 
 func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {
@@ -380,7 +314,7 @@ func newRevertCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			flags.print(cmd, resp.Msg, revertPlanText(resp.Msg, colors(cmd.OutOrStdout())))
+			flags.print(cmd, resp.Msg, report.RevertPlanText(resp.Msg, report.Colors(cmd.OutOrStdout())))
 			if req.DryRun {
 				return nil
 			}
@@ -399,43 +333,6 @@ func newRevertCmd() *cobra.Command {
 	configKeys(cmd, "target")
 
 	return cmd
-}
-
-// revertPlanText is the plan godwit prints before it runs anything, and all a --dry-run prints.
-func revertPlanText(m *godwitv1.RevertRunResponse, pal palette) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s will be reverted on %s, newest first", count(len(m.Migrations), "migration"), m.Target)
-	if m.Reverts != "" {
-		b.WriteString(", undoing run " + m.Reverts)
-	}
-	if m.Forced {
-		b.WriteString(", forced past a newer run")
-	}
-	b.WriteString(".")
-	hazards := 0
-	for _, pm := range m.Migrations {
-		fmt.Fprintf(&b, "\n\n%s", pal.change(engine.DirectionDown, migrationID(pm)+" (down)  "+count(len(pm.Statements), "statement")))
-		for i, st := range pm.Statements {
-			fmt.Fprintf(&b, "\n  %s", statementFacts(i, planItem{}, engine.Statement{NoTx: st.NoTx}, terminal, false))
-			for _, l := range strings.Split(st.Sql, "\n") {
-				b.WriteString("\n      " + l)
-			}
-			for _, h := range st.Hazards {
-				hazards++
-				fmt.Fprintf(&b, "\n      hazard %s: %s", h.Code, h.Detail)
-			}
-		}
-	}
-	for _, l := range m.DataLoss {
-		fmt.Fprintf(&b, "\n\ndata loss: %s drops %s %s holding %d row(s)", l.Migration, l.Kind, l.Object, l.Rows)
-	}
-	fmt.Fprintf(&b, "\n\nPlan: 0 to apply, %d to revert, %d hazard(s) to acknowledge", len(m.Migrations), hazards)
-
-	return b.String()
-}
-
-func migrationID(pm *godwitv1.PlannedMigration) string {
-	return engine.MigrationID(pm.Version, pm.Name, pm.Repeatable)
 }
 
 func timeoutFlags(cmd *cobra.Command, lock, statement *string, scope string) {
@@ -462,18 +359,14 @@ func (f *clientFlags) watch(cmd *cobra.Command, client godwitv1connect.GodwitSer
 	}
 	switch last.GetState() {
 	case godwitv1.RunState_RUN_STATE_FAILED, godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION:
-		return fmt.Errorf("run %s %s: %s", id, stateName(last.State), last.Error)
+		return fmt.Errorf("run %s %s: %s", id, report.StateName(last.State), last.Error)
 	default:
 		return nil
 	}
 }
 
-func stateName(s godwitv1.RunState) string {
-	return strings.ToLower(strings.TrimPrefix(s.String(), "RUN_STATE_"))
-}
-
 func runLine(r *godwitv1.Run) string {
-	line := fmt.Sprintf("run %s: %s", r.Id, stateName(r.State))
+	line := fmt.Sprintf("run %s: %s", r.Id, report.StateName(r.State))
 	if r.Attempts > 0 {
 		line += fmt.Sprintf(" (attempt %d)", r.Attempts)
 	}
@@ -503,14 +396,6 @@ func progressLine(p *godwitv1.RunProgress) string {
 	}
 }
 
-func stamp(ts *timestamppb.Timestamp) string {
-	if ts == nil {
-		return ""
-	}
-
-	return ts.AsTime().UTC().Format(time.RFC3339)
-}
-
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -537,7 +422,7 @@ func newRunGetCmd() *cobra.Command {
 			}
 			r := resp.Msg.Run
 			flags.print(cmd, resp.Msg, fmt.Sprintf("%s\n  target: %s\n  kind: %s\n  rollout: %s\n  phase: %s\n  reverts: %s\n  lock_timeout: %s\n  statement_timeout: %s\n  created_by: %s\n  source: %s\n  plan: %s\n  created: %s\n  finished: %s%s",
-				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, r.PlanId, stamp(r.CreatedAt), stamp(r.FinishedAt),
+				runLine(r), r.Target, r.Kind, r.Rollout, r.Phase, r.Reverts, r.LockTimeout, r.StatementTimeout, r.CreatedBy, r.Source, r.PlanId, report.Stamp(r.CreatedAt), report.Stamp(r.FinishedAt),
 				appliedText(resp.Msg.Applied)))
 
 			return nil
@@ -556,7 +441,7 @@ func appliedText(applied []*godwitv1.RunMigration) string {
 	var b strings.Builder
 	b.WriteString("\n  applied:")
 	for _, m := range applied {
-		fmt.Fprintf(&b, "\n    %s at %s", m.Migration, stamp(m.AppliedAt))
+		fmt.Fprintf(&b, "\n    %s at %s", m.Migration, report.Stamp(m.AppliedAt))
 		if m.Held {
 			b.WriteString(" (contract held)")
 		}
@@ -709,8 +594,8 @@ func runsTable(runs []*godwitv1.Run) string {
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tTARGET\tKIND\tSTATE\tROLLOUT\tPHASE\tBY\tSOURCE\tCREATED")
 	for _, r := range runs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Id, r.Target, r.Kind, stateName(r.State), r.Rollout, r.Phase,
-			r.CreatedBy, r.Source, stamp(r.CreatedAt))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Id, r.Target, r.Kind, report.StateName(r.State), r.Rollout, r.Phase,
+			r.CreatedBy, r.Source, report.Stamp(r.CreatedAt))
 	}
 	_ = w.Flush()
 

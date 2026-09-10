@@ -15,6 +15,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/lint"
+	"github.com/SamuelMolling/godwit/internal/report"
 	"github.com/SamuelMolling/godwit/internal/schemasource"
 )
 
@@ -132,7 +133,7 @@ func writeLintText(w io.Writer, rep lint.Report) {
 	}
 	for _, f := range rep.Findings {
 		fmt.Fprintf(w, "%s: %s %s %s\n", f.File, f.Level, f.Code, f.Message)
-		writeRecipeText(w, "    ", f.Recipe)
+		report.WriteRecipeText(w, "    ", f.Recipe)
 	}
 	fmt.Fprintf(w, "%d finding(s), %d blocking\n", len(rep.Findings), rep.Blocking)
 }

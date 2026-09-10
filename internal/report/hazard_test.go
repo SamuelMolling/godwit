@@ -1,4 +1,4 @@
-package cli
+package report
 
 import (
 	"strings"
@@ -7,8 +7,8 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-func hazardItem(id string, skipped bool) planItem {
-	return planItem{
+func hazardItem(id string, skipped bool) item {
+	return item{
 		Plan: engine.Plan{
 			Migration: engine.Migration{Version: 20260901120000, Name: id},
 			Direction: engine.DirectionUp,
@@ -25,7 +25,7 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct", validated: true, items: []planItem{hazardItem("users", true)}})
+	writePlanMarkdown(&b, Plan{live: true, target: "app", rollout: "direct", validated: true, items: []item{hazardItem("users", true)}})
 	got := b.String()
 	if strings.Contains(got, "on what this run would execute") {
 		t.Fatalf("an applied migration's hazard must not be presented as acknowledgeable:\n%s", got)
@@ -41,9 +41,9 @@ func TestPlanMarkdownCountsOnlyWhatTheRunWouldExecute(t *testing.T) {
 	}
 
 	b.Reset()
-	writePlanMarkdown(&b, planReport{
+	writePlanMarkdown(&b, Plan{
 		live: true, target: "app", rollout: "direct", validated: true,
-		items: []planItem{hazardItem("users", true), hazardItem("orders", false)},
+		items: []item{hazardItem("users", true), hazardItem("orders", false)},
 	})
 	got = b.String()
 	if !strings.Contains(got, "⚠️ 1 hazard on what this run would execute: take the recipe printed with it,"+
@@ -61,7 +61,7 @@ func TestPlanTextDropsWhatTheTargetAlreadyHas(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	writePlanText(&b, planReport{live: true, target: "app", rollout: "direct", validated: true, items: []planItem{hazardItem("users", true)}})
+	writePlanText(&b, Plan{live: true, target: "app", rollout: "direct", validated: true, items: []item{hazardItem("users", true)}})
 	got := b.String()
 	if !strings.Contains(got, "Nothing to apply. app is at 20260901120000 (1 migration).\n") {
 		t.Fatalf("a clean plan must say where the target stands:\n%s", got)
@@ -83,9 +83,9 @@ func TestNotRunKeepsOnlyWhatTheReaderCouldActOn(t *testing.T) {
 	rep.Migration = engine.Migration{Name: "stats", Repeatable: true}
 	held := hazardItem("later", true)
 	held.applied, held.withheld = false, true
-	r := planReport{
+	r := Plan{
 		live: true, target: "app", rollout: "direct", validated: true,
-		items: []planItem{hazardItem("users", true), rep, held},
+		items: []item{hazardItem("users", true), rep, held},
 	}
 	var b strings.Builder
 	writePlanText(&b, r)
@@ -112,11 +112,11 @@ func TestSkipReasonNamesWhyTheBodyStaysUnrun(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		item planItem
+		item item
 		want string
 	}{
-		{planItem{note: "collapsed by a checkpoint"}, "collapsed by a checkpoint"},
-		{planItem{}, "the run would not execute its body"},
+		{item{note: "collapsed by a checkpoint"}, "collapsed by a checkpoint"},
+		{item{}, "the run would not execute its body"},
 	} {
 		if got := tc.item.skipReason(); got != tc.want {
 			t.Fatalf("skipReason = %q, want %q", got, tc.want)
@@ -127,7 +127,7 @@ func TestSkipReasonNamesWhyTheBodyStaysUnrun(t *testing.T) {
 func TestPlanReportNamesTheIgnoredBookkeepingTables(t *testing.T) {
 	t.Parallel()
 
-	r := planReport{
+	r := Plan{
 		live: true, target: "app", rollout: "direct", validated: true, planID: "p1", planKey: "k1",
 		observed: &planObservation{
 			HistoryHash: "h1", SchemaFingerprint: "f1", At: "2026-09-01T10:00:00Z",
@@ -157,7 +157,7 @@ func TestPlanReportNamesTheIgnoredBookkeepingTables(t *testing.T) {
 func TestPlanDetailsDropTheMachineIdentity(t *testing.T) {
 	t.Parallel()
 
-	r := planReport{
+	r := Plan{
 		live: true, target: "app", rollout: "direct", validated: true, planID: "p1", planKey: "k1",
 		observed: &planObservation{HistoryHash: "h1", SchemaFingerprint: "f1", AppliedCount: 3, NewestApplied: 20260902165420, At: "2026-09-01T10:00:00Z"},
 	}
@@ -187,16 +187,33 @@ func TestStatusVerdictIsWhatFitsInACommitStatus(t *testing.T) {
 	down.Direction = engine.DirectionDown
 	down.Statements[0].Hazards = nil
 	for _, tc := range []struct {
-		report planReport
+		report Plan
 		want   string
 	}{
-		{planReport{}, "offline plan; no target was consulted"},
-		{planReport{live: true}, "nothing to apply"},
-		{planReport{live: true, items: []planItem{hazardItem("users", false), down}}, "1 to apply, 1 to revert, 1 hazard to acknowledge"},
-		{planReport{live: true, items: []planItem{down}}, "1 to revert"},
+		{Plan{}, "offline plan; no target was consulted"},
+		{Plan{live: true}, "nothing to apply"},
+		{Plan{live: true, items: []item{hazardItem("users", false), down}}, "1 to apply, 1 to revert, 1 hazard to acknowledge"},
+		{Plan{live: true, items: []item{down}}, "1 to revert"},
 	} {
-		if got := tc.report.statusVerdict(); got != tc.want {
-			t.Fatalf("statusVerdict = %q, want %q", got, tc.want)
+		if got := tc.report.Verdict(); got != tc.want {
+			t.Fatalf("Verdict = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestHazardsCountsWhatTheGateHolds(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		report Plan
+		want   int
+	}{
+		{Plan{live: true}, 0},
+		{Plan{live: true, items: []item{hazardItem("users", true)}}, 0},
+		{Plan{live: true, items: []item{hazardItem("users", false), hazardItem("orders", false)}}, 2},
+	} {
+		if got := tc.report.Hazards(); got != tc.want {
+			t.Fatalf("Hazards = %d, want %d", got, tc.want)
 		}
 	}
 }
