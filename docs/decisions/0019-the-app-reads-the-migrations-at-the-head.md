@@ -22,7 +22,7 @@ A clone was the obvious alternative and is worse in every direction: it needs di
 
 The directory listing carries every entry's name and size. `--max-files`, `--max-file-bytes` and `--max-migrations` are decided from that, so a directory over any of them costs one request rather than one per file, and a repository cannot spend the App's GitHub budget by committing a thousand large files.
 
-The rule is not a second copy of the API's. `api.Limits.CheckListing` takes names and sizes; the admission that a `PlanRun` request already went through (`checkFiles`) now calls it with the bodies' own lengths. One rule, two callers — so the App cannot refuse a directory the API would admit, and it cannot admit one the API is about to refuse with a less useful message.
+The rule is not a second copy of the API's. `limits.Limits.CheckListing` takes names and sizes; the admission that a `PlanRun` request already went through (`checkFiles`) now calls it with the bodies' own lengths. One rule, two callers — so the App cannot refuse a directory the API would admit, and it cannot admit one the API is about to refuse with a less useful message.
 
 A blob is fetched with `Accept: application/vnd.github.raw` and a hard byte limit: over it, the fetch fails. It does not truncate. A migration read short would be planned, reported and approved as SQL nobody wrote.
 

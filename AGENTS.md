@@ -14,6 +14,7 @@ internal/engine/       loader, planner (libpg_query), executor, journal, verifie
 internal/controlplane/ store, scheduler, rollout policies, drift monitor, validator
 internal/api/          connect handlers and the bearer-token interceptor
 internal/authz/        scope policy (what a token may call) and forge policy (who may command the App)
+internal/limits/       the bounds a request is admitted within (sizes, counts, heavy-call concurrency)
 internal/server/       wiring; end-to-end tests live here
 internal/creds/        credential providers + credstest conformance suite
 demo/                  docker compose demo (two replicas, kill -9 recovery)

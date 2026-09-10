@@ -10,14 +10,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 // scratchConns sizes the pool that creates and drops scratch databases. Only the admitted calls reach it,
 // each holding one connection at a time per database it makes, so the concurrency gate is the demand.
 func scratchConns(heavyCalls int) int {
-	return max(4, 2*cmp.Or(heavyCalls, api.DefaultHeavyCalls))
+	return max(4, 2*cmp.Or(heavyCalls, limits.DefaultHeavyCalls))
 }
 
 // newScratch resolves where scratch databases live and refuses a configured scratch connection that can act

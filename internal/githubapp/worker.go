@@ -13,9 +13,9 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 // service is the control-plane API called in the process that serves it: the App carries a principal
@@ -52,7 +52,7 @@ type WorkerConfig struct {
 	API     forge
 	Service service
 	Runs    runStore
-	Limits  api.Limits
+	Limits  limits.Limits
 	// PublicURL is the base a check's details_url is built on; empty links nothing.
 	PublicURL string
 	// Workers bounds how many commands run at once; each may build scratch databases, so it spends

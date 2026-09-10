@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 func newStorePool(t *testing.T) *pgxpool.Pool {
@@ -110,7 +110,7 @@ func TestScratchDSNErrors(t *testing.T) {
 func TestScratchConnsFollowsTheGate(t *testing.T) {
 	t.Parallel()
 
-	for heavy, want := range map[int]int{0: 2 * api.DefaultHeavyCalls, 1: 4, 4: 8, 16: 32} {
+	for heavy, want := range map[int]int{0: 2 * limits.DefaultHeavyCalls, 1: 4, 4: 8, 16: 32} {
 		if got := scratchConns(heavy); got != want {
 			t.Fatalf("scratchConns(%d) = %d, want %d", heavy, got, want)
 		}

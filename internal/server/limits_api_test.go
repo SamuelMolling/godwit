@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 // Nothing bounded a request before: the body was buffered whole, then multiplied through the proto
@@ -19,7 +19,7 @@ func TestAPIRefusesOversizedRequests(t *testing.T) {
 	ctx := context.Background()
 	baseURL := startServiceCfg(t, Config{
 		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1", Log: testLog,
-		Limits: api.Limits{RequestBytes: 4096, Files: 4, FileBytes: 512},
+		Limits: limits.Limits{RequestBytes: 4096, Files: 4, FileBytes: 512},
 	})
 	client := newClient(baseURL, "")
 	registerTarget(t, client, newDatabase(t, "tg"))

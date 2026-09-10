@@ -11,25 +11,8 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
-
-func TestLimitsDefaults(t *testing.T) {
-	t.Parallel()
-
-	l := Limits{}.WithDefaults()
-	if l.RequestBytes != DefaultRequestBytes || l.Migrations != DefaultMigrations || l.Files != DefaultFiles ||
-		l.FileBytes != DefaultFileBytes || l.HeavyCalls != DefaultHeavyCalls || l.HeavyWait != DefaultHeavyWait {
-		t.Fatalf("defaults = %+v", l)
-	}
-	if DefaultFiles < 2*DefaultMigrations {
-		t.Fatalf("the file limit must clear two files per migration at the migration limit: %d < %d",
-			DefaultFiles, 2*DefaultMigrations)
-	}
-	set := Limits{RequestBytes: 1, Migrations: 9, Files: 2, FileBytes: 3, HeavyCalls: 4, HeavyWait: time.Second}
-	if got := set.WithDefaults(); got != set {
-		t.Fatalf("explicit limits = %+v, want %+v", got, set)
-	}
-}
 
 func directory(n int, body string) []*godwitv1.MigrationFile {
 	out := make([]*godwitv1.MigrationFile, 0, 2*n)
@@ -43,46 +26,25 @@ func directory(n int, body string) []*godwitv1.MigrationFile {
 	return out
 }
 
-// A real 200-migration directory must pass, and so must the 1000-migration one the load rig builds.
-func TestCheckFiles(t *testing.T) {
+func TestCheckFilesMeasuresBodiesAndRefusesAsInvalidArgument(t *testing.T) {
 	t.Parallel()
 
-	l := Limits{}.WithDefaults()
-	if err := l.checkFiles(directory(200, strings.Repeat("-- migration\n", 600))); err != nil {
+	s := &Server{}
+	if err := s.checkFiles(directory(200, strings.Repeat("-- migration\n", 600))); err != nil {
 		t.Fatalf("a 200-migration directory must be admitted: %v", err)
 	}
-	deep := append(directory(1000, "select 1;\n"),
-		&godwitv1.MigrationFile{Name: "20260902000000_squash.up.sql", Body: "-- godwit: checkpoint\n"})
-	if err := l.checkFiles(deep); err != nil {
-		t.Fatalf("a 1000-migration directory and its checkpoint must be admitted: %v", err)
-	}
-
-	cases := []struct {
-		name string
-		in   []*godwitv1.MigrationFile
-		want string
-	}{
-		{"too many files", make([]*godwitv1.MigrationFile, l.Files+1), "too many migration files"},
-		{"too many migrations", directory(l.Migrations+1, ""), "too many migrations"},
-		{"long name", []*godwitv1.MigrationFile{{Name: strings.Repeat("n", maxNameBytes+1)}}, "file name is"},
-		{"big body", []*godwitv1.MigrationFile{{Name: "a.up.sql", Body: strings.Repeat("x", l.FileBytes+1)}}, "bytes, limit"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := l.checkFiles(tc.in)
-			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v", err)
-			}
-		})
+	err := s.checkFiles([]*godwitv1.MigrationFile{
+		{Name: "a.up.sql", Body: strings.Repeat("x", limits.DefaultFileBytes+1)},
+	})
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "bytes, limit") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestGateAdmitsAndRefuses(t *testing.T) {
 	t.Parallel()
 
-	g := newGate(Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
+	g := newGate(limits.Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
 	leave, err := g.enter(context.Background(), godwitv1connect.GodwitServiceListRunsProcedure)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +76,7 @@ func TestGateAdmitsAndRefuses(t *testing.T) {
 func TestGateInterceptor(t *testing.T) {
 	t.Parallel()
 
-	g := newGate(Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
+	g := newGate(limits.Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
 	blocked := make(chan struct{})
 	release := make(chan struct{})
 	unary := g.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
