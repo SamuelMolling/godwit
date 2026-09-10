@@ -21,18 +21,36 @@ import (
 // rather than a token, so api.Authorize stands in for the interceptor that would have made the decision.
 type service interface {
 	PlanRun(context.Context, *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error)
+	CreateRun(context.Context, *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error)
+	ConfirmRollout(context.Context, *connect.Request[godwitv1.ConfirmRolloutRequest]) (*connect.Response[godwitv1.ConfirmRolloutResponse], error)
+	RevertRun(context.Context, *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error)
+	GetRun(context.Context, *connect.Request[godwitv1.GetRunRequest]) (*connect.Response[godwitv1.GetRunResponse], error)
+	GetPlan(context.Context, *connect.Request[godwitv1.GetPlanRequest]) (*connect.Response[godwitv1.GetPlanResponse], error)
+}
+
+// bindings is the durable half: a run outlives the delivery that created it, and may settle on another
+// replica, so which pull request it belongs to is in the store rather than in this process.
+type runStore interface {
+	RecordGitHubRun(ctx context.Context, g controlplane.GitHubRun) error
+	ClaimGitHubReports(ctx context.Context, lease time.Duration, limit int) ([]controlplane.GitHubRun, error)
+	MarkGitHubReported(ctx context.Context, runID, state string) error
+	GitHubRunsOf(ctx context.Context, repository string, pull int, target string) ([]controlplane.GitHubRun, error)
 }
 
 const (
-	defaultWorkers = 2
-	defaultQueue   = 64
-	defaultTimeout = 15 * time.Minute
+	defaultWorkers  = 2
+	defaultQueue    = 64
+	defaultTimeout  = 15 * time.Minute
+	defaultInterval = 5 * time.Second
+	defaultLease    = time.Minute
+	reportBatch     = 16
 )
 
 // WorkerConfig is what carrying a command out needs; NewWorker fills in what is left zero.
 type WorkerConfig struct {
 	API     forge
 	Service service
+	Runs    runStore
 	Limits  api.Limits
 	// PublicURL is the base a check's details_url is built on; empty links nothing.
 	PublicURL string
@@ -41,7 +59,9 @@ type WorkerConfig struct {
 	Workers int
 	Queue   int
 	Timeout time.Duration
-	Log     *slog.Logger
+	// Interval is how often a replica looks for a run whose outcome the pull request has not been told.
+	Interval time.Duration
+	Log      *slog.Logger
 }
 
 // Worker runs the commands the receiver accepted, off the delivery's own request.
@@ -49,17 +69,16 @@ type Worker struct {
 	cfg    WorkerConfig
 	jobs   chan command
 	drain  chan struct{}
+	teller chan struct{}
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 	mu     sync.RWMutex
 	closed bool
 }
 
-// NewWorker returns a started Worker; Stop drains what it has accepted.
-func NewWorker(cfg WorkerConfig) (*Worker, error) {
-	if cfg.API == nil || cfg.Service == nil || cfg.Log == nil {
-		return nil, &configError{"the github worker needs an api client, the godwit service and a logger"}
-	}
+// NewWorker returns a started Worker; Stop drains what it has accepted. New refuses a Receiver with no
+// Runner, which is where a worker that was never wired is caught.
+func NewWorker(cfg WorkerConfig) *Worker {
 	if cfg.Workers <= 0 {
 		cfg.Workers = defaultWorkers
 	}
@@ -69,15 +88,22 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
 	}
+	if cfg.Interval <= 0 {
+		cfg.Interval = defaultInterval
+	}
 	cfg.Limits = cfg.Limits.WithDefaults()
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &Worker{cfg: cfg, jobs: make(chan command, cfg.Queue), drain: make(chan struct{}), cancel: cancel}
+	w := &Worker{
+		cfg: cfg, jobs: make(chan command, cfg.Queue),
+		drain: make(chan struct{}), teller: make(chan struct{}), cancel: cancel,
+	}
 	for range cfg.Workers {
 		w.wg.Add(1)
 		go w.serve(ctx)
 	}
+	go w.tell(ctx)
 
-	return w, nil
+	return w
 }
 
 // Stop closes the queue and waits for what is in flight, cancelling it when ctx gives up first.
@@ -97,6 +123,7 @@ func (w *Worker) Stop(ctx context.Context) {
 	case <-ctx.Done():
 	}
 	w.cancel()
+	<-w.teller
 }
 
 func (w *Worker) serve(ctx context.Context) {
@@ -179,6 +206,8 @@ type done struct {
 	conclusion string
 	url        string
 	check      int64
+	// run is set when the command queued one: the check stays open until it settles.
+	run string
 }
 
 const (
@@ -207,16 +236,27 @@ func (w *Worker) one(ctx context.Context, repo repoView, cmd command, p project)
 	if err := cmd.bound.grant(cmd.repository, p.root, p.target); err != nil {
 		return refusedBy(cmd, p, err)
 	}
+	// confirm and revert act on a run that already carries its migration set; only the two that submit
+	// one have to read the directory.
+	switch cmd.name {
+	case "confirm":
+		return w.confirm(ctx, cmd, p)
+	case "revert":
+		return w.revert(ctx, cmd, p)
+	}
 	files, err := migrations(ctx, repo, p.path(), cmd.head, w.cfg.Limits)
 	if err != nil {
 		return refusedBy(cmd, p, err)
 	}
 	if len(files) == 0 {
 		return done{
-			project: p, conclusion: conclusionSuccess, title: "nothing to plan",
-			body: fmt.Sprintf("## godwit %s\n\n`%s` holds no migration at %s, so there is nothing to plan against `%s`.\n",
-				cmd.name, p.path(), short(cmd.head), p.target),
+			project: p, conclusion: conclusionSuccess, title: "nothing to " + cmd.name,
+			body: fmt.Sprintf("## godwit %s\n\n`%s` holds no migration at %s, so there is nothing to %s against `%s`.\n",
+				cmd.name, p.path(), short(cmd.head), cmd.name, p.target),
 		}
+	}
+	if cmd.name == "apply" {
+		return w.apply(ctx, cmd, p, files)
 	}
 
 	return w.plan(ctx, cmd, p, files)
@@ -279,6 +319,11 @@ func (w *Worker) begin(ctx context.Context, repo repoView, cmd command, p projec
 func (w *Worker) settle(ctx context.Context, repo repoView, cmd command, all []done, log *slog.Logger) {
 	name := checks[cmd.name]
 	for _, d := range all {
+		if d.run != "" {
+			w.bind(ctx, cmd, d, log)
+
+			continue
+		}
 		if d.check == 0 {
 			continue
 		}
@@ -291,6 +336,19 @@ func (w *Worker) settle(ctx context.Context, repo repoView, cmd command, all []d
 	}
 }
 
+// bind is what lets any replica finish the command: without the row the run still applies, and the pull
+// request is never told.
+func (w *Worker) bind(ctx context.Context, cmd command, d done, log *slog.Logger) {
+	if err := w.cfg.Runs.RecordGitHubRun(ctx, controlplane.GitHubRun{
+		RunID: d.run, Repository: cmd.repository, RepositoryID: cmd.repositoryID, Installation: cmd.installation,
+		PullRequest: cmd.number, Head: cmd.head, Command: cmd.name, Target: d.project.target,
+		Marker: cmd.markerFor(d.project), Format: d.project.format, CheckRun: d.check,
+	}); err != nil {
+		log.Error("the run was created but not bound to the pull request, which will not hear about it",
+			"run", d.run, "target", d.project.target, "error", err)
+	}
+}
+
 // reportMarker is the Action's, so that if both ever ran on one pull request exactly one report stands.
 var reportMarker = map[string]string{
 	"plan": "<!-- godwit:plan -->", "apply": "<!-- godwit:migrate -->",
@@ -298,17 +356,38 @@ var reportMarker = map[string]string{
 }
 
 func (w *Worker) say(ctx context.Context, repo repoView, cmd command, all []done, log *slog.Logger) {
-	marker, ok := reportMarker[cmd.name]
-	if !ok || len(all) == 0 {
+	if _, ok := reportMarker[cmd.name]; !ok || len(all) == 0 {
 		return
 	}
-	bodies := make([]string, 0, len(all))
+	for _, group := range grouped(cmd, all) {
+		if err := repo.speak(ctx, cmd.number, group.marker, strings.Join(group.bodies, "\n---\n")); err != nil {
+			log.Warn("could not post the report on the pull request", "error", err)
+		}
+	}
+}
+
+type sticky struct {
+	marker string
+	bodies []string
+}
+
+// grouped keeps one comment per marker: with several projects each carries its own, because a run
+// reports itself later and would otherwise delete the comment of the project next to it.
+func grouped(cmd command, all []done) []sticky {
+	var out []sticky
+	at := map[string]int{}
 	for _, d := range all {
-		bodies = append(bodies, d.body)
+		marker := cmd.markerFor(d.project)
+		i, ok := at[marker]
+		if !ok {
+			i = len(out)
+			at[marker] = i
+			out = append(out, sticky{marker: marker})
+		}
+		out[i].bodies = append(out[i].bodies, d.body)
 	}
-	if err := repo.speak(ctx, cmd.number, marker, strings.Join(bodies, "\n---\n")); err != nil {
-		log.Warn("could not post the report on the pull request", "error", err)
-	}
+
+	return out
 }
 
 func (c command) rollout(p project) string {
@@ -332,4 +411,14 @@ func (c command) checkName(name string, p project) string {
 	}
 
 	return name + " (" + p.target + ")"
+}
+
+// markerFor stays the Action's while there is one project, and gains the target when there are several.
+func (c command) markerFor(p project) string {
+	marker := reportMarker[c.name]
+	if len(c.projects) < 2 {
+		return marker
+	}
+
+	return strings.TrimSuffix(marker, " -->") + ":" + p.target + " -->"
 }

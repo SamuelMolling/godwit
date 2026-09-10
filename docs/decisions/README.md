@@ -27,6 +27,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0017](0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) | The repository asks to be planned, the binding says which target it may be planned against | #127 |
 | [0018](0018-the-app-answers-where-the-author-is-looking.md) | The App answers where the author is looking: an acknowledgement, and every refusal on the pull request | #129 |
 | [0019](0019-the-app-reads-the-migrations-at-the-head.md) | The App reads the migrations at the head, and the listing decides before the bodies | #134 |
+| [0020](0020-a-run-is-bound-to-the-pull-request-that-asked-for-it.md) | A run is bound to the pull request that asked for it, and whoever sees it settle reports it | #135 |
 
 ## Open questions
 

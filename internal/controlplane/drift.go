@@ -103,7 +103,8 @@ func (m *DriftMonitor) sweepDeliveries(ctx context.Context) {
 	if m.DeliveryRetention <= 0 {
 		return
 	}
-	n, err := m.store.SweepDeliveries(ctx, time.Now().Add(-m.DeliveryRetention))
+	before := time.Now().Add(-m.DeliveryRetention)
+	n, err := m.store.SweepDeliveries(ctx, before)
 	if err != nil {
 		m.log.Error("delivery sweep failed", "error", err)
 
@@ -111,6 +112,16 @@ func (m *DriftMonitor) sweepDeliveries(ctx context.Context) {
 	}
 	if n > 0 {
 		m.log.Info("webhook deliveries swept", "deleted", n, "retention", m.DeliveryRetention)
+	}
+	// A binding outlives its delivery: it is what a run reports back through, so it goes once reported.
+	bound, err := m.store.SweepGitHubRuns(ctx, before)
+	if err != nil {
+		m.log.Error("github run sweep failed", "error", err)
+
+		return
+	}
+	if bound > 0 {
+		m.log.Info("github run bindings swept", "deleted", bound, "retention", m.DeliveryRetention)
 	}
 }
 
