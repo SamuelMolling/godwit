@@ -27,6 +27,7 @@ type GitHubApp struct {
 	MaxBodyBytes  int
 	MaxAge        time.Duration
 	Associations  []string
+	Reaction      string
 	OnReady       func(addr net.Addr)
 }
 
@@ -62,6 +63,7 @@ func (g GitHubApp) receiver(key crypto.Signer, store *controlplane.Store, m *met
 		MaxBodyBytes: g.MaxBodyBytes,
 		MaxAge:       g.MaxAge,
 		Associations: g.Associations,
+		Reaction:     g.Reaction,
 		Store:        githubapp.Adapt(store),
 		API: &githubapp.Client{
 			BaseURL: g.APIBaseURL,

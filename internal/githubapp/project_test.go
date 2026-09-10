@@ -11,7 +11,7 @@ func repoWith(t *testing.T, touched []string, files map[string]string) *fakeRepo
 	t.Helper()
 	repo := writer(t)
 	repo.touched, repo.files = touched, files
-	repo.submitted = []review{{login: "bob", state: "APPROVED", commitID: testHead}}
+	repo.submitted = []review{{login: "bob", state: "APPROVED"}}
 
 	return repo
 }

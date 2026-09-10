@@ -30,6 +30,8 @@ const (
 const (
 	defaultMaxBodyBytes = 1 << 20
 	defaultMaxAge       = time.Hour
+	// defaultReaction is on where Atlantis's --emoji-reaction is off; decision 0018 argues why.
+	defaultReaction = "eyes"
 )
 
 const (
@@ -69,13 +71,20 @@ type Config struct {
 	MaxBodyBytes int
 	MaxAge       time.Duration
 	Associations []string
-	Store        store
-	API          forge
-	Runner       runner
-	Record       func(event, result string)
-	Log          *slog.Logger
-	Now          func() time.Time
+	// Reaction is the emoji godwit adds to a comment it read as a command; empty takes the default, NoReaction adds none.
+	Reaction string
+	Store    store
+	API      forge
+	Runner   runner
+	Record   func(event, result string)
+	Log      *slog.Logger
+	Now      func() time.Time
 }
+
+const unsetReaction = ""
+
+// NoReaction is what an operator sets to stop godwit reacting to comments at all.
+const NoReaction = "none"
 
 // Receiver is the GitHub App webhook endpoint.
 type Receiver struct {
@@ -106,6 +115,9 @@ func New(cfg Config) (*Receiver, error) {
 	}
 	if cfg.Runner == nil {
 		cfg.Runner = recorder{log: cfg.Log}
+	}
+	if cfg.Reaction == unsetReaction {
+		cfg.Reaction = defaultReaction
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -225,37 +237,37 @@ func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd comm
 		fmt.Sprintf("godwit %s accepted at %s for %s", cmd.name, short(cmd.head), cmd.projectNames())
 }
 
-func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, error) {
+func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, *request, error) {
 	req, out := parse(event, p)
 	if out != nil {
-		return nil, out, nil
+		return nil, out, req, nil
 	}
 	if out := r.fresh(req); out != nil {
-		return nil, out, nil
+		return nil, out, req, nil
 	}
 	stored, err := r.cfg.Store.GitHubBindings(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, req, err
 	}
 	bound := bind(stored, req.repository)
 	if len(bound) == 0 {
 		return nil, refused("repository %s is bound to no godwit target, so it gets nothing here — not an apply "+
 			"and not a plan; ask a godwit operator to bind it (godwit target add <target> --github-repo %s)",
-			req.repository, req.repository), nil
+			req.repository, req.repository), req, nil
 	}
 	at, out, err := r.resolve(ctx, req, p)
 	if out != nil || err != nil {
-		return nil, out, err
+		return nil, out, req, err
 	}
 	res, err := resolve(ctx, at.repo, bound, req, at.head, at.files)
 	if errors.Is(err, errTruncated) {
-		return nil, tooLarge(req, err), nil
+		return nil, tooLarge(req, err), req, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, req, err
 	}
 	if len(res.planned) == 0 {
-		return nil, nothingToDo(req, res), nil
+		return nil, nothingToDo(req, res), req, nil
 	}
 	head := at.head
 
@@ -265,7 +277,72 @@ func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payloa
 		principal: api.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
 		bound:     bound, name: req.name, cmd: req.cmd, projects: res.planned,
 		source: "github.com/" + req.repository + "@" + head,
-	}, nil, nil
+	}, nil, req, nil
+}
+
+// refusedMarker is the Action's, so that if both ever ran on one pull request exactly one refusal stands.
+const refusedMarker = "<!-- godwit:refused -->"
+
+// tellable are the outcomes a person has to act on; an ignored delivery is not one.
+var tellable = map[string]bool{resultRefused: true, resultStale: true}
+
+func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, error) {
+	cmd, out, req, err := r.decide(ctx, event, delivery, p)
+	if out != nil && tellable[out.result] {
+		r.tell(ctx, p, req, out)
+	}
+
+	return cmd, out, err
+}
+
+// checks is the mapping scripts/action-refuse.sh uses for the commit status the Action sets.
+var checks = map[string]string{
+	"plan": "godwit/plan", "apply": "godwit/applied", "confirm": "godwit/applied", "revert": "godwit/applied",
+}
+
+func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outcome) {
+	if req == nil || req.number <= 0 {
+		return
+	}
+	repo, err := r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
+	if err != nil {
+		r.cfg.Log.Warn("could not answer on the pull request", "repository", req.repository,
+			"pull_request", req.number, "error", err)
+
+		return
+	}
+	if err := repo.speak(ctx, req.number, refusedMarker, refusal(req, out)); err != nil {
+		r.cfg.Log.Warn("could not post the refusal on the pull request", "repository", req.repository,
+			"pull_request", req.number, "error", err)
+	}
+	r.mark(ctx, repo, req, out)
+}
+
+// mark turns the check the command would have set red; a head godwit cannot read leaves the comment alone.
+func (r *Receiver) mark(ctx context.Context, repo repoView, req *request, out *outcome) {
+	name, ok := checks[req.name]
+	if !ok {
+		return
+	}
+	head := req.headSHA
+	if !validSHA(head) {
+		pr, err := repo.pullRequest(ctx, req.number)
+		if err != nil || !validSHA(pr.head) {
+			r.cfg.Log.Warn("could not set the refusal check", "repository", req.repository,
+				"pull_request", req.number, "check", name, "error", err)
+
+			return
+		}
+		head = pr.head
+	}
+	if err := repo.check(ctx, name, head, "godwit "+req.name+" refused", out.message); err != nil {
+		r.cfg.Log.Warn("could not set the refusal check", "repository", req.repository,
+			"pull_request", req.number, "check", name, "error", err)
+	}
+}
+
+func refusal(req *request, out *outcome) string {
+	return fmt.Sprintf("## godwit %s refused\n\n%s\n\nNothing ran.\n", req.name, out.message)
 }
 
 // tooLarge is what a partial listing gets instead of a wrong answer, and it is never silence.
@@ -300,7 +377,9 @@ func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *
 		return r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
 	}
 	if req.commander != "" {
-		return authorizer{open: open, allowed: r.allowed}.authorize(ctx, req)
+		return authorizer{
+			open: open, allowed: r.allowed, reaction: r.cfg.Reaction, log: r.cfg.Log,
+		}.authorize(ctx, req)
 	}
 	if req.headRepo != req.repository {
 		return at{}, refused("pull request #%d has its head in %s, not %s: a fork's pull request is not planned "+

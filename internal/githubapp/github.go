@@ -27,6 +27,9 @@ const (
 )
 
 type repoView interface {
+	react(ctx context.Context, comment int64, reaction string) error
+	speak(ctx context.Context, number int, marker, body string) error
+	check(ctx context.Context, name, head, title, summary string) error
 	permission(ctx context.Context, login string) (string, error)
 	pullRequest(ctx context.Context, number int) (pull, error)
 	reviews(ctx context.Context, number int) ([]review, bool, error)
@@ -49,9 +52,8 @@ type pull struct {
 }
 
 type review struct {
-	login    string
-	state    string
-	commitID string
+	login string
+	state string
 }
 
 // Client authenticates as the App: a JWT to mint an installation token, and that token for everything else.
@@ -137,9 +139,8 @@ func (r *repoClient) pullRequest(ctx context.Context, number int) (pull, error) 
 }
 
 type reviewBody struct {
-	State    string `json:"state"`
-	CommitID string `json:"commit_id"`
-	User     struct {
+	State string `json:"state"`
+	User  struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
@@ -155,7 +156,7 @@ func (r *repoClient) reviews(ctx context.Context, number int) ([]review, bool, e
 			return nil, false, err
 		}
 		for _, p := range page {
-			all = append(all, review{login: p.User.Login, state: p.State, commitID: p.CommitID})
+			all = append(all, review{login: p.User.Login, state: p.State})
 		}
 		if len(all) >= reviewsCap {
 			return nil, false, nil
@@ -243,6 +244,90 @@ func (r *repoClient) file(ctx context.Context, path, ref string) ([]byte, error)
 	}
 
 	return body, nil
+}
+
+func (r *repoClient) react(ctx context.Context, comment int64, reaction string) error {
+	url := r.url("/issues/comments/" + strconv.FormatInt(comment, 10) + "/reactions")
+	body := fmt.Sprintf(`{"content":%q}`, reaction)
+	var out struct{}
+	_, err := r.client.call(ctx, http.MethodPost, url, r.token, []byte(body), &out)
+
+	return err
+}
+
+type issueComment struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	User user   `json:"user"`
+}
+
+const commentsCap = 1000
+
+// speak leaves one comment carrying marker and makes it the newest on the page, as scripts/action-refuse.sh does.
+func (r *repoClient) speak(ctx context.Context, number int, marker, body string) error {
+	old, err := r.mine(ctx, number, marker)
+	if err != nil {
+		return err
+	}
+	for _, id := range old {
+		if err := r.drop(ctx, id); err != nil {
+			return err
+		}
+	}
+
+	return r.write(ctx, http.MethodPost, r.url("/issues/"+strconv.Itoa(number)+"/comments"), marker+"\n"+body)
+}
+
+func (r *repoClient) drop(ctx context.Context, id int64) error {
+	var out struct{}
+	_, err := r.client.call(ctx, http.MethodDelete, r.url("/issues/comments/"+strconv.FormatInt(id, 10)), r.token, nil, &out)
+
+	return err
+}
+
+// check is concluded as it is created, so a refusal never leaves a check spinning with nothing to close it.
+func (r *repoClient) check(ctx context.Context, name, head, title, summary string) error {
+	body, _ := json.Marshal(map[string]any{ // only strings and one nested map; cannot fail
+		"name": name, "head_sha": head, "status": "completed", "conclusion": "failure",
+		"output": map[string]string{"title": title, "summary": summary},
+	})
+	var out struct{}
+	_, err := r.client.call(ctx, http.MethodPost, r.url("/check-runs"), r.token, body, &out)
+
+	return err
+}
+
+func (r *repoClient) write(ctx context.Context, method, url, body string) error {
+	payload, _ := json.Marshal(map[string]string{"body": body}) // map[string]string cannot fail
+	var out struct{}
+	_, err := r.client.call(ctx, method, url, r.token, payload, &out)
+
+	return err
+}
+
+func (r *repoClient) mine(ctx context.Context, number int, marker string) ([]int64, error) {
+	url := r.url("/issues/" + strconv.Itoa(number) + "/comments?per_page=100")
+	var out []int64
+	read := 0
+	for url != "" {
+		var page []issueComment
+		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range page {
+			if strings.HasPrefix(c.Body, marker) {
+				out = append(out, c.ID)
+			}
+		}
+		read += len(page)
+		if read >= commentsCap {
+			return out, nil
+		}
+		url = next
+	}
+
+	return out, nil
 }
 
 func (r *repoClient) url(path string) string {

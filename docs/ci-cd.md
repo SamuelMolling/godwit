@@ -457,14 +457,14 @@ With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`
 
 The Action needs a runner that can reach godwit, and a workflow in every consuming repository. The App inverts that: the service receives the pull request events itself, so a consumer configures a webhook and nothing else. [Decision 0016](decisions/0016-the-app-is-bound-to-targets-by-the-server.md) has the reasoning, what an attacker gains from the webhook secret, and what is deliberately not built.
 
-**What is built today is the receiving half.** A delivery is verified, de-duplicated, authorised and recorded in `cp_audit`, and nothing else happens: no files are read, no run is created, nothing is posted back to the pull request. The App is not yet a replacement for the Action, and a repository that wants a plan on its pull requests still needs the workflow.
+**What is built today stops short of running anything.** A delivery is verified, de-duplicated, authorised, resolved to the projects the pull request touches and recorded in `cp_audit`; a command is acknowledged and a refusal is answered on the pull request. No run is created and no report is posted, because there is no run yet. The App is not yet a replacement for the Action, and a repository that wants a plan on its pull requests still needs the workflow.
 
 ### Registering the App
 
 One App per godwit deployment, registered by the operator — never a shared, publicly listed one, because a shared App means one webhook secret across unrelated fleets.
 
 1. **New GitHub App**, under the organisation that owns the repositories. Webhook URL is `https://<host><path>` where the path is `/github/webhook`; set a webhook secret and keep it wherever the master key lives.
-2. **Repository permissions**: `Metadata: read` (the collaborator permission lookup), `Pull requests: read` (the pull request and its reviews), `Contents: read` (the migration files, once the App fetches them), `Checks: write` (the report, once the App writes one). Nothing needs `write` on contents, and the App never asks for it: a service that can write to the repository can write the migration it is about to apply.
+2. **Repository permissions**: `Metadata: read` (the collaborator permission lookup), `Pull requests: **write**` (the pull request and its reviews, the emoji reaction on a command, and the comment saying why godwit did nothing), `Contents: read` (the project file, and the migration files once the App fetches them), `Checks: write` (the report, once the App writes one). Nothing needs `write` on contents, and the App never asks for it: a service that can write to the repository can write the migration it is about to apply.
 3. **Subscribe to** `Issue comment`, `Pull request` and `Pull request review`. Anything else is answered `202` and dropped.
 4. **Generate a private key** and install the App on the repositories that will use it. Installing it grants nothing on its own — see the binding below.
 5. Point `--github-webhook-addr` at a port only the tunnel or ingress reaches, and give the service `GODWIT_GITHUB_APP_ID`, `GODWIT_GITHUB_WEBHOOK_SECRET` and the key ([configuration](configuration.md#github-app)). Without `--github-webhook-addr` the listener does not exist.
@@ -529,11 +529,21 @@ The same three checks as [the Action](#who-may-command-an-apply), run server-sid
 
 1. **`author_association`** must be in `--github-allowed-associations` (default `OWNER,MEMBER,COLLABORATOR`). Naming `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` or `NONE` fails `serve` at start-up rather than at the first comment.
 2. **Repository permission** — `admin` or `write` for the commander, and for the approver. A failed lookup refuses.
-3. **An approving review on the exact head**, by someone other than the pull request author, for `apply` and `confirm`. There is no `require-approval: false` on this path.
+3. **An approving review GitHub still reports**, for `apply` and `confirm`: the latest review per reviewer, one of them `APPROVED`, and that approver's own permission checked too. There is no `require-approval: false` on this path. As on the Action's, godwit takes GitHub's answer rather than re-deriving it from commit shas — [the amendment to decision 0007](decisions/0007-the-action-authorises-with-permission-and-approval.md#amendment--the-platform-says-whether-a-pull-request-is-approved) says why, and *Dismiss stale pull request approvals when new commits are pushed* is the branch-protection setting that makes a push withdraw one.
 
 A command's grammar is the one on this page: [what counts as commanding](#what-counts-as-commanding) and its [flags](#flags-on-a-command-comment) are the same parser. A comment that names no command is silence, and the App posts nothing about it — the Action's green `skipped=true` tick has no equivalent here.
 
 Beyond those: the pull request must be open (`plan`, `apply`, `confirm`) and unmerged (`revert`); the head must be in the repository the delivery named, so a fork's pull request is refused whatever the command; and a comment or review older than `--github-webhook-max-age` (default one hour) is refused before any of the above, so a redelivered command from yesterday cannot apply today.
+
+### What godwit says back
+
+**A comment godwit reads as a command is marked with an emoji** — `eyes` by default, `--github-emoji-reaction none` turns it off. It is added after the `author_association` filter and before the permission lookup, so a command that takes several API calls to refuse never looks unread, and a comment from someone who could never command godwit costs no API call at all. The reaction means **read**, not accepted; a `godwit apply` that is then refused still carries it. Atlantis has the same thing behind `--emoji-reaction`, defaulted off; godwit defaults it on ([decision 0018](decisions/0018-the-app-answers-where-the-author-is-looking.md) argues why).
+
+**A refusal is said on the pull request, not only in the delivery log.** Anything a person has to act on — an unbound repository, a commander without write, a `godwit.yaml` that does not parse or names a target the binding does not carry, a pull request too large for godwit to see the whole of, a command that arrived too late or carries a flag it does not take — becomes a `## godwit <command> refused` comment carrying the reason, and turns the check that command would have set (`godwit/plan`, or `godwit/applied` for `apply`, `confirm` and `revert`) red with the same text.
+
+It is the [same answer the Action gives](#a-refusal-answers-on-the-pull-request), in the same words: the same `<!-- godwit:refused -->` marker, the previous refusal deleted so exactly one stands and it is the newest thing on the page, and a comment of its own so a refusal never overwrites a report that is still true. The App expresses the signal as a Check Run where the Action sets a commit status — a repository uses one integration or the other, and [0016](decisions/0016-the-app-is-bound-to-targets-by-the-server.md) refused to have both surfaces from one path. A refusal check is concluded as it is created, so nothing is ever left spinning; a comment godwit could not parse into a command sets no check, since godwit does not know which one was meant.
+
+A pull request that simply changed nothing godwit plans still gets nothing, and neither does an accepted command yet — what an accepted command produces is a report about a run, and the App does not run anything until the next change. Failing to react, to comment or to set the check is a warning in the service log and never fails the delivery.
 
 ### What a delivery is answered with
 
