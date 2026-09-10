@@ -1,6 +1,6 @@
 # 0018 — The App answers where the author is looking
 
-Shipped in #PR: the acknowledgement and the refusals. The run report, the Check Runs and the link to live output are the next change, and this record says why they are not this one.
+Shipped in #129: the acknowledgement and the refusals. The run report, the Check Runs and the link to live output are the next change, and this record says why they are not this one.
 
 ## The open question
 
