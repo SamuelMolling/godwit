@@ -144,6 +144,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--github-private-key-file` | `GODWIT_GITHUB_PRIVATE_KEY_FILE` | PEM file holding the App's private key (PKCS#1 or PKCS#8); `GODWIT_GITHUB_PRIVATE_KEY` carries the key itself instead |
 | `--github-webhook-max-age` | `1h` | how old a comment's `created_at` or a review's `submitted_at` may be before its delivery is refused. A `pull_request` payload carries no timestamp of its own and is not aged |
 | `--github-webhook-max-bytes` | `1048576` (1 MiB) | largest delivery body read before the signature is verified; over it the answer is `413` with no body |
+| `--github-emoji-reaction` | `eyes` | emoji added to a pull request comment godwit read as a command, so a command never looks unread; `none` adds none (or `GODWIT_GITHUB_EMOJI_REACTION`) |
 | `--github-allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | author associations that may command godwit from a comment or review body. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and `NONE` fail `serve` at start-up: anyone who opened a pull request carries one |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
@@ -202,6 +203,7 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_GITHUB_PRIVATE_KEY` | with `--github-webhook-addr` | the App's private key as PEM, when it does not come from `--github-private-key-file` |
 | `GODWIT_GITHUB_PRIVATE_KEY_FILE` | no | default for `--github-private-key-file` |
 | `GODWIT_GITHUB_API_URL` | no | REST API base; defaults to `https://api.github.com` |
+| `GODWIT_GITHUB_EMOJI_REACTION` | no | default for `--github-emoji-reaction` |
 | `VAULT_ADDR` | for `vault` targets | Vault base URL; the provider fails with `vault provider not configured: set VAULT_ADDR` otherwise |
 | `VAULT_TOKEN` | no | static Vault token; when unset the Kubernetes auth method is used |
 | `VAULT_K8S_ROLE` | without `VAULT_TOKEN` | role for `POST auth/<mount>/login` |

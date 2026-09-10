@@ -475,3 +475,180 @@ func TestWholeReadsTheCountItWasGiven(t *testing.T) {
 		}
 	}
 }
+
+func TestReact(t *testing.T) {
+	t.Parallel()
+
+	var gotURL, gotBody string
+	r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		gotURL, gotBody = req.URL.Path, string(body)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if err := r.react(context.Background(), 77, "eyes"); err != nil {
+		t.Fatal(err)
+	}
+	if gotURL != "/repos/"+testRepo+"/issues/comments/77/reactions" || gotBody != `{"content":"eyes"}` {
+		t.Fatalf("POST %s %s", gotURL, gotBody)
+	}
+}
+
+func TestReactFails(t *testing.T) {
+	t.Parallel()
+
+	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if err := r.react(context.Background(), 77, "eyes"); err == nil {
+		t.Fatal("no error")
+	}
+}
+
+func TestSpeakPostsWhenGodwitHasNotSpokenYet(t *testing.T) {
+	t.Parallel()
+
+	var method, url, body string
+	r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `[{"id":1,"body":"unrelated","user":{"login":"alice"}}]`)
+
+			return
+		}
+		raw, _ := io.ReadAll(req.Body)
+		method, url, body = req.Method, req.URL.Path, string(raw)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if err := r.speak(context.Background(), 3, "<!-- m -->", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || url != "/repos/"+testRepo+"/issues/3/comments" {
+		t.Fatalf("%s %s", method, url)
+	}
+	var posted struct{ Body string }
+	if err := json.Unmarshal([]byte(body), &posted); err != nil {
+		t.Fatal(err)
+	}
+	if posted.Body != "<!-- m -->\nhello" {
+		t.Fatalf("body = %q", posted.Body)
+	}
+}
+
+func TestSpeakDeletesTheOneItPostedBeforeSoTheNewestStands(t *testing.T) {
+	t.Parallel()
+
+	var deleted []string
+	posted := false
+	r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodGet:
+			_, _ = io.WriteString(w, `[{"id":9,"body":"<!-- m -->\nold"},{"id":4,"body":"chat"},{"id":11,"body":"<!-- m -->\nolder"}]`)
+		case http.MethodDelete:
+			deleted = append(deleted, req.URL.Path)
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			posted = true
+			_, _ = io.WriteString(w, `{}`)
+		}
+	})
+	if err := r.speak(context.Background(), 3, "<!-- m -->", "new"); err != nil {
+		t.Fatal(err)
+	}
+	want := "/repos/" + testRepo + "/issues/comments/"
+	if len(deleted) != 2 || deleted[0] != want+"9" || deleted[1] != want+"11" {
+		t.Fatalf("deleted = %v", deleted)
+	}
+	if !posted {
+		t.Fatal("the new refusal was never posted")
+	}
+}
+
+func TestSpeakFailures(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the comment list cannot be read", func(t *testing.T) {
+		t.Parallel()
+
+		r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+		if err := r.speak(context.Background(), 3, "<!-- m -->", "x"); err == nil {
+			t.Fatal("no error")
+		}
+	})
+	t.Run("the previous one cannot be deleted", func(t *testing.T) {
+		t.Parallel()
+
+		r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+			if req.Method == http.MethodGet {
+				_, _ = io.WriteString(w, `[{"id":9,"body":"<!-- m -->\nold"}]`)
+
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+		})
+		if err := r.speak(context.Background(), 3, "<!-- m -->", "x"); err == nil {
+			t.Fatal("no error")
+		}
+	})
+	t.Run("the comment cannot be posted", func(t *testing.T) {
+		t.Parallel()
+
+		r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+			if req.Method == http.MethodGet {
+				_, _ = io.WriteString(w, `[]`)
+
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+		})
+		if err := r.speak(context.Background(), 3, "<!-- m -->", "x"); err == nil {
+			t.Fatal("no error")
+		}
+	})
+}
+
+func TestCheckRunIsConcludedAsItIsCreated(t *testing.T) {
+	t.Parallel()
+
+	var url, body string
+	r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+		raw, _ := io.ReadAll(req.Body)
+		url, body = req.URL.Path, string(raw)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	if err := r.check(context.Background(), "godwit/plan", testHead, "godwit plan refused", "why"); err != nil {
+		t.Fatal(err)
+	}
+	if url != "/repos/"+testRepo+"/check-runs" {
+		t.Fatalf("url = %s", url)
+	}
+	var sent struct {
+		Name       string `json:"name"`
+		HeadSHA    string `json:"head_sha"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		Output     struct{ Title, Summary string }
+	}
+	if err := json.Unmarshal([]byte(body), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent.Name != "godwit/plan" || sent.HeadSHA != testHead || sent.Status != "completed" ||
+		sent.Conclusion != "failure" || sent.Output.Summary != "why" {
+		t.Fatalf("check = %+v", sent)
+	}
+}
+
+func TestCheckRunFails(t *testing.T) {
+	t.Parallel()
+
+	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if err := r.check(context.Background(), "godwit/plan", testHead, "t", "s"); err == nil {
+		t.Fatal("no error")
+	}
+}
+
+func TestACommentListLongerThanGodwitReadsStopsAtTheCap(t *testing.T) {
+	t.Parallel()
+
+	r := clientAt(t, pages(t, `{"id":1,"body":"noise","user":{"login":"someone"}}`, 100))
+	ids, err := r.mine(context.Background(), 3, "<!-- m -->")
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("mine = %v, %v", ids, err)
+	}
+}

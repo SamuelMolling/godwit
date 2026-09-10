@@ -167,14 +167,21 @@ func TestUnboundRepositoryGetsNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			f := newFixture(t, map[string]string{"payments": "someone/else"}, approvedBy(t, "bob", testHead))
+			repo := approvedBy(t, "bob", testHead)
+			f := newFixture(t, map[string]string{"payments": "someone/else"}, repo)
 			rec := f.post(t, tc.event, "d1", tc.body)
 			check(t, rec, http.StatusAccepted, "bound to no godwit target")
 			if strings.Contains(rec.Body.String(), "payments") {
 				t.Fatalf("the refusal named a target: %q", rec.Body.String())
 			}
-			if len(f.api.scoped) != 0 || f.store.commits != 0 {
-				t.Fatalf("an unbound repository reached github or the store")
+			if f.store.commits != 0 || len(f.runner.got) != 0 {
+				t.Fatal("an unbound repository was acted on")
+			}
+			if len(repo.notices) != 1 || !strings.Contains(repo.notices[0], "bound to no godwit target") {
+				t.Fatalf("notices = %v, want the refusal said once on the pull request", repo.notices)
+			}
+			if len(repo.read) != 0 || len(repo.reacted) != 0 {
+				t.Fatal("an unbound repository was read as well as told")
 			}
 			if got := f.result(t); got != resultRefused {
 				t.Fatalf("result = %s, want %s", got, resultRefused)
@@ -266,8 +273,11 @@ func TestStaleDeliveryIsRefused(t *testing.T) {
 	if got := f.result(t); got != resultStale {
 		t.Fatalf("result = %s, want %s", got, resultStale)
 	}
-	if len(f.api.scoped) != 0 {
-		t.Fatal("a stale delivery reached github")
+	if len(f.api.repo.notices) != 1 {
+		t.Fatalf("notices = %v, want the commenter told why nothing happened", f.api.repo.notices)
+	}
+	if len(f.api.repo.reacted) != 0 || f.store.commits != 0 {
+		t.Fatal("a stale delivery was acted on")
 	}
 }
 
@@ -519,8 +529,11 @@ func TestAssociationNarrows(t *testing.T) {
 	f := newFixture(t, bound, approvedBy(t, "bob", testHead))
 	rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "CONTRIBUTOR", "alice", now))
 	check(t, rec, http.StatusAccepted, "author association CONTRIBUTOR is not allowed")
-	if len(f.api.scoped) != 0 {
-		t.Fatal("a refused association still reached github")
+	if len(f.api.repo.reacted) != 0 {
+		t.Fatal("godwit acknowledged a comment it would not read as a command")
+	}
+	if len(f.api.repo.notices) != 1 {
+		t.Fatalf("notices = %v, want the commenter told why", f.api.repo.notices)
 	}
 }
 

@@ -35,6 +35,7 @@ type payload struct {
 		PullRequest json.RawMessage `json:"pull_request"`
 	} `json:"issue"`
 	Comment struct {
+		ID          int64     `json:"id"`
 		Body        string    `json:"body"`
 		CreatedAt   time.Time `json:"created_at"`
 		User        user      `json:"user"`
@@ -72,6 +73,7 @@ type request struct {
 	headSHA     string
 	headRepo    string
 	files       int
+	comment     int64
 }
 
 type outcome struct {
@@ -115,7 +117,7 @@ func commentRequest(req *request, p *payload) (*request, *outcome) {
 		return nil, ignored("comment on an issue, not a pull request")
 	}
 	req.number, req.commander, req.association = p.Issue.Number, p.Comment.User.Login, p.Comment.Association
-	req.at = p.Comment.CreatedAt
+	req.at, req.comment = p.Comment.CreatedAt, p.Comment.ID
 
 	return commanded(req, p.Comment.Body, "comment")
 }
@@ -138,7 +140,7 @@ func pullRequest(req *request, p *payload) (*request, *outcome) {
 	req.headSHA, req.headRepo = p.PullRequest.Head.SHA, p.PullRequest.Head.Repo.FullName
 	req.files = p.PullRequest.ChangedFiles
 	if !validSHA(req.headSHA) {
-		return nil, refused("the pull_request payload carries no head commit")
+		return req, refused("the pull_request payload carries no head commit")
 	}
 
 	return validated(req)
@@ -147,13 +149,13 @@ func pullRequest(req *request, p *payload) (*request, *outcome) {
 func commanded(req *request, body, what string) (*request, *outcome) {
 	cmd, err := comment.Parse(body, "")
 	if err != nil {
-		return nil, refused("%s", err)
+		return req, refused("%s", err)
 	}
 	if cmd == nil {
 		return nil, ignored("the %s names no godwit command", what)
 	}
 	if !validLogin(req.commander) {
-		return nil, refused("%q is not a github login", req.commander)
+		return req, refused("%q is not a github login", req.commander)
 	}
 	req.name, req.cmd = cmd.Name, cmd
 

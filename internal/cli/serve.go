@@ -26,7 +26,7 @@ func newServeCmd() *cobra.Command {
 	var maxRequestBytes, maxMigrations, maxFiles, maxFileBytes, maxConcurrentDiffs int
 	var skipValidation, requirePlan, withUI bool
 	var planTTL, planRetention time.Duration
-	var githubAddr, githubKeyFile string
+	var githubAddr, githubKeyFile, githubReaction string
 	var githubMaxAge time.Duration
 	var githubMaxBodyBytes int
 	var githubAssociations []string
@@ -78,6 +78,7 @@ func newServeCmd() *cobra.Command {
 					MaxBodyBytes:  githubMaxBodyBytes,
 					MaxAge:        githubMaxAge,
 					Associations:  githubAssociations,
+					Reaction:      githubReaction,
 				},
 				Listen:          listen,
 				StoreDSN:        storeDSN,
@@ -166,6 +167,9 @@ func newServeCmd() *cobra.Command {
 		"how old a comment or review may be before its delivery is refused as a replay")
 	cmd.Flags().IntVar(&githubMaxBodyBytes, "github-webhook-max-bytes", 1<<20,
 		"largest delivery body read before the signature is verified")
+	cmd.Flags().StringVar(&githubReaction, "github-emoji-reaction", envOr("GODWIT_GITHUB_EMOJI_REACTION", "eyes"),
+		"emoji godwit adds to a pull request comment it read as a command, so a command never looks unread; "+
+			"none adds no reaction (or GODWIT_GITHUB_EMOJI_REACTION)")
 	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		"author associations that may command godwit from a comment: OWNER, MEMBER or COLLABORATOR")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),

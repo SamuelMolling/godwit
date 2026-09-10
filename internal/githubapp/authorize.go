@@ -2,6 +2,7 @@ package githubapp
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 )
@@ -43,8 +44,10 @@ var (
 
 type authorizer struct {
 	// open mints the token only after the association narrowed, so an idle comment spends no GitHub budget.
-	open    func(ctx context.Context) (repoView, error)
-	allowed map[string]bool
+	open     func(ctx context.Context) (repoView, error)
+	allowed  map[string]bool
+	reaction string
+	log      *slog.Logger
 }
 
 func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, error) {
@@ -56,6 +59,7 @@ func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, 
 	if err != nil {
 		return at{}, nil, err
 	}
+	a.seen(ctx, repo, req)
 	if out, err := permitted(ctx, repo, req.commander, "commander"); out != nil || err != nil {
 		return at{}, out, err
 	}
@@ -80,6 +84,17 @@ func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, 
 	}
 
 	return at{head: pr.head, repo: repo, files: pr.files}, nil, nil
+}
+
+// seen marks the comment read before godwit knows whether it will obey it, which is the whole point of it.
+func (a authorizer) seen(ctx context.Context, repo repoView, req *request) {
+	if a.reaction == unsetReaction || a.reaction == NoReaction || req.comment == 0 {
+		return
+	}
+	if err := repo.react(ctx, req.comment, a.reaction); err != nil {
+		a.log.Warn("could not react to the commanding comment", "repository", req.repository,
+			"comment", req.comment, "error", err)
+	}
 }
 
 func anchored(req *request, pr pull) *outcome {

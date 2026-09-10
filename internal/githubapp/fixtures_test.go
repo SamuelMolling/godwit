@@ -92,6 +92,12 @@ type fakeRepo struct {
 	files         map[string]string
 	fileErr       error
 	read          []string
+	reacted       []string
+	reactErr      error
+	notices       []string
+	noticeErr     error
+	checks        []string
+	checkErr      error
 }
 
 func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
@@ -111,6 +117,24 @@ func (r *fakeRepo) pullRequest(context.Context, int) (pull, error) {
 
 func (r *fakeRepo) reviews(context.Context, int) ([]review, bool, error) {
 	return r.submitted, !r.reviewsCapped, r.reviewsErr
+}
+
+func (r *fakeRepo) react(_ context.Context, comment int64, reaction string) error {
+	r.reacted = append(r.reacted, fmt.Sprintf("%d:%s", comment, reaction))
+
+	return r.reactErr
+}
+
+func (r *fakeRepo) speak(_ context.Context, _ int, marker, body string) error {
+	r.notices = append(r.notices, marker+"\n"+body)
+
+	return r.noticeErr
+}
+
+func (r *fakeRepo) check(_ context.Context, name, head, title, summary string) error {
+	r.checks = append(r.checks, fmt.Sprintf("%s@%s %s: %s", name, head, title, summary))
+
+	return r.checkErr
 }
 
 func (r *fakeRepo) changed(context.Context, int) (listing, error) {
