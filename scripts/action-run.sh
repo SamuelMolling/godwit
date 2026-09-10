@@ -60,6 +60,14 @@ run_summary() {
     + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
 }
 
+# report renders the outcome from the service. The one-line run_summary below is the fallback: a report the
+# service could not render must not cost the comment its run id and state.
+report() {
+  local args=()
+  if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
+  [ -n "$2" ] && "${godwit}" run report "$2" ${args[@]+"${args[@]}"} --command "$1" --format markdown >"${summary}" 2>"${errors}"
+}
+
 run_phase() {
   printf '%s' "$1" | jq -r 'if .run.state == "RUN_STATE_AWAITING_CONTRACT" then "awaiting-contract"
     elif .run.phase == "contract" then "contract" else "" end' 2>/dev/null || true
@@ -80,9 +88,12 @@ cmd_migrate() {
     refused "${label}" "refused: the stored plan is stale or missing, ${hint}"
   elif [ -n "${last}" ]; then
     phase="$(run_phase "${last}")"
-    { printf '## godwit %s\n\n' "${label}"; run_summary "${last}" "${at}"; } >"${summary}"
-    if [ "${phase}" = "awaiting-contract" ]; then
-      printf '\n%s\n' "${held}" >>"${summary}"
+    if ! report "${label}" "${run_id}"; then
+      cat "${errors}" >&2
+      { printf '## godwit %s\n\n' "${label}"; run_summary "${last}" "${at}"; } >"${summary}"
+      if [ "${phase}" = "awaiting-contract" ]; then
+        printf '\n%s\n' "${held}" >>"${summary}"
+      fi
     fi
   elif [ -s "${errors}" ]; then
     refused "${label}" "no run created"
@@ -248,7 +259,10 @@ cmd_confirm() {
   fi
   plan_id="$(printf '%s' "${last}" | jq -r '.run.planId // empty' 2>/dev/null || true)"
   phase="$(run_phase "${last}")"
-  { printf '## godwit confirm\n\n'; run_summary "${last}" "${at}"; } >"${summary}"
+  if ! report confirm "${run_id}"; then
+    cat "${errors}" >&2
+    { printf '## godwit confirm\n\n'; run_summary "${last}" "${at}"; } >"${summary}"
+  fi
 }
 
 cmd_diff() {

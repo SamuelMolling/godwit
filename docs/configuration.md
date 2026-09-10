@@ -186,7 +186,7 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_SLACK_TOKEN` | no | Slack bot token; enables the Slack provider |
 | `GODWIT_SLACK_CHANNEL` | with the token | channel id or name for the root messages; `serve` refuses to start with a token and no channel |
 | `GODWIT_SLACK_MODE` | no | `thread` (default; root message plus threaded replies) or `edit` (one message rewritten) |
-| `GODWIT_PUBLIC_URL` | no | base URL for the "Open run" button in Slack messages (`<url>/ui/runs/<id>`) |
+| `GODWIT_PUBLIC_URL` | no | base URL of the UI as a reader reaches it. The service uses it for the "Open run" button in Slack messages; the CLI uses it to link the run and its plan from [`godwit run report`](cli.md#godwit-run-report), so set it in the workflow too when the Action posts the apply report. Both compose `<url>/ui/runs/<id>` |
 | `GODWIT_HOLDER` | no | default for `--holder` |
 | `GODWIT_LOG_FORMAT` | no | default for `--log-format` |
 | `GODWIT_LOG_LEVEL` | no | default for `--log-level` |

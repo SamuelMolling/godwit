@@ -18,7 +18,12 @@ permissions:
 # Branch protection on main: require the godwit/applied status and "Require branches to be up to
 # date before merging". The status is set on the head commit, so a push after the apply drops it
 # and the pull request needs `godwit apply` again; a base move re-runs `check` and re-plans.
+# https://github.com/SamuelMolling/godwit/blob/main/docs/ci-cd.md#the-merge-signal
 concurrency: migrate-orders   # one apply per target at a time
+
+# The plan and apply reports link the run and its plan to the UI. Drop it and they link neither.
+env:
+  GODWIT_PUBLIC_URL: https://godwit.internal
 
 jobs:
   check:

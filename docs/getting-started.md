@@ -508,7 +508,9 @@ steps:
       target: orders
 ```
 
-`lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head and sets the `godwit/applied` commit status the branch protection requires; `verify` on the merge proves `main` carries nothing unapplied.
+`lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head, reports what it applied and what that changed on the database, and sets the `godwit/applied` commit status; `verify` on the merge proves `main` carries nothing unapplied.
+
+**That status is the merge gate.** Make `godwit/applied` a required status check on `main` and the pull request cannot merge until the apply has landed — there is nothing else to switch on, and GitHub's own auto-merge waits on it like any other check ([the merge signal](ci-cd.md#the-merge-signal)). Set `GODWIT_PUBLIC_URL` in the workflow's environment if you run the UI, and the reports link each run and plan to their pages.
 
 The comment has to be exactly `godwit apply` and nothing else — prose around it means nothing fires ([what counts as commanding](ci-cd.md#what-counts-as-commanding)). It is refused unless the commenter holds write or admin permission on the repository **and** GitHub reports the pull request as approved. Whether a push withdraws that approval is your branch protection's *Dismiss stale pull request approvals when new commits are pushed*, not godwit's rule. Working alone, either approve from a second account — GitHub does not let you approve your own pull request — or pass `require-approval: "false"` ([who may command an apply](ci-cd.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
 
