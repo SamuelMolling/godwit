@@ -28,7 +28,7 @@ func (s *Server) Diff(ctx context.Context, req *connect.Request[godwitv1.DiffReq
 	if len(m.Schema) > l.FileBytes {
 		return nil, invalid(fmt.Sprintf("schema is %d bytes, limit %d", len(m.Schema), l.FileBytes))
 	}
-	if err := l.checkFiles(m.Files); err != nil {
+	if err := s.checkFiles(m.Files); err != nil {
 		return nil, err
 	}
 	if s.Differ == nil {

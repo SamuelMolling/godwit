@@ -32,7 +32,7 @@ func (s *Server) Checkpoint(ctx context.Context, req *connect.Request[godwitv1.C
 	if !checkpointName.MatchString(m.Name) {
 		return nil, invalid("name is required and must be snake_case ([a-z0-9_]+)")
 	}
-	if err := s.limits().checkFiles(m.Files); err != nil {
+	if err := s.checkFiles(m.Files); err != nil {
 		return nil, err
 	}
 	if s.Checkpointer == nil {

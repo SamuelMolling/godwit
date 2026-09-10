@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/limits"
 	"github.com/SamuelMolling/godwit/internal/server"
 )
 
@@ -94,7 +94,7 @@ func newServeCmd() *cobra.Command {
 					MaxConcurrentRuns: maxConcurrentRuns, RunTimeout: runTimeout,
 				},
 				StoreMaxConns: storeMaxConns,
-				Limits: api.Limits{
+				Limits: limits.Limits{
 					RequestBytes: maxRequestBytes, Migrations: maxMigrations, Files: maxFiles,
 					FileBytes: maxFileBytes, HeavyCalls: maxConcurrentDiffs,
 				},
@@ -141,11 +141,11 @@ func newServeCmd() *cobra.Command {
 		"on SIGTERM: how long to drain the listener and the runs this replica claimed before exiting anyway; keep it under the platform's kill delay")
 	cmd.Flags().IntVar(&storeMaxConns, "store-max-conns", server.DefaultStoreMaxConns,
 		"connections the API pool opens against the store; wins over pool_max_conns in the DSN")
-	cmd.Flags().IntVar(&maxRequestBytes, "max-request-bytes", api.DefaultRequestBytes, "largest request body the API accepts")
-	cmd.Flags().IntVar(&maxMigrations, "max-migrations", api.DefaultMigrations, "migrations one request may carry")
-	cmd.Flags().IntVar(&maxFiles, "max-files", api.DefaultFiles, "migration files one request may carry")
-	cmd.Flags().IntVar(&maxFileBytes, "max-file-bytes", api.DefaultFileBytes, "largest migration body or desired schema the API accepts")
-	cmd.Flags().IntVar(&maxConcurrentDiffs, "max-concurrent-diffs", api.DefaultHeavyCalls,
+	cmd.Flags().IntVar(&maxRequestBytes, "max-request-bytes", limits.DefaultRequestBytes, "largest request body the API accepts")
+	cmd.Flags().IntVar(&maxMigrations, "max-migrations", limits.DefaultMigrations, "migrations one request may carry")
+	cmd.Flags().IntVar(&maxFiles, "max-files", limits.DefaultFiles, "migration files one request may carry")
+	cmd.Flags().IntVar(&maxFileBytes, "max-file-bytes", limits.DefaultFileBytes, "largest migration body or desired schema the API accepts")
+	cmd.Flags().IntVar(&maxConcurrentDiffs, "max-concurrent-diffs", limits.DefaultHeavyCalls,
 		"Diff, PlanRun, CreateRun and RevertRun calls admitted at once; each builds scratch databases on the store server")
 	cmd.Flags().BoolVar(&skipValidation, "skip-validation", false, "disable scratch-database validation at run admission")
 	cmd.Flags().BoolVar(&requirePlan, "require-plan", false, "refuse runs without a stored plan on every target")

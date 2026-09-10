@@ -19,6 +19,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/limits"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
 	"github.com/SamuelMolling/godwit/internal/ui"
@@ -56,7 +57,7 @@ type Config struct {
 	// pool_max_conns in the DSN.
 	StoreMaxConns int
 	// Limits are the API admission bounds; a zero field takes its default.
-	Limits api.Limits
+	Limits limits.Limits
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
 	RequirePlan    bool

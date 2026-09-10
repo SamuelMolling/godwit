@@ -24,6 +24,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/limits"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
 )
@@ -85,7 +86,7 @@ type Server struct {
 	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
 	PlanTTL time.Duration
 	// Limits are the admission bounds; a zero field takes its default. Set them before Handler.
-	Limits Limits
+	Limits limits.Limits
 
 	store         *controlplane.Store
 	drift         DriftOps
@@ -113,9 +114,20 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, k
 	}
 }
 
-// limits are the admission bounds in force, whatever the caller left zero.
-func (s *Server) limits() Limits {
+func (s *Server) limits() limits.Limits {
 	return s.Limits.WithDefaults()
+}
+
+func (s *Server) checkFiles(in []*godwitv1.MigrationFile) error {
+	listed := make([]limits.Listed, 0, len(in))
+	for _, f := range in {
+		listed = append(listed, limits.Listed{Name: f.GetName(), Size: len(f.GetBody())})
+	}
+	if err := s.limits().CheckListing(listed); err != nil {
+		return invalid(err.Error())
+	}
+
+	return nil
 }
 
 // Handler mounts the connect service with bearer-token auth, admission limits, plus the unauthenticated
@@ -345,7 +357,7 @@ func (s *Server) upSpec(target, rollout string, in []*godwitv1.MigrationFile) (r
 	if len(in) == 0 {
 		return runSpec{}, invalid("at least one migration file is required")
 	}
-	if err := s.limits().checkFiles(in); err != nil {
+	if err := s.checkFiles(in); err != nil {
 		return runSpec{}, err
 	}
 	if rollout == "" {

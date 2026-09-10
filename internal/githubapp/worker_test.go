@@ -11,11 +11,11 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/comment"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 type fakeService struct {
@@ -347,7 +347,7 @@ func TestAFileOverTheLimitIsRefusedWithoutFetchingAnything(t *testing.T) {
 	t.Parallel()
 
 	repo := planningRepo()
-	h := newHarness(t, repo, WorkerConfig{Limits: api.Limits{FileBytes: 4}})
+	h := newHarness(t, repo, WorkerConfig{Limits: limits.Limits{FileBytes: 4}})
 	h.worker.carry(context.Background(), planCommand())
 
 	if len(repo.fetched) != 0 {
@@ -612,7 +612,7 @@ func TestAWorkerNeedsWhatItCannotRunWithout(t *testing.T) {
 	if w.cfg.Workers != defaultWorkers || w.cfg.Queue != defaultQueue || w.cfg.Timeout != defaultTimeout {
 		t.Fatalf("defaults = %+v", w.cfg)
 	}
-	if w.cfg.Limits.FileBytes != api.DefaultFileBytes {
+	if w.cfg.Limits.FileBytes != limits.DefaultFileBytes {
 		t.Fatalf("limits = %+v", w.cfg.Limits)
 	}
 }

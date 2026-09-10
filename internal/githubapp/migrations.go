@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 // errPartial is a migration directory godwit knows it did not read whole, which it refuses rather than plans.
@@ -21,7 +21,7 @@ const blobWorkers = 8
 
 // migrations reads a directory at head; the limits are decided from the listing, so one over them
 // costs a single request rather than one per file.
-func migrations(ctx context.Context, repo repoView, dir, head string, lim api.Limits) ([]*godwitv1.MigrationFile, error) {
+func migrations(ctx context.Context, repo repoView, dir, head string, lim limits.Limits) ([]*godwitv1.MigrationFile, error) {
 	lim = lim.WithDefaults()
 	listed, err := repo.directory(ctx, dir, head)
 	if errors.Is(err, errAbsent) {
@@ -46,20 +46,20 @@ func migrations(ctx context.Context, repo repoView, dir, head string, lim api.Li
 }
 
 // wanted is what engine.LoadFS would read out of the same directory on disk: files, dot-files left out.
-func wanted(listed contents) []api.Listed {
-	out := make([]api.Listed, 0, len(listed.entries))
+func wanted(listed contents) []limits.Listed {
+	out := make([]limits.Listed, 0, len(listed.entries))
 	for _, e := range listed.entries {
 		if !e.file || strings.HasPrefix(e.name, ".") {
 			continue
 		}
-		out = append(out, api.Listed{Name: e.name, Size: e.size})
+		out = append(out, limits.Listed{Name: e.name, Size: e.size})
 	}
-	slices.SortFunc(out, func(a, b api.Listed) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(out, func(a, b limits.Listed) int { return strings.Compare(a.Name, b.Name) })
 
 	return out
 }
 
-func bodies(ctx context.Context, repo repoView, dir, head string, want []api.Listed, limit int) ([]*godwitv1.MigrationFile, error) {
+func bodies(ctx context.Context, repo repoView, dir, head string, want []limits.Listed, limit int) ([]*godwitv1.MigrationFile, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := make([]*godwitv1.MigrationFile, len(want))

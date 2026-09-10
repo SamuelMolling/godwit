@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
 func listed(names ...string) contents {
@@ -44,7 +44,7 @@ func TestTheMigrationSetIsTheDirectoryAtTheHead(t *testing.T) {
 	t.Parallel()
 
 	repo := withBodies("20260102000000_b.up.sql", "20260101000000_a.up.sql", "20260101000000_a.down.sql")
-	got, err := migrations(context.Background(), repo, "db/migrations", testHead, api.Limits{})
+	got, err := migrations(context.Background(), repo, "db/migrations", testHead, limits.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestAPartialDirectoryIsRefusedRatherThanPlanned(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeRepo{listing: map[string]contents{"db/migrations": {entries: listed("a.up.sql").entries, capped: true}}}
-	_, err := migrations(context.Background(), repo, "db/migrations", testHead, api.Limits{})
+	_, err := migrations(context.Background(), repo, "db/migrations", testHead, limits.Limits{})
 	if !errors.Is(err, errPartial) || !strings.Contains(err.Error(), "contents api") {
 		t.Fatalf("err = %v", err)
 	}
@@ -76,19 +76,19 @@ func TestTheLimitsAreAppliedToTheListingBeforeAnyBodyIsFetched(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name   string
-		limits api.Limits
-		want   string
+		name string
+		lim  limits.Limits
+		want string
 	}{
-		{"a file over max-file-bytes", api.Limits{FileBytes: 4}, "20260101000000_a.up.sql is 23 bytes, limit 4"},
-		{"more files than max-files", api.Limits{Files: 1}, "too many migration files: 2, limit 1"},
-		{"more migrations than max-migrations", api.Limits{Migrations: 1}, "too many migrations: 2, limit 1"},
+		{"a file over max-file-bytes", limits.Limits{FileBytes: 4}, "20260101000000_a.up.sql is 23 bytes, limit 4"},
+		{"more files than max-files", limits.Limits{Files: 1}, "too many migration files: 2, limit 1"},
+		{"more migrations than max-migrations", limits.Limits{Migrations: 1}, "too many migrations: 2, limit 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			repo := withBodies("20260101000000_a.up.sql", "20260102000000_b.up.sql")
-			_, err := migrations(context.Background(), repo, "db/migrations", testHead, tc.limits)
+			_, err := migrations(context.Background(), repo, "db/migrations", testHead, tc.lim)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v", err)
 			}
@@ -102,7 +102,7 @@ func TestTheLimitsAreAppliedToTheListingBeforeAnyBodyIsFetched(t *testing.T) {
 func TestADirectoryThatIsNotThereYetIsAnEmptySet(t *testing.T) {
 	t.Parallel()
 
-	got, err := migrations(context.Background(), &fakeRepo{}, "db/migrations", testHead, api.Limits{})
+	got, err := migrations(context.Background(), &fakeRepo{}, "db/migrations", testHead, limits.Limits{})
 	if err != nil || got != nil {
 		t.Fatalf("files = %v, err = %v", got, err)
 	}
@@ -114,7 +114,7 @@ func TestADirectoryHoldingNothingGodwitReadsIsAnEmptySet(t *testing.T) {
 	repo := &fakeRepo{listing: map[string]contents{"db/migrations": {entries: []content{
 		{name: ".keep", file: true}, {name: "archive", file: false},
 	}}}}
-	got, err := migrations(context.Background(), repo, "db/migrations", testHead, api.Limits{})
+	got, err := migrations(context.Background(), repo, "db/migrations", testHead, limits.Limits{})
 	if err != nil || got != nil {
 		t.Fatalf("files = %v, err = %v", got, err)
 	}
@@ -127,7 +127,7 @@ func TestADirectoryGodwitCannotList(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeRepo{listErr: errBroken}
-	if _, err := migrations(context.Background(), repo, "db/migrations", testHead, api.Limits{}); !errors.Is(err, errBroken) {
+	if _, err := migrations(context.Background(), repo, "db/migrations", testHead, limits.Limits{}); !errors.Is(err, errBroken) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -137,7 +137,7 @@ func TestABodyGodwitCannotReadNamesTheFile(t *testing.T) {
 
 	repo := withBodies("20260101000000_a.up.sql")
 	delete(repo.blobs, "db/migrations/20260101000000_a.up.sql")
-	_, err := migrations(context.Background(), repo, "db/migrations", testHead, api.Limits{})
+	_, err := migrations(context.Background(), repo, "db/migrations", testHead, limits.Limits{})
 	if err == nil || !strings.Contains(err.Error(), "db/migrations/20260101000000_a.up.sql") {
 		t.Fatalf("err = %v", err)
 	}
@@ -153,7 +153,7 @@ func TestOneUnreadableBodyStopsTheWholeSet(t *testing.T) {
 	}
 	repo := withBodies(all...)
 	repo.blobErr = errBroken
-	if _, err := migrations(context.Background(), repo, "db/migrations", testHead, api.Limits{}); !errors.Is(err, errBroken) {
+	if _, err := migrations(context.Background(), repo, "db/migrations", testHead, limits.Limits{}); !errors.Is(err, errBroken) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(repo.fetched) == len(all) {
