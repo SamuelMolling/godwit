@@ -18,8 +18,7 @@ var (
 	ErrVersionTarget = errors.New("version target")
 )
 
-// SelectVersion splits a submitted set at a version target: the whole directory arrives, only the part
-// at or below to is kept, and the rest is withheld rather than dropped.
+// SelectVersion splits a submitted set at a version target: what is at or below to is kept, the rest withheld.
 func (s *Store) SelectVersion(ctx context.Context, target string, plans []engine.Plan, to int64) (keep, withheld []engine.Plan, err error) {
 	if !slices.ContainsFunc(plans, func(p engine.Plan) bool {
 		return !p.Migration.Repeatable && p.Migration.Version == to

@@ -9,9 +9,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
-// reattach finds the run an earlier job with the same files and rollout created and, when the target still
-// matches what that run knew, returns it so the caller follows it instead of queueing a duplicate.
-// An explicit plan id is an explicit ask and skips it.
 func (g Gate) reattach(ctx context.Context, req Request, set Set, obs controlplane.Observation) (*Reattach, error) {
 	if req.PlanID != "" {
 		return nil, nil
@@ -73,7 +70,6 @@ func unapplied(plan controlplane.Plan, run controlplane.Run, obs controlplane.Ob
 	return out
 }
 
-// A failed run's own partial progress shows up as history the plan did not know; it is expected, not drift.
 func (g Gate) resumable(ctx context.Context, req Request, set Set, plan controlplane.Plan, obs controlplane.Observation) error {
 	d, err := g.attribute(ctx, plan, obs)
 	if err != nil {

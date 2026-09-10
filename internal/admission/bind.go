@@ -21,10 +21,9 @@ type Binding struct {
 	SearchPath      string
 	Acked           []string
 	AllowOutOfOrder bool
-	// Superseded is the plan a re-plan replaced; its ID is empty when Bind bound one unchanged.
-	Superseded controlplane.Plan
-	Reattach   *Reattach
-	Admitted   *Admitted
+	Superseded      controlplane.Plan
+	Reattach        *Reattach
+	Admitted        *Admitted
 }
 
 // Reattach is the run a repeated submission joins instead of queueing a duplicate.
@@ -34,8 +33,7 @@ type Reattach struct {
 	Resume bool
 }
 
-// Bind resolves the stored plan a run may bind to, re-planning it when the target moved under it and
-// refusing when what moved cannot be explained.
+// Bind resolves the stored plan a run may bind to, re-planning it when the target moved under it.
 func (g Gate) Bind(ctx context.Context, req Request, set Set) (Binding, error) {
 	b := Binding{Acked: req.Acked, AllowOutOfOrder: req.AllowOutOfOrder}
 	if g.Observer == nil {
@@ -66,7 +64,6 @@ func (g Gate) Bind(ctx context.Context, req Request, set Set) (Binding, error) {
 	if err != nil {
 		return b, err
 	}
-	// A stored plan accounts for the target's history itself: what it cannot explain is refused as stale below.
 	if plan.ID == "" {
 		return b, g.CheckReconciled(ctx, req.Target, obs)
 	}
@@ -118,8 +115,7 @@ func (g Gate) replan(ctx context.Context, req Request, set Set, b Binding, plan 
 	return b, nil
 }
 
-// Save records a plan a later run binds to together with an observation of the target, and reports how
-// many migrations it found pending.
+// Save records a plan a later run binds to, and reports how many migrations it found pending.
 func (g Gate) Save(ctx context.Context, req Request, set Set, adm Admitted, obs controlplane.Observation) (controlplane.Plan, int, error) {
 	pending, err := controlplane.Pending(migrations(set.Plans), obs.Applied, obs.Repeatables)
 	if err != nil {
@@ -183,10 +179,7 @@ func (g Gate) driftSince(ctx context.Context, target string, obs controlplane.Ob
 
 var errUnreconciled = errors.New("target records migrations the ledger does not")
 
-// CheckReconciled refuses to plan against a target whose own journal is ahead of the control plane's
-// ledger. The journal is what says a migration is applied; the ledger is the control plane's copy of it,
-// and it is what the order guard and the scratch replay read. Planning over a ledger that cannot see an
-// out-of-band apply plans against a history the target does not have.
+// CheckReconciled refuses to plan against a target whose own journal is ahead of the control plane's ledger.
 func (g Gate) CheckReconciled(ctx context.Context, target string, obs controlplane.Observation) error {
 	applied, err := g.Store.Applied(ctx, target)
 	if err != nil {
@@ -236,8 +229,7 @@ func join(a, b string) string {
 	return a + ", " + b
 }
 
-// Expanded names what godwit generated for this run, so an implicit run without a stored plan still
-// leaves the expansion in the audit trail and the notification.
+// Expanded names what godwit generated for this run, so an implicit run still leaves it in the audit trail.
 func (b Binding) Expanded() string {
 	ids := make([]string, 0, len(b.Expansions))
 	for id, e := range b.Expansions {
@@ -251,8 +243,7 @@ func (b Binding) Expanded() string {
 	return "expands " + strings.Join(ids, ", ")
 }
 
-// PlanSince is the oldest creation time a stored plan may have and still bind; the zero time keeps
-// plans forever.
+// PlanSince is the oldest creation time a stored plan may have and still bind; zero keeps plans forever.
 func (g Gate) PlanSince() time.Time {
 	if g.PlanTTL <= 0 {
 		return time.Time{}

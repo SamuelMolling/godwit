@@ -19,13 +19,11 @@ type Admitted struct {
 	Applied    controlplane.AppliedSet
 	Validated  bool
 	Validation *controlplane.Validation
-	// Plans is the admitted set with every directive migration replaced by its expansion.
 	Plans      []engine.Plan
 	Expansions map[string]controlplane.Expansion
 }
 
-// Expanded is what admission decided to run; it falls back to the submitted plans when a validator
-// stub reported none.
+// Expanded is what admission decided to run, or the submitted plans when a validator stub reported none.
 func (a Admitted) Expanded(set Set) []engine.Plan {
 	if a.Plans != nil {
 		return a.Plans
@@ -93,7 +91,6 @@ func (g Gate) Admit(ctx context.Context, target string, plans []engine.Plan, ack
 	return adm, nil
 }
 
-// directiveID names a directive migration still to apply; one the target holds is never expanded again.
 func directiveID(plans []engine.Plan, applied controlplane.AppliedSet) string {
 	for _, p := range plans {
 		if len(p.Migration.Directives) > 0 && !applied.Has(p.Migration) {
@@ -104,8 +101,7 @@ func directiveID(plans []engine.Plan, applied controlplane.AppliedSet) string {
 	return ""
 }
 
-// CheckRollout refuses a directive that splits into two phases under a rollout that runs everything at
-// once: the rollout is part of the plan key, so godwit will not silently upgrade it.
+// CheckRollout refuses a directive that splits into two phases under a rollout that runs everything at once.
 func CheckRollout(rollout string, plans []engine.Plan) error {
 	if rollout != controlplane.RolloutDirect {
 		return nil
@@ -121,8 +117,7 @@ func CheckRollout(rollout string, plans []engine.Plan) error {
 	return nil
 }
 
-// CheckIdle refuses to plan or run against a target parked between the phases of an earlier run: its
-// schema matches no recorded state, so nothing can be validated against it.
+// CheckIdle refuses to plan or run against a target parked between the phases of an earlier run.
 func (g Gate) CheckIdle(ctx context.Context, target string) error {
 	run, ok, err := g.Store.AwaitingContract(ctx, target)
 	if err != nil {
@@ -135,7 +130,6 @@ func (g Gate) CheckIdle(ctx context.Context, target string) error {
 	return precondition(fmt.Errorf("target %s has run %s awaiting contract; confirm or revert it first", target, run.ID))
 }
 
-// checkHazards reads only the plans this admission would execute, so a target's own history never refuses a run over it.
 func (g Gate) checkHazards(plans []engine.Plan, applied controlplane.AppliedSet, acked []string) error {
 	ackSet := map[string]bool{}
 	for _, code := range acked {
@@ -163,8 +157,6 @@ func (g Gate) checkHazards(plans []engine.Plan, applied controlplane.AppliedSet,
 	return nil
 }
 
-// checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it
-// logs them; repeatables carry no version and are never out of order.
 func (g Gate) checkOrder(target string, plans []engine.Plan, applied []int64, allow bool) error {
 	if len(applied) == 0 {
 		return nil

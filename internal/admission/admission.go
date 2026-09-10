@@ -1,5 +1,4 @@
-// Package admission decides what a submitted migration set becomes on a target and whether the control
-// plane lets it run.
+// Package admission decides what a submitted migration set becomes on a target and whether it may run.
 package admission
 
 import (
@@ -23,8 +22,7 @@ type Validator interface {
 	Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (controlplane.Validation, error)
 }
 
-// Gate is what every admission decision reads. A nil Observer leaves stored plans unavailable and every
-// run implicit; a nil Validator skips the scratch replay.
+// Gate is what every admission decision reads; a nil Observer leaves every run implicit and a nil Validator skips the scratch replay.
 type Gate struct {
 	Store       *controlplane.Store
 	Observer    Observer
@@ -48,10 +46,9 @@ type Request struct {
 
 // Set is a submitted migration directory as the control plane reads it.
 type Set struct {
-	Rollout string
-	Files   map[string]string
-	Plans   []engine.Plan
-	// Withheld is what a version target kept out of Plans and Files: reported, never run.
+	Rollout  string
+	Files    map[string]string
+	Plans    []engine.Plan
 	Withheld []engine.Plan
 }
 
@@ -71,8 +68,7 @@ func NewSet(rollout string, files map[string]string) (Set, error) {
 	return Set{Rollout: rollout, Files: files, Plans: plans}, nil
 }
 
-// StopAt cuts the set at a version target: the whole directory arrives, only the part at or below to
-// runs, and the rest is reported as withheld rather than dropped. A target at or below zero keeps it whole.
+// StopAt cuts the set at a version target, withholding the rest; a target at or below zero keeps it whole.
 func (g Gate) StopAt(ctx context.Context, target string, set Set, to int64) (Set, error) {
 	if to <= 0 {
 		return set, nil

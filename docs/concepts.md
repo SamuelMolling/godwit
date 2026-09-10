@@ -742,7 +742,7 @@ It refuses, naming what it means, on the three disagreements it will not decide 
 | recorded on the target and absent from the directory | the replay could never rebuild a migration whose SQL the store does not hold |
 | standing in the ledger and absent from the target | the target has lost history the control plane saw applied — a restore from backup, or a hand-emptied journal |
 
-**The refusal that sends you here.** Before planning against a target with no stored plan to explain its history, godwit compares the observation it takes with the ledger:
+**The refusal that sends you here.** The ledger is what the order guard and the scratch replay read, so planning over one that cannot see an out-of-band apply plans against a history the target does not have. Before planning against a target with no stored plan to explain its history, godwit compares the observation it takes with the ledger:
 
 ```
 target records migrations the ledger does not: app records 20260101000000_orders, 20260101000001_total;

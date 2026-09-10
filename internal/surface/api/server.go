@@ -174,7 +174,6 @@ func invalid(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
 }
 
-// admitErr gives a refusal its status code, and a plan refusal the machine-readable detail a pipeline reads.
 func admitErr(err error) error {
 	var stale *controlplane.PlanStale
 	var required *controlplane.PlanRequired
