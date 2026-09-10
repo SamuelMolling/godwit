@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/githubapp"
 	"github.com/SamuelMolling/godwit/internal/metrics"
@@ -28,7 +29,9 @@ type GitHubApp struct {
 	MaxAge        time.Duration
 	Associations  []string
 	Reaction      string
-	OnReady       func(addr net.Addr)
+	// Workers bounds how many accepted commands the App carries out at once.
+	Workers int
+	OnReady func(addr net.Addr)
 }
 
 const (
@@ -57,24 +60,44 @@ func (g GitHubApp) credential() (crypto.Signer, error) {
 	return parsePrivateKey(g.PrivateKeyPEM)
 }
 
-func (g GitHubApp) receiver(key crypto.Signer, store *controlplane.Store, m *metrics.Metrics, log *slog.Logger) (*githubapp.Receiver, error) {
-	return githubapp.New(githubapp.Config{
+func (g GitHubApp) receiver(cfg Config, key crypto.Signer, store *controlplane.Store, svc *api.Server,
+	m *metrics.Metrics, log *slog.Logger,
+) (*githubapp.Receiver, *githubapp.Worker, error) {
+	client := &githubapp.Client{
+		BaseURL: g.APIBaseURL,
+		AppID:   g.AppID,
+		Signer:  key,
+		HTTP:    &http.Client{Timeout: 30 * time.Second},
+		Now:     time.Now,
+	}
+	worker, err := githubapp.NewWorker(githubapp.WorkerConfig{
+		API:       client,
+		Service:   svc,
+		Limits:    cfg.Limits,
+		PublicURL: cfg.PublicURL,
+		Workers:   g.Workers,
+		Log:       log,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	r, err := githubapp.New(githubapp.Config{
 		Secret:       g.Secret,
 		MaxBodyBytes: g.MaxBodyBytes,
 		MaxAge:       g.MaxAge,
 		Associations: g.Associations,
 		Reaction:     g.Reaction,
 		Store:        githubapp.Adapt(store),
-		API: &githubapp.Client{
-			BaseURL: g.APIBaseURL,
-			AppID:   g.AppID,
-			Signer:  key,
-			HTTP:    &http.Client{Timeout: 30 * time.Second},
-			Now:     time.Now,
-		},
-		Record: m.WebhookDelivered,
-		Log:    log,
+		API:          client,
+		Runner:       worker,
+		Record:       m.WebhookDelivered,
+		Log:          log,
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return r, worker, nil
 }
 
 func parsePrivateKey(text string) (crypto.Signer, error) {
@@ -97,16 +120,20 @@ func parsePrivateKey(text string) (crypto.Signer, error) {
 	return signer, nil
 }
 
-func serveWebhook(cfg Config, key crypto.Signer, store *controlplane.Store, m *metrics.Metrics, log *slog.Logger) (func(context.Context), error) {
+func serveWebhook(cfg Config, key crypto.Signer, store *controlplane.Store, svc *api.Server,
+	m *metrics.Metrics, log *slog.Logger,
+) (func(context.Context), error) {
 	if !cfg.GitHub.enabled() {
 		return func(context.Context) {}, nil
 	}
-	receiver, err := cfg.GitHub.receiver(key, store, m, log)
+	receiver, worker, err := cfg.GitHub.receiver(cfg, key, store, svc, m, log)
 	if err != nil {
 		return nil, err
 	}
 	ln, err := net.Listen("tcp", cfg.GitHub.Addr)
 	if err != nil {
+		worker.Stop(context.Background())
+
 		return nil, err
 	}
 	srv := &http.Server{
@@ -123,5 +150,9 @@ func serveWebhook(cfg Config, key crypto.Signer, store *controlplane.Store, m *m
 	}
 	go func() { _ = srv.Serve(ln) }()
 
-	return func(ctx context.Context) { _ = srv.Shutdown(ctx) }, nil
+	// The listener closes first, so nothing new is accepted while what was accepted is carried out.
+	return func(ctx context.Context) {
+		_ = srv.Shutdown(ctx)
+		worker.Stop(ctx)
+	}, nil
 }

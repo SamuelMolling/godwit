@@ -97,8 +97,8 @@ func New(cfg Config) (*Receiver, error) {
 	if cfg.Secret == "" {
 		return nil, &configError{"the github webhook secret is required: an unverified endpoint is an open one"}
 	}
-	if cfg.Store == nil || cfg.API == nil || cfg.Log == nil {
-		return nil, &configError{"the github receiver needs a store, an api client and a logger"}
+	if cfg.Store == nil || cfg.API == nil || cfg.Runner == nil || cfg.Log == nil {
+		return nil, &configError{"the github receiver needs a store, an api client, a runner and a logger"}
 	}
 	if len(cfg.Associations) == 0 {
 		cfg.Associations = defaultAssociations
@@ -112,9 +112,6 @@ func New(cfg Config) (*Receiver, error) {
 	}
 	if cfg.MaxAge <= 0 {
 		cfg.MaxAge = defaultMaxAge
-	}
-	if cfg.Runner == nil {
-		cfg.Runner = recorder{log: cfg.Log}
 	}
 	if cfg.Reaction == unsetReaction {
 		cfg.Reaction = defaultReaction
@@ -272,7 +269,8 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	head := at.head
 
 	return &command{
-		delivery: delivery, event: event, repository: req.repository, installation: p.Installation.ID,
+		delivery: delivery, event: event, repository: req.repository,
+		repositoryID: p.Repository.ID, installation: p.Installation.ID,
 		number: req.number, head: head, login: req.commander,
 		principal: api.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
 		bound:     bound, name: req.name, cmd: req.cmd, projects: res.planned,

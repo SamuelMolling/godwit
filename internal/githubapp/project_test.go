@@ -177,6 +177,10 @@ func TestProjectFilesThatCannotBeUsed(t *testing.T) {
 		{"a dir that leaves the project", "dir: ../../etc\ntarget: orders\n", "leaves the project"},
 		{"an absolute dir", "dir: /etc\ntarget: orders\n", "is absolute"},
 		{
+			"a dir godwit will not put in a url", "dir: db/migrations?ref=main\ntarget: orders\n",
+			"will not read a directory at",
+		},
+		{
 			"a pattern that leaves the project", ordersYAML + "autoplan:\n  when_modified: [\"../../**\"]\n",
 			"leaves the project directory",
 		},

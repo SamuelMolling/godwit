@@ -114,7 +114,7 @@ func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, k
 
 // limits are the admission bounds in force, whatever the caller left zero.
 func (s *Server) limits() Limits {
-	return s.Limits.withDefaults()
+	return s.Limits.WithDefaults()
 }
 
 // Handler mounts the connect service with bearer-token auth, admission limits, plus the unauthenticated
