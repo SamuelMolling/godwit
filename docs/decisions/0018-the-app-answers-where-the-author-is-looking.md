@@ -81,7 +81,7 @@ A refusal's check is concluded the moment it is created. The check that goes **p
 
 So the pending lifecycle ships with the runs it describes. What that change inherits from here is settled: `godwit/plan` and `godwit/applied` as Check Runs rather than commit statuses (0016), `pending` mapping to `status: in_progress` with no conclusion rather than `conclusion: neutral` (0004's reasoning about a required check that must stay unsatisfied without claiming an error), and no commit statuses alongside them.
 
-The link to live output needs nothing new either: `GODWIT_PUBLIC_URL` already exists and already builds exactly the link required — `internal/notify/slack.go` composes `<public url>/ui/runs/<run id>` for the Slack "Open run" button, and `internal/ui` already serves that page with live run progress. The check's `details_url` is that same string. That is wiring, and it belongs with the run that gives it an id.
+The link to live output needs nothing new either: `GODWIT_PUBLIC_URL` already exists and already builds exactly the link required — `internal/notify/slack.go` composes `<public url>/ui/runs/<run id>` for the Slack "Open run" button, and `internal/surface/ui` already serves that page with live run progress. The check's `details_url` is that same string. That is wiring, and it belongs with the run that gives it an id.
 
 ## Rejected or deferred
 

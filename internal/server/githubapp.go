@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
-	"github.com/SamuelMolling/godwit/internal/githubapp"
 	"github.com/SamuelMolling/godwit/internal/metrics"
+	"github.com/SamuelMolling/godwit/internal/surface/api"
+	"github.com/SamuelMolling/godwit/internal/surface/githubapp"
 )
 
 // GitHubApp configures the App webhook listener, which is its own listener rather than a path on the API's.

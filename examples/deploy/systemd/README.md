@@ -1,6 +1,6 @@
 # A plain VM
 
-One binary, one unit file, one environment file. **Untested:** the unit was not run on a Linux host. The flags, environment variables and endpoints in it were checked against `internal/cli/serve.go`, `internal/api` and `internal/server`, and the runtime behaviour was measured on the [Docker Compose](../docker-compose/README.md) stack; the systemd directives were not exercised.
+One binary, one unit file, one environment file. **Untested:** the unit was not run on a Linux host. The flags, environment variables and endpoints in it were checked against `internal/cli/serve.go`, `internal/surface/api` and `internal/server`, and the runtime behaviour was measured on the [Docker Compose](../docker-compose/README.md) stack; the systemd directives were not exercised.
 
 **Assumes:** a systemd Linux host — 247 or later for the `ProtectProc` and `ProcSubset` lines, 240 for `Type=exec`; drop those three directives on anything older — and two PostgreSQL servers it can reach.
 

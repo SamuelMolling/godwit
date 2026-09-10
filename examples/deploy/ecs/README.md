@@ -1,6 +1,6 @@
 # AWS ECS
 
-A task definition, a service with two tasks, secrets from Secrets Manager, and an ALB in front. **Untested:** nothing on this page was run against AWS. Every flag, environment variable, path and port was checked against `internal/cli/serve.go`, `internal/api` and `internal/server`, and the runtime behaviour it relies on was measured on the [Docker Compose](../docker-compose/README.md) stack, which runs the same binary; the AWS resources and their arguments were not.
+A task definition, a service with two tasks, secrets from Secrets Manager, and an ALB in front. **Untested:** nothing on this page was run against AWS. Every flag, environment variable, path and port was checked against `internal/cli/serve.go`, `internal/surface/api` and `internal/server`, and the runtime behaviour it relies on was measured on the [Docker Compose](../docker-compose/README.md) stack, which runs the same binary; the AWS resources and their arguments were not.
 
 **Assumes:** a VPC with private subnets, an ECS cluster, an ALB, and a route to the internet for the image pull (`ghcr.io` has no VPC endpoint, so private subnets need a NAT gateway).
 

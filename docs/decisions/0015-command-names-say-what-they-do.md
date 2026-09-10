@@ -63,7 +63,7 @@ distinction the CLI has collapsed: **two CLI commands cover one RPC, while one C
 two unrelated code paths.**
 
 **The service form is classified as a read.** `GodwitServicePlanRunProcedure` maps to `ScopeRead`
-(`internal/api/auth.go:50`), and `docs/configuration.md` lists `godwit plan --target` under
+(`internal/surface/api/auth.go:50`), and `docs/configuration.md` lists `godwit plan --target` under
 `Service` with scope `read`. It nevertheless inserts rows into `cp_plans` and `cp_plan_files`,
 writes an audit row, and submits your DDL to a scratch database — which `godwit serve` warns about
 in the strongest language on the page: *"validation and diff execute submitted DDL on the store
@@ -191,7 +191,7 @@ history. One word, two unrelated subsystems.
 
 `godwit target baseline` appears on **14 lines across 8 files** (13 in `docs/`, 1 in
 `deploy/helm/godwit/README.md`). `godwit target reconcile` appears on **19 lines across 11 files**
-(15 in `docs/`, 3 in Go — one of them `internal/api/plan.go`, where the refusal message tells the
+(15 in `docs/`, 3 in Go — one of them `internal/surface/api/plan.go`, where the refusal message tells the
 operator what to run — and 1 in the Helm README). **33 lines, 17 files, no overlap with the
 GitHub Action at all** (`scripts/action-run.sh` invokes only `diff`, `lint`, `migrate`, `plan`,
 `revert`, `run`, `runs`), **no `godwit.yaml` key**, **1 cell** in the key table's *Used by* column,
@@ -203,7 +203,7 @@ store operations with different refusal sets, and they are named in `concepts.md
 which are `text` in `cp_audit` and would split history. Under 2b the CLI has one verb over two RPCs
 — which is what a CLI is for.
 
-The one real cost 2b carries: the refusal in `internal/api/plan.go` prints
+The one real cost 2b carries: the refusal in `internal/surface/api/plan.go` prints
 `run `godwit target reconcile app --dir <migrations>` to adopt what it already has`. That string is
 a server-side instruction naming a client command, so the service and the CLI must ship together.
 They already do.
@@ -270,7 +270,7 @@ in no other tool's documentation.
 ### The cost, counted
 
 `godwit drift accept` appears on **11 lines across 9 files** — 7 in `docs/`, 3 in Go (two tests and
-`internal/api/plan.go`), 1 in `deploy/argocd/README.md`. **No GitHub Action surface, no Helm
+`internal/surface/api/plan.go`), 1 in `deploy/argocd/README.md`. **No GitHub Action surface, no Helm
 templates, no `godwit.yaml` key.** 3a costs two Go lines and three doc lines and renames nothing.
 3b costs the 11 lines plus a decision about `AcceptBaseline`, `drift.accept` and the UI button.
 
@@ -421,9 +421,9 @@ spelling, so a rename splits stored history in two.
 `internal/cli/service.go:149` (`migrate`), `:219` (`dryRun`, `persist` false), `:242`
 (`persistPlan`, `persist` true), `:327` (`revert`), `:37`/`:70` (`baseline`, `reconcile`),
 `:705` (`drift accept`); `internal/cli/commands.go:28` (`targetFlags.register`, the `--dsn` trio);
-`internal/api/auth.go:50` (`PlanRun` is `ScopeRead`); `api/proto/godwit/v1` (`PlanRunRequest.persist`,
+`internal/surface/api/auth.go:50` (`PlanRun` is `ScopeRead`); `api/proto/godwit/v1` (`PlanRunRequest.persist`,
 field 7); `internal/controlplane/audit_store.go:28`–`:35` and `internal/controlplane/schema.go:152`
-(audit actions as stored text); `internal/ui/templates/drift.html:17`–`:19` (the button and its
+(audit actions as stored text); `internal/surface/ui/templates/drift.html:17`–`:19` (the button and its
 note); `scripts/action-run.sh:317` (`apply` dispatches to `cmd_migrate`); `docs/ci-cd.md:37`;
 `docs/configuration.md:22` (the `plan --target ""` paragraph), `:198` and `:216` (the same command
 listed in the **Local** table and in the **Service** table); `docs/concepts.md:699` (*"Two ways
@@ -533,7 +533,7 @@ passes `--save`, which is the one invocation in the repository that needed it.
 
 **2. `target adopt`.** One command over `BaselineTarget` and `ReconcileTarget`, which keep their
 names. `--version N` or `--from-journal`, exactly one required; neither and both are refused with a
-message that states what each flag takes its truth from. `internal/api/plan.go`'s refusal now names
+message that states what each flag takes its truth from. `internal/surface/api/plan.go`'s refusal now names
 `godwit target adopt <t> --from-journal`, so the service and the CLI still ship together.
 
 **3. `drift accept` — not renamed, documented at the point of use.** `Short:` lost "bless" and the
