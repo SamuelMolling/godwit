@@ -20,6 +20,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/admission"
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
@@ -36,9 +37,7 @@ type DriftOps interface {
 }
 
 // Validator checks migrations before admission.
-type Validator interface {
-	Validate(ctx context.Context, target string, plans []engine.Plan, searchPath string) (controlplane.Validation, error)
-}
+type Validator = admission.Validator
 
 // Baseliner marks migrations applied on a target without running them (implemented by the control plane).
 type Baseliner interface {
@@ -118,6 +117,15 @@ func (s *Server) limits() limits.Limits {
 	return s.Limits.WithDefaults()
 }
 
+// gate reads the fields an operator may still be setting when NewServer returns, so it is built per call.
+func (s *Server) gate() admission.Gate {
+	return admission.Gate{
+		Store: s.store, Observer: s.Inspector, Validator: s.validator,
+		Log: s.Log, Metrics: s.Metrics, NewID: s.newID,
+		PlanTTL: s.PlanTTL, RequirePlan: s.RequirePlan,
+	}
+}
+
 func (s *Server) checkFiles(in []*godwitv1.MigrationFile) error {
 	listed := make([]limits.Listed, 0, len(in))
 	for _, f := range in {
@@ -162,10 +170,28 @@ func rpcErr(err error) *connect.Error {
 	}
 }
 
-var errOutOfOrder = errors.New("out-of-order migrations")
-
 func invalid(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
+}
+
+func admitErr(err error) error {
+	var stale *controlplane.PlanStale
+	var required *controlplane.PlanRequired
+	switch {
+	case errors.As(err, &stale), errors.As(err, &required):
+		cerr := connect.NewError(connect.CodeFailedPrecondition, err)
+		if detail, derr := connect.NewErrorDetail(planDetail(err)); derr == nil {
+			cerr.AddDetail(detail)
+		}
+
+		return cerr
+	case errors.Is(err, admission.ErrInvalid):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, admission.ErrRefused):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	default:
+		return rpcErr(err)
+	}
 }
 
 func timeouts(lock, statement string) (controlplane.Timeouts, error) {
@@ -280,102 +306,123 @@ func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.Cr
 			return nil, err
 		}
 	}
-	spec, err := s.upSpec(m.Target, m.Rollout, m.Files)
+	set, err := s.upSet(m.Target, m.Rollout, m.Files)
 	if err != nil {
 		return nil, err
 	}
-	if spec, err = s.stopAt(ctx, m.Target, spec, m.ToVersion); err != nil {
-		return nil, err
+	g := s.gate()
+	if set, err = g.StopAt(ctx, m.Target, set, m.ToVersion); err != nil {
+		return nil, admitErr(err)
 	}
 	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
 	if err != nil {
 		return nil, err
 	}
-	b, err := s.bind(ctx, m, spec)
+	b, err := g.Bind(ctx, createRequest(m), set)
 	if err != nil {
-		return nil, err
+		return nil, admitErr(err)
 	}
-	if b.reattached != "" {
-		return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: b.reattached, PlanId: b.planID, Reattached: true}), nil
+	if b.Superseded.ID != "" {
+		s.audit(ctx, controlplane.AuditPlanSupersede, "", m.Target,
+			fmt.Sprintf("plan=%s by=%s key=%s", b.Superseded.ID, b.PlanID, b.Superseded.Key))
 	}
-	if b.adm == nil {
-		adm, err := s.admit(ctx, m.Target, spec.plans, b.acked, m.SkipValidation, b.allowOutOfOrder, b.searchPath)
-		if err != nil {
+	if b.Reattach != nil {
+		if err := s.rejoin(ctx, *b.Reattach); err != nil {
 			return nil, err
 		}
-		b.adm = &adm
+
+		return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: b.Reattach.Run.ID, PlanId: b.PlanID, Reattached: true}), nil
 	}
-	if b.expansions == nil {
-		b.expansions = b.adm.expansions
+	if b.Admitted == nil {
+		adm, err := g.Admit(ctx, m.Target, set.Plans, b.Acked, m.SkipValidation, b.AllowOutOfOrder, b.SearchPath)
+		if err != nil {
+			return nil, admitErr(err)
+		}
+		b.Admitted = &adm
 	}
-	if err := checkRollout(spec.rollout, b.adm.expanded(spec)); err != nil {
-		return nil, err
+	if b.Expansions == nil {
+		b.Expansions = b.Admitted.Expansions
+	}
+	if err := admission.CheckRollout(set.Rollout, b.Admitted.Expanded(set)); err != nil {
+		return nil, admitErr(err)
 	}
 
 	id := s.newID()
 	p := controlplane.Provenance{CreatedBy: authz.Actor(ctx), Source: m.Source}
-	_, err = s.queue(ctx, notify.RunCreated, b.detail(), func(tx *controlplane.Store) (controlplane.Run, error) {
-		if err := tx.CreateRun(ctx, id, m.Target, spec.rollout, spec.files, t, p, b.planID, b.expansions); err != nil {
+	_, err = s.queue(ctx, notify.RunCreated, b.Detail(), func(tx *controlplane.Store) (controlplane.Run, error) {
+		if err := tx.CreateRun(ctx, id, m.Target, set.Rollout, set.Files, t, p, b.PlanID, b.Expansions); err != nil {
 			return controlplane.Run{}, err
 		}
-		if b.planID != "" {
-			if err := tx.BindPlan(ctx, b.planID, id); err != nil {
+		if b.PlanID != "" {
+			if err := tx.BindPlan(ctx, b.PlanID, id); err != nil {
 				return controlplane.Run{}, err
 			}
 		}
 
 		return controlplane.Run{
-			ID: id, Target: m.Target, State: controlplane.StateQueued, PlanID: b.planID,
-			Rollout: spec.rollout, Phase: controlplane.PhaseExpand, Timeouts: t, Provenance: p,
+			ID: id, Target: m.Target, State: controlplane.StateQueued, PlanID: b.PlanID,
+			Rollout: set.Rollout, Phase: controlplane.PhaseExpand, Timeouts: t, Provenance: p,
 		}, nil
 	})
 	if err != nil {
 		return nil, rpcErr(err)
 	}
-	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", spec.rollout, "source", m.Source, "plan", b.planID,
-		"files", len(spec.files), "acked", b.acked, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
-		"allow_out_of_order", b.allowOutOfOrder, "to_version", m.ToVersion, "withheld", len(spec.withheld))
-	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target,
-		join(fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", spec.rollout, len(spec.plans),
-			strings.Join(b.acked, ","), m.Source, b.planID), b.expanded()))
+	s.Log.Info("run created", "run", id, "target", m.Target, "rollout", set.Rollout, "source", m.Source, "plan", b.PlanID,
+		"files", len(set.Files), "acked", b.Acked, "lock_timeout", t.Lock, "statement_timeout", t.Statement,
+		"allow_out_of_order", b.AllowOutOfOrder, "to_version", m.ToVersion, "withheld", len(set.Withheld))
+	detail := fmt.Sprintf("rollout=%s migrations=%d acked=%s source=%s plan=%s", set.Rollout, len(set.Plans),
+		strings.Join(b.Acked, ","), m.Source, b.PlanID)
+	if e := b.Expanded(); e != "" {
+		detail += ", " + e
+	}
+	s.audit(ctx, controlplane.AuditRunCreate, id, m.Target, detail)
 
-	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id, PlanId: b.planID}), nil
+	return connect.NewResponse(&godwitv1.CreateRunResponse{RunId: id, PlanId: b.PlanID}), nil
 }
 
-type runSpec struct {
-	rollout string
-	files   map[string]string
-	plans   []engine.Plan
-	// withheld is what a version target kept out of plans and files: reported, never run.
-	withheld []engine.Plan
+func createRequest(m *godwitv1.CreateRunRequest) admission.Request {
+	return admission.Request{
+		Target: m.Target, PlanID: m.PlanId, Source: m.Source, Acked: m.AcknowledgeHazards,
+		SkipValidation: m.SkipValidation, AllowOutOfOrder: m.AllowOutOfOrder,
+	}
 }
 
-func (s *Server) upSpec(target, rollout string, in []*godwitv1.MigrationFile) (runSpec, error) {
+func (s *Server) rejoin(ctx context.Context, r admission.Reattach) error {
+	if r.Resume {
+		if _, err := s.queue(ctx, notify.RunResumed, "re-attached by a pipeline re-run", func(tx *controlplane.Store) (controlplane.Run, error) {
+			return tx.Resume(ctx, r.Run.ID)
+		}); err != nil {
+			return rpcErr(err)
+		}
+		s.Metrics.RunResumed(r.Run.Target)
+	}
+	s.Log.Info("run re-attached", "run", r.Run.ID, "target", r.Run.Target, "state", r.Run.State, "plan", r.Plan.ID, "resumed", r.Resume)
+	s.audit(ctx, controlplane.AuditRunReattach, r.Run.ID, r.Run.Target,
+		fmt.Sprintf("state=%s plan=%s resumed=%t", r.Run.State, r.Plan.ID, r.Resume))
+
+	return nil
+}
+
+func (s *Server) upSet(target, rollout string, in []*godwitv1.MigrationFile) (admission.Set, error) {
 	if target == "" {
-		return runSpec{}, invalid("target is required")
+		return admission.Set{}, invalid("target is required")
 	}
 	if len(in) == 0 {
-		return runSpec{}, invalid("at least one migration file is required")
+		return admission.Set{}, invalid("at least one migration file is required")
 	}
 	if err := s.checkFiles(in); err != nil {
-		return runSpec{}, err
-	}
-	if rollout == "" {
-		rollout = controlplane.RolloutDirect
-	}
-	if _, ok := controlplane.Policies()[rollout]; !ok {
-		return runSpec{}, invalid("unknown rollout policy " + rollout)
+		return admission.Set{}, err
 	}
 	files := map[string]string{}
 	for _, f := range in {
 		files[f.Name] = f.Body
 	}
-	plans, err := controlplane.PlansFromFiles(files, engine.DirectionUp)
+	set, err := admission.NewSet(rollout, files)
 	if err != nil {
-		return runSpec{}, invalid(err.Error())
+		return admission.Set{}, admitErr(err)
 	}
 
-	return runSpec{rollout: rollout, files: files, plans: plans}, nil
+	return set, nil
 }
 
 // ErrDataLoss marks a revert plan that would drop a table or column the target still has rows in.
@@ -398,17 +445,18 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	if err != nil {
 		return nil, err
 	}
-	searchPath, err := s.observedSearchPath(ctx, orig.Target)
+	g := s.gate()
+	searchPath, err := g.ObservedSearchPath(ctx, orig.Target)
 	if err != nil {
-		return nil, err
+		return nil, rpcErr(err)
 	}
-	adm, err := s.admit(ctx, orig.Target, rp.Plans, m.AcknowledgeHazards, m.SkipValidation, true, searchPath)
+	adm, err := g.Admit(ctx, orig.Target, rp.Plans, m.AcknowledgeHazards, m.SkipValidation, true, searchPath)
 	if err != nil {
-		return nil, err
+		return nil, admitErr(err)
 	}
 	out := &godwitv1.RevertRunResponse{
 		Reverts: orig.ID, Target: orig.Target, DataLoss: lossToProto(loss), Forced: rp.Newer,
-		Migrations: migrationsToProto(controlplane.BuildPlanMigrations(controlplane.RolloutDirect, rp.Plans, adm.applied, nil)),
+		Migrations: migrationsToProto(controlplane.BuildPlanMigrations(controlplane.RolloutDirect, rp.Plans, adm.Applied, nil)),
 	}
 	if m.DryRun {
 		s.Log.Info("revert planned", "target", orig.Target, "reverts", orig.ID, "migrations", len(rp.Plans), "data_loss", len(loss))
@@ -558,120 +606,6 @@ func (s *Server) audit(ctx context.Context, action, runID, target, detail string
 	if err := s.store.Audit(ctx, e); err != nil {
 		s.Log.Error("audit write failed", "actor", e.Actor, "action", action, "run", runID, "target", target, "error", err)
 	}
-}
-
-type admission struct {
-	applied    controlplane.AppliedSet
-	validated  bool
-	validation *controlplane.Validation
-	// plans is the admitted set with every directive migration replaced by its expansion.
-	plans      []engine.Plan
-	expansions map[string]controlplane.Expansion
-}
-
-// expanded is what admission decided to run; it falls back to the submitted plans when a validator
-// stub reported none.
-func (a admission) expanded(spec runSpec) []engine.Plan {
-	if a.plans != nil {
-		return a.plans
-	}
-
-	return spec.plans
-}
-
-// admit refuses unacknowledged hazards, out-of-order versions and plans that fail on the scratch database.
-func (s *Server) admit(ctx context.Context, target string, plans []engine.Plan, acked []string, skipValidation, allowOutOfOrder bool, searchPath string) (admission, error) {
-	if _, _, err := s.store.Target(ctx, target); err != nil {
-		return admission{}, rpcErr(err)
-	}
-	applied, err := s.store.Applied(ctx, target)
-	if err != nil {
-		return admission{}, rpcErr(err)
-	}
-	if err := s.checkOrder(target, plans, applied.Versions, allowOutOfOrder); err != nil {
-		return admission{}, err
-	}
-	plans, err = engine.ShapeCheckpoint(plans, applied.Newest())
-	if err != nil {
-		s.Log.Warn("run refused by the checkpoint gate", "target", target, "error", err.Error())
-
-		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
-	}
-	if err := s.checkHazards(plans, applied, acked); err != nil {
-		s.Log.Warn("run refused by hazard gate", "target", target, "error", err.Error())
-
-		return admission{}, connect.NewError(connect.CodeFailedPrecondition, err)
-	}
-	adm := admission{applied: applied, plans: plans}
-	if s.validator == nil || skipValidation {
-		if id := directiveID(plans, applied); id != "" {
-			return admission{}, invalid(id + " carries a godwit directive: directives need validation, so drop --skip-validation")
-		}
-
-		return adm, nil
-	}
-	val, err := s.validator.Validate(ctx, target, plans, searchPath)
-	if err != nil {
-		if errors.Is(err, controlplane.ErrValidationFailed) || errors.Is(err, controlplane.ErrDirective) {
-			s.Metrics.ValidationFailed(target)
-			s.Log.Warn("run refused by validation", "target", target, "error", err.Error())
-
-			return admission{}, connect.NewError(connect.CodeInvalidArgument, err)
-		}
-
-		return admission{}, rpcErr(err)
-	}
-	adm.validated, adm.validation = true, &val
-	adm.expansions = val.Expansions
-	if val.Plans != nil {
-		adm.plans = val.Plans
-	}
-
-	return adm, nil
-}
-
-// directiveID names a directive migration still to apply; one the target holds is never expanded again.
-func directiveID(plans []engine.Plan, applied controlplane.AppliedSet) string {
-	for _, p := range plans {
-		if len(p.Migration.Directives) > 0 && !applied.Has(p.Migration) {
-			return p.Migration.ID()
-		}
-	}
-
-	return ""
-}
-
-// checkRollout refuses a directive that splits into two phases under a rollout that runs everything at
-// once: the rollout is part of the plan key, so godwit will not silently upgrade it.
-func checkRollout(rollout string, plans []engine.Plan) error {
-	if rollout != controlplane.RolloutDirect {
-		return nil
-	}
-	for _, p := range plans {
-		for _, st := range p.Statements {
-			if st.Phase == engine.PhaseContract {
-				return connect.NewError(connect.CodeFailedPrecondition,
-					fmt.Errorf("%s expands into expand and contract phases; use rollout: expand-contract", p.Migration.ID()))
-			}
-		}
-	}
-
-	return nil
-}
-
-// checkIdle refuses to plan or run against a target parked between the phases of an earlier run: its
-// schema matches no recorded state, so nothing can be validated against it.
-func (s *Server) checkIdle(ctx context.Context, target string) error {
-	run, ok, err := s.store.AwaitingContract(ctx, target)
-	if err != nil {
-		return rpcErr(err)
-	}
-	if !ok {
-		return nil
-	}
-
-	return connect.NewError(connect.CodeFailedPrecondition,
-		fmt.Errorf("target %s has run %s awaiting contract; confirm or revert it first", target, run.ID))
 }
 
 func toProto(r controlplane.Run) *godwitv1.Run {
@@ -853,63 +787,6 @@ func (s *Server) ConfirmRollout(ctx context.Context, req *connect.Request[godwit
 	s.audit(ctx, controlplane.AuditRunConfirm, run.ID, run.Target, "")
 
 	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
-}
-
-// checkHazards reads only the plans this admission would execute, so a target's own history never refuses a run over it.
-func (s *Server) checkHazards(plans []engine.Plan, applied controlplane.AppliedSet, acked []string) error {
-	ackSet := map[string]bool{}
-	for _, code := range acked {
-		ackSet[code] = true
-	}
-	var pending []string
-	for _, p := range plans {
-		if !controlplane.RunsBody(p, applied) {
-			continue
-		}
-		for _, st := range p.Statements {
-			for _, h := range st.Hazards {
-				s.Metrics.Hazard(h.Code, ackSet[h.Code])
-				if !ackSet[h.Code] {
-					pending = append(pending, fmt.Sprintf("%s: %s", h.Code, h.Detail))
-				}
-			}
-		}
-	}
-	if len(pending) > 0 {
-		return fmt.Errorf("unacknowledged hazards (pass acknowledge_hazards to accept):\n%s",
-			strings.Join(pending, "\n"))
-	}
-
-	return nil
-}
-
-// checkOrder refuses pending versions older than the newest one applied on the target unless allowed, in which case it
-// logs them; repeatables carry no version and are never out of order.
-func (s *Server) checkOrder(target string, plans []engine.Plan, applied []int64, allow bool) error {
-	if len(applied) == 0 {
-		return nil
-	}
-	latest := applied[len(applied)-1]
-	var behind []string
-	for _, p := range plans {
-		v := p.Migration.Version
-		if !p.Migration.Repeatable && v < latest && !slices.Contains(applied, v) {
-			behind = append(behind, strconv.FormatInt(v, 10))
-		}
-	}
-	if len(behind) == 0 {
-		return nil
-	}
-	if allow {
-		s.Log.Warn("out-of-order migrations admitted", "target", target, "versions", behind, "latest_applied", latest)
-
-		return nil
-	}
-	err := fmt.Errorf("%w %s: newest applied version on %s is %d (pass allow_out_of_order to apply them anyway)",
-		errOutOfOrder, strings.Join(behind, ", "), target, latest)
-	s.Log.Warn("run refused by order guard", "target", target, "error", err.Error())
-
-	return connect.NewError(connect.CodeFailedPrecondition, err)
 }
 
 var (

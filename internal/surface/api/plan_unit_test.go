@@ -93,12 +93,12 @@ func expectSnapshot(mock pgxmock.PgxPoolIface, fingerprint string) {
 
 func plannedMigrations(t *testing.T) []controlplane.PlanMigration {
 	t.Helper()
-	spec, err := (&Server{}).upSpec("app", "", planFiles())
+	set, err := (&Server{}).upSet("app", "", planFiles())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return controlplane.BuildPlanMigrations(spec.rollout, spec.plans, controlplane.AppliedSet{}, nil)
+	return controlplane.BuildPlanMigrations(set.Rollout, set.Plans, controlplane.AppliedSet{}, nil)
 }
 
 func createReq(acked ...string) *connect.Request[godwitv1.CreateRunRequest] {
@@ -326,40 +326,6 @@ func TestPlanRunDetectsWithValidation(t *testing.T) {
 	}
 }
 
-func TestPlanMigrationsDetects(t *testing.T) {
-	t.Parallel()
-	spec, err := (&Server{}).upSpec("app", "", []*godwitv1.MigrationFile{
-		{Name: "20260901120000_t.up.sql", Body: "CREATE TABLE b (id int);"},
-		{Name: "20260901120000_t.down.sql", Body: "DROP TABLE b;"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	obs := controlplane.Observation{Fingerprint: "f2", Definition: "table a\ntable b\n"}
-
-	migs, drift, detected := planMigrations(spec, admission{}, obs)
-	if detected || drift != "" || migs[0].AlreadyApplied {
-		t.Fatalf("no validation: %+v %q %t", migs, drift, detected)
-	}
-
-	val := controlplane.Validation{Base: "table a\n", Effects: [][]string{{"+ table b"}}, Fingerprints: []string{"f1", "f2"}}
-	migs, drift, detected = planMigrations(spec, admission{validation: &val}, obs)
-	if !detected || drift != "" || !migs[0].AlreadyApplied || migs[0].Effect != "+ table b" {
-		t.Fatalf("validation: %+v %q %t", migs, drift, detected)
-	}
-}
-
-func TestErrMessage(t *testing.T) {
-	t.Parallel()
-
-	if got := errMessage(errors.New("plain")); got != "plain" {
-		t.Fatalf("plain = %q", got)
-	}
-	if got := errMessage(connect.NewError(connect.CodeInternal, errors.New("wrapped"))); got != "wrapped" {
-		t.Fatalf("connect = %q", got)
-	}
-}
-
 func TestAuditTruncatesDetail(t *testing.T) {
 	t.Parallel()
 	mock, err := pgxmock.NewPool()
@@ -374,22 +340,5 @@ func TestAuditTruncatesDetail(t *testing.T) {
 	s.audit(context.Background(), "x", "", "app", strings.Repeat("é", auditDetailLimit+1))
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestObservedSearchPath(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	s := NewServer(nil, nil, nil, creds.Keyring{})
-	if path, err := s.observedSearchPath(ctx, "app"); path != "" || err != nil {
-		t.Fatalf("no inspector: %q, %v", path, err)
-	}
-	s.Inspector = stubInspector{err: errors.New("target down")}
-	if _, err := s.observedSearchPath(ctx, "app"); connect.CodeOf(err) != connect.CodeInternal {
-		t.Fatalf("observe error: %v", err)
-	}
-	s.Inspector = stubInspector{obs: controlplane.Observation{SearchPath: "app,public"}}
-	if path, err := s.observedSearchPath(ctx, "app"); path != "app,public" || err != nil {
-		t.Fatalf("path = %q, err = %v", path, err)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pashagolub/pgxmock/v4"
 
-	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
@@ -154,9 +153,6 @@ func TestReattachRefusals(t *testing.T) {
 func TestReattachSkipsUnboundSet(t *testing.T) {
 	t.Parallel()
 	s, mock := planServer(t, controlplane.Observation{Fingerprint: "f2", Definition: "table a\n"}, nil)
-	if run, ok, err := s.reattach(context.Background(), &godwitv1.CreateRunRequest{Target: "app", PlanId: planID}, runSpec{}, controlplane.Observation{}); ok || err != nil || run.ID != "" {
-		t.Fatalf("explicit plan: %+v, %v, %v", run, ok, err)
-	}
 	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
 	mock.ExpectQuery("SELECT provider, coalesce\\(credential_store, ..\\), config FROM cp_targets").WithArgs("app").WillReturnError(pgx.ErrNoRows)

@@ -2,16 +2,13 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
-	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
 // GetPlan returns one stored plan by id.
@@ -94,42 +91,4 @@ func (s *Server) explicitPlan(ctx context.Context, m *godwitv1.CreateRunRequest)
 	m.Files = filesToProto(files)
 
 	return nil
-}
-
-func (s *Server) lookup(ctx context.Context, m *godwitv1.CreateRunRequest, spec runSpec, pending []engine.Migration) (controlplane.Plan, error) {
-	if m.PlanId == "" {
-		key := controlplane.PlanKey(m.Target, spec.rollout, pending)
-		plan, err := s.store.ReadyPlan(ctx, m.Target, key, s.planSince())
-		if errors.Is(err, controlplane.ErrNotFound) {
-			return controlplane.Plan{}, s.noPlan(ctx, m.Target, key, pending)
-		}
-		if err != nil {
-			return controlplane.Plan{}, rpcErr(err)
-		}
-
-		return plan, nil
-	}
-	plan, err := s.store.Plan(ctx, m.PlanId)
-	if err != nil {
-		return controlplane.Plan{}, rpcErr(err)
-	}
-	switch plan.State {
-	case controlplane.PlanBound:
-		return controlplane.Plan{}, precondition(fmt.Sprintf("plan %s is bound to run %s", plan.ID, plan.RunID))
-	case controlplane.PlanSuperseded:
-		return controlplane.Plan{}, precondition(fmt.Sprintf("plan %s was superseded by %s", plan.ID, plan.SupersededBy))
-	}
-	if plan.CreatedAt.Before(s.planSince()) {
-		return controlplane.Plan{}, precondition(fmt.Sprintf("plan %s expired: planned %s, ttl %s", plan.ID, plan.CreatedAt.UTC().Format(time.RFC3339), s.PlanTTL))
-	}
-	planned, err := controlplane.Pending(migrations(spec.plans), plan.Applied, plan.Repeatables)
-	if err != nil || controlplane.PlanKey(m.Target, spec.rollout, planned) != plan.Key {
-		return controlplane.Plan{}, invalid(fmt.Sprintf("files do not match plan %s", plan.ID))
-	}
-
-	return plan, nil
-}
-
-func precondition(msg string) *connect.Error {
-	return connect.NewError(connect.CodeFailedPrecondition, errors.New(msg))
 }
