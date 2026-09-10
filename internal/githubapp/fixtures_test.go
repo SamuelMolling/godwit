@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
@@ -82,9 +83,9 @@ func (s *fakeStore) Audit(_ context.Context, e controlplane.AuditEntry) error {
 type fakeRepo struct {
 	perm          map[string]string
 	permErr       error
-	pr            pull
+	pr            authz.PullRequest
 	pullErr       error
-	submitted     []review
+	submitted     []authz.Review
 	reviewsErr    error
 	reviewsCapped bool
 	filesCapped   bool
@@ -123,11 +124,11 @@ func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
 	return "none", nil
 }
 
-func (r *fakeRepo) pullRequest(context.Context, int) (pull, error) {
+func (r *fakeRepo) pullRequest(context.Context, int) (authz.PullRequest, error) {
 	return r.pr, r.pullErr
 }
 
-func (r *fakeRepo) reviews(context.Context, int) ([]review, bool, error) {
+func (r *fakeRepo) reviews(context.Context, int) ([]authz.Review, bool, error) {
 	return r.submitted, !r.reviewsCapped, r.reviewsErr
 }
 
@@ -262,7 +263,7 @@ func newFixture(t *testing.T, bindings map[string]string, repo *fakeRepo) *fixtu
 	f := &fixture{store: newStore(bindings), api: &fakeAPI{repo: repo}, runner: &fakeRunner{}}
 	r, err := New(Config{
 		Secret: testSecret, Store: f.store, API: f.api, Runner: f.runner, Log: testLog,
-		Associations: defaultAssociations,
+		Associations: []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		Record:       func(event, result string) { f.counts = append(f.counts, counted{event, result}) },
 		Now:          func() time.Time { return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC) },
 	})
@@ -349,7 +350,7 @@ func writer(t *testing.T) *fakeRepo {
 
 	return &fakeRepo{
 		perm:    map[string]string{"alice": "write", "bob": "admin"},
-		pr:      pull{head: testHead, headRepo: testRepo, state: "open", author: "carol"},
+		pr:      authz.PullRequest{Head: testHead, HeadRepo: testRepo, State: "open"},
 		touched: []string{"db/migrations/20260101000000_x.up.sql"},
 		files:   map[string]string{"godwit.yaml": "dir: db/migrations\ntarget: orders\n"},
 	}

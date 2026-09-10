@@ -14,11 +14,12 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
 // service is the control-plane API called in the process that serves it: the App carries a principal
-// rather than a token, so api.Authorize stands in for the interceptor that would have made the decision.
+// rather than a token, so authz.Authorize stands in for the interceptor that would have made the decision.
 type service interface {
 	PlanRun(context.Context, *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error)
 	CreateRun(context.Context, *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error)
@@ -190,11 +191,11 @@ func (w *Worker) moved(ctx context.Context, repo repoView, cmd command, log *slo
 
 		return false, err
 	}
-	if pr.head == cmd.head {
+	if pr.Head == cmd.head {
 		return false, nil
 	}
 	log.Info("the head moved after the command was accepted, so it is left to the delivery that moved it",
-		"now", pr.head)
+		"now", pr.Head)
 
 	return true, nil
 }
@@ -263,10 +264,10 @@ func (w *Worker) one(ctx context.Context, repo repoView, cmd command, p project)
 }
 
 func (w *Worker) plan(ctx context.Context, cmd command, p project, files []*godwitv1.MigrationFile) done {
-	if err := api.Authorize(godwitv1connect.GodwitServicePlanRunProcedure, cmd.principal); err != nil {
+	if err := authz.Authorize(godwitv1connect.GodwitServicePlanRunProcedure, cmd.principal); err != nil {
 		return refusedBy(cmd, p, err)
 	}
-	res, err := w.cfg.Service.PlanRun(api.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.PlanRunRequest{
+	res, err := w.cfg.Service.PlanRun(authz.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.PlanRunRequest{
 		Target: p.target, Files: files, Rollout: cmd.rollout(p), AllowOutOfOrder: p.outOfOrder,
 		Persist: true, Source: cmd.sourceOf(p),
 	}))

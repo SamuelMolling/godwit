@@ -195,3 +195,19 @@ func validName(name string) bool {
 func validSHA(sha string) bool {
 	return len(sha) == 40 && strings.Trim(sha, "0123456789abcdef") == ""
 }
+
+func short(sha string) string {
+	if len(sha) < 7 {
+		return sha
+	}
+
+	return sha[:7]
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+
+	return s
+}

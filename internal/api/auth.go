@@ -1,167 +1,28 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"connectrpc.com/connect"
 
-	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
-
-// AnonymousActor names calls made with an unnamed token or against a service without tokens.
-const AnonymousActor = "anonymous"
-
-// Scope is what a token may call; each scope includes everything below it.
-type Scope string
-
-// Scopes from least to most privileged.
-const (
-	ScopeRead     Scope = "read"
-	ScopePipeline Scope = "pipeline"
-	ScopeOperator Scope = "operator"
-	ScopeAdmin    Scope = "admin"
-)
-
-var scopeRank = map[Scope]int{ScopeRead: 1, ScopePipeline: 2, ScopeOperator: 3, ScopeAdmin: 4}
-
-func (s Scope) allows(required Scope) bool {
-	r, ok := scopeRank[required]
-
-	return ok && scopeRank[s] >= r
-}
-
-// ParseScope returns s as a Scope, refusing anything outside the known set.
-func ParseScope(s string) (Scope, error) {
-	if _, ok := scopeRank[Scope(s)]; !ok {
-		return "", fmt.Errorf("unknown scope %q, want read, pipeline, operator or admin", s)
-	}
-
-	return Scope(s), nil
-}
-
-var procedureScopes = map[string]Scope{
-	godwitv1connect.GodwitServiceGetRunProcedure:                  ScopeRead,
-	godwitv1connect.GodwitServiceListRunsProcedure:                ScopeRead,
-	godwitv1connect.GodwitServiceWatchRunProcedure:                ScopeRead,
-	godwitv1connect.GodwitServicePlanRunProcedure:                 ScopeRead,
-	godwitv1connect.GodwitServiceGetTargetStatusProcedure:         ScopeRead,
-	godwitv1connect.GodwitServiceListTargetsProcedure:             ScopeRead,
-	godwitv1connect.GodwitServiceListMigrationsProcedure:          ScopeRead,
-	godwitv1connect.GodwitServiceListDriftEventsProcedure:         ScopeRead,
-	godwitv1connect.GodwitServiceListAuditProcedure:               ScopeRead,
-	godwitv1connect.GodwitServiceGetPlanProcedure:                 ScopeRead,
-	godwitv1connect.GodwitServiceListPlansProcedure:               ScopeRead,
-	godwitv1connect.GodwitServiceDiffProcedure:                    ScopeRead,
-	godwitv1connect.GodwitServiceCheckpointProcedure:              ScopeRead,
-	godwitv1connect.GodwitServiceListCredentialStoresProcedure:    ScopeRead,
-	godwitv1connect.GodwitServiceCreateRunProcedure:               ScopePipeline,
-	godwitv1connect.GodwitServiceRevertRunProcedure:               ScopePipeline,
-	godwitv1connect.GodwitServiceConfirmRolloutProcedure:          ScopePipeline,
-	godwitv1connect.GodwitServiceResumeRunProcedure:               ScopeOperator,
-	godwitv1connect.GodwitServiceParkRunProcedure:                 ScopeOperator,
-	godwitv1connect.GodwitServiceCheckDriftProcedure:              ScopeOperator,
-	godwitv1connect.GodwitServiceAcceptBaselineProcedure:          ScopeOperator,
-	godwitv1connect.GodwitServiceBaselineTargetProcedure:          ScopeOperator,
-	godwitv1connect.GodwitServiceReconcileTargetProcedure:         ScopeOperator,
-	godwitv1connect.GodwitServiceRegisterTargetProcedure:          ScopeAdmin,
-	godwitv1connect.GodwitServiceRegisterCredentialStoreProcedure: ScopeAdmin,
-}
-
-// Token is one accepted bearer secret with the actor name and scope it resolves to.
-type Token struct {
-	Name   string
-	Scope  Scope
-	Secret string
-}
-
-// ParseTokens reads token specs of the form "name:scope:secret"; a bare "secret" is an anonymous admin.
-func ParseTokens(specs []string) ([]Token, error) {
-	seen := map[string]string{}
-	out := make([]Token, 0, len(specs))
-	for i, spec := range specs {
-		t, err := parseToken(strings.TrimSpace(spec))
-		if err != nil {
-			return nil, fmt.Errorf("token #%d: %w", i+1, err)
-		}
-		if other, dup := seen[t.Secret]; dup {
-			return nil, fmt.Errorf("token #%d (%s): secret already used by %s", i+1, t.Name, other)
-		}
-		seen[t.Secret] = t.Name
-		out = append(out, t)
-	}
-
-	return out, nil
-}
-
-var errTokenForm = errors.New("want name:scope:secret or a bare secret")
-
-func parseToken(spec string) (Token, error) {
-	parts := strings.SplitN(spec, ":", 3)
-	if len(parts) == 2 {
-		return Token{}, fmt.Errorf("%q has two fields; that form used to read the second one as the secret and grant admin: %w",
-			parts[0]+":…", errTokenForm)
-	}
-	if len(parts) == 1 {
-		if parts[0] == "" {
-			return Token{}, errTokenForm
-		}
-
-		return Token{Name: AnonymousActor, Scope: ScopeAdmin, Secret: parts[0]}, nil
-	}
-	t := Token{Name: parts[0], Scope: Scope(parts[1]), Secret: parts[2]}
-	if t.Name == "" || t.Secret == "" {
-		return Token{}, errTokenForm
-	}
-	if _, err := ParseScope(string(t.Scope)); err != nil {
-		return Token{}, fmt.Errorf("(%s): %w", t.Name, err)
-	}
-
-	return t, nil
-}
-
-// Principal is the identity behind a call: the token name and its scope.
-type Principal struct {
-	Name  string
-	Scope Scope
-}
-
-type principalKey struct{}
-
-var anonymousAdmin = Principal{Name: AnonymousActor, Scope: ScopeAdmin}
-
-// Caller returns the principal behind the call; a context that never passed the auth interceptor
-// carries no scope, so Authorize refuses every procedure.
-func Caller(ctx context.Context) Principal {
-	p, _ := ctx.Value(principalKey{}).(Principal)
-
-	return p
-}
-
-// WithPrincipal returns ctx carrying p as the caller, the way the auth interceptor does for a bearer token.
-func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	return context.WithValue(ctx, principalKey{}, p)
-}
-
-// Actor returns the name of the token behind the call, or anonymous outside an authenticated request.
-func Actor(ctx context.Context) string {
-	return cmp.Or(Caller(ctx).Name, AnonymousActor)
-}
 
 // auth checks bearer tokens against the allow-set, names the caller and enforces the per-procedure scope;
 // an empty set disables auth and every call runs as open, which newAuth sets explicitly.
 type auth struct {
-	principals map[string]Principal
-	open       Principal
+	principals map[string]authz.Principal
+	open       authz.Principal
 }
 
-func newAuth(tokens []Token) *auth {
-	principals := map[string]Principal{}
+var anonymousAdmin = authz.Principal{Name: authz.AnonymousActor, Scope: authz.ScopeAdmin}
+
+func newAuth(tokens []authz.Token) *auth {
+	principals := map[string]authz.Principal{}
 	for _, t := range tokens {
-		principals[t.Secret] = Principal{Name: t.Name, Scope: t.Scope}
+		principals[t.Secret] = authz.Principal{Name: t.Name, Scope: t.Scope}
 	}
 
 	return &auth{principals: principals, open: anonymousAdmin}
@@ -170,29 +31,17 @@ func newAuth(tokens []Token) *auth {
 var errUnauthenticated = connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token"))
 
 // actor resolves the Authorization header to a principal; ok is false when the call must be refused.
-func (a *auth) actor(header string) (Principal, bool) {
+func (a *auth) actor(header string) (authz.Principal, bool) {
 	if len(a.principals) == 0 {
 		return a.open, true
 	}
 	secret, ok := strings.CutPrefix(header, "Bearer ")
 	if !ok {
-		return Principal{}, false
+		return authz.Principal{}, false
 	}
 	p, ok := a.principals[secret]
 
 	return p, ok
-}
-
-// Authorize is the scope decision the interceptor makes, for callers that reach a handler without one.
-func Authorize(procedure string, p Principal) error {
-	required := procedureScopes[procedure]
-	if p.Scope.allows(required) {
-		return nil
-	}
-	method := procedure[strings.LastIndex(procedure, "/")+1:]
-
-	return connect.NewError(connect.CodePermissionDenied,
-		fmt.Errorf("%s requires scope %s; token %s has scope %s", method, required, p.Name, p.Scope))
 }
 
 func (a *auth) authorize(ctx context.Context, procedure, header string) (context.Context, error) {
@@ -200,11 +49,11 @@ func (a *auth) authorize(ctx context.Context, procedure, header string) (context
 	if !ok {
 		return ctx, errUnauthenticated
 	}
-	if err := Authorize(procedure, p); err != nil {
-		return ctx, err
+	if err := authz.Authorize(procedure, p); err != nil {
+		return ctx, connect.NewError(connect.CodePermissionDenied, err)
 	}
 
-	return WithPrincipal(ctx, p), nil
+	return authz.WithPrincipal(ctx, p), nil
 }
 
 // WrapUnary implements connect.Interceptor.

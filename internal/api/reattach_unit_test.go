@@ -13,6 +13,7 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
@@ -33,7 +34,7 @@ func expectBoundRun(mock pgxmock.PgxPoolIface, state string) {
 	mock.ExpectQuery("FROM cp_runs WHERE id = \\$1").WithArgs(boundRunID).
 		WillReturnRows(pgxmock.NewRows(
 			[]string{"id", "seq", "target", "state", "coalesce", "attempts", "rollout", "phase", "coalesce", "kind", "coalesce", "coalesce", "created_at", "finished_at", "created_by", "source", "coalesce", "retries", "not_before", "progress", "expansions"}).
-			AddRow(boundRunID, int64(1), "app", state, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), AnonymousActor, "", planID, 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
+			AddRow(boundRunID, int64(1), "app", state, "", 1, controlplane.RolloutDirect, controlplane.PhaseExpand, "", controlplane.KindMigrate, "", "", time.Now(), (*time.Time)(nil), authz.AnonymousActor, "", planID, 0, (*time.Time)(nil), (*controlplane.RunProgress)(nil), map[string]controlplane.Expansion{}))
 }
 
 func expectRunsApplying(mock pgxmock.PgxPoolIface, byVersion map[int64]string) {
@@ -119,7 +120,7 @@ func TestReattachRefusals(t *testing.T) {
 	expectBoundPlan(mock, nil, plannedMigrations(t))
 	expectBoundRun(mock, controlplane.StateSucceeded)
 	expectRunsApplying(mock, map[int64]string{20260901120000: boundRunID})
-	mock.ExpectExec("INSERT INTO cp_audit").WithArgs(AnonymousActor, controlplane.AuditRunReattach, boundRunID, "app", "state=succeeded plan="+planID+" resumed=false").
+	mock.ExpectExec("INSERT INTO cp_audit").WithArgs(authz.AnonymousActor, controlplane.AuditRunReattach, boundRunID, "app", "state=succeeded plan="+planID+" resumed=false").
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	if res, err := s.CreateRun(ctx, createReq()); err != nil || !res.Msg.Reattached || res.Msg.RunId != boundRunID || res.Msg.PlanId != planID {
 		t.Fatalf("succeeded and applied: %+v, %v", res, err)

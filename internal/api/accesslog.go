@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
 type accessLog struct {
 	log   *slog.Logger
-	actor func(header string) (Principal, bool)
+	actor func(header string) (authz.Principal, bool)
 }
 
 func (a accessLog) observe(ctx context.Context, spec connect.Spec, header string, start time.Time, err error) {

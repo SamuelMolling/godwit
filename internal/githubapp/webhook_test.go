@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
 var bound = map[string]string{"orders": testRepo, "billing": "other/repo"}
@@ -84,7 +86,7 @@ func TestVerifiedRequestIsAccepted(t *testing.T) {
 func approvedBy(t *testing.T, login string) *fakeRepo {
 	t.Helper()
 	repo := writer(t)
-	repo.submitted = []review{{login: login, state: "APPROVED"}}
+	repo.submitted = []authz.Review{{Login: login, State: "APPROVED"}}
 
 	return repo
 }
@@ -220,18 +222,18 @@ func TestGodwitRefusesWhatGitHubDoesNotCallApproved(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		reviews []review
+		reviews []authz.Review
 	}{
 		{"no review at all", nil},
 		{
 			"an approval later withdrawn",
-			[]review{{login: "bob", state: "APPROVED"}, {login: "bob", state: "CHANGES_REQUESTED"}},
+			[]authz.Review{{Login: "bob", State: "APPROVED"}, {Login: "bob", State: "CHANGES_REQUESTED"}},
 		},
 		{
 			"a dismissed approval",
-			[]review{{login: "bob", state: "APPROVED"}, {login: "bob", state: "DISMISSED"}},
+			[]authz.Review{{Login: "bob", State: "APPROVED"}, {Login: "bob", State: "DISMISSED"}},
 		},
-		{"a comment is not an approval", []review{{login: "bob", state: "COMMENTED"}}},
+		{"a comment is not an approval", []authz.Review{{Login: "bob", State: "COMMENTED"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -252,9 +254,9 @@ func TestApprovalOutlivesAWithdrawalItPredates(t *testing.T) {
 	t.Parallel()
 
 	repo := writer(t)
-	repo.submitted = []review{
-		{login: "bob", state: "CHANGES_REQUESTED"},
-		{login: "bob", state: "APPROVED"},
+	repo.submitted = []authz.Review{
+		{Login: "bob", State: "CHANGES_REQUESTED"},
+		{Login: "bob", State: "APPROVED"},
 	}
 	f := newFixture(t, bound, repo)
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
@@ -387,7 +389,7 @@ func TestForkGetsNothing(t *testing.T) {
 		t.Parallel()
 
 		repo := approvedBy(t, "bob")
-		repo.pr.headRepo = "fork/orders"
+		repo.pr.HeadRepo = "fork/orders"
 		f := newFixture(t, bound, repo)
 		rec := f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now))
 		check(t, rec, http.StatusAccepted, "a fork may not reach the targets")
@@ -475,7 +477,7 @@ func TestPullRequestHeadIsNotTrustedForACommand(t *testing.T) {
 	t.Parallel()
 
 	repo := approvedBy(t, "bob")
-	repo.pr.head = testOther
+	repo.pr.Head = testOther
 	f := newFixture(t, bound, repo)
 	body := strings.Replace(commentBody("godwit apply "+testHead, "MEMBER", "alice", now), "", "", 1)
 	check(t, f.post(t, eventIssueComment, "d1", body), http.StatusAccepted, "the head moved after the comment")
@@ -486,19 +488,19 @@ func TestPullRequestStateGuards(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, command, want string
-		mutate              func(pr *pull)
+		mutate              func(pr *authz.PullRequest)
 	}{
 		{
 			"a closed pull request has nothing to apply", "godwit apply", "is closed: nothing to apply",
-			func(pr *pull) { pr.state = "closed" },
+			func(pr *authz.PullRequest) { pr.State = "closed" },
 		},
 		{
 			"a merged pull request cannot be reverted", "godwit revert", "was merged",
-			func(pr *pull) { pr.merged = true },
+			func(pr *authz.PullRequest) { pr.Merged = true },
 		},
 		{
 			"a head that is not a commit", "godwit apply", "could not read the head",
-			func(pr *pull) { pr.head = "" },
+			func(pr *authz.PullRequest) { pr.Head = "" },
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -580,7 +582,7 @@ func TestAnApprovalGitHubStillShowsSurvivesAPush(t *testing.T) {
 	t.Parallel()
 
 	repo := approvedBy(t, "bob")
-	repo.pr.head = testOther
+	repo.pr.Head = testOther
 	f := newFixture(t, bound, repo)
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
 		http.StatusAccepted, "godwit apply accepted")

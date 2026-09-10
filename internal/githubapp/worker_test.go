@@ -12,6 +12,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/comment"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
@@ -175,7 +176,7 @@ func newHarness(t *testing.T, repo *fakeRepo, cfg WorkerConfig) *harness {
 func planningRepo() *fakeRepo {
 	r := &fakeRepo{
 		perm: map[string]string{"alice": "write"},
-		pr:   pull{head: testHead, headRepo: testRepo, state: "open"},
+		pr:   authz.PullRequest{Head: testHead, HeadRepo: testRepo, State: "open"},
 	}
 	r.listing = map[string]contents{"db/migrations": listed("20260101000000_add_orders.up.sql")}
 	r.blobs = map[string]string{"db/migrations/20260101000000_add_orders.up.sql": "CREATE TABLE orders ();"}
@@ -188,7 +189,7 @@ func planCommand() command {
 		delivery: "d1", event: eventIssueComment, repository: testRepo, repositoryID: 42, installation: 7,
 		number: 3, head: testHead, login: "alice", name: "plan",
 		cmd:       &comment.Command{Name: "plan"},
-		principal: api.Principal{Name: "github:" + testRepo, Scope: scopes["plan"]},
+		principal: authz.Principal{Name: "github:" + testRepo, Scope: scopes["plan"]},
 		bound:     bindings{{target: "orders"}},
 		projects:  []project{{dir: "db/migrations", target: "orders", format: config.PlanFormatSchema}},
 		source:    "github.com/" + testRepo + "@" + testHead,
@@ -296,7 +297,7 @@ func TestAHeadThatMovedBetweenAcceptAndRunIsLeftToTheDeliveryThatMovedIt(t *test
 	t.Parallel()
 
 	repo := planningRepo()
-	repo.pr.head = testOther
+	repo.pr.Head = testOther
 	h := newHarness(t, repo, WorkerConfig{})
 	h.worker.carry(context.Background(), planCommand())
 

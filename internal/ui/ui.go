@@ -20,7 +20,7 @@ import (
 	"github.com/SamuelMolling/godwit/assets"
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/version"
 )
@@ -36,14 +36,14 @@ var script []byte
 // Origins, when set, are the only origins a form post may come from and the only hosts the UI answers on.
 type Config struct {
 	Replica  string
-	Tokens   []api.Token
+	Tokens   []authz.Token
 	User     string
 	Password string
-	Scope    api.Scope
+	Scope    authz.Scope
 	Origins  []Origin
 	// AnonymousScope is what a visitor gets when neither Tokens nor User/Password can sign anyone in;
 	// it defaults to AnonymousScope, never to Scope, and widening it is an explicit choice.
-	AnonymousScope api.Scope
+	AnonymousScope authz.Scope
 	// Anonymous serves /ui with no authentication at all, even when Tokens or User/Password could sign
 	// someone in. Every visitor is then ui:anonymous with AnonymousScope.
 	Anonymous bool
@@ -61,7 +61,7 @@ type Handler struct {
 // New mounts the UI under /ui/.
 func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	if cfg.Scope == "" {
-		cfg.Scope = api.ScopeOperator
+		cfg.Scope = authz.ScopeOperator
 	}
 	if cfg.AnonymousScope == "" {
 		cfg.AnonymousScope = AnonymousScope
@@ -111,26 +111,26 @@ func digestEqual(a, b string) int {
 // AnonymousScope is what an unauthenticated visitor gets when the UI has no way to sign anyone in.
 // It is read, never Config.Scope: a service with no credential configured must not hand out the rights
 // of the identity it would have authenticated.
-const AnonymousScope = api.ScopeRead
+const AnonymousScope = authz.ScopeRead
 
-func (h *Handler) principal(r *http.Request) (api.Principal, bool) {
+func (h *Handler) principal(r *http.Request) (authz.Principal, bool) {
 	if !h.protected() {
-		return api.Principal{Name: "ui:" + api.AnonymousActor, Scope: h.cfg.AnonymousScope}, true
+		return authz.Principal{Name: "ui:" + authz.AnonymousActor, Scope: h.cfg.AnonymousScope}, true
 	}
 	user, pass, ok := r.BasicAuth()
 	if !ok {
-		return api.Principal{}, false
+		return authz.Principal{}, false
 	}
 	for _, t := range h.cfg.Tokens {
 		if digestEqual(pass, t.Secret) == 1 {
-			return api.Principal{Name: "ui:" + t.Name, Scope: t.Scope}, true
+			return authz.Principal{Name: "ui:" + t.Name, Scope: t.Scope}, true
 		}
 	}
 	if h.shared() && digestEqual(user, h.cfg.User)&digestEqual(pass, h.cfg.Password) == 1 {
-		return api.Principal{Name: "ui:" + user, Scope: h.cfg.Scope}, true
+		return authz.Principal{Name: "ui:" + user, Scope: h.cfg.Scope}, true
 	}
 
-	return api.Principal{}, false
+	return authz.Principal{}, false
 }
 
 // ServeHTTP implements http.Handler.
@@ -153,15 +153,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	h.mux.ServeHTTP(w, r.WithContext(api.WithPrincipal(r.Context(), p)))
+	h.mux.ServeHTTP(w, r.WithContext(authz.WithPrincipal(r.Context(), p)))
 }
 
 // call runs the scope decision the auth interceptor would have made, then the handler in process.
 func call[Req, Resp any](ctx context.Context, procedure string, msg *Req,
 	fn func(context.Context, *connect.Request[Req]) (*connect.Response[Resp], error),
 ) (*Resp, error) {
-	if err := api.Authorize(procedure, api.Caller(ctx)); err != nil {
-		return nil, err
+	if err := authz.Authorize(procedure, authz.Caller(ctx)); err != nil {
+		return nil, connect.NewError(connect.CodePermissionDenied, err)
 	}
 	resp, err := fn(ctx, connect.NewRequest(msg))
 	if err != nil {
@@ -181,10 +181,10 @@ var uiActions = map[string]string{
 	"diff":    godwitv1connect.GodwitServiceDiffProcedure,
 }
 
-func allowed(p api.Principal) map[string]bool {
+func allowed(p authz.Principal) map[string]bool {
 	out := make(map[string]bool, len(uiActions))
 	for name, procedure := range uiActions {
-		out[name] = api.Authorize(procedure, p) == nil
+		out[name] = authz.Authorize(procedure, p) == nil
 	}
 
 	return out
@@ -419,7 +419,7 @@ func needsHuman(r *godwitv1.Run) bool {
 }
 
 func (h *Handler) bare(r *http.Request, nav string) page {
-	who := api.Caller(r.Context())
+	who := authz.Caller(r.Context())
 	p := page{
 		Nav: nav, Replica: h.cfg.Replica, Version: version.Version, Anonymous: h.cfg.Anonymous,
 		Scope: string(who.Scope), Can: allowed(who), Partial: r.Header.Get("HX-Request") != "",

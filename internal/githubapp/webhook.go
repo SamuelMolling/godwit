@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
@@ -86,10 +86,14 @@ const unsetReaction = ""
 // NoReaction is what an operator sets to stop godwit reacting to comments at all.
 const NoReaction = "none"
 
+type configError struct{ msg string }
+
+func (e *configError) Error() string { return e.msg }
+
 // Receiver is the GitHub App webhook endpoint.
 type Receiver struct {
-	cfg     Config
-	allowed map[string]bool
+	cfg   Config
+	forge authz.Forge
 }
 
 // New checks the receiver's configuration and returns it ready to serve; every fault here fails start-up.
@@ -100,10 +104,7 @@ func New(cfg Config) (*Receiver, error) {
 	if cfg.Store == nil || cfg.API == nil || cfg.Runner == nil || cfg.Log == nil {
 		return nil, &configError{"the github receiver needs a store, an api client, a runner and a logger"}
 	}
-	if len(cfg.Associations) == 0 {
-		cfg.Associations = defaultAssociations
-	}
-	allowed, err := parseAssociations(cfg.Associations)
+	forge, err := authz.NewForge(cfg.Associations)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func New(cfg Config) (*Receiver, error) {
 		cfg.Record = func(string, string) {}
 	}
 
-	return &Receiver{cfg: cfg, allowed: allowed}, nil
+	return &Receiver{cfg: cfg, forge: forge}, nil
 }
 
 // Handler serves the App at /github/webhook and answers 404 everywhere else.
@@ -272,7 +273,7 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 		delivery: delivery, event: event, repository: req.repository,
 		repositoryID: p.Repository.ID, installation: p.Installation.ID,
 		number: req.number, head: head, login: req.commander,
-		principal: api.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
+		principal: authz.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
 		bound:     bound, name: req.name, cmd: req.cmd, projects: res.planned,
 		source: "github.com/" + req.repository + "@" + head,
 	}, nil, req, nil
@@ -325,13 +326,13 @@ func (r *Receiver) mark(ctx context.Context, repo repoView, req *request, out *o
 	head := req.headSHA
 	if !validSHA(head) {
 		pr, err := repo.pullRequest(ctx, req.number)
-		if err != nil || !validSHA(pr.head) {
+		if err != nil || !validSHA(pr.Head) {
 			r.cfg.Log.Warn("could not set the refusal check", "repository", req.repository,
 				"pull_request", req.number, "check", name, "error", err)
 
 			return
 		}
-		head = pr.head
+		head = pr.Head
 	}
 	if err := repo.check(ctx, name, head, "godwit "+req.name+" refused", out.message); err != nil {
 		r.cfg.Log.Warn("could not set the refusal check", "repository", req.repository,
@@ -376,7 +377,7 @@ func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *
 	}
 	if req.commander != "" {
 		return authorizer{
-			open: open, allowed: r.allowed, reaction: r.cfg.Reaction, log: r.cfg.Log,
+			open: open, forge: r.forge, reaction: r.cfg.Reaction, log: r.cfg.Log,
 		}.authorize(ctx, req)
 	}
 	if req.headRepo != req.repository {

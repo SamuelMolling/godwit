@@ -9,15 +9,15 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
-	"github.com/SamuelMolling/godwit/internal/api"
+	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
 func (w *Worker) apply(ctx context.Context, cmd command, p project, files []*godwitv1.MigrationFile) done {
-	if err := api.Authorize(godwitv1connect.GodwitServiceCreateRunProcedure, cmd.principal); err != nil {
+	if err := authz.Authorize(godwitv1connect.GodwitServiceCreateRunProcedure, cmd.principal); err != nil {
 		return refusedBy(cmd, p, err)
 	}
-	res, err := w.cfg.Service.CreateRun(api.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.CreateRunRequest{
+	res, err := w.cfg.Service.CreateRun(authz.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: p.target, Files: files, AcknowledgeHazards: cmd.acked(), Rollout: cmd.rollout(p),
 		AllowOutOfOrder: p.outOfOrder, Source: cmd.sourceOf(p),
 	}))
@@ -29,7 +29,7 @@ func (w *Worker) apply(ctx context.Context, cmd command, p project, files []*god
 }
 
 func (w *Worker) confirm(ctx context.Context, cmd command, p project) done {
-	if err := api.Authorize(godwitv1connect.GodwitServiceConfirmRolloutProcedure, cmd.principal); err != nil {
+	if err := authz.Authorize(godwitv1connect.GodwitServiceConfirmRolloutProcedure, cmd.principal); err != nil {
 		return refusedBy(cmd, p, err)
 	}
 	held, err := w.pick(ctx, cmd, p, func(g controlplane.GitHubRun) bool {
@@ -42,7 +42,7 @@ func (w *Worker) confirm(ctx context.Context, cmd command, p project) done {
 		return refusedBy(cmd, p, fmt.Errorf(
 			"no run of pull request #%d on %s is awaiting its contract phase", cmd.number, p.target))
 	}
-	if _, err := w.cfg.Service.ConfirmRollout(api.WithPrincipal(ctx, cmd.principal),
+	if _, err := w.cfg.Service.ConfirmRollout(authz.WithPrincipal(ctx, cmd.principal),
 		connect.NewRequest(&godwitv1.ConfirmRolloutRequest{RunId: held})); err != nil {
 		return refusedBy(cmd, p, err)
 	}
@@ -53,7 +53,7 @@ func (w *Worker) confirm(ctx context.Context, cmd command, p project) done {
 // revert undoes the newest un-reverted run of this pull request. The Action loops over every one of them
 // oldest first, which refuses on the second without --force, so the two agree wherever the Action works.
 func (w *Worker) revert(ctx context.Context, cmd command, p project) done {
-	if err := api.Authorize(godwitv1connect.GodwitServiceRevertRunProcedure, cmd.principal); err != nil {
+	if err := authz.Authorize(godwitv1connect.GodwitServiceRevertRunProcedure, cmd.principal); err != nil {
 		return refusedBy(cmd, p, err)
 	}
 	undo, err := w.pick(ctx, cmd, p, revertable)
@@ -67,7 +67,7 @@ func (w *Worker) revert(ctx context.Context, cmd command, p project) done {
 				cmd.number, p.target),
 		}
 	}
-	res, err := w.cfg.Service.RevertRun(api.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.RevertRunRequest{
+	res, err := w.cfg.Service.RevertRun(authz.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.RevertRunRequest{
 		RunId: undo, Target: p.target, AcknowledgeHazards: cmd.acked(),
 		Force: cmd.force(), AllowDataLoss: cmd.allowDataLoss(),
 	}))
