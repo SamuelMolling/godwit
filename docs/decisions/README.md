@@ -24,7 +24,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0014](0014-the-target-journal-is-authoritative.md) | The target's journal is authoritative; the ledger is the control plane's copy of it | #96 |
 | [0015](0015-command-names-say-what-they-do.md) | Command names that say what they do: `plan --save`, one `target adopt`, `apply` → `up` | #109 |
 | [0016](0016-the-app-is-bound-to-targets-by-the-server.md) | The GitHub App is bound to its targets by the server, not by the repository | #126 |
-| [0017](0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) | The repository asks to be planned, the binding says which target it may be planned against | #PR |
+| [0017](0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) | The repository asks to be planned, the binding says which target it may be planned against | #127 |
 
 ## Open questions
 

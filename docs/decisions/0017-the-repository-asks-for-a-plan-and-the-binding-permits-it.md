@@ -1,6 +1,6 @@
 # 0017 — The repository asks to be planned, the binding says which target it may be planned against
 
-Shipped in #PR. It decides *when* the App looks at a project and *which* project it is; it still does not fetch the migrations or write a Check Run.
+Shipped in #127. It decides *when* the App looks at a project and *which* project it is; it still does not fetch the migrations or write a Check Run.
 
 ## The open question
 
