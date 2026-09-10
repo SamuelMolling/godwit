@@ -15,14 +15,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/SamuelMolling/godwit/internal/api"
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/limits"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
-	"github.com/SamuelMolling/godwit/internal/ui"
+	"github.com/SamuelMolling/godwit/internal/surface/api"
+	"github.com/SamuelMolling/godwit/internal/surface/ui"
 	"github.com/SamuelMolling/godwit/internal/version"
 )
 
