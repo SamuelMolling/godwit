@@ -92,17 +92,3 @@ extraObjects:
                   kubernetes.io/metadata.name: gateway-system
           ports:
             - port: {{ .Values.serve.githubApp.port }}
-
-# The binding lives on the target, not in the repository: this is what lets acme/orders command
-# godwit against `orders`, and nothing else.
-targets:
-  enabled: true
-  tokenSecret:
-    name: godwit-admin
-    key: GODWIT_ADMIN_TOKEN
-  list:
-    - name: orders
-      provider: kubernetes
-      secretPath: /secrets/orders/dsn
-      requirePlan: true
-      githubRepos: [acme/orders]

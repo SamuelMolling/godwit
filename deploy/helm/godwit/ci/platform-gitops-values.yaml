@@ -1,5 +1,6 @@
-# A GitOps platform: Gateway API for routing, an operator for the Secret, targets
-# declared in git, and the chart's own Ingress off. Nothing here patches the chart.
+# A GitOps platform: Gateway API for routing, an operator for the Secret, and the chart's
+# own Ingress off. Nothing here patches the chart. The targets and the Vault they read are
+# rows an admin registers against the API; the values only say which hosts a store may name.
 replicaCount: 2
 
 image:
@@ -15,7 +16,7 @@ commonLabels:
 existingSecret:
   name: godwit
   keys:
-    # `legacy` below is a static target, so this deployment opts into a key.
+    # This deployment has a static target registered, so it opts into a key.
     masterKey: GODWIT_MASTER_KEY
     tokens: GODWIT_TOKENS
     storeDSN: GODWIT_STORE_DSN
@@ -32,11 +33,6 @@ serve:
 
 stores:
   allowedHosts: [vault.example.internal]
-  list:
-    - name: platform
-      vaultAddr: http://vault.example.internal
-      vaultK8sRole: godwit
-      vaultK8sMount: kubernetes-platform
 
 notifications:
   publicUrl: https://godwit.example.internal
@@ -74,36 +70,6 @@ httpRoute:
     - godwit.example.internal
   annotations:
     external-dns.alpha.kubernetes.io/hostname: godwit.example.internal
-
-targets:
-  enabled: true
-  tokenSecret:
-    name: godwit-admin
-    key: GODWIT_ADMIN_TOKEN
-  helmHook: false
-  annotations:
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-  list:
-    - name: orders
-      provider: vault
-      credentialStore: platform
-      vaultPath: secrets/data/orders
-      vaultTemplate: 'postgres://{{DB_USER}}:{{DB_PASSWORD}}@orders-db:5432/orders'
-      lockTimeout: 5s
-      statementTimeout: 15m
-      requirePlan: true
-    - name: billing
-      provider: vault
-      vaultPath: secrets/data/billing
-      vaultTemplate: '{{DATABASE_URL}}'
-      searchPath: app,public
-      keepOld: false
-    - name: legacy
-      provider: static
-      dsnSecret:
-        name: legacy-dsn
-        key: dsn
 
 extraObjects:
   - apiVersion: external-secrets.io/v1

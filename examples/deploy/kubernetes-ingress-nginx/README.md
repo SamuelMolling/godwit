@@ -4,7 +4,7 @@ The chart in [deploy/helm/godwit](../../../deploy/helm/godwit) supports an Ingre
 
 **Assumes:** a cluster with `ingress-nginx` installed and an `IngressClass` named `nginx`, cert-manager with a `ClusterIssuer` named `letsencrypt-prod`, the Prometheus Operator CRDs (for `serviceMonitor.enabled`), and a DNS record for `godwit.example.com` pointing at the ingress controller.
 
-**Leaves to you:** where the two PostgreSQL servers come from (a managed service, CloudNativePG, a StatefulSet), and the credential provider for your targets. Registering the targets is the chart's `targets.list`, or the `godwit target add` calls [deployment.md](../../../docs/deployment.md#registering-a-target) describes.
+**Leaves to you:** where the two PostgreSQL servers come from (a managed service, CloudNativePG, a StatefulSet), and the credential provider for your targets. Registering the targets is the `godwit credential-store add` and `godwit target add` calls [deployment.md](../../../docs/deployment.md#registering-a-target) describes; the chart declares neither.
 
 Files here: [`values.yaml`](values.yaml) (the chart values, rendered and validated) and [`ingress-grpc.yaml`](ingress-grpc.yaml) (a second Ingress for HTTP/2 clients — read [Reaching the API](#reaching-the-api) before you apply it).
 

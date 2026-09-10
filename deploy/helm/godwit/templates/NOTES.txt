@@ -19,23 +19,17 @@ Check it:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "godwit.fullname" . }} {{ .Values.service.port }}
   curl -s localhost:{{ .Values.service.port }}/readyz
 
-{{ if and .Values.targets.enabled .Values.targets.list -}}
-{{ len .Values.targets.list }} target(s) are registered by Job {{ include "godwit.fullname" . }}-register-targets:
-{{- range .Values.targets.list }}
-  {{ .name }} ({{ .provider }})
-{{- end }}
-  kubectl -n {{ .Release.Namespace }} logs job/{{ include "godwit.fullname" . }}-register-targets --all-containers
-
-Run migrations with one of the tokens from the Secret:
+Targets and credential stores are registered through the API, not declared in these values.
+With the `admin` token from the Secret:
   export GODWIT_SERVER=http://localhost:{{ .Values.service.port }} GODWIT_TOKEN=...
-  godwit migrate --target {{ (first .Values.targets.list).name }} --rollout expand-contract
-{{- else -}}
-Register a target and run migrations with one of the tokens from the Secret:
-  export GODWIT_SERVER=http://localhost:{{ .Values.service.port }} GODWIT_TOKEN=...
-  godwit target add orders --provider vault --vault-path database/creds/orders \
+  godwit credential-store add production --vault-addr https://vault.internal --vault-k8s-role godwit
+  godwit target add orders --provider vault --credential-store production \
+    --vault-path database/creds/orders \
     --vault-template 'postgres://{{"{{"}}username{{"}}"}}:{{"{{"}}password{{"}}"}}@db/orders'
+  godwit target status orders
+
+Then, with a `pipeline` token:
   godwit migrate --target orders --rollout expand-contract
-{{- end }}
 {{- if not .Values.serviceMonitor.enabled }}
 
 Metrics are on /metrics; set serviceMonitor.enabled=true to scrape them with the Prometheus Operator.
