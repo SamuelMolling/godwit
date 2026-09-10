@@ -173,6 +173,33 @@ func TestForgeAuthorizeReportsWhatItCouldNotRead(t *testing.T) {
 	}
 }
 
+func TestAutoPlanAdmitsAHeadInTheBoundRepository(t *testing.T) {
+	t.Parallel()
+
+	if ref := (Forge{}).AutoPlan(Event{Repository: testRepo, HeadRepo: testRepo, Number: 7}); ref != "" {
+		t.Fatalf("AutoPlan = %q, want the head admitted", ref)
+	}
+}
+
+func TestAForkIsRefusedTheSameWayWhetherOrNotSomebodyCommandedIt(t *testing.T) {
+	t.Parallel()
+
+	repo, c := newRepo(), command()
+	repo.pr.HeadRepo = "fork/orders"
+	_, commanded, err := newForge(t).Authorize(context.Background(), opens(repo), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noticed := (Forge{}).AutoPlan(Event{Repository: c.Repository, HeadRepo: "fork/orders", Number: c.Number})
+	if commanded == "" || noticed == "" {
+		t.Fatalf("both paths must refuse a fork: %q and %q", commanded, noticed)
+	}
+	rest, named := strings.CutPrefix(commanded, "godwit "+c.Name+" on ")
+	if !named || rest != noticed {
+		t.Fatalf("the two paths refuse a fork differently:\n  commanded %q\n  noticed   %q", commanded, noticed)
+	}
+}
+
 func TestNewForge(t *testing.T) {
 	t.Parallel()
 

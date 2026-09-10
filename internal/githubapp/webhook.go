@@ -380,9 +380,8 @@ func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *
 			open: open, forge: r.forge, reaction: r.cfg.Reaction, log: r.cfg.Log,
 		}.authorize(ctx, req)
 	}
-	if req.headRepo != req.repository {
-		return at{}, refused("pull request #%d has its head in %s, not %s: a fork's pull request is not planned "+
-			"against the targets of %s", req.number, orNone(req.headRepo), req.repository, req.repository), nil
+	if out := outcomeOf(r.forge.AutoPlan(eventOf(req))); out != nil {
+		return at{}, out, nil
 	}
 	repo, err := open(ctx)
 	if err != nil {

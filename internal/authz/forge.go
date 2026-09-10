@@ -40,6 +40,13 @@ type Repository interface {
 	Reviews(ctx context.Context, number int) ([]Review, bool, error)
 }
 
+// Event is a pull request godwit noticed rather than one somebody commanded.
+type Event struct {
+	Repository string
+	HeadRepo   string
+	Number     int
+}
+
 // Command is a command someone posted on a pull request, as the delivery named it.
 type Command struct {
 	Name        string
@@ -52,6 +59,26 @@ type Command struct {
 }
 
 func refuse(format string, a ...any) string { return fmt.Sprintf(format, a...) }
+
+// forked is the one sentence both paths refuse a fork with; name is empty for an event nobody commanded.
+func forked(name string, number int, headRepo, repository string) string {
+	commanded := ""
+	if name != "" {
+		commanded = "godwit " + name + " on "
+	}
+
+	return refuse("%spull request #%d refused: its head is in %s, not %s; a fork may not reach the targets of %s",
+		commanded, number, orNone(headRepo), repository, repository)
+}
+
+// AutoPlan decides an event nobody commanded: nothing is applied and there is nobody to hold to an association, a permission or an approval, so the head being in the bound repository — where only a writer could have pushed it — is the whole of it.
+func (Forge) AutoPlan(ev Event) string {
+	if ev.HeadRepo != ev.Repository {
+		return forked("", ev.Number, ev.HeadRepo, ev.Repository)
+	}
+
+	return ""
+}
 
 // Forge is the policy for commands arriving through a forge: who may post them and on what.
 type Forge struct{ associations map[string]bool }
@@ -105,8 +132,7 @@ func (f Forge) Authorize(ctx context.Context, open func(context.Context) (Reposi
 		return PullRequest{}, refuse("could not read the head of pull request #%d", c.Number), nil
 	}
 	if pr.HeadRepo != c.Repository {
-		return PullRequest{}, refuse("godwit %s on pull request #%d refused: its head is in %s, not %s; a fork may not reach "+
-			"the targets of %s", c.Name, c.Number, orNone(pr.HeadRepo), c.Repository, c.Repository), nil
+		return PullRequest{}, forked(c.Name, c.Number, pr.HeadRepo, c.Repository), nil
 	}
 	if ref := anchored(c, pr); ref != "" {
 		return PullRequest{}, ref, nil

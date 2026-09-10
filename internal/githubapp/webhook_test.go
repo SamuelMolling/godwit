@@ -383,7 +383,7 @@ func TestForkGetsNothing(t *testing.T) {
 
 		f := newFixture(t, bound, writer(t))
 		rec := f.post(t, eventPullRequest, "d1", pullBodyJSON("opened", "fork/orders", testHead))
-		check(t, rec, http.StatusAccepted, "a fork's pull request is not planned")
+		check(t, rec, http.StatusAccepted, "a fork may not reach the targets")
 	})
 	t.Run("a command on a fork's head is refused", func(t *testing.T) {
 		t.Parallel()
