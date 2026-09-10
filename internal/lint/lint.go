@@ -44,6 +44,8 @@ type Finding struct {
 type Report struct {
 	Findings []Finding `json:"findings"`
 	Blocking int       `json:"blocking"`
+	// Nothing says why there was no migration to check, and is empty when there was one.
+	Nothing string `json:"nothing,omitempty"`
 }
 
 // GitFunc runs git with args inside dir and returns its stdout.
@@ -74,22 +76,32 @@ var (
 	repeatRe = regexp.MustCompile(`^R__[a-z0-9_]+\.(up|down)\.sql$`)
 )
 
-// Check lints dir; with opts.Base set, only migrations added since that git ref are reported.
+// Check lints dir; with opts.Base set, only migrations added since that git ref are reported. An absent dir holds nothing to lint and is no working directory for the git diff either.
 func Check(dir string, acked []string, opts Options) (Report, error) {
 	rep := Report{Findings: []Finding{}}
-	sc, err := newScope(dir, opts)
-	if err != nil {
-		return Report{}, err
+	migs, err := engine.LoadDir(dir)
+	if errors.Is(err, engine.ErrNoDir) {
+		rep.Nothing = "no migration to lint: " + dir + " does not exist yet"
+		if err := rep.checkSchema(opts.Schema, nil); err != nil {
+			return Report{}, err
+		}
+
+		return rep, nil
+	}
+	sc, serr := newScope(dir, opts)
+	if serr != nil {
+		return Report{}, serr
 	}
 	for _, f := range sc.modified {
 		rep.add(Finding{File: f, Level: LevelError, Code: CodeModified, Message: "migration modified after merge"})
 	}
-
-	migs, err := engine.LoadDir(dir)
 	if err != nil {
 		rep.add(loadFinding(dir, err))
 
 		return rep, nil
+	}
+	if len(migs) == 0 {
+		rep.Nothing = "no migration to lint: " + dir + " holds none"
 	}
 	ackSet := map[string]bool{}
 	for _, code := range acked {

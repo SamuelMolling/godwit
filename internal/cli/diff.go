@@ -64,7 +64,7 @@ func newDiffCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			committed, err := optionalFiles(cmd, dir)
+			committed, err := optionalFiles(dir)
 			if err != nil {
 				return err
 			}
@@ -279,6 +279,9 @@ func (s *sourceFlags) djangoSource(managePy, bin string) (schemasource.Source, s
 }
 
 func writeDiff(dir, name string, m *godwitv1.DiffResponse) ([]string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
 	prefix := filepath.Join(dir, diffNow().UTC().Format(versionLayout)+"_"+name)
 	files := []string{prefix + ".up.sql", prefix + ".down.sql"}
 	for i, body := range []string{m.UpSql, m.DownSql} {

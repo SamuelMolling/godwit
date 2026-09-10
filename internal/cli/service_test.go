@@ -340,7 +340,7 @@ func TestTargetAdoptAtVersion(t *testing.T) {
 	}
 
 	if code, _, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", "/nope", "--version", "1"); code != 1 ||
-		!strings.Contains(errOut, "read migration dir") {
+		!strings.Contains(errOut, "no migration directory /nope") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target already has applied migrations"))
@@ -369,7 +369,7 @@ func TestTargetAdoptFromJournal(t *testing.T) {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 	if code, _, errOut := runCLI("target", "adopt", "app", "--server", url, "--dir", "/nope", "--from-journal"); code != 1 ||
-		!strings.Contains(errOut, "read migration dir") {
+		!strings.Contains(errOut, "no migration directory /nope") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 	stub.err = connect.NewError(connect.CodeFailedPrecondition, errors.New("target and ledger disagree"))
@@ -782,13 +782,52 @@ func TestMigrateHazardRefusedVerbatim(t *testing.T) {
 	}
 }
 
-func TestMigrateBadDir(t *testing.T) {
+func TestMigrateWithoutMigrations(t *testing.T) {
 	t.Parallel()
-	url := startStub(t, &stubService{})
+	stub := &stubService{status: &godwitv1.GetTargetStatusResponse{Target: "app"}}
+	url := startStub(t, stub)
+	missing := t.TempDir() + "/missing"
 
-	code, _, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", t.TempDir()+"/missing")
-	if code != 1 || !strings.Contains(errOut, "read migration dir") {
+	code, out, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", missing)
+	if code != 0 || out != "no migration to run: "+missing+" does not exist yet\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+	if code, _, errOut = runCLI("migrate", "--server", url, "--target", "app", "--dir", badMigs(t)); code != 1 ||
+		!strings.Contains(errOut, "unexpected file") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	if stub.created != nil {
+		t.Fatalf("a run was created for an empty set: %v", stub.created)
+	}
+
+	code, out, errOut = runCLI("migrate", "--server", url, "--target", "app", "--dir", missing, "--dry-run")
+	if code != 0 || !strings.Contains(out, "No migration yet. "+missing+" does not exist yet") {
+		t.Fatalf("dry run: code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+	code, out, _ = runCLI("migrate", "--server", url, "--target", "app", "--dir", missing, "--dry-run", "--json")
+	if code != 0 || decodeJSON(t, out)["target"] != "app" {
+		t.Fatalf("dry run json: code = %d, out = %q", code, out)
+	}
+	if code, out, _ = runCLI("migrate", "--server", url, "--target", "app", "--dir", missing, "--json"); code != 0 || out != "" {
+		t.Fatalf("json: code = %d, out = %q", code, out)
+	}
+}
+
+func TestMigrateWithoutMigrationsOnStartedTarget(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{status: &godwitv1.GetTargetStatusResponse{
+		Target: "app", Applied: []*godwitv1.AppliedMigration{{Version: 20260901120000, Name: "users"}},
+	}}
+	url := startStub(t, stub)
+	missing := t.TempDir() + "/missing"
+
+	code, _, errOut := runCLI("migrate", "--server", url, "--target", "app", "--dir", missing)
+	if code != 1 || errOut != "godwit: "+missing+" does not exist yet, and app already has 1 migration applied:"+
+		" check --dir, the checkout and the branch\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	if stub.created != nil {
+		t.Fatalf("a run was created over a lost directory: %v", stub.created)
 	}
 }
 
@@ -1216,8 +1255,36 @@ func TestPlan_RemoteErrors(t *testing.T) {
 	if code != 1 || errOut != "godwit: 20260901120000_users applied with different content\n" {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
-	if code, _, errOut := runCLI("plan", "--server", url, "--target", "app", "--dir", t.TempDir()+"/missing"); code != 1 ||
-		!strings.Contains(errOut, "read migration dir") {
+	missing := t.TempDir() + "/missing"
+	if code, _, errOut := runCLI("plan", "--server", url, "--target", "app", "--dir", missing); code != 1 ||
+		errOut != "godwit: "+missing+" does not exist yet, and app could not be asked whether it already has"+
+			" migrations applied: 20260901120000_users applied with different content\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+	if code, _, errOut := runCLI("plan", "--target", "app", "--dir", missing); code != 1 || !strings.Contains(errOut, "--server") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
+func TestPlanWithoutMigrationsAgainstTarget(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{status: &godwitv1.GetTargetStatusResponse{Target: "app"}}
+	url := startStub(t, stub)
+	missing := t.TempDir() + "/missing"
+
+	code, out, errOut := runCLI("plan", "--server", url, "--target", "app", "--dir", missing)
+	if code != 0 || !strings.Contains(out, "No migration yet. "+missing+" does not exist yet, so there is nothing to plan.") {
+		t.Fatalf("code = %d, out = %q, stderr = %q", code, out, errOut)
+	}
+	if stub.planned != nil {
+		t.Fatalf("an empty set was planned on the service: %v", stub.planned)
+	}
+
+	stub.status = &godwitv1.GetTargetStatusResponse{
+		Target: "app", Applied: []*godwitv1.AppliedMigration{{Version: 20260901120000, Name: "users"}, {Name: "views", Repeatable: true}},
+	}
+	if code, _, errOut = runCLI("plan", "--server", url, "--target", "app", "--dir", missing); code != 1 ||
+		!strings.Contains(errOut, "app already has 2 migrations applied: check --dir, the checkout and the branch") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }

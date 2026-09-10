@@ -130,6 +130,9 @@ func (r planReport) pauses() bool {
 }
 
 func (r planReport) verdict(m markup) string {
+	if r.nothing != "" {
+		return m.glyph("ℹ️") + m.bold("No migration yet.") + " " + r.nothing + ", so there is nothing to plan."
+	}
 	if !r.live {
 		return m.glyph("ℹ️") + m.bold("Offline plan.") + " Both sides of every migration in the directory, as written; no database was" +
 			" consulted, so nothing here says what is pending."
@@ -201,7 +204,7 @@ func (r planReport) stateLine(m markup) string {
 }
 
 func (r planReport) notices(m markup) []string {
-	if !r.live {
+	if !r.live || r.nothing != "" {
 		return nil
 	}
 	var out []string
@@ -224,6 +227,9 @@ func (r planReport) notices(m markup) []string {
 }
 
 func (r planReport) footerLines(m markup) []string {
+	if r.nothing != "" {
+		return nil
+	}
 	gated, codes := r.hazardGate()
 	apply, revert := r.counts()
 	var out []string
@@ -252,6 +258,9 @@ func (r planReport) acts() bool {
 
 // statusVerdict is the whole of a commit status description, which GitHub cuts at 140 characters.
 func (r planReport) statusVerdict() string {
+	if r.nothing != "" {
+		return "no migration yet"
+	}
 	if !r.live {
 		return "offline plan; no target was consulted"
 	}
@@ -470,6 +479,7 @@ type planReport struct {
 	stored    *storedPlan
 	items     []planItem
 	format    string
+	nothing   string
 }
 
 func (r planReport) schema() bool {
@@ -582,21 +592,20 @@ func newPlanCmd() *cobra.Command {
 			if save && req.Target == "" {
 				return errors.New("--save needs --target: an offline plan is not made against a target, so there is nothing for a later migrate to bind to")
 			}
+			migs, why, err := emptySet(flags.dir)
+			if err != nil {
+				return err
+			}
 			if req.Target != "" {
-				files, err := migrationFiles(flags.dir)
-				if err != nil {
-					return err
+				if why != "" {
+					return remote.nothingYet(cmd, req.Target, why, write)
 				}
-				req.Files = files
+				req.Files = protoFiles(migs)
 				req.Persist = save
 
 				return remote.planRun(cmd, req, write)
 			}
-			migs, err := engine.LoadDir(flags.dir)
-			if err != nil {
-				return err
-			}
-			report := planReport{items: make([]planItem, 0, 2*len(migs))}
+			report := planReport{nothing: why, items: make([]planItem, 0, 2*len(migs))}
 			for _, m := range migs {
 				for _, dir := range directionsOf(m) {
 					p, err := engine.BuildPlan(m, dir)
@@ -684,8 +693,12 @@ func writePlanText(w io.Writer, r planReport) {
 			fmt.Fprintln(w, "  "+l)
 		}
 	}
+	footer := r.footerLines(terminal)
+	if len(footer) == 0 {
+		return
+	}
 	fmt.Fprintln(w)
-	for _, l := range r.footerLines(terminal) {
+	for _, l := range footer {
 		fmt.Fprintln(w, l)
 	}
 }
@@ -1058,7 +1071,7 @@ func newUpCmd() *cobra.Command {
 			"register, no plan to bind, no ledger. What it applies is recorded in that database's own journal only.\n\n" +
 			"`up` and `down` are the local pair, against --dsn. `migrate` and `revert` are the service pair, against --target.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			migs, err := engine.LoadDir(flags.dir)
+			migs, why, err := emptySet(flags.dir)
 			if err != nil {
 				return err
 			}
@@ -1067,6 +1080,9 @@ func newUpCmd() *cobra.Command {
 				return err
 			}
 			defer closeFn()
+			if why != "" {
+				return nothingLocal(cmd, exec, why)
+			}
 
 			plans, err := upPlans(cmd.Context(), exec, migs)
 			if err != nil {
@@ -1131,7 +1147,7 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show which migrations the database at --dsn has applied, asked of the database itself",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			migs, err := engine.LoadDir(flags.dir)
+			migs, why, err := emptySet(flags.dir)
 			if err != nil {
 				return err
 			}
@@ -1140,6 +1156,9 @@ func newStatusCmd() *cobra.Command {
 				return err
 			}
 			defer closeFn()
+			if why != "" {
+				return nothingLocal(cmd, exec, why)
+			}
 
 			rows, err := exec.Status(cmd.Context(), migs)
 			if err != nil {

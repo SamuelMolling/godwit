@@ -68,6 +68,12 @@ To stop repeating `--target` and `--dir`, put them in a `godwit.yaml` next to yo
 
 Exit codes are the same everywhere: `0` succeeded, `1` anything went wrong — a refusal, a failed run, an unreachable server. `lint` also exits `1` when it found something blocking, and `migrate` exits `3` when the service refuses the run because the reviewed plan no longer matches the database.
 
+### When `--dir` holds nothing
+
+A migration directory that does not exist, or that holds no migration, is a repository whose first migration is unwritten — the state every repository adopting godwit passes through, because the workflows have to be on the default branch before `godwit apply` can run from a pull request. `lint`, `plan`, `migrate` (so also the Action's `verify`), `up` and `status` report *no migration yet* and exit `0`, and nothing is sent to the service or the database.
+
+What decides that it is unwritten rather than lost is the history on the other side. `migrate` and `plan --target` ask the target, `up` and `status` read the journal of the database at `--dsn`: with migrations already applied there, an empty directory is an error naming what the target has, because a directory standing over applied history did not go missing on its own. `lint` and a bare `godwit plan` have no target to ask and say so rather than guessing. `new` and `diff` create the directory they write into, and `target status` compares against nothing when it is absent; `down` names a version an empty directory can never hold, `checkpoint` has nothing to collapse and `target adopt` nothing to record, so those stay errors.
+
 ### Colour
 
 A plan lists what would change, one line per migration, marked `+` for a side the run would apply and `-` for one it would revert; `diff` and the drift block mark schema objects the same way. On a terminal those lines are green and red. `GODWIT_COLOR` is `auto` (colour when stdout is a terminal), `always` or `never`, and any non-empty `NO_COLOR` turns colour off unless `GODWIT_COLOR=always` says otherwise. The marks are the meaning and the colour only repeats it, so a pipe, a log with the escapes stripped and a colour-blind reader all get the same report. Markdown carries no escapes: the change list goes in a ` ```diff ` fence and the forge paints it.

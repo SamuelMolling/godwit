@@ -159,7 +159,7 @@ func TestDiffErrors(t *testing.T) {
 		{"no name", base, "--name is required"},
 		{"bad name", append(base, "--name", "Drop-A"), "snake_case"},
 		{"missing schema file", []string{"diff", "--server", url, "--target", "app", "--schema", filepath.Join(dir, "nope.sql"), "--name", "x"}, "no such file"},
-		{"bad dir", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--name", "x", "--dir", filepath.Join(dir, "missing")}, "no such file"},
+		{"dir under a file", []string{"diff", "--server", url, "--target", "app", "--schema", schema, "--name", "x", "--dir", filepath.Join(schema, "under")}, "not a directory"},
 	} {
 		if code, _, errOut := runCLI(tc.args...); code != 1 || !strings.Contains(errOut, tc.want) {
 			t.Fatalf("%s: code = %d, stderr = %q", tc.name, code, errOut)
@@ -174,6 +174,10 @@ func TestDiffErrors(t *testing.T) {
 	if code, _, errOut := runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--name", "x", "--dir", readOnly); code != 1 ||
 		!strings.Contains(errOut, "permission denied") {
 		t.Fatalf("read-only dir: code = %d, stderr = %q", code, errOut)
+	}
+	if code, _, errOut := runCLI("diff", "--server", url, "--target", "app", "--schema", schema, "--name", "x",
+		"--dir", filepath.Join(readOnly, "sub")); code != 1 || !strings.Contains(errOut, "permission denied") {
+		t.Fatalf("uncreatable dir: code = %d, stderr = %q", code, errOut)
 	}
 
 	stub.err = connect.NewError(connect.CodeInvalidArgument, errors.New("desired schema failed to apply: type nosuchtype does not exist"))
