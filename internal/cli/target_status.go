@@ -12,6 +12,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/config"
+	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/report"
 )
@@ -44,6 +45,65 @@ func newTargetStatusCmd() *cobra.Command {
 	configKeys(cmd, "dir")
 
 	return cmd
+}
+
+func newTargetShowCmd() *cobra.Command {
+	flags := &clientFlags{}
+	cmd := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show how a target is registered: its provider, where its credential is read from and the settings its runs inherit",
+		Long: "The credential itself is not part of it: a static target's DSN is sealed in the registration and\n" +
+			"never shown, and changing another setting with `godwit target add` keeps it.",
+		Args: cobra.ExactArgs(1),
+		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
+			resp, err := client.GetTarget(cmd.Context(), connect.NewRequest(&godwitv1.GetTargetRequest{Name: args[0]}))
+			if err != nil {
+				return err
+			}
+			flags.print(cmd, resp.Msg, targetText(resp.Msg))
+
+			return nil
+		}),
+	}
+	flags.register(cmd)
+
+	return cmd
+}
+
+func targetText(t *godwitv1.GetTargetResponse) string {
+	rows := [][2]string{{"provider", t.Provider}}
+	switch t.Provider {
+	case creds.ProviderStatic:
+		rows = append(rows, [2]string{"dsn registered", fmt.Sprintf("%t", t.DsnRegistered)})
+	case creds.ProviderKubernetes:
+		rows = append(rows, [2]string{"secret path", t.SecretPath})
+	case creds.ProviderVault:
+		rows = append(rows, [2]string{"credential store", t.CredentialStore},
+			[2]string{"vault path", t.VaultPath}, [2]string{"vault template", orDefaultTemplate(t.VaultTemplate)})
+	}
+	rows = append(rows,
+		[2]string{"lock timeout", orNone(t.LockTimeout)}, [2]string{"statement timeout", orNone(t.StatementTimeout)},
+		[2]string{"search path", orNone(t.SearchPath)}, [2]string{"require plan", fmt.Sprintf("%t", t.RequirePlan)},
+		[2]string{"keep old", fmt.Sprintf("%t", t.KeepOld)},
+		[2]string{"ignore adopted tables", fmt.Sprintf("%t", t.IgnoreAdoptedTables)},
+		[2]string{"github repositories", orNone(strings.Join(t.GithubRepositories, " "))})
+	var b strings.Builder
+	fmt.Fprintf(&b, "target %s\n", t.Name)
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	for _, r := range rows {
+		fmt.Fprintf(w, "  %s\t%s\n", r[0], r[1])
+	}
+	_ = w.Flush()
+
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func orDefaultTemplate(s string) string {
+	if s == "" {
+		return "{{dsn}} (default)"
+	}
+
+	return s
 }
 
 func newTargetsCmd() *cobra.Command {
@@ -104,6 +164,9 @@ func statusText(st *godwitv1.GetTargetStatusResponse) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "target %s: provider %s, lock timeout %s, statement timeout %s, search path %s\n",
 		st.Target, st.Provider, orNone(st.LockTimeout), orNone(st.StatementTimeout), orNone(st.SearchPath))
+	if st.Unreachable != "" {
+		fmt.Fprintf(&b, "its own journal was not read: %s\n", st.Unreachable)
+	}
 	fmt.Fprintf(&b, "applied (%d):\n", len(st.Applied))
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	for _, a := range st.Applied {

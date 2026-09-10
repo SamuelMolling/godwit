@@ -26,8 +26,13 @@ type Vault struct {
 
 const defaultJWTPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
-// StoreConfigKey is the target config key naming the credential store its secret is read from.
-const StoreConfigKey = "credential_store"
+// Target config keys the providers read.
+const (
+	DSNKey         = "dsn"
+	PathKey        = "path"
+	TemplateKey    = "template"
+	StoreConfigKey = "credential_store"
+)
 
 // VaultStore is where a named credential store points: one Vault, and how godwit authenticates there.
 type VaultStore struct {
@@ -83,7 +88,7 @@ func (p vaults) DSN(ctx context.Context, config map[string]string) (string, erro
 
 // DSN implements Provider.
 func (p Vault) DSN(ctx context.Context, config map[string]string) (string, error) {
-	path, ok := config["path"]
+	path, ok := config[PathKey]
 	if !ok {
 		return "", errors.New(`vault target config missing "path"`)
 	}
@@ -104,7 +109,7 @@ func (p Vault) DSN(ctx context.Context, config map[string]string) (string, error
 		secret.Data = inner
 	}
 
-	return render(config["template"], secret.Data)
+	return render(config[TemplateKey], secret.Data)
 }
 
 func (p Vault) token(ctx context.Context) (string, error) {

@@ -37,7 +37,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 |---|---|
 | `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
-| `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget`, `ReconcileTarget` |
+| `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget`, `ReconcileTarget`, `GetTarget` |
 | `admin` | + `RegisterTarget` |
 
 Missing or unknown token: `unauthenticated: invalid or missing bearer token`. Insufficient scope: `permission_denied: <Method> requires scope <x>; token <name> has scope <y>`. Both are counted in `godwit_api_requests_total{code=...}` and logged as `api call` at warn.
@@ -73,13 +73,31 @@ Every registered store by name, with `targets`, the number of targets reading fr
 
 ### RegisterTarget — admin
 
-Creates or replaces a target. `provider` is `static` (`dsn` sealed by the configured [key provider](security.md#the-key-and-where-it-comes-from), and refused with `invalid_argument` when none is), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`credentialStore`, `vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `credentialStore` names the Vault the secret is read from and is **required** by `vault` — an unregistered name is `invalid_argument`, and so is giving it to a provider that reads no Vault. `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan. `searchPath` is the `search_path` every session godwit opens on the target runs under ([concepts](concepts.md#search_path)): a comma-separated list of unquoted schema names, `invalid_argument` on anything else, on `$user` and on `godwit`. `ignoreAdoptedTables` (default true) keeps the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and out of drift ([concepts](concepts.md#drift)); false puts them back.
+Registers a target, and changes a registered one. **Every setting the request leaves out keeps the value the target already has**, so one of them can be moved without resending the rest — and the merged registration is what is validated, which is how a `vault` target that already holds a path takes a `credentialStore` on its own. A setting whose empty value means something carries presence (`vaultTemplate`, `lockTimeout`, `statementTimeout`, `searchPath`, `requirePlan`, `keepOld`, `ignoreAdoptedTables`, and `githubRepositories`, whose whole list is one message): send it empty to clear it, leave it out to keep it. The rest — `provider`, `dsn`, `secretPath`, `vaultPath`, `credentialStore` — are never validly empty, so empty is "unchanged"; `provider` is required for a target that is not registered yet, and changing it drops the previous provider's credential. A credential field the target's provider does not read is `invalid_argument` rather than dead configuration.
+
+`provider` is `static` (`dsn` sealed by the configured [key provider](security.md#the-key-and-where-it-comes-from), and refused with `invalid_argument` when none is), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`credentialStore`, `vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `credentialStore` names the Vault the secret is read from and is **required** by `vault` — an unregistered name is `invalid_argument`, and so is giving it to a provider that reads no Vault. `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan. `searchPath` is the `search_path` every session godwit opens on the target runs under ([concepts](concepts.md#search_path)): a comma-separated list of unquoted schema names, `invalid_argument` on anything else, on `$user` and on `godwit`. `ignoreAdoptedTables` (default true) keeps the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and out of drift ([concepts](concepts.md#drift)); false puts them back. A `vaultTemplate` carrying a literal password instead of taking it from the secret (`{{password}}`) is `invalid_argument`: the template is registered configuration and `GetTarget` shows it back.
 
 ```bash
 call RegisterTarget '{"name":"app","provider":"static","dsn":"postgres://app:app@db/app","lockTimeout":"5s","requirePlan":true,"searchPath":"app,public"}'
 # {}
 call RegisterTarget '{"name":"app","provider":"vault","credentialStore":"production","vaultPath":"secret/data/app/db","vaultTemplate":"postgres://{{user}}:{{password}}@db/app"}'
+call RegisterTarget '{"name":"app","lockTimeout":"10s"}'   # only the lock timeout moves
+call RegisterTarget '{"name":"app","searchPath":"","githubRepositories":{}}'   # both cleared
 ```
+
+### GetTarget — operator
+
+```bash
+call GetTarget '{"name":"app"}'
+```
+
+```json
+{"name":"app","provider":"vault","credentialStore":"production","vaultPath":"database/creds/migrate-app",
+ "vaultTemplate":"postgres://{{username}}:{{password}}@db/app","lockTimeout":"5s","requirePlan":true,
+ "keepOld":true,"ignoreAdoptedTables":true,"searchPath":"app,public","githubRepositories":["acme/orders"]}
+```
+
+One target's registration: what `RegisterTarget` was given, read back, so that changing a setting does not mean guessing the others. **The credential is never part of it.** A `static` target's DSN is sealed in the config and answers only as `dsnRegistered: true` — godwit neither returns the ciphertext nor opens it to redact one, and `RegisterTarget` keeps it while another setting moves, so nothing needs it back. What is returned instead points *at* the credential: the Vault path, the mounted file, the template. That is why this is `operator` and not `read`: `ListTargets` says how targets behave, this says where their secrets live, and a token that watches runs has no business with the second. `requirePlan` is as registered — `serve --require-plan` requires one on every target regardless. The CLI renders it as `godwit target show`.
 
 ### CreateRun — pipeline
 
@@ -284,6 +302,8 @@ call GetTargetStatus '{"target":"app","files":[...]}'
 ```
 
 `files` is optional; with it, `pending` lists versions in the files not yet applied and `applied[].checksumMismatch` marks versions whose file changed. `readyPlans` counts the stored plans still bindable (`ready` and younger than `--plan-ttl`).
+
+A target whose credential does not resolve — a `vault` one naming no credential store, a mounted secret that is not there — is still answered: everything the control plane holds is returned, `applied` and `pending` are empty, and `unreachable` carries why its journal was not read, saying what to do about it. That is the state an operator is in while fixing the registration, and it is the one where a refusal helps least. A credential that resolves onto a database godwit cannot reach is still `internal`.
 
 ### ListTargets — read
 

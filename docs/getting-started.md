@@ -178,7 +178,7 @@ export GODWIT_TOKEN=s3cret-admin
 godwit target add app --provider static --dsn postgres://app:app@localhost/app --lock-timeout 5s
 ```
 
-`target add` needs the `admin` scope; the `kubernetes` and `vault` providers avoid storing a DSN at all ([security: providers](security.md#credential-providers)).
+`target add` needs the `admin` scope; the `kubernetes` and `vault` providers avoid storing a DSN at all ([security: providers](security.md#credential-providers)). Run it again later with only the flag you want to move — it keeps everything you leave out — and `godwit target show app` prints what it is registered with.
 
 The `app` database here is empty, so the next section just runs. **A real first target rarely is**: a database that already has a schema, or a `godwit` journal written by something else, has to be adopted before the first plan — one `godwit target adopt`, with `--version` or `--from-journal`. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database) is the section to read before pointing this at anything that exists.
 

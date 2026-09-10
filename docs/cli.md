@@ -21,6 +21,7 @@ What each `godwit` command is *for*, in plain words, with an example you can pas
 | [`godwit status`](#godwit-status) | Which migrations a database has, asked of the database directly |
 | [`godwit target status`](#godwit-target-status) | The same, for a database the service manages, plus its last migration and its drift |
 | [`godwit targets`](#godwit-targets) | One line per database the service manages |
+| [`godwit target show`](#godwit-target-show) | How one of them is registered: where its password comes from, and its settings |
 | [`godwit migrations`](#godwit-migrations) | A grid: which of your databases has which migration |
 | [`godwit runs`](#godwit-runs) | Every migration attempt, newest first |
 | [`godwit run get`](#godwit-run-get) | Everything about one attempt: what it applied, why it stopped |
@@ -30,7 +31,7 @@ What each `godwit` command is *for*, in plain words, with an example you can pas
 | [`godwit plan show`](#godwit-plan-show) | One of those in full, including the state of the database when it was reviewed |
 | [`godwit audit`](#godwit-audit) | Who asked godwit to do what, and when |
 | **Managing the databases godwit migrates** | |
-| [`godwit target add`](#godwit-target-add) | Tells the service about a database and where to get its password |
+| [`godwit target add`](#godwit-target-add) | Tells the service about a database and where to get its password, or changes one setting on it |
 | [`godwit target adopt`](#godwit-target-adopt) | Puts the migrations a database already has on the books, without running them |
 | [`godwit drift check`](#godwit-drift-check) | Shows what changed in a database that godwit did not change |
 | [`godwit drift accept`](#godwit-drift-accept) | Makes the live schema the new reference, and stops the alert |
@@ -487,6 +488,8 @@ drift baseline: taken 2026-09-08T13:19:11Z by run 7071c5ac-93e5-43de-9322-960a47
 
 Before that first run it would have listed three under `pending (3):` instead. `none` for a timeout means nothing is registered, not that there is no limit — see [configuration](configuration.md#target-settings). [Concepts: target status](concepts.md#target-status).
 
+A target whose credential does not resolve — a `vault` one pointed at no credential store, a mounted secret that is not there — still prints, with `its own journal was not read: <why>` in place of the applied list. That is the state you are in while fixing the registration, and it is exactly when you want to see the rest of it; `godwit target show` is the other half of the picture.
+
 ### `godwit targets`
 
 **One line per database the service manages,** without connecting to any of them. Provider, the credential store it reads from, how many migrations it has, plans waiting, runs needing a human, whether its schema has drifted, and its settings.
@@ -502,6 +505,28 @@ legacy  static    none        2        0            0          clean  none      
 `STORE` is what answers "why can it not reach that database": it names the Vault the target's credentials are read from, and `none` is right for `static` and `kubernetes`, which read no Vault at all. `godwit credential-stores` turns the name into an address.
 
 `APPLIED` counts versioned migrations only, so it is a smaller number than the `applied (N)` in `target status`, which also counts repeatables.
+
+### `godwit target show`
+
+**How one target is registered:** the provider, where its credential is read from, and every setting its runs inherit. `godwit targets` says how the fleet behaves; this says what one target *is*, which is what you want before changing any of it.
+
+```console
+$ godwit target show orders
+target orders
+  provider               vault
+  credential store       production
+  vault path             database/creds/migrate-orders
+  vault template         postgres://{{username}}:{{password}}@db.internal:5432/orders
+  lock timeout           5s
+  statement timeout      none
+  search path            app,public
+  require plan           true
+  keep old               true
+  ignore adopted tables  true
+  github repositories    acme/orders:db/migrations
+```
+
+The password is not here and cannot be: a `static` target prints `dsn registered  true` and nothing else, because godwit will not hand back a credential — not the ciphertext, and not a decrypted-then-redacted copy of it. Nothing needs it back either, since `target add` keeps the DSN while you change another setting. It needs the `operator` scope rather than `read`: what it prints points at where the secret lives. [Security: credential providers](security.md#credential-providers).
 
 ### `godwit migrations`
 
@@ -682,12 +707,16 @@ AT                    ACTOR  ACTION           TARGET  RUN                       
 
 You also choose here *where the password comes from*: `static` stores the DSN encrypted in the service's own database, `kubernetes` reads it from a mounted secret file at connect time, `vault` fetches it from the Vault named by `--credential-store` — including short-lived credentials Vault generates per connection.
 
-Reach for it once per database. Note that it is a full replace, not a patch: running it again with fewer flags resets the settings you left out.
+**It is also how you change one:** a flag you do not pass keeps the value the target already has, so moving a timeout does not mean resending the DSN, the Vault path and everything else you would first have to go and look up.
 
 ```console
 $ godwit target add app --provider static --dsn postgres://app:app@localhost/app
-target app: registered (static)
+target app: registered
+$ godwit target add app --lock-timeout 10s
+target app: registered
 ```
+
+To *remove* a setting, pass it empty: `--search-path=""` puts the target back on its role's own path, `--github-repo=""` leaves no repository able to reach it. `--provider` is needed only for a target that is not registered yet; changing it drops the previous provider's credential, and a flag the target's provider does not read — `--dsn` on a `vault` target — is refused rather than stored. `godwit target show` prints what a target currently is.
 
 Per-target settings live on this command too — `--lock-timeout`, `--statement-timeout`, `--search-path`, `--require-plan` — and are listed in [configuration](configuration.md#target-settings). Use `GODWIT_TARGET_DSN` rather than `--dsn` to keep the password out of the process list. [Deployment: registering a target](deployment.md#registering-a-target), [security: credential providers](security.md#credential-providers).
 
@@ -703,7 +732,7 @@ credential store production: registered (https://vault.production.internal)
 
 `--vault-k8s-role` logs in at that Vault with the ServiceAccount token the deployment mints for the audience `godwit`, which is the form to use in Kubernetes: that Vault needs a Kubernetes auth mount trusting this cluster and a role bound to godwit's ServiceAccount **carrying `audience=godwit`**. The audience is a constant, not a flag and not a chart value; a deployment is one identity, and setting `audience="godwit"` on the Vault role is the only thing an operator configures. Outside Kubernetes, `--vault-token-env VAULT_TOKEN` names an environment variable of the *service* holding a token instead — the value never travels through this command and is never stored.
 
-Registering a store is a full replace, like `target add`: re-running it with a new address moves every target that names it. [Security: credential stores](security.md#credential-stores).
+Registering a store is a full replace, unlike `target add`: re-running it with a new address moves every target that names it. [Security: credential stores](security.md#credential-stores).
 
 ### `godwit credential-stores`
 

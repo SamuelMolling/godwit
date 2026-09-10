@@ -77,6 +77,82 @@ func TestTargetStatus(t *testing.T) {
 	}
 }
 
+func TestTargetStatusOfAnUnreadableTarget(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{status: &godwitv1.GetTargetStatusResponse{
+		Target: "app", Provider: "vault", Unreachable: "target app: this target names no credential store",
+	}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("target", "status", "app", "--server", url)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	if !strings.Contains(out, "its own journal was not read: target app: this target names no credential store\n") {
+		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestTargetShow(t *testing.T) {
+	t.Parallel()
+	stub := &stubService{target: &godwitv1.GetTargetResponse{
+		Name: "app", Provider: "vault", CredentialStore: "production", VaultPath: "database/creds/migrate-app",
+		VaultTemplate: "postgres://{{username}}:{{password}}@db/app",
+		LockTimeout:   "3s", SearchPath: "app,public", RequirePlan: true, KeepOld: true, IgnoreAdoptedTables: true,
+		GithubRepositories: []string{"acme/orders"},
+	}}
+	url := startStub(t, stub)
+
+	code, out, errOut := runCLI("target", "show", "app", "--server", url)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+	want := strings.Join([]string{
+		"target app",
+		"  provider               vault",
+		"  credential store       production",
+		"  vault path             database/creds/migrate-app",
+		"  vault template         postgres://{{username}}:{{password}}@db/app",
+		"  lock timeout           3s",
+		"  statement timeout      none",
+		"  search path            app,public",
+		"  require plan           true",
+		"  keep old               true",
+		"  ignore adopted tables  true",
+		"  github repositories    acme/orders",
+		"",
+	}, "\n")
+	if out != want {
+		t.Fatalf("out = %q\nwant %q", out, want)
+	}
+	if stub.shown != "app" {
+		t.Fatalf("asked for %q", stub.shown)
+	}
+
+	stub.target.VaultTemplate = ""
+	if code, out, _ := runCLI("target", "show", "app", "--server", url); code != 0 ||
+		!strings.Contains(out, "vault template         {{dsn}} (default)") {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	stub.target = &godwitv1.GetTargetResponse{Name: "app", Provider: "static", DsnRegistered: true}
+	if code, out, _ := runCLI("target", "show", "app", "--server", url); code != 0 ||
+		!strings.Contains(out, "dsn registered         true") || strings.Contains(out, "postgres://") {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+	stub.target = &godwitv1.GetTargetResponse{Name: "app", Provider: "kubernetes", SecretPath: "/run/secrets/app"}
+	if code, out, _ := runCLI("target", "show", "app", "--server", url, "--json"); code != 0 ||
+		decodeJSON(t, out)["secretPath"] != "/run/secrets/app" {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	stub.err = connect.NewError(connect.CodeNotFound, errors.New("target \"app\": not found"))
+	if code, _, errOut := runCLI("target", "show", "app", "--server", url); code != 1 ||
+		errOut != "godwit: target \"app\": not found\n" {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
+	}
+}
+
 func (s *stubService) ListTargets(_ context.Context, req *connect.Request[godwitv1.ListTargetsRequest]) (*connect.Response[godwitv1.ListTargetsResponse], error) {
 	if err := s.record(req.Header()); err != nil {
 		return nil, err

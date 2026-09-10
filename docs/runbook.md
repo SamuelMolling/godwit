@@ -98,7 +98,7 @@ FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
 WHERE NOT l.granted OR l.mode LIKE '%Exclusive%';
 ```
 
-**Action.** End or wait out the long transaction (`idle in transaction` sessions are the usual holder); the run retries by itself (backoff doubles per attempt from `--tick-interval`, capped at 5 minutes) and only needs `godwit run resume <run-id>` once it parked as `needs_attention`. If contention is structural, run the migration with a longer wait in a quiet window: `godwit migrate --lock-timeout 30s` for that run, or `godwit target add` again with a different `--lock-timeout` to change the default. A `statement_timeout` failure (`SQLSTATE 57014`) is the same procedure with the other knob.
+**Action.** End or wait out the long transaction (`idle in transaction` sessions are the usual holder); the run retries by itself (backoff doubles per attempt from `--tick-interval`, capped at 5 minutes) and only needs `godwit run resume <run-id>` once it parked as `needs_attention`. If contention is structural, run the migration with a longer wait in a quiet window: `godwit migrate --lock-timeout 30s` for that run, or `godwit target add <t> --lock-timeout 30s` to change the target's default, which touches nothing else about it. A `statement_timeout` failure (`SQLSTATE 57014`) is the same procedure with the other knob.
 
 ## Replica lost mid-run
 
@@ -287,7 +287,7 @@ connect it with a role not named godwit
 Every plan, run, diff and `target adopt --from-journal` on that target is refused, and nothing is written on the target or the store. PostgreSQL's default path is `"$user", public` and godwit creates schema `godwit` on every target for its journal, so a target connected with a role named `godwit` — the name the quickstart gives the service's own role — resolves unqualified names into that schema. Declare a path and the refusal is gone; re-registering the target updates it in place:
 
 ```bash
-godwit target add app --provider static --dsn "$DSN" --search-path public   # admin
+godwit target add app --search-path public   # admin; the provider and the DSN stay as they are
 ```
 
 Then look at what earlier runs already left in there. Anything in `godwit` besides the journal's own four tables came from a migration:

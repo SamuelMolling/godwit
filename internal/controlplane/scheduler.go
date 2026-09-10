@@ -566,6 +566,11 @@ func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, er
 	if err != nil {
 		return resolvedTarget{}, err
 	}
+
+	return s.resolve(ctx, name, providerName, config)
+}
+
+func (s *Scheduler) resolve(ctx context.Context, name, providerName string, config map[string]string) (resolvedTarget, error) {
 	provider, ok := s.providers[providerName]
 	if !ok {
 		return resolvedTarget{}, fmt.Errorf("unknown credential provider %q", providerName)

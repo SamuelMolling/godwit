@@ -61,6 +61,7 @@ var procedureScopes = map[string]Scope{
 	service + "CreateRun":               ScopePipeline,
 	service + "RevertRun":               ScopePipeline,
 	service + "ConfirmRollout":          ScopePipeline,
+	service + "GetTarget":               ScopeOperator,
 	service + "ResumeRun":               ScopeOperator,
 	service + "ParkRun":                 ScopeOperator,
 	service + "CheckDrift":              ScopeOperator,

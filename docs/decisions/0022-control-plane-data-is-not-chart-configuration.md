@@ -14,7 +14,7 @@ The objection, on reading it: *if it is a database, why is it in git?*
 
 A target is a row in `cp_targets`. A credential store is a row in `cp_credential_stores`. Both are created by an API call carrying an `admin` token, written to the store, recorded in `cp_audit` with the actor that made them, and referenced by every run, plan and drift event afterwards. A values file that also holds them gives one row two sources of truth.
 
-It is not a tie. `RegisterTarget` is an upsert that writes a **new config map, not a patch** — the property 0021 and [deployment](../deployment.md#re-registering-replaces-the-whole-row) both state plainly. So the declaration wins, always and quietly: a target registered through the API, or a flag added to one, is gone at the next sync with no error, no diff and no event. That is the failure shape where two systems each believe they own one fact, and the one that syncs on a timer wins.
+It is not a tie. `RegisterTarget` is an upsert ([deployment](../deployment.md#re-registering-changes-what-you-pass)), so the declaration wins, always and quietly: a setting changed through the API is back to the values file's at the next sync, with no error, no diff and no event. That is the failure shape where two systems each believe they own one fact, and the one that syncs on a timer wins.
 
 The values file is also the worse of the two owners. It carries no actor, so `cp_audit` records the Job; it cannot be applied without a release; and it puts the set of databases godwit migrates into the deployment's own configuration, where it is neither reviewed by the people who own those databases nor visible to `godwit targets`.
 

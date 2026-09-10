@@ -83,8 +83,12 @@ func TestInspectorStatusTargetErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := insp.Status(ctx, "nodsn"); err == nil || !strings.Contains(err.Error(), "missing dsn") {
-		t.Fatalf("provider err = %v", err)
+	st, err := insp.Status(ctx, "nodsn")
+	if err != nil || !strings.Contains(st.Unreachable, "missing dsn") {
+		t.Fatalf("a credential that does not resolve = %v, unreachable %q", err, st.Unreachable)
+	}
+	if st.Target != "nodsn" || st.Provider != "plain" {
+		t.Fatalf("the target must still be described: %+v", st)
 	}
 	if _, err := insp.Status(ctx, "broken"); err == nil || !strings.Contains(err.Error(), "connect target") {
 		t.Fatalf("unreachable err = %v", err)

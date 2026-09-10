@@ -60,20 +60,20 @@ rollout: expand-contract
 
 Alongside the provider config, the same row carries the [target settings](configuration.md#target-settings) — `lock_timeout`, `statement_timeout`, `require_plan`, `keep_old`, `search_path`. Nothing else: no migration directory, no schema, no history. The history is in the target's own `godwit` schema, and the file bodies are in `cp_run_files` per run.
 
-The registration does **not** connect to the database. A wrong DSN, an unreadable Vault path or a mistyped mount is accepted here and surfaces on the first call that needs the target — `godwit target status <name>` is the cheapest way to find out.
+The registration does **not** connect to the database. A wrong DSN, an unreadable Vault path or a mistyped mount is accepted here and surfaces on the first call that needs the target — `godwit target status <name>` is the cheapest way to find out: it answers for a target whose credential does not resolve, with `its own journal was not read: <why>` and everything the control plane still knows.
 
-### Re-registering replaces the whole row
+### Re-registering changes what you pass
 
-`RegisterTarget` is an upsert that writes a **new config map**, not a patch. Every setting you do not pass again is dropped:
+`RegisterTarget` is an upsert that **merges**: a setting you do not pass keeps the value the target has, and a setting you pass empty is cleared.
 
 ```
 $ godwit target add orders --provider vault --credential-store production --vault-path ... --lock-timeout 5s
-$ godwit targets     # LOCK 5s
-$ godwit target add orders --provider vault --credential-store production --vault-path ...   # no --lock-timeout
-$ godwit targets     # LOCK none
+$ godwit target add orders --lock-timeout 10s   # only the lock timeout moves
+$ godwit target add orders --lock-timeout ""    # and back to the executor's default
+$ godwit target show orders                     # what it is now, credential excluded
 ```
 
-Runs, plans, drift events and the target's applied history are untouched — only `provider` and `config` are replaced. Keep the full `target add` line in the repository that owns the target (an ArgoCD Job, a Terraform `null_resource`, a make target) and re-run *that*, rather than typing a shorter version of it. Re-registration is also how you move a `static` target between key providers by hand, though [key rotation](security.md#rotation) does not need it.
+Runs, plans, drift events and the target's applied history are untouched either way. A declarative owner of a target — an ArgoCD Job, a Terraform `null_resource`, a make target — should still keep the full `target add` line and re-run *that*, because merging means the row is no longer whatever the last invocation said; what it drops is the need to hunt the current values down before changing one of them. Re-registration is also how you move a `static` target between key providers by hand, though [key rotation](security.md#rotation) does not need it.
 
 ### Who runs it
 
@@ -81,7 +81,7 @@ Runs, plans, drift events and the target's applied history are untouched — onl
 
 Once there is more than one, whatever registers them should be a Job rather than a person: put the full `target add` line in the repository that owns the target and run it from a Job with an `admin` token, and the upsert makes re-running it on every sync the point rather than a hazard.
 
-**Not the godwit Helm chart, which declares no target and no store.** They are control-plane rows, and a values file that also holds them makes the values authoritative by force — the upsert replaces the whole row, so a sync drops whatever anyone registered against the API, silently. [Decision 0022](decisions/0022-control-plane-data-is-not-chart-configuration.md) states the rule and what it cost to learn.
+**Not the godwit Helm chart, which declares no target and no store.** They are control-plane rows, and a values file that also holds them makes the values authoritative by force — a sync overwrites whatever anyone registered against the API, silently. [Decision 0022](decisions/0022-control-plane-data-is-not-chart-configuration.md) states the rule and what it cost to learn.
 
 Registering is not adopting: a target whose database already has a schema still needs `godwit target adopt` before its first plan, and the chart does not do it for you.
 

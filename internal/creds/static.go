@@ -13,7 +13,7 @@ type Static struct {
 
 // DSN implements Provider.
 func (p Static) DSN(ctx context.Context, config map[string]string) (string, error) {
-	enc, ok := config["dsn"]
+	enc, ok := config[DSNKey]
 	if !ok {
 		return "", errors.New(`static target config missing "dsn"`)
 	}

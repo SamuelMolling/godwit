@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
@@ -27,9 +28,9 @@ func TestListTargetsEndToEnd(t *testing.T) {
 	admin, viewer := newClient(baseURL, "s-admin"), newClient(baseURL, "s-read")
 
 	if _, err := admin.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-		Name: "app", Provider: "static", Dsn: newDatabase(t, "tg"), SearchPath: "app,public",
-		LockTimeout: "3s", StatementTimeout: "1m", RequirePlan: true,
-		GithubRepositories: []string{"acme/orders", "acme/orders:db/migrations"},
+		Name: "app", Provider: "static", Dsn: newDatabase(t, "tg"), SearchPath: proto.String("app,public"),
+		LockTimeout: proto.String("3s"), StatementTimeout: proto.String("1m"), RequirePlan: proto.Bool(true),
+		GithubRepositories: &godwitv1.TargetRepositories{Values: []string{"acme/orders", "acme/orders:db/migrations"}},
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,8 @@ func TestListTargetsEndToEnd(t *testing.T) {
 		t.Fatalf("binding = %v", fresh.GithubRepositories)
 	}
 	if _, err := admin.RegisterTarget(ctx, connect.NewRequest(&godwitv1.RegisterTargetRequest{
-		Name: "bad", Provider: "static", Dsn: "postgres://x", GithubRepositories: []string{"orders"},
+		Name: "bad", Provider: "static", Dsn: "postgres://x",
+		GithubRepositories: &godwitv1.TargetRepositories{Values: []string{"orders"}},
 	})); err == nil || !strings.Contains(err.Error(), "is not owner/repo") {
 		t.Fatalf("a binding that is not owner/repo = %v", err)
 	}
