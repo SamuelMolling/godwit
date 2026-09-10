@@ -29,6 +29,12 @@ func goodMigs(t *testing.T) string {
 	})
 }
 
+func badMigs(t *testing.T) string {
+	t.Helper()
+
+	return writeMigs(t, map[string]string{"README.md": "not a migration"})
+}
+
 func TestPlanCommand(t *testing.T) {
 	t.Parallel()
 
@@ -108,12 +114,31 @@ func TestPlanMarkdown(t *testing.T) {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 
-	code, out, _ = runCLI("plan", "--dir", t.TempDir(), "--format", "markdown")
-	if code != 0 || !strings.Contains(out, "\n\nPlan: 0 to apply, 0 to revert, 0 hazard(s) to acknowledge\n") {
+	empty := t.TempDir()
+	code, out, _ = runCLI("plan", "--dir", empty, "--format", "markdown")
+	if code != 0 || !strings.Contains(out, "**No migration yet.** "+empty+" holds no migration") ||
+		!strings.Contains(out, "<!-- godwit-plan-verdict: no migration yet -->") {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 	if strings.Contains(out, "godwit-plan-hazards") {
 		t.Fatalf("an offline plan gates nothing, so it must not claim a hazard count:\n%s", out)
+	}
+}
+
+func TestPlanWithoutMigrations(t *testing.T) {
+	t.Parallel()
+
+	gone := filepath.Join(t.TempDir(), "nope")
+	code, out, errOut := runCLI("plan", "--dir", gone)
+	if code != 0 || !strings.Contains(out, "No migration yet. "+gone+" does not exist yet, so there is nothing to plan.") {
+		t.Fatalf("code = %d, out = %q, stderr = %s", code, out, errOut)
+	}
+	if strings.Contains(out, "Plan: 0 to apply") {
+		t.Fatalf("a plan of nothing counts nothing:\n%s", out)
+	}
+	code, out, _ = runCLI("plan", "--dir", t.TempDir(), "--format", "json")
+	if code != 0 || strings.TrimSpace(out) != "[]" {
+		t.Fatalf("code = %d, out = %q", code, out)
 	}
 }
 
@@ -174,8 +199,8 @@ func TestPlanJSON(t *testing.T) {
 func TestPlanErrors(t *testing.T) {
 	t.Parallel()
 
-	if code, _, _ := runCLI("plan", "--dir", filepath.Join(t.TempDir(), "nope")); code != 1 {
-		t.Fatal("missing dir must fail")
+	if code, _, errOut := runCLI("plan", "--dir", badMigs(t)); code != 1 || !strings.Contains(errOut, "unexpected file") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	if code, _, errOut := runCLI("plan", "--dir", goodMigs(t), "--format", "yaml"); code != 1 || !strings.Contains(errOut, "unknown format") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
@@ -201,6 +226,38 @@ func TestUpAppliesAndSkips(t *testing.T) {
 	code, out, _ = runCLI("up", "--dsn", dsn, "--dir", dir)
 	if code != 0 || !strings.Contains(out, "skipped") {
 		t.Fatalf("re-run: code = %d, out = %s", code, out)
+	}
+}
+
+func TestUpAndStatusWithoutMigrations(t *testing.T) {
+	t.Parallel()
+	dsn := newTestDSN(t)
+	missing := filepath.Join(t.TempDir(), "nope")
+	want := "no migration yet: " + missing + " does not exist yet\n"
+
+	for _, name := range []string{"status", "up"} {
+		if code, out, errOut := runCLI(name, "--dsn", dsn, "--dir", missing); code != 0 || out != want {
+			t.Fatalf("%s: code = %d, out = %q, stderr = %q", name, code, out, errOut)
+		}
+		if code, _, errOut := runCLI(name, "--dsn", dsn, "--dir", badMigs(t)); code != 1 ||
+			!strings.Contains(errOut, "unexpected file") {
+			t.Fatalf("%s: code = %d, stderr = %q", name, code, errOut)
+		}
+	}
+
+	if code, _, errOut := runCLI("up", "--dsn", dsn, "--dir", goodMigs(t)); code != 0 {
+		t.Fatal(errOut)
+	}
+	for _, name := range []string{"status", "up"} {
+		if code, _, errOut := runCLI(name, "--dsn", dsn, "--dir", missing); code != 1 ||
+			!strings.Contains(errOut, "the database already has 1 migration applied: check --dir and the checkout") {
+			t.Fatalf("%s: code = %d, stderr = %q", name, code, errOut)
+		}
+	}
+
+	if code, _, errOut := runCLI("status", "--dsn", withoutCreate(t, newTestDSN(t)), "--dir", missing); code != 1 ||
+		!strings.Contains(errOut, "permission denied") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
 
@@ -362,8 +419,8 @@ func TestConfigFileSetsDir(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "20260901120000_users  2 statements") {
 		t.Fatalf("code = %d, out = %s, stderr = %s", code, out, errOut)
 	}
-	if code, _, _ = runCLI("plan", "--dir", filepath.Join(root, "nope")); code != 1 {
-		t.Fatal("explicit --dir must beat the file")
+	if code, out, _ = runCLI("plan", "--dir", filepath.Join(root, "nope")); code != 0 || strings.Contains(out, "20260901120000_users") {
+		t.Fatalf("explicit --dir must beat the file: code = %d, out = %s", code, out)
 	}
 	if code, _, errOut = runCLI("plan", "--config", filepath.Join(root, "missing.yaml")); code != 1 ||
 		!strings.Contains(errOut, "missing.yaml") {

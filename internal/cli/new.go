@@ -42,6 +42,9 @@ func newNewCmd() *cobra.Command {
 			if !nameRe.MatchString(name) {
 				return fmt.Errorf("name %q must be snake_case ([a-z0-9_]+): the loader accepts no other file name", name)
 			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
 			id, err := nextID(dir, name, repeatable)
 			if err != nil {
 				return err

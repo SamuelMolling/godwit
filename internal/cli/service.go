@@ -179,11 +179,21 @@ func newMigrateCmd() *cobra.Command {
 				req.Rollout = ""
 			}
 			if req.PlanId == "" || cmd.Flags().Changed("dir") {
-				files, err := migrationFiles(dir)
+				migs, why, err := emptySet(dir)
 				if err != nil {
 					return err
 				}
-				req.Files = files
+				if why != "" {
+					if err := startedTarget(cmd.Context(), client, req.Target, why); err != nil {
+						return err
+					}
+					if dryRun {
+						return flags.nothingPlanned(cmd, req.Target, why, write)
+					}
+
+					return flags.nothingRun(cmd, why)
+				}
+				req.Files = protoFiles(migs)
 			}
 			if dryRun {
 				return flags.dryRun(cmd, client, req, write)
@@ -336,6 +346,11 @@ func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return protoFiles(migs), nil
+}
+
+func protoFiles(migs []engine.Migration) []*godwitv1.MigrationFile {
 	files := make([]*godwitv1.MigrationFile, 0, 2*len(migs))
 	for _, m := range migs {
 		files = append(files, &godwitv1.MigrationFile{Name: m.UpFile(), Body: m.UpSQL})
@@ -344,7 +359,7 @@ func migrationFiles(dir string) ([]*godwitv1.MigrationFile, error) {
 		}
 	}
 
-	return files, nil
+	return files
 }
 
 func newRevertCmd() *cobra.Command {

@@ -105,6 +105,12 @@ cmd_verify() {
   local target total
   target="$(jq -r '.target' "${work}/plan.json")"
   total="$(jq -r '.migrations | length' "${work}/plan.json")"
+  if [ "${total}" = "0" ]; then
+    pending=0
+    printf '## godwit verify\n\ntarget `%s`: no migration yet\n' "${target}" >"${summary}"
+
+    return 0
+  fi
   pending="$(jq -r '[.migrations[] | select((.applied // false) | not)] | length' "${work}/plan.json")"
   if [ "${pending}" = "0" ]; then
     printf '## godwit verify\n\ntarget `%s`: %s migrations, all applied\n' "${target}" "${total}" >"${summary}"

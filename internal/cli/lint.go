@@ -127,6 +127,9 @@ func committedFiles(files map[string]string) []*godwitv1.MigrationFile {
 }
 
 func writeLintText(w io.Writer, rep lint.Report) {
+	if rep.Nothing != "" {
+		fmt.Fprintln(w, rep.Nothing)
+	}
 	for _, f := range rep.Findings {
 		fmt.Fprintf(w, "%s: %s %s %s\n", f.File, f.Level, f.Code, f.Message)
 		writeRecipeText(w, "    ", f.Recipe)
@@ -137,6 +140,10 @@ func writeLintText(w io.Writer, rep lint.Report) {
 func writeLintMarkdown(w io.Writer, rep lint.Report) {
 	fmt.Fprintln(w, "## godwit lint")
 	fmt.Fprintln(w)
+	if rep.Nothing != "" {
+		fmt.Fprintln(w, rep.Nothing)
+		fmt.Fprintln(w)
+	}
 	if len(rep.Findings) > 0 {
 		fmt.Fprintln(w, "| Migration | Level | Code | Message |")
 		fmt.Fprintln(w, "|---|---|---|---|")

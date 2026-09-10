@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -91,14 +92,25 @@ var (
 	repeatRe = regexp.MustCompile(`^R__([a-z0-9_]+)\.(up|down)\.sql$`)
 )
 
+// ErrNoDir marks a migration directory that is not there at all, which a caller able to tell an unwritten first migration from a lost directory reads as an empty set.
+var ErrNoDir = errors.New("no migration directory")
+
 // LoadDir reads a migration directory and returns migrations in apply order.
 func LoadDir(dir string) ([]Migration, error) {
-	return LoadFS(os.DirFS(dir))
+	migs, err := LoadFS(os.DirFS(dir))
+	if errors.Is(err, ErrNoDir) {
+		return nil, fmt.Errorf("%w %s", ErrNoDir, dir)
+	}
+
+	return migs, err
 }
 
 // LoadFS is LoadDir over any filesystem root.
 func LoadFS(fsys fs.FS) ([]Migration, error) {
 	entries, err := fs.ReadDir(fsys, ".")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoDir
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read migration dir: %w", err)
 	}

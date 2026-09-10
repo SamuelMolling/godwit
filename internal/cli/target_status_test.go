@@ -62,8 +62,12 @@ func TestTargetStatus(t *testing.T) {
 		t.Fatalf("code = %d, out = %q", code, out)
 	}
 
-	if code, _, errOut := runCLI("target", "status", "app", "--server", url, "--dir", "/nope"); code != 1 ||
-		!strings.Contains(errOut, "read migration dir") {
+	if code, _, errOut := runCLI("target", "status", "app", "--server", url, "--dir", "/nope"); code != 0 ||
+		len(stub.statused.Files) != 0 {
+		t.Fatalf("code = %d, stderr = %q, files = %v", code, errOut, stub.statused.Files)
+	}
+	if code, _, errOut := runCLI("target", "status", "app", "--server", url, "--dir", badMigs(t)); code != 1 ||
+		!strings.Contains(errOut, "unexpected file") {
 		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 	stub.err = connect.NewError(connect.CodeNotFound, errors.New("target \"app\": not found"))

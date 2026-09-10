@@ -467,6 +467,8 @@ Two consequences of this particular file worth knowing before you write it:
 
 ## 5. CI
 
+**Wire the workflows first, write the first migration second.** GitHub runs an `issue_comment` workflow only from the version on the default branch, so `godwit apply` on a pull request does nothing until the apply workflow has already been merged. The order is: merge the workflows and `godwit.yaml`, then open the pull request that adds `db/migrations/`. That window is deliberate and godwit is built for it — a migration directory that does not exist yet is a repository that has not written its first migration, so `lint`, `plan` and `verify` report *no migration yet* and pass. The same directory missing over a target that already has migrations applied is an error instead, because then it went missing rather than never having existed.
+
 Plan on the pull request, apply from it, verify on the merge, with the composite Action in this repository:
 
 ```yaml

@@ -3,8 +3,11 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/internal/lint"
@@ -98,8 +101,30 @@ func TestLintErrors(t *testing.T) {
 	if code, _, errOut := runCLI("lint", "--dir", goodMigs(t), "--base", "no-such-ref"); code != 1 || !strings.Contains(errOut, "git diff no-such-ref") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	if code, out, _ := runCLI("lint", "--dir", t.TempDir()+"/nope"); code != 1 || !strings.Contains(out, "E001") {
+	if code, out, _ := runCLI("lint", "--dir", badMigs(t)); code != 1 || !strings.Contains(out, "E001") {
 		t.Fatalf("code = %d, out = %s", code, out)
+	}
+}
+
+func TestLintWithoutMigrations(t *testing.T) {
+	t.Parallel()
+
+	gone := filepath.Join(t.TempDir(), "nope")
+	code, out, errOut := runCLI("lint", "--dir", gone, "--base", "origin/main")
+	if code != 0 || out != "no migration to lint: "+gone+" does not exist yet\n0 finding(s), 0 blocking\n" {
+		t.Fatalf("code = %d, out = %q, stderr = %s", code, out, errOut)
+	}
+
+	empty := t.TempDir()
+	code, out, _ = runCLI("lint", "--dir", empty, "--format", "markdown")
+	if code != 0 || !strings.Contains(out, "no migration to lint: "+empty+" holds none\n") ||
+		!strings.Contains(out, "✅ no unacknowledged hazards") {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	code, out, _ = runCLI("lint", "--dir", gone, "--format", "json")
+	if code != 0 || out != `{"findings":[],"blocking":0,"nothing":"no migration to lint: `+gone+` does not exist yet"}`+"\n" {
+		t.Fatalf("code = %d, out = %q", code, out)
 	}
 }
 
@@ -174,6 +199,26 @@ func TestLintSchemaDrift(t *testing.T) {
 	}
 	if code != 1 || rep.Blocking != 1 || len(rep.Findings) != 1 || rep.Findings[0].Code != "E005" || rep.Findings[0].Recipe != residue {
 		t.Fatalf("code = %d, report = %+v", code, rep)
+	}
+}
+
+func TestLintWithoutMigrationsStillChecksTheSchemaSource(t *testing.T) {
+	stub := &stubService{diff: &godwitv1.DiffResponse{Target: "app", UpSql: "CREATE TABLE users (id int);"}}
+	url := startStub(t, stub)
+	chdir(t, configRepo(t, map[string]string{
+		"godwit.yaml": lintConfig,
+		"schema.sql":  "CREATE TABLE users (id int);\n",
+	}))
+
+	code, out, _ := runCLI("lint", "--server", url)
+	if code != 1 || !strings.Contains(out, "/migrations does not exist yet\n") ||
+		!strings.Contains(out, "schema.sql: error E005 ") {
+		t.Fatalf("code = %d, out = %q", code, out)
+	}
+
+	stub.err = connect.NewError(connect.CodeInternal, errors.New("scratch database unavailable"))
+	if code, _, errOut := runCLI("lint", "--server", url); code != 1 || !strings.Contains(errOut, "scratch database unavailable") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut)
 	}
 }
 

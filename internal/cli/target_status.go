@@ -1,11 +1,8 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -26,7 +23,7 @@ func newTargetStatusCmd() *cobra.Command {
 		Short: "Show what a target has applied, what is pending, its last run and drift baseline",
 		Args:  cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			files, err := optionalFiles(cmd, dir)
+			files, err := optionalFiles(dir)
 			if err != nil {
 				return err
 			}
@@ -42,7 +39,7 @@ func newTargetStatusCmd() *cobra.Command {
 		}),
 	}
 	flags.register(cmd)
-	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory to compare against (skipped when absent unless set explicitly)")
+	cmd.Flags().StringVar(&dir, "dir", config.Defaults().Dir, "migration directory to compare against; an absent one compares against nothing")
 	configKeys(cmd, "dir")
 
 	return cmd
@@ -90,12 +87,14 @@ func targetsTable(targets []*godwitv1.TargetSummary) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func optionalFiles(cmd *cobra.Command, dir string) ([]*godwitv1.MigrationFile, error) {
-	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) && !cmd.Flags().Changed("dir") {
-		return nil, nil
+// optionalFiles is the committed set for a command that only reads or generates: nothing is applied over it, so an absent directory is nothing to compare against.
+func optionalFiles(dir string) ([]*godwitv1.MigrationFile, error) {
+	migs, _, err := emptySet(dir)
+	if err != nil {
+		return nil, err
 	}
 
-	return migrationFiles(dir)
+	return protoFiles(migs), nil
 }
 
 func statusText(st *godwitv1.GetTargetStatusResponse) string {

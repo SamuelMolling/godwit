@@ -514,16 +514,29 @@ type StatusRow struct {
 	AppliedAt time.Time
 }
 
-// Status reports the applied state of migs against the target; a repeatable whose content changed reads as pending.
-func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, error) {
+// AppliedCount is how many migrations the database's own journal records, versioned and repeatable.
+func (e *Executor) AppliedCount(ctx context.Context) (int, error) {
+	applied, reps, err := e.journal(ctx)
+
+	return len(applied) + len(reps), err
+}
+
+func (e *Executor) journal(ctx context.Context) ([]Applied, []Repeatable, error) {
 	if err := ensureSchema(ctx, e.db); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	applied, err := readApplied(ctx, e.db)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reps, err := readRepeatables(ctx, e.db)
+
+	return applied, reps, err
+}
+
+// Status reports the applied state of migs against the target; a repeatable whose content changed reads as pending.
+func (e *Executor) Status(ctx context.Context, migs []Migration) ([]StatusRow, error) {
+	applied, reps, err := e.journal(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -135,9 +135,10 @@ func TestNewFailures(t *testing.T) {
 		}
 	}
 
-	if code, _, errOut := runCLI("new", "add_status", "--dir", filepath.Join(dir, "missing")); code != 1 ||
-		!strings.Contains(errOut, "read migration dir") || !strings.Contains(errOut, "no such file") {
-		t.Fatalf("missing dir: code = %d, stderr = %q", code, errOut)
+	made := filepath.Join(dir, "missing")
+	if code, out, errOut := runCLI("new", "add_status", "--dir", made); code != 0 ||
+		!strings.Contains(out, filepath.Join(made, "20260908143012_add_status.up.sql")) {
+		t.Fatalf("missing dir: code = %d, out = %q, stderr = %q", code, out, errOut)
 	}
 
 	if code, _, errOut := runCLI("new", "--dir", dir); code != 1 || !strings.Contains(errOut, "accepts 1 arg") {
@@ -152,6 +153,20 @@ func TestNewFailures(t *testing.T) {
 	if code, _, errOut := runCLI("new", "add_status", "--dir", readOnly); code != 1 ||
 		!strings.Contains(errOut, "permission denied") {
 		t.Fatalf("read-only dir: code = %d, stderr = %q", code, errOut)
+	}
+	if code, _, errOut := runCLI("new", "add_status", "--dir", filepath.Join(readOnly, "sub")); code != 1 ||
+		!strings.Contains(errOut, "permission denied") {
+		t.Fatalf("uncreatable dir: code = %d, stderr = %q", code, errOut)
+	}
+
+	unlisted := t.TempDir()
+	if err := os.Chmod(unlisted, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unlisted, 0o700) })
+	if code, _, errOut := runCLI("new", "add_status", "--dir", unlisted); code != 1 ||
+		!strings.Contains(errOut, "read migration dir") {
+		t.Fatalf("unlistable dir: code = %d, stderr = %q", code, errOut)
 	}
 }
 

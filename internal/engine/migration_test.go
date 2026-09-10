@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,8 +102,20 @@ func TestLoadDirErrors(t *testing.T) {
 func TestLoadDirMissingDir(t *testing.T) {
 	t.Parallel()
 
-	if _, err := LoadDir(filepath.Join(t.TempDir(), "nope")); err == nil {
-		t.Fatal("want error for missing dir")
+	missing := filepath.Join(t.TempDir(), "nope")
+	_, err := LoadDir(missing)
+	if !errors.Is(err, ErrNoDir) || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("err = %v, want %v naming %s", err, ErrNoDir, missing)
+	}
+}
+
+func TestLoadDirNotADirectory(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(writeFiles(t, map[string]string{"20260901120000_a.up.sql": "SELECT 1;"}), "20260901120000_a.up.sql")
+	_, err := LoadDir(file)
+	if err == nil || errors.Is(err, ErrNoDir) {
+		t.Fatalf("err = %v, want a failure that is not %v", err, ErrNoDir)
 	}
 }
 

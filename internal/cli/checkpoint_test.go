@@ -102,7 +102,7 @@ func TestCheckpointRefusals(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	code, _, errOut = runCLI("checkpoint", "--server", startStub(t, checkpointStub()), "--name", "squash", "--dir", filepath.Join(dir, "gone"))
-	if code == 0 || !strings.Contains(errOut, "read migration dir") {
+	if code == 0 || !strings.Contains(errOut, "no migration directory") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 	stub := checkpointStub()
