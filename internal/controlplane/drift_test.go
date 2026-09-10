@@ -354,3 +354,29 @@ func TestValidatorReplay(t *testing.T) {
 		t.Fatalf("history err = %v", err)
 	}
 }
+
+func TestTick_SweepsDeliveries(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := newStore(t)
+	mon, _ := newMonitor(t, s, notify.None{})
+
+	if _, err := s.RecordDelivery(ctx, "d1", "issue_comment", "acme/orders"); err != nil {
+		t.Fatal(err)
+	}
+	mon.Tick(ctx)
+	if first, err := s.RecordDelivery(ctx, "d1", "issue_comment", "acme/orders"); err != nil || first {
+		t.Fatalf("a delivery went before retention was set: %t, %v", first, err)
+	}
+	mon.DeliveryRetention = 4 * time.Hour
+	if _, err := s.pool.Exec(ctx, `UPDATE cp_webhook_deliveries SET received_at = now() - interval '2 days'`); err != nil {
+		t.Fatal(err)
+	}
+	mon.Tick(ctx)
+	if first, err := s.RecordDelivery(ctx, "d1", "issue_comment", "acme/orders"); err != nil || !first {
+		t.Fatalf("the delivery survived the sweep: %t, %v", first, err)
+	}
+
+	s.pool.(interface{ Close() }).Close()
+	mon.Tick(ctx)
+}

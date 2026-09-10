@@ -101,9 +101,9 @@ func TestTargets(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "NAME     PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT    SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN\n" +
-		"app      static    7        2            1          drifted  app,public   3s    1m         true          r1 needs_attention\n" +
-		"billing  vault     0        0            0          clean    none         none  none       false         none\n"
+	want := "NAME     PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT    SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  GITHUB  LAST RUN\n" +
+		"app      static    7        2            1          drifted  app,public   3s    1m         true          none    r1 needs_attention\n" +
+		"billing  vault     0        0            0          clean    none         none  none       false         none    none\n"
 	if out != want {
 		t.Fatalf("out = %q\nwant %q", out, want)
 	}

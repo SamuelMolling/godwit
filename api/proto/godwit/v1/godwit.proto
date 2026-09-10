@@ -91,6 +91,8 @@ message RegisterTargetRequest {
   string search_path = 10;
   // Leave the bookkeeping tables of the migration tool this database was adopted from out of drift; default true.
   optional bool ignore_adopted_tables = 12;
+  // Repositories a GitHub App delivery may reach this target from, each "owner/repo" or "owner/repo:dir"; none may when empty.
+  repeated string github_repositories = 13;
 }
 
 message RegisterTargetResponse {}
@@ -462,6 +464,7 @@ message TargetSummary {
   int32 applied_count = 11;
   // Runs waiting for a human: needs_attention or awaiting_contract.
   int32 attention_runs = 12;
+  repeated string github_repositories = 13;
 }
 
 message ListTargetsResponse {

@@ -60,6 +60,7 @@ func (s *Server) ListTargets(ctx context.Context, _ *connect.Request[godwitv1.Li
 			RequirePlan: s.RequirePlan || t.RequirePlan, KeepOld: t.KeepOld,
 			UnresolvedDrift: t.UnresolvedDrift, ReadyPlans: int32(t.ReadyPlans),
 			AppliedCount: int32(t.AppliedCount), AttentionRuns: int32(t.AttentionRuns),
+			GithubRepositories: t.GitHubRepositories,
 		}
 		if t.LastRun != nil {
 			sum.LastRun = toProto(*t.LastRun)

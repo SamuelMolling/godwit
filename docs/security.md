@@ -219,6 +219,20 @@ What this does **not** protect against, stated so nobody reads more into it:
 - **`require-approval: "false"` removes the anchor.** The comment path then has no sha of its own; `godwit apply <sha>` in the comment body restores an anchor a commenter chose deliberately, and is refused when the head has moved past it.
 - **Anything the checkout runs inherits the job's environment.** `lint` and `diff` with an ORM `schema_source` execute code from the repository (`go run`, `npx prisma`, `python manage.py`) in a step that carries `GODWIT_TOKEN` and `GH_TOKEN`. Keep those steps on `pull_request` with a `read` token, and install dependencies with lifecycle scripts off (`npm ci --ignore-scripts`).
 
+## GitHub App
+
+The webhook listener is separate from the API listener (`--github-webhook-addr`, off by default) and serves one path. That is deliberate: the main listener carries every RPC, `/ui` and an unauthenticated `/metrics` whose label values are target names, so "only the webhook is exposed" should be a property of the process rather than of a proxy's path rules.
+
+**Nothing but the byte count is learned from an unverified request.** The endpoint reads at most `--github-webhook-max-bytes`, computes an HMAC-SHA256 over the raw body and compares it in constant time with `X-Hub-Signature-256`. The SHA-1 header is ignored and is never a fallback. Before that comparison passes, no JSON is parsed, no store is touched, and the answer is `401` with an empty body.
+
+**The webhook secret is a target credential by transitivity.** Someone holding it can forge a delivery, and forging one gets them exactly this: they control the repository name, the pull request number, the comment body and `author_association`. They do not control what GitHub's API answers, and the commander's permission, the pull request's head and its reviews are all read live. So a forged `godwit apply` still needs a real writer with write permission and a real approving review standing on the current head. What it buys is **pressing early a button somebody was already entitled to press**, in a bound repository, on an already-approved pull request. Keep it where `GODWIT_MASTER_KEY` is, and rotate it per installation.
+
+**A `pipeline` token reaches every target; a bound repository does not.** The token spec is `name:scope:secret` and carries no target, so any `pipeline` token can create a run against any registered target — which is why the section above says to treat one like the target's own credential. The GitHub App is the first mechanism in godwit that scopes access *by target*: `github_repositories` on the target lists the repositories a delivery may reach it from, an unbound repository gets nothing at all, and the refusal does not reveal whether the target exists. The binding is set by `RegisterTarget`, which is `admin`, and it is the reason a webhook principal is capped at `pipeline` in code: the RPC that grants a repository access to a target can never be reached by that repository.
+
+**The installation token is narrowed per delivery.** `${{ github.token }}` in the Action could only read its own repository; an installation token can read every repository in the installation. The App mints one with `repository_ids` set to the single repository the verified payload named, for that delivery only, and hands the authorising code a value that can only ask about that repository.
+
+**A delivery is acted on once.** `X-GitHub-Delivery` is recorded with a unique key in the same transaction as the work it enqueues, so a redelivery — GitHub's or an attacker's replay — is a no-op rather than a second run. A comment or review older than `--github-webhook-max-age` is refused before any of it.
+
 ## Admission limits
 
 Request size, file count, page size and concurrency are bounded, and the knobs are in [configuration](configuration.md#admission-limits). What the limits are for, from a security point of view:

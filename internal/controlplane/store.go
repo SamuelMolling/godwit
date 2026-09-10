@@ -200,17 +200,18 @@ func (s *Store) Target(ctx context.Context, name string) (string, map[string]str
 
 // TargetSummary is the control plane's own view of a registered target, assembled without connecting to it.
 type TargetSummary struct {
-	Name            string
-	Provider        string
-	Timeouts        Timeouts
-	SearchPath      string
-	RequirePlan     bool
-	KeepOld         bool
-	LastRun         *Run
-	AttentionRuns   int
-	UnresolvedDrift bool
-	ReadyPlans      int
-	AppliedCount    int
+	Name               string
+	Provider           string
+	Timeouts           Timeouts
+	SearchPath         string
+	RequirePlan        bool
+	KeepOld            bool
+	LastRun            *Run
+	AttentionRuns      int
+	UnresolvedDrift    bool
+	ReadyPlans         int
+	AppliedCount       int
+	GitHubRepositories []string
 }
 
 // ListTargets summarises every target by name, counting ready plans created at or after since.
@@ -241,6 +242,7 @@ func (s *Store) ListTargets(ctx context.Context, since time.Time) ([]TargetSumma
 		}
 		sum.Timeouts, sum.SearchPath = TargetTimeouts(config), config[ConfigSearchPath]
 		sum.RequirePlan, sum.KeepOld = config[ConfigRequirePlan] == "true", config[ConfigKeepOld] != "false"
+		sum.GitHubRepositories = splitRepositories(config[configGitHubRepositories])
 		sum.LastRun = last[sum.Name]
 		out = append(out, sum)
 

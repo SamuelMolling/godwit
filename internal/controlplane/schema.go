@@ -357,6 +357,21 @@ CREATE UNIQUE INDEX cp_runs_seq_idx ON cp_runs (seq);`,
 DROP INDEX cp_runs_seq_idx;
 ALTER TABLE cp_runs DROP COLUMN seq;`,
 	},
+	{
+		Version:  20260906000018,
+		Name:     "webhook_deliveries",
+		Checksum: "cp-webhook-deliveries-v1",
+		UpSQL: `
+CREATE TABLE cp_webhook_deliveries (
+	id          text PRIMARY KEY,
+	event       text NOT NULL,
+	repository  text NOT NULL,
+	received_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX cp_webhook_deliveries_received_idx ON cp_webhook_deliveries (received_at);`,
+		DownSQL: `DROP TABLE cp_webhook_deliveries;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

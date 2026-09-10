@@ -37,6 +37,7 @@ const (
 	AuditPlanSupersede   = "plan.supersede"
 	AuditRunReattach     = "run.reattach"
 	AuditCheckpoint      = "checkpoint.generate"
+	AuditWebhookCommand  = "webhook.command"
 )
 
 // AuditEntry is one recorded mutation: who did what to which target or run.

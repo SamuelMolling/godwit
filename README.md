@@ -112,7 +112,7 @@ That single-server form executes submitted SQL on the store server as the store 
 | [Deployment](docs/deployment.md) | registering a target, the three credential providers, Vault end to end, Helm and ArgoCD, a staging checklist |
 | [Operations](docs/operations.md) | HA, the store, backups, retention, upgrades, metrics and alert rules, notifications, logging, the UI |
 | [Runbook](docs/runbook.md) | per symptom: the SQL to look at and the command to run |
-| [CI/CD](docs/ci-cd.md) | Action inputs and outputs, who may command an apply, ArgoCD hooks, exit codes |
+| [CI/CD](docs/ci-cd.md) | Action inputs and outputs, who may command an apply, the GitHub App, ArgoCD hooks, exit codes |
 | [API](docs/api.md) | every RPC with its scope, request, response and curl |
 | [Security](docs/security.md) | tokens, key providers and rotation, credential providers, the scratch database, what is logged |
 | [Comparison](docs/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |

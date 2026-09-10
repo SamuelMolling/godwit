@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,6 +26,10 @@ func newServeCmd() *cobra.Command {
 	var maxRequestBytes, maxMigrations, maxFiles, maxFileBytes, maxConcurrentDiffs int
 	var skipValidation, requirePlan, withUI bool
 	var planTTL, planRetention time.Duration
+	var githubAddr, githubKeyFile string
+	var githubMaxAge time.Duration
+	var githubMaxBodyBytes int
+	var githubAssociations []string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the godwit control-plane service",
@@ -56,10 +61,24 @@ func newServeCmd() *cobra.Command {
 			if raw := os.Getenv("GODWIT_TOKENS"); raw != "" {
 				tokens = strings.Split(raw, ",")
 			}
+			privateKey, err := githubPrivateKey(githubKeyFile)
+			if err != nil {
+				return err
+			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
 			return server.Run(ctx, server.Config{
+				GitHub: server.GitHubApp{
+					Addr:          githubAddr,
+					Secret:        os.Getenv("GODWIT_GITHUB_WEBHOOK_SECRET"),
+					AppID:         os.Getenv("GODWIT_GITHUB_APP_ID"),
+					PrivateKeyPEM: privateKey,
+					APIBaseURL:    os.Getenv("GODWIT_GITHUB_API_URL"),
+					MaxBodyBytes:  githubMaxBodyBytes,
+					MaxAge:        githubMaxAge,
+					Associations:  githubAssociations,
+				},
 				Listen:          listen,
 				StoreDSN:        storeDSN,
 				ScratchDSN:      scratchDSN,
@@ -138,10 +157,33 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&uiAnonymousScope, "ui-anonymous-scope", os.Getenv("GODWIT_UI_ANONYMOUS_SCOPE"),
 		"serve /ui with no authentication at all, at this scope: read, pipeline, operator or admin (or GODWIT_UI_ANONYMOUS_SCOPE). "+
 			"Anyone who reaches the listener may then do whatever it allows, audited as ui:anonymous; empty keeps /ui behind basic auth")
+	cmd.Flags().StringVar(&githubAddr, "github-webhook-addr", os.Getenv("GODWIT_GITHUB_WEBHOOK_ADDR"),
+		"address for the GitHub App webhook, on its own listener serving /github/webhook and nothing else "+
+			"(or GODWIT_GITHUB_WEBHOOK_ADDR); empty leaves the App off")
+	cmd.Flags().StringVar(&githubKeyFile, "github-private-key-file", os.Getenv("GODWIT_GITHUB_PRIVATE_KEY_FILE"),
+		"PEM file holding the GitHub App's private key (or GODWIT_GITHUB_PRIVATE_KEY_FILE, or the key itself in GODWIT_GITHUB_PRIVATE_KEY)")
+	cmd.Flags().DurationVar(&githubMaxAge, "github-webhook-max-age", time.Hour,
+		"how old a comment or review may be before its delivery is refused as a replay")
+	cmd.Flags().IntVar(&githubMaxBodyBytes, "github-webhook-max-bytes", 1<<20,
+		"largest delivery body read before the signature is verified")
+	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", []string{"OWNER", "MEMBER", "COLLABORATOR"},
+		"author associations that may command godwit from a comment: OWNER, MEMBER or COLLABORATOR")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),
 		"scheme://host[:port] origins /ui is reached at; a form post from anywhere else and a request for another host are refused (or GODWIT_UI_ORIGIN)")
 
 	return cmd
+}
+
+func githubPrivateKey(file string) (string, error) {
+	if file == "" {
+		return os.Getenv("GODWIT_GITHUB_PRIVATE_KEY"), nil
+	}
+	pem, err := os.ReadFile(file)
+	if err != nil {
+		return "", fmt.Errorf("--github-private-key-file: %w", err)
+	}
+
+	return string(pem), nil
 }
 
 func envList(name string) []string {
