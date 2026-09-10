@@ -261,6 +261,7 @@ serviceAccount:
   #   iam.gke.io/gcp-service-account: godwit@project.iam.gserviceaccount.com
   #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/godwit
   annotations: {}
+  # false takes the generic, audience-less token out of the pod; godwit calls no Kubernetes API.
   automountServiceAccountToken: true
 
 podAnnotations: {}
@@ -390,9 +391,10 @@ affinity: {}
 # and audited there, so declaring them here would give one row two owners. Register them
 # with `godwit credential-store add` and `godwit target add` (chart README).
 stores:
-  # --vault-host / GODWIT_VAULT_HOSTS: the hosts a credential store may point at. This is the
-  # guardrail on that registration and not the registration: it moves which Vaults godwit may
-  # authenticate at out of the admin token, which lives in a Secret, and into the pod spec,
-  # which is reviewed. Empty accepts any host an admin registers; set it wherever more than
-  # one person holds an admin token. See docs/security.md#credential-stores.
-  allowedHosts: []
+  # ServiceAccount tokens this pod holds, one projected per entry at /var/run/secrets/godwit/vault/<audience>
+  # and named by it, so each must be a plain name. Stores name one with --vault-audience (docs/security.md#credential-stores).
+  audiences: []
+  # - vault.production.internal
+  # - vault.staging.internal
+  # How long each projected token is valid; the API server's floor is 600.
+  tokenExpirationSeconds: 3600

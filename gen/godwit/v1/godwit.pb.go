@@ -677,10 +677,11 @@ type RegisterCredentialStoreRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Name      string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	VaultAddr string                 `protobuf:"bytes,2,opt,name=vault_addr,json=vaultAddr,proto3" json:"vault_addr,omitempty"`
-	// Kubernetes auth at that Vault, presenting the pod's own ServiceAccount token; vault_k8s_jwt is empty for the projected one.
+	// Kubernetes auth at that Vault, presenting a ServiceAccount token projected for vault_audience.
 	VaultK8SRole  string `protobuf:"bytes,3,opt,name=vault_k8s_role,json=vaultK8sRole,proto3" json:"vault_k8s_role,omitempty"`
 	VaultK8SMount string `protobuf:"bytes,4,opt,name=vault_k8s_mount,json=vaultK8sMount,proto3" json:"vault_k8s_mount,omitempty"`
-	VaultK8SJwt   string `protobuf:"bytes,7,opt,name=vault_k8s_jwt,json=vaultK8sJwt,proto3" json:"vault_k8s_jwt,omitempty"`
+	// Audience this Vault requires on the token, projected by the deployment; required with vault_k8s_role.
+	VaultAudience string `protobuf:"bytes,8,opt,name=vault_audience,json=vaultAudience,proto3" json:"vault_audience,omitempty"`
 	// An environment variable of the service holding a token, named VAULT_TOKEN*; exactly one of it and vault_k8s_role.
 	VaultTokenEnv string `protobuf:"bytes,5,opt,name=vault_token_env,json=vaultTokenEnv,proto3" json:"vault_token_env,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -745,9 +746,9 @@ func (x *RegisterCredentialStoreRequest) GetVaultK8SMount() string {
 	return ""
 }
 
-func (x *RegisterCredentialStoreRequest) GetVaultK8SJwt() string {
+func (x *RegisterCredentialStoreRequest) GetVaultAudience() string {
 	if x != nil {
-		return x.VaultK8SJwt
+		return x.VaultAudience
 	}
 	return ""
 }
@@ -838,7 +839,7 @@ type CredentialStore struct {
 	VaultAddr     string                 `protobuf:"bytes,2,opt,name=vault_addr,json=vaultAddr,proto3" json:"vault_addr,omitempty"`
 	VaultK8SRole  string                 `protobuf:"bytes,3,opt,name=vault_k8s_role,json=vaultK8sRole,proto3" json:"vault_k8s_role,omitempty"`
 	VaultK8SMount string                 `protobuf:"bytes,4,opt,name=vault_k8s_mount,json=vaultK8sMount,proto3" json:"vault_k8s_mount,omitempty"`
-	VaultK8SJwt   string                 `protobuf:"bytes,8,opt,name=vault_k8s_jwt,json=vaultK8sJwt,proto3" json:"vault_k8s_jwt,omitempty"`
+	VaultAudience string                 `protobuf:"bytes,9,opt,name=vault_audience,json=vaultAudience,proto3" json:"vault_audience,omitempty"`
 	VaultTokenEnv string                 `protobuf:"bytes,6,opt,name=vault_token_env,json=vaultTokenEnv,proto3" json:"vault_token_env,omitempty"`
 	Targets       int32                  `protobuf:"varint,5,opt,name=targets,proto3" json:"targets,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -903,9 +904,9 @@ func (x *CredentialStore) GetVaultK8SMount() string {
 	return ""
 }
 
-func (x *CredentialStore) GetVaultK8SJwt() string {
+func (x *CredentialStore) GetVaultAudience() string {
 	if x != nil {
-		return x.VaultK8SJwt
+		return x.VaultAudience
 	}
 	return ""
 }
@@ -5691,26 +5692,26 @@ const file_godwit_v1_godwit_proto_rawDesc = "" +
 	"\x10credential_store\x18\x0e \x01(\tR\x0fcredentialStoreB\v\n" +
 	"\t_keep_oldB\x18\n" +
 	"\x16_ignore_adopted_tables\"\x18\n" +
-	"\x16RegisterTargetResponse\"\xed\x01\n" +
+	"\x16RegisterTargetResponse\"\x85\x02\n" +
 	"\x1eRegisterCredentialStoreRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"vault_addr\x18\x02 \x01(\tR\tvaultAddr\x12$\n" +
 	"\x0evault_k8s_role\x18\x03 \x01(\tR\fvaultK8sRole\x12&\n" +
-	"\x0fvault_k8s_mount\x18\x04 \x01(\tR\rvaultK8sMount\x12\"\n" +
-	"\rvault_k8s_jwt\x18\a \x01(\tR\vvaultK8sJwt\x12&\n" +
-	"\x0fvault_token_env\x18\x05 \x01(\tR\rvaultTokenEnv\"!\n" +
+	"\x0fvault_k8s_mount\x18\x04 \x01(\tR\rvaultK8sMount\x12%\n" +
+	"\x0evault_audience\x18\b \x01(\tR\rvaultAudience\x12&\n" +
+	"\x0fvault_token_env\x18\x05 \x01(\tR\rvaultTokenEnvJ\x04\b\a\x10\bR\rvault_k8s_jwt\"!\n" +
 	"\x1fRegisterCredentialStoreResponse\"\x1d\n" +
-	"\x1bListCredentialStoresRequest\"\xf8\x01\n" +
+	"\x1bListCredentialStoresRequest\"\x90\x02\n" +
 	"\x0fCredentialStore\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"vault_addr\x18\x02 \x01(\tR\tvaultAddr\x12$\n" +
 	"\x0evault_k8s_role\x18\x03 \x01(\tR\fvaultK8sRole\x12&\n" +
-	"\x0fvault_k8s_mount\x18\x04 \x01(\tR\rvaultK8sMount\x12\"\n" +
-	"\rvault_k8s_jwt\x18\b \x01(\tR\vvaultK8sJwt\x12&\n" +
+	"\x0fvault_k8s_mount\x18\x04 \x01(\tR\rvaultK8sMount\x12%\n" +
+	"\x0evault_audience\x18\t \x01(\tR\rvaultAudience\x12&\n" +
 	"\x0fvault_token_env\x18\x06 \x01(\tR\rvaultTokenEnv\x12\x18\n" +
-	"\atargets\x18\x05 \x01(\x05R\atargets\"R\n" +
+	"\atargets\x18\x05 \x01(\x05R\atargetsJ\x04\b\b\x10\tR\rvault_k8s_jwt\"R\n" +
 	"\x1cListCredentialStoresResponse\x122\n" +
 	"\x06stores\x18\x01 \x03(\v2\x1a.godwit.v1.CredentialStoreR\x06stores\"\x9b\x03\n" +
 	"\x10CreateRunRequest\x12\x16\n" +

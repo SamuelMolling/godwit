@@ -100,12 +100,15 @@ message RegisterTargetRequest {
 message RegisterTargetResponse {}
 
 message RegisterCredentialStoreRequest {
+  reserved 7;
+  reserved "vault_k8s_jwt";
   string name = 1;
   string vault_addr = 2;
-  // Kubernetes auth at that Vault, presenting the pod's own ServiceAccount token; vault_k8s_jwt is empty for the projected one.
+  // Kubernetes auth at that Vault, presenting a ServiceAccount token projected for vault_audience.
   string vault_k8s_role = 3;
   string vault_k8s_mount = 4;
-  string vault_k8s_jwt = 7;
+  // Audience this Vault requires on the token, projected by the deployment; required with vault_k8s_role.
+  string vault_audience = 8;
   // An environment variable of the service holding a token, named VAULT_TOKEN*; exactly one of it and vault_k8s_role.
   string vault_token_env = 5;
 }
@@ -116,11 +119,13 @@ message ListCredentialStoresRequest {}
 
 // CredentialStore is one Vault a target's secret can be read from.
 message CredentialStore {
+  reserved 8;
+  reserved "vault_k8s_jwt";
   string name = 1;
   string vault_addr = 2;
   string vault_k8s_role = 3;
   string vault_k8s_mount = 4;
-  string vault_k8s_jwt = 8;
+  string vault_audience = 9;
   string vault_token_env = 6;
   int32 targets = 5;
 }

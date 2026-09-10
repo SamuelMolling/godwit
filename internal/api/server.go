@@ -86,8 +86,6 @@ type Server struct {
 	PlanTTL time.Duration
 	// Limits are the admission bounds; a zero field takes its default. Set them before Handler.
 	Limits Limits
-	// VaultHosts are the hosts a credential store may point at; empty accepts any.
-	VaultHosts []string
 
 	store         *controlplane.Store
 	drift         DriftOps

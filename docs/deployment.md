@@ -17,7 +17,8 @@ The short version:
 ```bash
 godwit credential-store add production \
   --server https://godwit.internal --token "$GODWIT_ADMIN_TOKEN" \
-  --vault-addr https://vault.internal:8200 --vault-k8s-role godwit
+  --vault-addr https://vault.internal:8200 --vault-k8s-role godwit \
+  --vault-audience vault.internal
 
 godwit target add orders \
   --server https://godwit.internal --token "$GODWIT_ADMIN_TOKEN" \
@@ -241,9 +242,11 @@ The full Vault setup is the next section.
 
 ```bash
 godwit credential-store add production \
-  --vault-addr https://vault.production.internal:8200 --vault-k8s-role godwit
+  --vault-addr https://vault.production.internal:8200 --vault-k8s-role godwit \
+  --vault-audience vault.production.internal
 godwit credential-store add staging \
-  --vault-addr https://vault.staging.internal:8200 --vault-k8s-role godwit
+  --vault-addr https://vault.staging.internal:8200 --vault-k8s-role godwit \
+  --vault-audience vault.staging.internal
 
 godwit credential-stores
 ```
@@ -254,21 +257,24 @@ A store is a row, not process configuration: changing an address is `credential-
 
 | Field | Meaning |
 |---|---|
-| `--vault-addr` | base URL, `http` or `https`. Refused when the service was started with `--vault-host` and the host is not on that list ([security](security.md#credential-stores)) |
-| `--vault-k8s-role`, `--vault-k8s-mount`, `--vault-k8s-jwt` | Kubernetes auth **at that Vault**; the mount defaults to `kubernetes` and the JWT to the projected ServiceAccount token |
+| `--vault-addr` | base URL, `http` or `https` |
+| `--vault-k8s-role`, `--vault-k8s-mount`, `--vault-audience` | Kubernetes auth **at that Vault**; the mount defaults to `kubernetes`, and the audience is required and has no default ([security](security.md#credential-stores)) |
 | `--vault-token-env` | instead of Kubernetes auth, the name of an environment variable of the service holding a token for that Vault. It must begin with `VAULT_TOKEN`. For deployments that are not on Kubernetes; prefer the role everywhere else |
 
-Kubernetes auth presents **the pod's own projected ServiceAccount token**, at whichever Vault the store names, and `--vault-k8s-jwt` moves the file for a store that needs a differently-audienced token:
+Kubernetes auth presents **a ServiceAccount token minted for `--vault-audience`**, read from `/var/run/secrets/godwit/vault/<audience>`. The chart's whole part in this is projecting one:
 
 ```yaml
-# the chart's whole part in this: the allowlist, and the token the provider presents
 stores:
-  allowedHosts: [vault.production.internal, vault.staging.internal]
+  audiences: [vault.production.internal, vault.staging.internal]
+  tokenExpirationSeconds: 3600
 
 serviceAccount:
   create: true
-  automountServiceAccountToken: true   # the default; the provider reads the projected token
+  # godwit calls no Kubernetes API; false takes the generic, audience-less token out of the pod
+  automountServiceAccountToken: false
 ```
+
+A `serviceAccountToken` projection carries one audience, so two audiences are **two sources of one projected volume**, each at its own file name — not two volumes, and not a second mount. The chart renders that from the list, and refuses an audience that is not a plain name, because the name is also the file godwit reads.
 
 Register a store before the targets that name it: a `vault` target whose store does not exist is refused.
 
@@ -606,8 +612,11 @@ path "secret/data/orders/db" { capabilities = ["read"] }
 EOF
 vault write auth/kubernetes/role/godwit \
   bound_service_account_names=godwit bound_service_account_namespaces=godwit \
+  audience=vault.internal \
   policies=godwit token_ttl=5m token_max_ttl=5m
 ```
+
+`audience` is what makes the role answer *was this token issued for me*, and not only *who may log in*. Without it the role accepts any token the cluster issues for this ServiceAccount, including one godwit was tricked into presenting somewhere else.
 
 **4. Install.**
 
@@ -615,7 +624,7 @@ vault write auth/kubernetes/role/godwit \
 helm upgrade --install godwit deploy/helm/godwit -n godwit \
   --set image.tag=sha-1a2b3c4 \
   --set serve.scratch.enabled=true \
-  --set stores.allowedHosts='{vault.internal}'
+  --set stores.audiences='{vault.internal}'
 kubectl -n godwit logs deploy/godwit | grep -E 'listening|not isolated|no tokens'
 ```
 
@@ -628,7 +637,8 @@ kubectl -n godwit port-forward svc/godwit 8474:8474 &
 export GODWIT_SERVER=http://localhost:8474 GODWIT_TOKEN=<the register:admin secret>
 
 godwit credential-store add production \
-  --vault-addr https://vault.internal:8200 --vault-k8s-role godwit
+  --vault-addr https://vault.internal:8200 --vault-k8s-role godwit \
+  --vault-audience vault.internal
 
 godwit target add orders --provider vault --credential-store production \
   --vault-path secret/data/orders/db \

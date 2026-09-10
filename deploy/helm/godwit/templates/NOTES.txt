@@ -22,7 +22,8 @@ Check it:
 Targets and credential stores are registered through the API, not declared in these values.
 With the `admin` token from the Secret:
   export GODWIT_SERVER=http://localhost:{{ .Values.service.port }} GODWIT_TOKEN=...
-  godwit credential-store add production --vault-addr https://vault.internal --vault-k8s-role godwit
+  godwit credential-store add production --vault-addr https://vault.internal --vault-k8s-role godwit \
+    --vault-audience {{ first (default (list "vault.internal") .Values.stores.audiences) }}
   godwit target add orders --provider vault --credential-store production \
     --vault-path database/creds/orders \
     --vault-template 'postgres://{{"{{"}}username{{"}}"}}:{{"{{"}}password{{"}}"}}@db/orders'

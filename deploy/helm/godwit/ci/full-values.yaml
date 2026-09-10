@@ -36,7 +36,8 @@ serve:
     origins: ["https://godwit.example.com"]
   extraArgs: ["--drift-interval=2m"]
 stores:
-  allowedHosts: [vault.production.example.com, vault.staging.example.com]
+  audiences: [vault.production.example.com, vault.staging.example.com]
+  tokenExpirationSeconds: 900
 
 notifications:
   webhookUrl: https://hooks.example.com/godwit

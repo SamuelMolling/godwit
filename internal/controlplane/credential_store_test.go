@@ -19,6 +19,7 @@ func TestCredentialStoreRoundTrip(t *testing.T) {
 
 	if err := s.RegisterCredentialStore(ctx, CredentialStore{
 		Name: "production", Address: "https://vault.production.example", Role: "godwit", Mount: "kubernetes",
+		Audience: "vault.production.example",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,10 @@ func TestCredentialStoreRoundTrip(t *testing.T) {
 	if err != nil || provider != "vault" || config[creds.StoreConfigKey] != "production" || config["path"] != "secret/data/app" {
 		t.Fatalf("provider = %q, config = %v, err = %v", provider, config, err)
 	}
-	want := creds.VaultStore{Address: "https://vault.production.example", Role: "godwit", Mount: "kubernetes"}
+	want := creds.VaultStore{
+		Address: "https://vault.production.example", Role: "godwit", Mount: "kubernetes",
+		Audience: "vault.production.example",
+	}
 	if v, err := s.VaultStore(ctx, "production"); err != nil || v != want {
 		t.Fatalf("store = %+v, err = %v", v, err)
 	}
@@ -82,7 +86,7 @@ func TestCredentialStoreStoreErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	mock.ExpectQuery("FROM cp_credential_stores").WillReturnRows(
-		pgxmock.NewRows([]string{"name", "address", "k8s_role", "k8s_mount", "k8s_jwt", "token_env", "count"}).
+		pgxmock.NewRows([]string{"name", "address", "k8s_role", "k8s_mount", "k8s_audience", "token_env", "count"}).
 			AddRow("s", "https://vault", "godwit", "kubernetes", "", "", 0).RowError(0, errBoom))
 	if _, err := s.ListCredentialStores(ctx); err == nil || !strings.Contains(err.Error(), "list credential stores") {
 		t.Fatalf("err = %v", err)

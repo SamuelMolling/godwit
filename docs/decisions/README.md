@@ -30,6 +30,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0020](0020-a-run-is-bound-to-the-pull-request-that-asked-for-it.md) | A run is bound to the pull request that asked for it, and whoever sees it settle reports it | #135 |
 | [0021](0021-a-target-names-the-vault-its-credentials-live-in.md) | A target names the Vault its credentials live in, and there is no other one | #136 |
 | [0022](0022-control-plane-data-is-not-chart-configuration.md) | Control-plane data is not chart configuration: targets and stores are registered, not declared | #138 |
+| [0023](0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) | The token godwit presents is minted for the Vault it goes to, and the host allowlist goes | #141 |
 
 ## Open questions
 

@@ -60,7 +60,7 @@ Request and response fields are listed as JSON. Fields not mentioned do not exis
 
 ### RegisterCredentialStore — admin
 
-Creates or replaces a [credential store](security.md#credential-stores): a named Vault a `vault` target can be read from. `vaultAddr` must be `http` or `https` with a host, and is refused when the service was started with `--vault-host` and the host is not on that list. Exactly one of `vaultK8sRole` (Kubernetes auth at that Vault, with `vaultK8sMount`, default `kubernetes`, using the pod's own projected ServiceAccount token) and `vaultTokenEnv` (an environment variable of the service holding a token, whose name must begin with `VAULT_TOKEN`).
+Creates or replaces a [credential store](security.md#credential-stores): a named Vault a `vault` target can be read from. `vaultAddr` must be `http` or `https` with a host. Exactly one of `vaultK8sRole` (Kubernetes auth at that Vault, with `vaultK8sMount`, default `kubernetes`, and `vaultAudience`, required: the ServiceAccount token the deployment projects for that audience is the one presented) and `vaultTokenEnv` (an environment variable of the service holding a token, whose name must begin with `VAULT_TOKEN`).
 
 ```bash
 call RegisterCredentialStore '{"name":"production","vaultAddr":"https://vault.production.internal","vaultK8sRole":"godwit"}'
