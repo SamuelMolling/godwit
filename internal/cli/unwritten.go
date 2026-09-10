@@ -12,6 +12,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/report"
 )
 
 // emptySet loads dir and names an empty migration set — an absent directory, or one holding nothing — instead of failing on the first.
@@ -38,7 +39,7 @@ func startedTarget(ctx context.Context, client godwitv1connect.GodwitServiceClie
 	}
 	if n := len(st.Msg.GetApplied()); n > 0 {
 		return fmt.Errorf("%s, and %s already has %s applied: check --dir, the checkout and the branch",
-			why, target, count(n, "migration"))
+			why, target, report.Count(n, "migration"))
 	}
 
 	return nil
@@ -51,14 +52,14 @@ func nothingLocal(cmd *cobra.Command, exec *engine.Executor, why string) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("%s, and the database already has %s applied: check --dir and the checkout", why, count(n, "migration"))
+		return fmt.Errorf("%s, and the database already has %s applied: check --dir and the checkout", why, report.Count(n, "migration"))
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "no migration yet: "+why)
 
 	return nil
 }
 
-func (f *clientFlags) nothingYet(cmd *cobra.Command, target, why string, write func(io.Writer, planReport)) error {
+func (f *clientFlags) nothingYet(cmd *cobra.Command, target, why string, write func(io.Writer, report.Plan)) error {
 	client, err := f.client()
 	if err != nil {
 		return err
@@ -70,13 +71,13 @@ func (f *clientFlags) nothingYet(cmd *cobra.Command, target, why string, write f
 	return f.nothingPlanned(cmd, target, why, write)
 }
 
-func (f *clientFlags) nothingPlanned(cmd *cobra.Command, target, why string, write func(io.Writer, planReport)) error {
+func (f *clientFlags) nothingPlanned(cmd *cobra.Command, target, why string, write func(io.Writer, report.Plan)) error {
 	if f.json {
 		f.print(cmd, &godwitv1.PlanRunResponse{Target: target}, "")
 
 		return nil
 	}
-	write(cmd.OutOrStdout(), planReport{live: true, target: target, nothing: why})
+	write(cmd.OutOrStdout(), report.PlanNothing(target, why))
 
 	return nil
 }

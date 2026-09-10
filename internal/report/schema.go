@@ -1,4 +1,4 @@
-package cli
+package report
 
 import (
 	"fmt"
@@ -23,7 +23,7 @@ type placedHazards struct {
 	loose    []engine.Hazard
 }
 
-func placeHazards(p planItem) placedHazards {
+func placeHazards(p item) placedHazards {
 	out := placedHazards{onAttr: map[string][]engine.Hazard{}, onObject: map[string][]engine.Hazard{}}
 	for _, st := range p.Statements {
 		for _, h := range st.Hazards {
@@ -93,13 +93,13 @@ func schemaBlock(c engine.ObjectChange, ph placedHazards) []blockLine {
 		out = append(out, blockLine{op: a.Op, pad: 6, text: text})
 	}
 	if c.Unchanged > 0 {
-		out = append(out, blockLine{pad: 8, text: fmt.Sprintf("# (%s hidden)", count(c.Unchanged, "unchanged attribute"))})
+		out = append(out, blockLine{pad: 8, text: fmt.Sprintf("# (%s hidden)", Count(c.Unchanged, "unchanged attribute"))})
 	}
 
 	return append(out, blockLine{pad: 4, text: "}"})
 }
 
-func terminalLine(l blockLine, pal palette) string {
+func terminalLine(l blockLine, pal Palette) string {
 	if l.op == "" {
 		return strings.Repeat(" ", l.pad) + l.text
 	}
@@ -178,7 +178,7 @@ func attrValueText(a engine.AttrChange) string {
 	return strings.Join(a.New, " ")
 }
 
-func recipeBlocks(p planItem) []engine.Hazard {
+func recipeBlocks(p item) []engine.Hazard {
 	var out []engine.Hazard
 	for _, st := range p.Statements {
 		for _, h := range st.Hazards {
@@ -191,12 +191,12 @@ func recipeBlocks(p planItem) []engine.Hazard {
 	return out
 }
 
-func (p planItem) describable() bool {
+func (p item) describable() bool {
 	return len(p.changes) > 0
 }
 
 // undescribed is prose, not a comment: it prints outside the fence, where a leading # is a heading.
-func (p planItem) undescribed() string {
+func (p item) undescribed() string {
 	if p.effect != "" {
 		return ""
 	}
@@ -210,7 +210,7 @@ func (p planItem) undescribed() string {
 		" The statements it runs are below instead."
 }
 
-func (p planItem) schemaHeading() string {
+func (p item) schemaHeading() string {
 	out := "  # " + p.Migration.ID() + downSuffix(p.Direction)
 	var about []string
 	if p.expanded {
@@ -229,7 +229,7 @@ func (p planItem) schemaHeading() string {
 	return out
 }
 
-func (r planReport) objectCounts() (add, change, destroy int) {
+func (r Plan) objectCounts() (add, change, destroy int) {
 	for _, p := range r.items {
 		if p.skipped {
 			continue
@@ -249,13 +249,13 @@ func (r planReport) objectCounts() (add, change, destroy int) {
 	return add, change, destroy
 }
 
-func (r planReport) objectFooter() string {
+func (r Plan) objectFooter() string {
 	add, change, destroy := r.objectCounts()
 
 	return fmt.Sprintf("Plan: %d to add, %d to change, %d to destroy.", add, change, destroy)
 }
 
-func blockLines(p planItem) []blockLine {
+func blockLines(p item) []blockLine {
 	ph := placeHazards(p)
 	var out []blockLine
 	for _, h := range ph.loose {
@@ -268,17 +268,17 @@ func blockLines(p planItem) []blockLine {
 	return out
 }
 
-func writeSchemaText(w io.Writer, p planItem, pal palette) {
+func writeSchemaText(w io.Writer, p item, pal Palette) {
 	for _, l := range blockLines(p) {
 		fmt.Fprintln(w, terminalLine(l, pal))
 	}
 	for _, h := range recipeBlocks(p) {
 		fmt.Fprintf(w, "    recipe for %s:\n", h.Code)
-		writeRecipeText(w, "      ", h.Recipe)
+		WriteRecipeText(w, "      ", h.Recipe)
 	}
 }
 
-func writeSchemaMarkdown(w io.Writer, p planItem) {
+func writeSchemaMarkdown(w io.Writer, p item) {
 	lines := make([]string, 0, len(p.changes))
 	for _, l := range blockLines(p) {
 		lines = append(lines, diffLine(l))

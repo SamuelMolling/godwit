@@ -13,6 +13,7 @@ import (
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/config"
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/report"
 )
 
 func newTargetStatusCmd() *cobra.Command {
@@ -73,7 +74,7 @@ func targetsTable(targets []*godwitv1.TargetSummary) string {
 	for _, t := range targets {
 		last := "none"
 		if t.LastRun != nil {
-			last = t.LastRun.Id + " " + stateName(t.LastRun.State)
+			last = t.LastRun.Id + " " + report.StateName(t.LastRun.State)
 		}
 		drift := "clean"
 		if t.UnresolvedDrift {
@@ -112,7 +113,7 @@ func statusText(st *godwitv1.GetTargetStatusResponse) string {
 		case a.Repeatable:
 			note = "unchanged"
 		}
-		fmt.Fprintf(w, "  %s\t%s\t%s\n", engine.MigrationID(a.Version, a.Name, a.Repeatable), stamp(a.AppliedAt), note)
+		fmt.Fprintf(w, "  %s\t%s\t%s\n", engine.MigrationID(a.Version, a.Name, a.Repeatable), report.Stamp(a.AppliedAt), note)
 	}
 	_ = w.Flush()
 	if len(st.Pending) > 0 {
@@ -134,9 +135,9 @@ func writeLastRun(w io.Writer, r *godwitv1.Run) {
 
 		return
 	}
-	line := fmt.Sprintf("last run: %s %s %s", r.Id, r.Kind, stateName(r.State))
+	line := fmt.Sprintf("last run: %s %s %s", r.Id, r.Kind, report.StateName(r.State))
 	if r.FinishedAt != nil {
-		line += " finished " + stamp(r.FinishedAt)
+		line += " finished " + report.Stamp(r.FinishedAt)
 	}
 	fmt.Fprintln(w, line)
 }
@@ -147,7 +148,7 @@ func writeBaseline(w io.Writer, d *godwitv1.DriftBaseline) {
 
 		return
 	}
-	line := "drift baseline: taken " + stamp(d.TakenAt)
+	line := "drift baseline: taken " + report.Stamp(d.TakenAt)
 	if d.RunId != "" {
 		line += " by run " + d.RunId
 	}

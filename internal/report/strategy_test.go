@@ -1,4 +1,4 @@
-package cli
+package report
 
 import (
 	"strings"
@@ -9,10 +9,10 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-func concurrentPlan() planReport {
-	return planReport{
+func concurrentPlan() Plan {
+	return Plan{
 		live: true, target: "app", rollout: "direct", validated: true, format: config.PlanFormatSchema,
-		items: []planItem{
+		items: []item{
 			{skipped: true, Plan: engine.Plan{
 				Migration:  engine.Migration{Version: 20260910100000, Name: "done"},
 				Statements: []engine.Statement{{SQL: "SELECT 1", NoTx: true}},
@@ -31,8 +31,8 @@ func concurrentPlan() planReport {
 						SQL:   "UPDATE public.b SET v = 1",
 						Batch: &engine.BatchSpec{Key: "id", KeyKind: "bigint", Size: 2000},
 					},
-					{SQL: "SELECT count(*) FROM public.a", Assert: &engine.AssertSpec{Op: "eq", Kind: "int", Value: "0"}},
-					{SQL: "SELECT count(*) FROM public.b", Assert: &engine.AssertSpec{Op: "eq", Kind: "int", Value: "0"}},
+					{SQL: "SELECT Count(*) FROM public.a", Assert: &engine.AssertSpec{Op: "eq", Kind: "int", Value: "0"}},
+					{SQL: "SELECT Count(*) FROM public.b", Assert: &engine.AssertSpec{Op: "eq", Kind: "int", Value: "0"}},
 					{
 						SQL: "ALTER TABLE public.a ADD CONSTRAINT a_chk CHECK (v > 0)",
 						Hazards: []engine.Hazard{
@@ -76,10 +76,10 @@ func TestStrategyDescribesEveryShapeTheRunTakes(t *testing.T) {
 
 func TestStrategyIsSilentWithoutALiveTargetOrAStatement(t *testing.T) {
 	t.Parallel()
-	if got := (planReport{}).strategy(terminal); got != nil {
+	if got := (Plan{}).strategy(terminal); got != nil {
 		t.Fatalf("an offline plan says nothing about how a run would go: %v", got)
 	}
-	empty := planReport{live: true, target: "app", items: []planItem{{skipped: true}}}
+	empty := Plan{live: true, target: "app", items: []item{{skipped: true}}}
 	if got := empty.strategy(terminal); got != nil {
 		t.Fatalf("nothing to run is nothing to describe: %v", got)
 	}

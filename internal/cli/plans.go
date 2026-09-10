@@ -10,6 +10,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/report"
 )
 
 func newPlansCmd() *cobra.Command {
@@ -49,7 +50,7 @@ func plansTable(plans []*godwitv1.Plan) string {
 			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%t\t%s\t%s\t%s\t%s\n", p.Id, planStateLabel(p), p.Rollout, pending, p.Validated,
-			p.CreatedBy, p.Source, stamp(p.CreatedAt), p.RunId)
+			p.CreatedBy, p.Source, report.Stamp(p.CreatedAt), p.RunId)
 	}
 	_ = w.Flush()
 
@@ -66,13 +67,13 @@ func planStateLabel(p *godwitv1.Plan) string {
 
 func newPlanShowCmd() *cobra.Command {
 	flags := &clientFlags{}
-	report := &reportFlags{}
+	rep := &reportFlags{}
 	cmd := &cobra.Command{
 		Use:   "show <plan-id>",
 		Short: "Show a stored plan: statements, hazards, observation, drift, state and the run that applied it",
 		Args:  cobra.ExactArgs(1),
 		RunE: flags.runE(func(cmd *cobra.Command, client godwitv1connect.GodwitServiceClient, args []string) error {
-			write, err := report.writer()
+			write, err := rep.writer()
 			if err != nil {
 				return err
 			}
@@ -85,26 +86,13 @@ func newPlanShowCmd() *cobra.Command {
 
 				return nil
 			}
-			write(cmd.OutOrStdout(), planReportFromPlan(resp.Msg.Plan))
+			write(cmd.OutOrStdout(), report.PlanFromStored(resp.Msg.Plan))
 
 			return nil
 		}),
 	}
 	flags.register(cmd)
-	report.register(cmd, "")
+	rep.register(cmd, "")
 
 	return cmd
-}
-
-func planReportFromPlan(p *godwitv1.Plan) planReport {
-	r := planReportFromProto(&godwitv1.PlanRunResponse{
-		Target: p.Target, Rollout: p.Rollout, Migrations: p.Migrations, Validated: p.Validated,
-		PlanId: p.Id, PlanKey: p.Key, Observed: p.Observed, Drift: p.Drift,
-	})
-	r.stored = &storedPlan{
-		State: p.State, RunID: p.RunId, SupersededBy: p.SupersededBy, CreatedBy: p.CreatedBy, CreatedAt: stamp(p.CreatedAt),
-		Source: p.Source, Acked: p.AcknowledgedHazards, AllowOutOfOrder: p.AllowOutOfOrder,
-	}
-
-	return r
 }

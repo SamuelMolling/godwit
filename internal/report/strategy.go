@@ -1,4 +1,4 @@
-package cli
+package report
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ type runShape struct {
 	locks      []engine.Hazard
 }
 
-func (r planReport) shape() runShape {
+func (r Plan) shape() runShape {
 	var s runShape
 	for _, p := range r.items {
 		if p.skipped {
@@ -55,7 +55,7 @@ func (s *runShape) takeLocks(st engine.Statement) {
 	}
 }
 
-func (r planReport) strategy(m markup) []string {
+func (r Plan) strategy(m markup) []string {
 	if !r.live {
 		return nil
 	}
@@ -122,7 +122,7 @@ func (s runShape) batches() string {
 	return fmt.Sprintf("%s %s not run as one statement at all: godwit walks the table %s and commits each batch, so"+
 		" no single transaction holds a lock or a snapshot over the whole table, and the cursor it journals is where"+
 		" a killed run picks the backfill up.",
-		count(len(s.batched), "statement"), agree(len(s.batched), "does", "do"), strings.Join(walks, "; "))
+		Count(len(s.batched), "statement"), agree(len(s.batched), "does", "do"), strings.Join(walks, "; "))
 }
 
 func (s runShape) checks() string {
@@ -132,7 +132,7 @@ func (s runShape) checks() string {
 
 	return fmt.Sprintf("%s %s nothing: they are conditions the migration declared, evaluated where they stand, and"+
 		" the run stops there if one does not hold.",
-		count(s.asserts, "statement"), agree(s.asserts, "changes", "change"))
+		Count(s.asserts, "statement"), agree(s.asserts, "changes", "change"))
 }
 
 func (s runShape) lockLine(m markup) string {
@@ -152,7 +152,7 @@ func (s runShape) lockLine(m markup) string {
 
 	return fmt.Sprintf("%s %s a lock the rest of the application queues behind while %s: %s. How long that matters is"+
 		" how long the statement itself takes, which grows with the table. %s",
-		count(s.locked, "statement"), agree(s.locked, "holds", "hold"),
+		Count(s.locked, "statement"), agree(s.locked, "holds", "hold"),
 		agree(s.locked, "it runs", "they run"), strings.Join(parts, "; "), base)
 }
 

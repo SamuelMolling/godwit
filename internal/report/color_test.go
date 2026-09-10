@@ -1,4 +1,4 @@
-package cli
+package report
 
 import (
 	"os"
@@ -31,7 +31,7 @@ func TestPaletteForResolvesTheTwoSwitches(t *testing.T) {
 			t.Parallel()
 			got := paletteFor(tc.mode, tc.noColor, tc.tty).add("x") != "x"
 			if got != tc.want {
-				t.Fatalf("coloured = %t, want %t", got, tc.want)
+				t.Fatalf("Coloured = %t, want %t", got, tc.want)
 			}
 		})
 	}
@@ -56,10 +56,10 @@ func TestIsTTYOnlyForACharacterDevice(t *testing.T) {
 func TestColourMarksTheDirectionOfEveryChange(t *testing.T) {
 	t.Parallel()
 
-	if got := coloured.change(engine.DirectionUp, "x"); got != "\x1b[32m+ x\x1b[0m" {
+	if got := Coloured.change(engine.DirectionUp, "x"); got != "\x1b[32m+ x\x1b[0m" {
 		t.Fatalf("applied = %q, want green", got)
 	}
-	if got := coloured.change(engine.DirectionDown, "x"); got != "\x1b[31m- x\x1b[0m" {
+	if got := Coloured.change(engine.DirectionDown, "x"); got != "\x1b[31m- x\x1b[0m" {
 		t.Fatalf("reverted = %q, want red", got)
 	}
 	for _, tc := range []struct{ line, want string }{
@@ -67,7 +67,7 @@ func TestColourMarksTheDirectionOfEveryChange(t *testing.T) {
 		{"- index i", "\x1b[31m- index i\x1b[0m"},
 		{"unchanged", "unchanged"},
 	} {
-		if got := coloured.diff(tc.line); got != tc.want {
+		if got := Coloured.diff(tc.line); got != tc.want {
 			t.Fatalf("diff(%q) = %q, want %q", tc.line, got, tc.want)
 		}
 	}
@@ -75,9 +75,9 @@ func TestColourMarksTheDirectionOfEveryChange(t *testing.T) {
 
 func TestColourAddsNothingButEscapes(t *testing.T) {
 	t.Setenv("GODWIT_COLOR", "always")
-	r := planReport{
+	r := Plan{
 		live: true, target: "app", rollout: "direct", validated: true, drift: "+ table public.orders",
-		items: []planItem{hazardItem("orders", false)},
+		items: []item{hazardItem("orders", false)},
 	}
 	var lit, dark strings.Builder
 	writePlanText(&lit, r)
@@ -97,7 +97,7 @@ func TestColourAddsNothingButEscapes(t *testing.T) {
 func TestMarkdownIsNeverColoured(t *testing.T) {
 	t.Setenv("GODWIT_COLOR", "always")
 	var b strings.Builder
-	writePlanMarkdown(&b, planReport{live: true, target: "app", rollout: "direct", validated: true, items: []planItem{hazardItem("orders", false)}})
+	writePlanMarkdown(&b, Plan{live: true, target: "app", rollout: "direct", validated: true, items: []item{hazardItem("orders", false)}})
 	if strings.Contains(b.String(), "\x1b[") {
 		t.Fatalf("a forge paints the diff fence itself; escapes would be posted as text:\n%s", b.String())
 	}

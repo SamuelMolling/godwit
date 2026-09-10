@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,7 +15,7 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/config"
-	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/report"
 	"github.com/SamuelMolling/godwit/internal/schemasource"
 )
 
@@ -26,19 +24,6 @@ var (
 	nameRe          = regexp.MustCompile(`^[a-z0-9_]+$`)
 	errNameRequired = errors.New("--name is required and must be snake_case ([a-z0-9_]+)")
 )
-
-type diffJSON struct {
-	Target     string           `json:"target"`
-	Changed    bool             `json:"changed"`
-	UpSQL      string           `json:"up_sql"`
-	DownSQL    string           `json:"down_sql"`
-	Statements []statementJSON  `json:"statements"`
-	Drift      string           `json:"drift,omitempty"`
-	Observed   *planObservation `json:"observed,omitempty"`
-	Files      []string         `json:"files"`
-
-	RepeatableObjects []string `json:"repeatable_objects"`
-}
 
 func newDiffCmd() *cobra.Command {
 	flags := &clientFlags{}
@@ -80,7 +65,7 @@ func newDiffCmd() *cobra.Command {
 				}
 			}
 
-			writeDiffReport(cmd.OutOrStdout(), res.Msg, files, label, flags.json)
+			report.WriteDiff(cmd.OutOrStdout(), res.Msg, files, label, flags.json)
 
 			return nil
 		}),
@@ -291,56 +276,4 @@ func writeDiff(dir, name string, m *godwitv1.DiffResponse) ([]string, error) {
 	}
 
 	return files, nil
-}
-
-func writeDiffReport(w io.Writer, m *godwitv1.DiffResponse, files []string, schema string, asJSON bool) {
-	if asJSON {
-		writeDiffJSON(w, m, files)
-
-		return
-	}
-	if len(m.RepeatableObjects) > 0 {
-		fmt.Fprintf(w, "declared by repeatable migrations, so the desired schema keeps them: %s\n",
-			strings.Join(m.RepeatableObjects, ", "))
-	}
-	if m.UpSql == "" {
-		fmt.Fprintf(w, "no changes: %s already matches %s\n", m.Target, schema)
-
-		return
-	}
-	fmt.Fprint(w, planReport{drift: m.Drift}.driftBlock("drift (the target's live schema, not its history, is the starting point):", "  ", "", "", colors(w)))
-	fmt.Fprintf(w, "%s -> %s: %d statement(s)\n", m.Target, schema, len(m.Statements))
-	for i, st := range m.Statements {
-		fmt.Fprintf(w, "  [%d] %-5s %s\n", i, statementMode(engine.Statement{NoTx: st.NoTx}), firstLine(st.Sql))
-		for _, h := range st.Hazards {
-			fmt.Fprintf(w, "        hazard %s: %s\n", h.Code, h.Detail)
-			writeRecipeText(w, "          ", h.Recipe)
-		}
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "-- up")
-	fmt.Fprintln(w, m.UpSql)
-	fmt.Fprintln(w, "-- down")
-	fmt.Fprintln(w, m.DownSql)
-	for _, f := range files {
-		fmt.Fprintln(w, "wrote", f)
-	}
-}
-
-func writeDiffJSON(w io.Writer, m *godwitv1.DiffResponse, files []string) {
-	out := diffJSON{
-		Target: m.Target, Changed: m.UpSql != "", UpSQL: m.UpSql, DownSQL: m.DownSql,
-		Statements: []statementJSON{}, Drift: m.Drift, Files: append([]string{}, files...),
-		RepeatableObjects: append([]string{}, m.RepeatableObjects...),
-	}
-	for _, st := range m.Statements {
-		hazards := make([]hazardJSON, 0, len(st.Hazards))
-		for _, h := range st.Hazards {
-			hazards = append(hazards, hazardJSON{Code: h.Code, Detail: h.Detail, Recipe: h.Recipe})
-		}
-		out.Statements = append(out.Statements, statementJSON{SQL: st.Sql, Mode: statementMode(engine.Statement{NoTx: st.NoTx}), Hazards: hazards})
-	}
-	out.Observed = observationFromProto(m.Observed)
-	body, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(w, string(body))
 }
