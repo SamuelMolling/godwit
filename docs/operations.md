@@ -34,6 +34,8 @@ One PostgreSQL database, tables in the default schema of the store role, plus a 
 | `cp_drift_events` | one per detected diff, `resolved_at` when it goes away or is accepted | drift |
 | `cp_notifications` | Slack root message ts per run / drift key | runs |
 | `cp_audit` | one per admitted mutation (`target.register`, `target.baseline`, `target.reconcile`, `run.create`, `run.reattach`, `run.revert`, `run.resume`, `run.park`, `run.confirm`, `drift.accept`) | mutations |
+| `cp_webhook_deliveries` | one per GitHub App delivery id, so a redelivery is not acted on twice | deliveries; swept at four times `--github-webhook-max-age` |
+| `cp_github_runs` | one per run a pull request command created: which repository, pull request, head and check it answers on, and the last state it was reported at. Deleted with the run it names | runs the App created; swept once reported, on the same schedule as the deliveries |
 
 Privileges for the store role: owner of the store database, and that is all it needs once `--scratch-dsn` points scratch databases elsewhere. Left unset, it also needs `CREATEDB` — and then submitted DDL executes as the owner of the control-plane database, which [security](security.md#the-scratch-database) explains and `serve` warns about on every start.
 
@@ -192,6 +194,7 @@ Set in [configuration](configuration.md#admission-limits); this is when to move 
 | `godwit_api_requests_total` | counter | `method`, `code` | connect code per RPC |
 | `godwit_api_request_duration_seconds` | histogram | `method` | |
 | `godwit_notifications_total` | counter | `provider`, `result` | `delivered`, `failed`, `dropped` |
+| `godwit_webhook_deliveries_total` | counter | `event`, `result` | GitHub App deliveries, including the ones refused before they were parsed |
 
 Alert rules to start from:
 

@@ -70,17 +70,15 @@ func (g GitHubApp) receiver(cfg Config, key crypto.Signer, store *controlplane.S
 		HTTP:    &http.Client{Timeout: 30 * time.Second},
 		Now:     time.Now,
 	}
-	worker, err := githubapp.NewWorker(githubapp.WorkerConfig{
+	worker := githubapp.NewWorker(githubapp.WorkerConfig{
 		API:       client,
 		Service:   svc,
+		Runs:      store,
 		Limits:    cfg.Limits,
 		PublicURL: cfg.PublicURL,
 		Workers:   g.Workers,
 		Log:       log,
 	})
-	if err != nil {
-		return nil, nil, err
-	}
 	r, err := githubapp.New(githubapp.Config{
 		Secret:       g.Secret,
 		MaxBodyBytes: g.MaxBodyBytes,

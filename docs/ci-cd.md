@@ -457,7 +457,7 @@ With `rollout: expand-contract` the apply (or the merge step in `apply-on-merge`
 
 The Action needs a runner that can reach godwit, and a workflow in every consuming repository. The App inverts that: the service receives the pull request events itself, so a consumer configures a webhook and nothing else. [Decision 0016](decisions/0016-the-app-is-bound-to-targets-by-the-server.md) has the reasoning, what an attacker gains from the webhook secret, and what is deliberately not built.
 
-**What is built today is `plan`.** A delivery is verified, de-duplicated, authorised and resolved to the projects the pull request touches; godwit then reads those projects' migration directories at the pull request's head over the Contents API, plans them against their targets, stores the plan, and posts the same report `godwit plan` renders on a laptop, with a `godwit/plan` check that carries the verdict. A repository that only wants a plan on its pull requests needs nothing but `godwit.yaml`. `apply`, `confirm` and `revert` are accepted, audited and still run nothing, so a repository that applies from the pull request keeps the workflow for now. [Decision 0019](decisions/0019-the-app-reads-the-migrations-at-the-head.md) is where the files come from and what bounds them.
+**All four commands run.** A delivery is verified, de-duplicated, authorised and resolved to the projects the pull request touches; godwit then reads those projects' migration directories at the pull request's head over the Contents API and carries the command out — `plan` stores the plan and reports it, `apply` creates the run, `confirm` releases a held contract phase, `revert` undoes what the pull request applied. A consuming repository needs `godwit.yaml` and nothing else: no workflow, no action pin, no token, no secret. [Decision 0019](decisions/0019-the-app-reads-the-migrations-at-the-head.md) is where the files come from and what bounds them; [0020](decisions/0020-a-run-is-bound-to-the-pull-request-that-asked-for-it.md) is how a run that outlives the delivery reports back.
 
 ### Registering the App
 
@@ -575,6 +575,18 @@ A pull request that changed nothing godwit plans still gets nothing. Failing to 
 **The command runs after the delivery is answered.** GitHub wants a webhook answered in seconds and a plan builds scratch databases, so the delivery is recorded and answered `202` and the command is carried out by `--github-workers` workers (default 2) behind it. Two consequences worth knowing. The queue is in memory: a replica that dies between the `202` and the plan loses that command, the check stays open, and the recovery is to comment `godwit plan` again — nothing ran. And a queue with no room fails the delivery (`500`) rather than dropping the command, so GitHub's redelivery is a fresh attempt.
 
 **A head that moved is left alone.** If the pull request's head is no longer the one the command was accepted at, godwit abandons it without comment: the push that moved it arrived as its own delivery and is being planned under that one.
+
+### What a run answers with
+
+`plan` finishes inside the command. `apply`, `confirm` and `revert` do not: they create or release a run, and the scheduler executes it — on a lease, possibly on another replica. So the command answers immediately with the run id, leaves its `godwit/applied` check open, and the run reports itself when it settles.
+
+That binding is a row in the store rather than state in one process ([0020](decisions/0020-a-run-is-bound-to-the-pull-request-that-asked-for-it.md)): every replica polls for runs whose outcome the pull request has not been told, claims one under a lease so exactly one replica reports it, and posts the report `godwit run report <id>` renders, with the check concluded from the run's state — `success`, `action_required` for an expand phase holding its contract half, `failure` for a run that stopped. An expand-contract run therefore reports twice, once holding and once when `godwit confirm` releases it.
+
+**`revert` undoes the newest run of the pull request on that target**, not every one of them. The Action loops over all of them oldest first, which refuses on the second without `--force`; the two agree in every case the Action actually handles. There is no `--dry-run` comment before the revert either: `RevertRun` already refuses a plan that would drop a table or column still holding rows unless `godwit revert --allow-data-loss` says so.
+
+**A pull request touching several bound projects gets one comment and one check per project**, both carrying the target: `godwit/plan (orders)` and `<!-- godwit:plan:orders -->`. With one project — the common case — both keep the Action's plain names, which is what a required check and a sticky comment are matched on.
+
+The window that is not covered: a replica dying between opening the check and recording the binding leaves a run that applies with nothing to report it, and a check that spins. The audit entry names the delivery and `godwit runs --target <t>` shows the run.
 
 ### What a delivery is answered with
 

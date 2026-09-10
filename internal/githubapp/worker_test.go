@@ -18,11 +18,85 @@ import (
 )
 
 type fakeService struct {
-	mu   sync.Mutex
-	got  []*godwitv1.PlanRunRequest
-	res  *godwitv1.PlanRunResponse
-	err  error
-	hold chan struct{}
+	mu         sync.Mutex
+	got        []*godwitv1.PlanRunRequest
+	res        *godwitv1.PlanRunResponse
+	err        error
+	hold       chan struct{}
+	created    []*godwitv1.CreateRunRequest
+	createRes  *godwitv1.CreateRunResponse
+	createErr  error
+	confirmed  []string
+	confirmErr error
+	reverted   []*godwitv1.RevertRunRequest
+	revertRes  *godwitv1.RevertRunResponse
+	revertErr  error
+	run        *godwitv1.Run
+	applied    []*godwitv1.RunMigration
+	runErr     error
+	plan       *godwitv1.Plan
+	planErr    error
+}
+
+func (s *fakeService) CreateRun(_ context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
+	s.mu.Lock()
+	s.created = append(s.created, req.Msg)
+	s.mu.Unlock()
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
+	res := s.createRes
+	if res == nil {
+		res = &godwitv1.CreateRunResponse{RunId: "run-1", PlanId: "plan-1"}
+	}
+
+	return connect.NewResponse(res), nil
+}
+
+func (s *fakeService) ConfirmRollout(_ context.Context, req *connect.Request[godwitv1.ConfirmRolloutRequest]) (*connect.Response[godwitv1.ConfirmRolloutResponse], error) {
+	s.mu.Lock()
+	s.confirmed = append(s.confirmed, req.Msg.GetRunId())
+	s.mu.Unlock()
+	if s.confirmErr != nil {
+		return nil, s.confirmErr
+	}
+
+	return connect.NewResponse(&godwitv1.ConfirmRolloutResponse{}), nil
+}
+
+func (s *fakeService) RevertRun(_ context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
+	s.mu.Lock()
+	s.reverted = append(s.reverted, req.Msg)
+	s.mu.Unlock()
+	if s.revertErr != nil {
+		return nil, s.revertErr
+	}
+	res := s.revertRes
+	if res == nil {
+		res = &godwitv1.RevertRunResponse{RunId: "revert-1", Reverts: req.Msg.GetRunId(), Target: req.Msg.GetTarget()}
+	}
+
+	return connect.NewResponse(res), nil
+}
+
+func (s *fakeService) GetRun(_ context.Context, req *connect.Request[godwitv1.GetRunRequest]) (*connect.Response[godwitv1.GetRunResponse], error) {
+	if s.runErr != nil {
+		return nil, s.runErr
+	}
+	run := s.run
+	if run == nil {
+		run = &godwitv1.Run{Id: req.Msg.GetRunId(), Target: "orders", State: godwitv1.RunState_RUN_STATE_SUCCEEDED}
+	}
+
+	return connect.NewResponse(&godwitv1.GetRunResponse{Run: run, Applied: s.applied}), nil
+}
+
+func (s *fakeService) GetPlan(_ context.Context, _ *connect.Request[godwitv1.GetPlanRequest]) (*connect.Response[godwitv1.GetPlanResponse], error) {
+	if s.planErr != nil {
+		return nil, s.planErr
+	}
+
+	return connect.NewResponse(&godwitv1.GetPlanResponse{Plan: s.plan}), nil
 }
 
 func (s *fakeService) PlanRun(ctx context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
@@ -78,19 +152,20 @@ type harness struct {
 	repo   *fakeRepo
 	api    *fakeAPI
 	svc    *fakeService
+	runs   *fakeRuns
 }
 
 func newHarness(t *testing.T, repo *fakeRepo, cfg WorkerConfig) *harness {
 	t.Helper()
-	h := &harness{repo: repo, api: &fakeAPI{repo: repo}, svc: &fakeService{}}
-	cfg.API, cfg.Service, cfg.Log = h.api, h.svc, testLog
+	h := &harness{repo: repo, api: &fakeAPI{repo: repo}, svc: &fakeService{}, runs: newRunStore()}
+	cfg.API, cfg.Service, cfg.Runs, cfg.Log = h.api, h.svc, h.runs, testLog
+	if cfg.Interval <= 0 {
+		cfg.Interval = time.Hour
+	}
 	if cfg.PublicURL == "" {
 		cfg.PublicURL = "https://godwit.test"
 	}
-	w, err := NewWorker(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	w := NewWorker(cfg)
 	t.Cleanup(func() { w.Stop(context.Background()) })
 	h.worker = w
 
@@ -362,8 +437,15 @@ func TestSeveralProjectsGetOneCommentAndACheckEach(t *testing.T) {
 	})
 	h.worker.carry(context.Background(), cmd)
 
-	if len(repo.notices) != 1 {
-		t.Fatalf("comments = %d, want one sticky comment", len(repo.notices))
+	// One sticky comment per project, not one carrying both: a run reports itself later under its own
+	// marker, and a shared one would delete the neighbouring project's report.
+	if len(repo.notices) != 2 {
+		t.Fatalf("comments = %d, want one per project", len(repo.notices))
+	}
+	for i, want := range []string{"<!-- godwit:plan:orders -->", "<!-- godwit:plan:billing -->"} {
+		if !strings.HasPrefix(repo.notices[i], want) {
+			t.Fatalf("comment %d = %s, want marker %s", i, repo.notices[i], want)
+		}
 	}
 	names := []string{repo.opened[0].name, repo.opened[1].name}
 	if names[0] != "godwit/plan (orders)" || names[1] != "godwit/plan (billing)" {
@@ -524,13 +606,7 @@ func TestStopGivesUpWhenItsDeadlineDoes(t *testing.T) {
 func TestAWorkerNeedsWhatItCannotRunWithout(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewWorker(WorkerConfig{}); err == nil {
-		t.Fatal("no error")
-	}
-	w, err := NewWorker(WorkerConfig{API: &fakeAPI{}, Service: &fakeService{}, Log: testLog})
-	if err != nil {
-		t.Fatal(err)
-	}
+	w := NewWorker(WorkerConfig{API: &fakeAPI{}, Service: &fakeService{}, Runs: newRunStore(), Log: testLog})
 	defer w.Stop(context.Background())
 	if w.cfg.Workers != defaultWorkers || w.cfg.Queue != defaultQueue || w.cfg.Timeout != defaultTimeout {
 		t.Fatalf("defaults = %+v", w.cfg)

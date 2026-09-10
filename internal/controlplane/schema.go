@@ -372,6 +372,32 @@ CREATE TABLE cp_webhook_deliveries (
 CREATE INDEX cp_webhook_deliveries_received_idx ON cp_webhook_deliveries (received_at);`,
 		DownSQL: `DROP TABLE cp_webhook_deliveries;`,
 	},
+	{
+		Version:  20260910000019,
+		Name:     "github_runs",
+		Checksum: "cp-github-runs-v1",
+		UpSQL: `
+CREATE TABLE cp_github_runs (
+	run_id         uuid PRIMARY KEY REFERENCES cp_runs (id) ON DELETE CASCADE,
+	repository     text NOT NULL,
+	repository_id  bigint NOT NULL,
+	installation   bigint NOT NULL,
+	pull_request   int NOT NULL,
+	head           text NOT NULL,
+	command        text NOT NULL,
+	target         text NOT NULL,
+	marker         text NOT NULL,
+	format         text NOT NULL,
+	check_run      bigint NOT NULL DEFAULT 0,
+	reported_state text,
+	claimed_at     timestamptz,
+	created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX cp_github_runs_pull_idx ON cp_github_runs (repository, pull_request, target);
+CREATE INDEX cp_github_runs_created_idx ON cp_github_runs (created_at);`,
+		DownSQL: `DROP TABLE cp_github_runs;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.

@@ -23,6 +23,7 @@ type forge struct {
 	mu       sync.Mutex
 	comments []string
 	checks   []map[string]any
+	approved bool
 	srv      *httptest.Server
 }
 
@@ -45,6 +46,12 @@ func (f *forge) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/access_tokens"):
 		_, _ = io.WriteString(w, `{"token":"ghs_x"}`)
+	case strings.HasSuffix(r.URL.Path, "/permission"):
+		_, _ = io.WriteString(w, `{"permission":"write"}`)
+	case strings.HasSuffix(r.URL.Path, "/reviews"):
+		_, _ = io.WriteString(w, f.reviews())
+	case strings.HasSuffix(r.URL.Path, "/reactions"):
+		_, _ = io.WriteString(w, `{}`)
 	case strings.HasSuffix(r.URL.Path, "/files"):
 		_, _ = io.WriteString(w, `[{"filename":"db/migrations/20260101000000_add_orders.up.sql"}]`)
 	case strings.HasSuffix(r.URL.Path, "/contents/godwit.yaml"):
@@ -69,6 +76,16 @@ func (f *forge) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+func (f *forge) reviews() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.approved {
+		return `[]`
+	}
+
+	return `[{"state":"APPROVED","user":{"login":"bob"}}]`
 }
 
 func (f *forge) recordCheck(body []byte) {

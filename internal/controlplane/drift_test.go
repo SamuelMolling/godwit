@@ -377,6 +377,33 @@ func TestTick_SweepsDeliveries(t *testing.T) {
 		t.Fatalf("the delivery survived the sweep: %t, %v", first, err)
 	}
 
+	// A binding goes on the same schedule, once the pull request has been told.
+	if err := s.RegisterTarget(ctx, "orders", "static", map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRun(ctx, runOne, "orders", RolloutDirect, goodFiles(), Timeouts{}, Provenance{}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordGitHubRun(ctx, githubRun(runOne)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkGitHubReported(ctx, runOne, StateSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE cp_github_runs SET created_at = now() - interval '2 days'`); err != nil {
+		t.Fatal(err)
+	}
+	mon.Tick(ctx)
+	left, err := s.GitHubRunsOf(ctx, "acme/orders", 3, "orders")
+	if err != nil || len(left) != 0 {
+		t.Fatalf("the binding survived the sweep: %+v, %v", left, err)
+	}
+
+	if _, err := s.pool.Exec(ctx, "DROP TABLE cp_github_runs"); err != nil {
+		t.Fatal(err)
+	}
+	mon.Tick(ctx)
+
 	s.pool.(interface{ Close() }).Close()
 	mon.Tick(ctx)
 }
