@@ -193,7 +193,7 @@ func TestBindStoreErrors(t *testing.T) {
 
 	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("app").WillReturnError(errors.New("targets down"))
+	mock.ExpectQuery("SELECT provider, coalesce\\(credential_store, ..\\), config FROM cp_targets").WithArgs("app").WillReturnError(errors.New("targets down"))
 	if _, err := s.CreateRun(ctx, createReq()); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("target error: %v", err)
 	}

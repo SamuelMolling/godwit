@@ -167,8 +167,11 @@ func TestListTargets(t *testing.T) {
 		app.LastRun == nil || app.LastRun.Id != "r1" || app.LastRun.State != godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION {
 		t.Fatalf("app = %+v last = %+v", app, app.LastRun)
 	}
+	if app.CredentialStore != "" {
+		t.Fatalf("app reads from the process-wide Vault: %+v", app)
+	}
 	if bare := got[1]; bare.Name != "bare" || bare.RequirePlan || !bare.KeepOld || bare.LastRun != nil ||
-		bare.SearchPath != "" || bare.AppliedCount != 0 {
+		bare.SearchPath != "" || bare.AppliedCount != 0 || bare.CredentialStore != "production" {
 		t.Fatalf("bare = %+v", bare)
 	}
 
@@ -200,11 +203,11 @@ func runRow() *pgxmock.Rows {
 func expectTargetRows(mock pgxmock.PgxPoolIface) {
 	mock.ExpectQuery("DISTINCT ON").WillReturnRows(runRow())
 	mock.ExpectQuery("FROM cp_targets").WithArgs(pgxmock.AnyArg()).WillReturnRows(
-		pgxmock.NewRows([]string{"name", "provider", "config", "applied", "attention", "ready", "drift"}).
-			AddRow("app", "static",
+		pgxmock.NewRows([]string{"name", "provider", "credential_store", "config", "applied", "attention", "ready", "drift"}).
+			AddRow("app", "static", "",
 				[]byte(`{"lock_timeout":"3s","statement_timeout":"1m","require_plan":"true","keep_old":"false","search_path":"app,public"}`),
 				7, 1, 2, true).
-			AddRow("bare", "static", []byte(`{}`), 0, 0, 0, false))
+			AddRow("bare", "vault", "production", []byte(`{}`), 0, 0, 0, false))
 }
 
 func TestGetRunLedgerError(t *testing.T) {

@@ -30,7 +30,7 @@ Where the key lives is a choice, made with `GODWIT_KEY_PROVIDER`:
 |---|---|---|---|
 | `env` (default) | `GODWIT_MASTER_KEY`, 32 bytes as 64 hex characters, plus any number of decrypt-only keys in `GODWIT_MASTER_KEY_PREVIOUS` | nothing | AES-256-GCM directly under the key |
 | `gcpkms` | a Cloud KMS CryptoKey named by `GODWIT_KMS_KEY` | Workload Identity (or `GOOGLE_OAUTH_ACCESS_TOKEN`) with `roles/cloudkms.cryptoKeyEncrypterDecrypter` | envelope: a fresh 32-byte data key per value, wrapped by KMS |
-| `vault-transit` | a Transit key named by `GODWIT_KMS_KEY` under `GODWIT_VAULT_TRANSIT_MOUNT` (default `transit`) | the `VAULT_ADDR` and auth the `vault` credential provider already uses | envelope: `transit/datakey/plaintext`, unwrapped with `transit/decrypt` |
+| `vault-transit` | a Transit key named by `GODWIT_KMS_KEY` under `GODWIT_VAULT_TRANSIT_MOUNT` (default `transit`) | `GODWIT_VAULT_TRANSIT_ADDR` with `GODWIT_VAULT_TRANSIT_TOKEN` or `GODWIT_VAULT_TRANSIT_K8S_ROLE`: its own Vault, sharing no setting with any target's | envelope: `transit/datakey/plaintext`, unwrapped with `transit/decrypt` |
 
 Under both KMS providers **the DSN never leaves the process**: the KMS is asked to wrap and to unwrap 32 bytes, and the DSN's own ciphertext is opened locally. So a KMS outage costs runs on `static` targets rather than the whole service, and a store dump on its own is no longer every target credential — opening one needs a live call the KMS logs, rate-limits and can revoke. That is the reason to prefer a KMS provider: with `env`, a store dump plus the key is still every credential.
 
@@ -73,11 +73,46 @@ Targets using the `kubernetes` or `vault` providers store no secret and need not
 |---|---|---|---|
 | `static` | `dsn` (encrypted) | every run, drift check, status, baseline | master key |
 | `kubernetes` | `path` | every use: the file is read and trimmed, so a rotated Secret is picked up without restart | the Secret mounted at that path in the godwit pod |
-| `vault` | `path`, `template` | every use: `GET <VAULT_ADDR>/v1/<path>`, KV v2 `data.data` unwrapped, `{{field}}` substituted into `template` | `VAULT_ADDR`, plus `VAULT_TOKEN` or Kubernetes auth (`VAULT_K8S_ROLE`, `VAULT_K8S_MOUNT`, `VAULT_K8S_JWT`) |
+| `vault` | `credential_store`, `path`, `template` | every use: `GET <the store's address>/v1/<path>`, KV v2 `data.data` unwrapped, `{{field}}` substituted into `template` | a registered credential store, below |
 
 Setting each of them up — the manifest a `kubernetes` target's path resolves in, the Vault policy, the Kubernetes auth role, and what TTL a dynamic credential needs against `--run-timeout` — is [deployment](deployment.md#the-three-credential-providers).
 
-Vault login (`POST auth/<mount>/login` with the pod's service-account JWT) happens on every fetch; the client token is not cached. A missing template field fails with `vault secret has no field for x`, naming the template's own keys and never the rendered string — the substitution is one pass over the template, so a field whose value contains `{{...}}` is not rescanned either. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
+### Credential stores
+
+A **credential store** is a named Vault: an address, and how godwit authenticates there. Every `vault` target names one, and it is the only thing that says which Vault the target's secret is read from — there is no service-wide address behind it. [Decision 0021](decisions/0021-a-target-names-the-vault-its-credentials-live-in.md) is why.
+
+```bash
+godwit credential-store add production \
+  --vault-addr https://vault.production.internal --vault-k8s-role godwit
+godwit credential-stores
+```
+
+| Field | Meaning |
+|---|---|
+| `vault_addr` | base URL; `http` and `https` only, and refused outright when `--vault-host` is set and the host is not on it |
+| `vault_k8s_role`, `vault_k8s_mount`, `vault_k8s_jwt` | Kubernetes auth at *that* Vault, presenting the pod's own projected ServiceAccount token (`vault_k8s_jwt` moves the file; empty is the projected default). Each Vault needs an auth mount that trusts this cluster and accepts that token's audience |
+| `vault_token_env` | instead of Kubernetes auth: the name of an environment variable of the service holding a token for that Vault. It must begin with `VAULT_TOKEN` |
+
+Registering a store is `admin`; listing them is `read`, because a store holds no secret — an address, a role, and the *name* of a variable. `godwit targets` shows which store each target reads from, and `godwit credential-stores` shows how many targets read from each.
+
+**What an admin who registers a hostile store obtains.** A store points godwit's credentials at an address, and the first run of any target pointed at it sends them there:
+
+- with `vault_k8s_role`, **the pod's projected ServiceAccount token**, POSTed to `<address>/v1/auth/<mount>/login`. That token is the identity every *other* Vault knows godwit by, so its holder can log in at the production Vault under godwit's role and read the credentials of every database godwit migrates. That is the real prize — not the JWT, but what it can be exchanged for.
+- with `vault_token_env`, the value of a named environment variable. `VAULT_TOKEN` is the prefix the name must carry, and it exists for exactly this reason: without it an admin could name `GODWIT_STORE_DSN` and receive the control plane's own credentials.
+- either way, the store's Vault **chooses the DSN godwit connects with**, so a hostile one can point a production target at a database it controls and receive that target's migrations.
+
+The second and third are not new privilege in kind: an admin can already register a `static` target with a DSN of their choosing. The ServiceAccount token is, and it is what `--vault-host` bounds.
+
+**The position on constraining addresses.** Two constraints, and only two:
+
+- **`http` or `https` with a host, always.** Anything else is refused at registration rather than producing a confusing error at run time.
+- **`--vault-host` / `GODWIT_VAULT_HOSTS`, an allowlist, empty by default.** It moves *which Vaults godwit may authenticate at* out of the admin token — which lives in a Secret and is held by CI — and into the pod spec, which lives in git and is reviewed. That is the same split External Secrets makes, and it is the only constraint that actually binds the escalation above. Set it in any deployment where more than one person holds an admin token.
+
+Plaintext `http` is **not** refused and is not planned to be: in-cluster Vault addresses such as `http://vault.production.svc` are how these deployments are actually wired, and refusing them would refuse the deployments this exists for. The allowlist is the control; TLS is the platform's.
+
+The list is checked when a store is registered, not when one is read. Tightening it does not retroactively refuse a store already registered under a wider one — `godwit credential-stores` prints every address so an operator can see them, and re-registering the store is how one is moved or removed.
+
+Vault login (`POST auth/<mount>/login` with the pod's service-account JWT, at the address the target's store names) happens on every fetch; the client token is not cached. A missing template field fails with `vault secret has no field for x`, naming the template's own keys and never the rendered string — the substitution is one pass over the template, so a field whose value contains `{{...}}` is not rescanned either. Prefer `vault` with dynamic database credentials: each run then gets a short-lived role.
 
 The DSN, whichever provider produced it, exists only in the replica's memory for the duration of the operation and is never logged or returned by any RPC. Two paths used to break that:
 

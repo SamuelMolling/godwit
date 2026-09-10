@@ -455,7 +455,7 @@ func TestAdmitStoreError(t *testing.T) {
 	}
 	t.Cleanup(mock.Close)
 	s := NewServer(controlplane.NewStore(mock), nil, nil, creds.Keyring{})
-	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("ghost").WillReturnError(pgx.ErrNoRows)
+	mock.ExpectQuery("SELECT provider, coalesce\\(credential_store, ..\\), config FROM cp_targets").WithArgs("ghost").WillReturnError(pgx.ErrNoRows)
 	if _, err := s.admit(context.Background(), "ghost", nil, nil, false, false, ""); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown target: %v", err)
 	}
@@ -543,8 +543,9 @@ func TestPlanRunUnit(t *testing.T) {
 }
 
 func expectTarget(mock pgxmock.PgxPoolIface) {
-	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("app").
-		WillReturnRows(pgxmock.NewRows([]string{"provider", "config"}).AddRow("static", []byte(`{}`)))
+	mock.ExpectQuery("SELECT provider, coalesce\\(credential_store, ..\\), config FROM cp_targets").WithArgs("app").
+		WillReturnRows(pgxmock.NewRows([]string{"provider", "credential_store", "config"}).
+			AddRow("static", "", []byte(`{}`)))
 }
 
 type failingValidator struct{ err error }

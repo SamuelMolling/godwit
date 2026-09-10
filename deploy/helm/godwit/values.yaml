@@ -88,6 +88,14 @@ serve:
     endpoint: ""
     # Vault Transit mount; empty is `transit`.
     transitMount: ""
+    # vault-transit only, and its own Vault: no target is read through it. See stores below for those.
+    vaultAddr: ""
+    vaultK8sRole: ""
+    vaultK8sMount: ""
+    vaultK8sJwt: ""
+    vaultTokenSecret:
+      name: ""
+      key: GODWIT_VAULT_TRANSIT_TOKEN
   # --drift-interval: how often targets are fingerprinted for schema drift.
   driftInterval: 5m
   # --skip-validation: disable the scratch-database validation at run admission.
@@ -199,19 +207,6 @@ serve:
   # the GODWIT_* environment variables, which are only defaults; --store-dsn and --scratch-dsn belong
   # in existingSecret rather than here, because an argument is readable from the pod spec.
   extraArgs: []
-
-# Vault credential provider (targets registered with --provider vault).
-# With addr set and no token the service uses the Kubernetes auth method,
-# which needs the ServiceAccount token mounted (automountServiceAccountToken).
-vault:
-  addr: ""
-  # VAULT_K8S_ROLE / VAULT_K8S_MOUNT for the Kubernetes auth method.
-  k8sRole: ""
-  k8sMount: ""
-  # Static VAULT_TOKEN read from a Secret; leave name empty to use Kubernetes auth.
-  tokenSecret:
-    name: ""
-    key: VAULT_TOKEN
 
 notifications:
   # GODWIT_WEBHOOK_URL: run and drift events are POSTed here as JSON.
@@ -405,6 +400,12 @@ affinity: {}
 # The Job needs an `admin` token — the only scope RegisterTarget accepts. Keep it
 # in a Secret of its own rather than reusing an entry of GODWIT_TOKENS the humans
 # also hold.
+# The Vault each vault target reads its secret from, registered ahead of the targets; see the README.
+stores:
+  # GODWIT_VAULT_HOSTS: hosts a store may point at; empty accepts any, and a store is sent godwit's token.
+  allowedHosts: []
+  list: []
+
 targets:
   enabled: false
   list: []
@@ -412,6 +413,7 @@ targets:
   #   provider: vault
   #   vaultPath: secret/data/orders/db
   #   vaultTemplate: 'postgres://{{username}}:{{password}}@orders-db:5432/orders'
+  #   credentialStore: production
   #   lockTimeout: 5s
   #   statementTimeout: 15m
   #   requirePlan: true

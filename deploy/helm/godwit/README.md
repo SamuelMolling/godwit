@@ -146,7 +146,7 @@ targets:
       requirePlan: true
 ```
 
-`godwit target add` registers one target per invocation and the image is distroless, so there is no shell to loop in: every entry but the last is an init container and the last is the pod's container. They run in order, and a failure names the target that failed.
+`godwit target add` registers one target per invocation and the image is distroless, so there is no shell to loop in: every entry but the last is an init container and the last is the pod's container. They run in order, and a failure names the target that failed. `stores.list` is registered by the same Job, ahead of every target, because a `vault` target naming a store nobody registered is refused.
 
 `RegisterTarget` is an upsert that replaces the whole config map rather than patching it, which cuts both ways. It is what makes re-running the Job on every sync safe — that is the point of the Job, not a hazard. It is also what makes this list *authoritative*: a setting somebody added by hand with a shorter `target add` is gone at the next sync. Register a target from this list or from somewhere else, never both.
 
@@ -158,7 +158,8 @@ Registration is not adoption. A database that already has a schema still needs `
 
 ## Credential providers
 
-- `vault`: set `vault.addr`; with `vault.k8sRole` the service logs in with the Kubernetes auth method using its own ServiceAccount token, otherwise point `vault.tokenSecret` at a Secret holding `VAULT_TOKEN`.
+- `vault`: list the Vaults under `stores.list`, one entry per Vault, and give each target a `credentialStore`. A target's Vault is the store it names and nothing else — no chart value reaches every target, and a `vault` target whose store is missing refuses its runs. With `vaultK8sRole` the service logs in at that Vault with its own ServiceAccount token (`vaultK8sJwt` moves the file); `vaultTokenEnv` names an environment variable of the service holding a token instead, whose name must begin with `VAULT_TOKEN` and which `extraEnv` / `extraEnvFrom` brings in from a Secret. `stores.allowedHosts` is the allowlist of hosts a store may point at, and a deployment where more than one person holds an admin token should set it ([security](../../../docs/security.md#credential-stores)).
+- **`serve.keyProvider.vaultAddr` and its siblings are not that.** They configure the `vault-transit` key provider, where godwit seals the DSNs of `static` targets; leave them empty unless `serve.keyProvider.name` is `vault-transit`.
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
 - `static`: the only one that needs a key, and the chart configures none by default. Set `existingSecret.keys.masterKey` (or a `serve.keyProvider` of `gcpkms` / `vault-transit`) before registering one; the DSN is sealed with it.
 

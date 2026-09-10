@@ -1,4 +1,4 @@
-{{- if and .Values.targets.enabled .Values.targets.list }}
+{{- if and .Values.targets.enabled (or .Values.targets.list .Values.stores.list) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -47,15 +47,22 @@ spec:
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
-      {{- $init := initial .Values.targets.list }}
+      {{- $regs := list }}
+      {{- range .Values.stores.list }}
+      {{- $regs = append $regs (dict "store" .) }}
+      {{- end }}
+      {{- range .Values.targets.list }}
+      {{- $regs = append $regs (dict "target" .) }}
+      {{- end }}
+      {{- $init := initial $regs }}
       {{- if $init }}
       initContainers:
         {{- range $init }}
-        - {{ include "godwit.registerContainer" (dict "root" $ "target" .) | nindent 10 | trim }}
+        - {{ include "godwit.registerOne" (dict "root" $ "reg" .) | nindent 10 | trim }}
         {{- end }}
       {{- end }}
       containers:
-        - {{ include "godwit.registerContainer" (dict "root" $ "target" (last .Values.targets.list)) | nindent 10 | trim }}
+        - {{ include "godwit.registerOne" (dict "root" $ "reg" (last $regs)) | nindent 10 | trim }}
       {{- with .Values.targets.extraVolumes }}
       volumes:
         {{- toYaml . | nindent 8 }}

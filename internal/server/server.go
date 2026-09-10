@@ -59,6 +59,7 @@ type Config struct {
 	// SkipValidation disables the scratch-database admission check.
 	SkipValidation bool
 	RequirePlan    bool
+	VaultHosts     []string
 	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
 	PlanTTL time.Duration
 	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
@@ -177,7 +178,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	cfg.Scheduler.Holder = cfg.Holder
 	eng := controlplane.PGEngine{Metrics: m, Log: log}
-	sched := controlplane.NewScheduler(store, creds.Registry(cfg.Keys),
+	sched := controlplane.NewScheduler(store, creds.Registry(cfg.Keys, store.VaultStore),
 		eng, controlplane.Policies(), cfg.Scheduler, log)
 	sched.Metrics = m
 	sched.Notifier = notifier
@@ -224,6 +225,7 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.Differ = controlplane.NewDiffer(scratch, sched, history, newID)
 	apiSrv.Checkpointer = controlplane.NewCheckpointer(scratch, newID)
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
+	apiSrv.VaultHosts = cfg.VaultHosts
 	apiSrv.Limits = cfg.Limits
 
 	// After apiSrv: the App carries its commands out against it, in this process.

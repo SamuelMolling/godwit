@@ -30,10 +30,13 @@ serve:
     enabled: true
     origins: ["https://godwit.example.internal"]
 
-vault:
-  addr: http://vault.example.internal
-  k8sRole: godwit
-  k8sMount: kubernetes-platform
+stores:
+  allowedHosts: [vault.example.internal]
+  list:
+    - name: platform
+      vaultAddr: http://vault.example.internal
+      vaultK8sRole: godwit
+      vaultK8sMount: kubernetes-platform
 
 notifications:
   publicUrl: https://godwit.example.internal
@@ -84,6 +87,7 @@ targets:
   list:
     - name: orders
       provider: vault
+      credentialStore: platform
       vaultPath: secrets/data/orders
       vaultTemplate: 'postgres://{{DB_USER}}:{{DB_PASSWORD}}@orders-db:5432/orders'
       lockTimeout: 5s

@@ -13,25 +13,31 @@ import (
 // ProviderVaultTransit names the Vault Transit key provider.
 const ProviderVaultTransit = "vault-transit"
 
-// VaultTransit seals a fresh data key per value with a Vault Transit key. It authenticates the same
-// way the `vault` credential provider does, so a deployment already reading secrets from Vault gains
-// a key provider without gaining a dependency.
+// VaultTransit seals a fresh data key per value with a Vault Transit key, in a Vault of its own.
 type VaultTransit struct {
 	Vault Vault
 	Mount string
 	Key   string
 }
 
-// VaultTransitFromEnv builds the provider from GODWIT_KMS_KEY, GODWIT_VAULT_TRANSIT_MOUNT and the
-// VAULT_* variables the `vault` credential provider reads.
+// VaultTransitFromEnv builds the provider from GODWIT_KMS_KEY and the GODWIT_VAULT_TRANSIT_* variables.
 func VaultTransitFromEnv() (VaultTransit, error) {
 	key := os.Getenv("GODWIT_KMS_KEY")
 	if key == "" {
 		return VaultTransit{}, errors.New("key provider vault-transit needs GODWIT_KMS_KEY, the transit key name")
 	}
-	v := VaultFromEnv()
-	if v.Address == "" {
-		return VaultTransit{}, errors.New("key provider vault-transit needs VAULT_ADDR")
+	addr := os.Getenv("GODWIT_VAULT_TRANSIT_ADDR")
+	if addr == "" {
+		return VaultTransit{}, errors.New("key provider vault-transit needs GODWIT_VAULT_TRANSIT_ADDR, " +
+			"the Vault holding its transit key; it is not a target's Vault, which is the credential store the target names")
+	}
+	v := Vault{
+		Address: addr,
+		Token:   os.Getenv("GODWIT_VAULT_TRANSIT_TOKEN"),
+		Role:    os.Getenv("GODWIT_VAULT_TRANSIT_K8S_ROLE"),
+		Mount:   cmp.Or(os.Getenv("GODWIT_VAULT_TRANSIT_K8S_MOUNT"), "kubernetes"),
+		JWTPath: cmp.Or(os.Getenv("GODWIT_VAULT_TRANSIT_K8S_JWT"), defaultJWTPath),
+		Client:  http.DefaultClient,
 	}
 
 	return VaultTransit{Vault: v, Mount: cmp.Or(os.Getenv("GODWIT_VAULT_TRANSIT_MOUNT"), "transit"), Key: key}, nil

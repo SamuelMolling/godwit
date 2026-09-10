@@ -158,7 +158,7 @@ func TestReattachSkipsUnboundSet(t *testing.T) {
 	}
 	expectNoBound(mock)
 	mock.ExpectQuery("AND state = 'ready' AND created_at >= \\$3").WithArgs("app", pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(pgx.ErrNoRows)
-	mock.ExpectQuery("SELECT provider, config FROM cp_targets").WithArgs("app").WillReturnError(pgx.ErrNoRows)
+	mock.ExpectQuery("SELECT provider, coalesce\\(credential_store, ..\\), config FROM cp_targets").WithArgs("app").WillReturnError(pgx.ErrNoRows)
 	if _, err := s.CreateRun(context.Background(), createReq()); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("no bound plan: %v", err)
 	}

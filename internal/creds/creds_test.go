@@ -63,7 +63,7 @@ func TestKubernetesMissingFile(t *testing.T) {
 func TestRegistry(t *testing.T) {
 	t.Parallel()
 
-	reg := creds.Registry(creds.Keyring{})
+	reg := creds.Registry(creds.Keyring{}, nil)
 	for _, name := range []string{"static", "kubernetes", "vault"} {
 		if _, ok := reg[name]; !ok {
 			t.Fatalf("missing %s", name)

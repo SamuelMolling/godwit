@@ -58,14 +58,27 @@ Missing or unknown token: `unauthenticated: invalid or missing bearer token`. In
 
 Request and response fields are listed as JSON. Fields not mentioned do not exist.
 
+### RegisterCredentialStore — admin
+
+Creates or replaces a [credential store](security.md#credential-stores): a named Vault a `vault` target can be read from. `vaultAddr` must be `http` or `https` with a host, and is refused when the service was started with `--vault-host` and the host is not on that list. Exactly one of `vaultK8sRole` (Kubernetes auth at that Vault, with `vaultK8sMount`, default `kubernetes`, using the pod's own projected ServiceAccount token) and `vaultTokenEnv` (an environment variable of the service holding a token, whose name must begin with `VAULT_TOKEN`).
+
+```bash
+call RegisterCredentialStore '{"name":"production","vaultAddr":"https://vault.production.internal","vaultK8sRole":"godwit"}'
+# {}
+```
+
+### ListCredentialStores — read
+
+Every registered store by name, with `targets`, the number of targets reading from it. A store holds no secret, which is why this is `read`.
+
 ### RegisterTarget — admin
 
-Creates or replaces a target. `provider` is `static` (`dsn` sealed by the configured [key provider](security.md#the-key-and-where-it-comes-from), and refused with `invalid_argument` when none is), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan. `searchPath` is the `search_path` every session godwit opens on the target runs under ([concepts](concepts.md#search_path)): a comma-separated list of unquoted schema names, `invalid_argument` on anything else, on `$user` and on `godwit`. `ignoreAdoptedTables` (default true) keeps the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and out of drift ([concepts](concepts.md#drift)); false puts them back.
+Creates or replaces a target. `provider` is `static` (`dsn` sealed by the configured [key provider](security.md#the-key-and-where-it-comes-from), and refused with `invalid_argument` when none is), `kubernetes` (`secretPath`: a mounted file containing the DSN) or `vault` (`credentialStore`, `vaultPath` under `/v1/`, optional `vaultTemplate`, default `{{dsn}}`). `credentialStore` names the Vault the secret is read from and is **required** by `vault` — an unregistered name is `invalid_argument`, and so is giving it to a provider that reads no Vault. `lockTimeout` / `statementTimeout` become the target defaults. `requirePlan` refuses every `CreateRun` on the target that does not bind to a stored plan. `searchPath` is the `search_path` every session godwit opens on the target runs under ([concepts](concepts.md#search_path)): a comma-separated list of unquoted schema names, `invalid_argument` on anything else, on `$user` and on `godwit`. `ignoreAdoptedTables` (default true) keeps the bookkeeping tables of the migration tool this database was adopted from out of its schema snapshot and out of drift ([concepts](concepts.md#drift)); false puts them back.
 
 ```bash
 call RegisterTarget '{"name":"app","provider":"static","dsn":"postgres://app:app@db/app","lockTimeout":"5s","requirePlan":true,"searchPath":"app,public"}'
 # {}
-call RegisterTarget '{"name":"app","provider":"vault","vaultPath":"secret/data/app/db","vaultTemplate":"postgres://{{user}}:{{password}}@db/app"}'
+call RegisterTarget '{"name":"app","provider":"vault","credentialStore":"production","vaultPath":"secret/data/app/db","vaultTemplate":"postgres://{{user}}:{{password}}@db/app"}'
 ```
 
 ### CreateRun — pipeline
@@ -273,6 +286,7 @@ call GetTargetStatus '{"target":"app","files":[...]}'
 `files` is optional; with it, `pending` lists versions in the files not yet applied and `applied[].checksumMismatch` marks versions whose file changed. `readyPlans` counts the stored plans still bindable (`ready` and younger than `--plan-ttl`).
 
 ### ListTargets — read
+
 
 ```bash
 call ListTargets '{}'

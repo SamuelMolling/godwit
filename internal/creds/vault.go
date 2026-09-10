@@ -24,16 +24,54 @@ type Vault struct {
 	Client  *http.Client
 }
 
-// VaultFromEnv builds a Vault provider from VAULT_ADDR, VAULT_TOKEN, VAULT_K8S_ROLE, VAULT_K8S_MOUNT and VAULT_K8S_JWT.
-func VaultFromEnv() Vault {
-	return Vault{
-		Address: os.Getenv("VAULT_ADDR"),
-		Token:   os.Getenv("VAULT_TOKEN"),
-		Role:    os.Getenv("VAULT_K8S_ROLE"),
-		Mount:   cmp.Or(os.Getenv("VAULT_K8S_MOUNT"), "kubernetes"),
-		JWTPath: cmp.Or(os.Getenv("VAULT_K8S_JWT"), "/var/run/secrets/kubernetes.io/serviceaccount/token"),
-		Client:  http.DefaultClient,
+const defaultJWTPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+// StoreConfigKey is the target config key naming the credential store its secret is read from.
+const StoreConfigKey = "credential_store"
+
+// VaultStore is where a named credential store points: one Vault, and how godwit authenticates there.
+type VaultStore struct {
+	Address  string
+	Role     string
+	Mount    string
+	JWTPath  string
+	TokenEnv string
+}
+
+type vaults struct {
+	client *http.Client
+	lookup func(ctx context.Context, name string) (VaultStore, error)
+}
+
+var errNoStore = errors.New("this target names no credential store, and godwit reads no Vault without one: " +
+	"register the Vault its credentials live in with `godwit credential-store add <store> --vault-addr=... --vault-k8s-role=...`, " +
+	"then point the target at it with `godwit target add <target> --provider=vault --vault-path=... --credential-store=<store>`")
+
+// DSN implements Provider.
+func (p vaults) DSN(ctx context.Context, config map[string]string) (string, error) {
+	name := config[StoreConfigKey]
+	if name == "" {
+		return "", errNoStore
 	}
+	if p.lookup == nil {
+		return "", fmt.Errorf("credential store %q: this service resolves no stores", name)
+	}
+	store, err := p.lookup(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("credential store %q: %w", name, err)
+	}
+	v := Vault{
+		Address: store.Address, Role: store.Role, Mount: cmp.Or(store.Mount, "kubernetes"),
+		JWTPath: cmp.Or(store.JWTPath, defaultJWTPath), Client: p.client,
+	}
+	if store.TokenEnv != "" {
+		if v.Token = os.Getenv(store.TokenEnv); v.Token == "" {
+			return "", fmt.Errorf("credential store %q reads its token from %s, and this process has no such value",
+				name, store.TokenEnv)
+		}
+	}
+
+	return v.DSN(ctx, config)
 }
 
 // DSN implements Provider.
@@ -43,7 +81,7 @@ func (p Vault) DSN(ctx context.Context, config map[string]string) (string, error
 		return "", errors.New(`vault target config missing "path"`)
 	}
 	if p.Address == "" {
-		return "", errors.New("vault provider not configured: set VAULT_ADDR")
+		return "", errors.New("this vault has no address")
 	}
 	token, err := p.token(ctx)
 	if err != nil {

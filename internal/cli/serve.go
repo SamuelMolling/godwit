@@ -21,6 +21,7 @@ func newServeCmd() *cobra.Command {
 	var listen, storeDSN, scratchDSN, scratchTemplate, logFormat, logLevel, uiUser, uiPassword, uiScope, holder string
 	var uiAnonymousScope string
 	var uiOrigins []string
+	var vaultHosts []string
 	var driftInterval, leaseTTL, tickInterval, runTimeout, shutdownTimeout time.Duration
 	var maxAttempts, maxConcurrentRuns, storeMaxConns int
 	var maxRequestBytes, maxMigrations, maxFiles, maxFileBytes, maxConcurrentDiffs int
@@ -39,7 +40,9 @@ func newServeCmd() *cobra.Command {
 			"GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; a bare secret is an anonymous admin),\n" +
 			"GODWIT_STORE_DSN, GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --store-dsn, --scratch-dsn and --scratch-template),\n" +
 			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
-			"GODWIT_PUBLIC_URL (link base for notifications), VAULT_ADDR/VAULT_TOKEN or VAULT_K8S_ROLE (vault provider),\n" +
+			"GODWIT_PUBLIC_URL (link base for notifications),\n" +
+			"GODWIT_VAULT_TRANSIT_ADDR with GODWIT_VAULT_TRANSIT_TOKEN or GODWIT_VAULT_TRANSIT_K8S_ROLE (the vault-transit key provider's own Vault; no target is read through it),\n" +
+			"GODWIT_VAULT_HOSTS (default for --vault-host, the hosts a credential store may point at),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level), GODWIT_HOLDER (default for --holder),\n" +
 			"GODWIT_UI=true (web UI at /ui), any bearer token's secret signs in to /ui as that token,\n" +
 			"GODWIT_UI_USER and GODWIT_UI_PASSWORD (a shared /ui identity), GODWIT_UI_SCOPE (what that identity may do),\n" +
@@ -105,6 +108,7 @@ func newServeCmd() *cobra.Command {
 				PublicURL:        os.Getenv("GODWIT_PUBLIC_URL"),
 				SkipValidation:   skipValidation,
 				RequirePlan:      requirePlan,
+				VaultHosts:       vaultHosts,
 				PlanTTL:          planTTL,
 				PlanRetention:    planRetention,
 				UI:               withUI || os.Getenv("GODWIT_UI") == "true",
@@ -176,6 +180,9 @@ func newServeCmd() *cobra.Command {
 			"the scratch server's budget alongside --max-concurrent-diffs rather than within it")
 	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		"author associations that may command godwit from a comment: OWNER, MEMBER or COLLABORATOR")
+	cmd.Flags().StringSliceVar(&vaultHosts, "vault-host", envList("GODWIT_VAULT_HOSTS"),
+		"host a credential store may point at, host or host:port (or GODWIT_VAULT_HOSTS, comma separated); "+
+			"repeatable, and empty accepts any host an admin registers")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),
 		"scheme://host[:port] origins /ui is reached at; a form post from anywhere else and a request for another host are refused (or GODWIT_UI_ORIGIN)")
 

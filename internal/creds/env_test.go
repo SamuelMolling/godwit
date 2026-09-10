@@ -96,12 +96,12 @@ func TestKeyringFromEnvErrors(t *testing.T) {
 		{
 			"vault transit without an address",
 			map[string]string{"GODWIT_KEY_PROVIDER": "vault-transit", "GODWIT_KMS_KEY": "dsn"},
-			"needs VAULT_ADDR",
+			"needs GODWIT_VAULT_TRANSIT_ADDR",
 		},
 		{"unknown provider", map[string]string{"GODWIT_KEY_PROVIDER": "aws-kms"}, "unknown key provider"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, name := range []string{"GODWIT_KEY_PROVIDER", "GODWIT_MASTER_KEY", "GODWIT_MASTER_KEY_PREVIOUS", "GODWIT_KMS_KEY", "VAULT_ADDR"} {
+			for _, name := range []string{"GODWIT_KEY_PROVIDER", "GODWIT_MASTER_KEY", "GODWIT_MASTER_KEY_PREVIOUS", "GODWIT_KMS_KEY", "GODWIT_VAULT_TRANSIT_ADDR"} {
 				t.Setenv(name, "")
 			}
 			for name, value := range tc.env {
@@ -126,7 +126,7 @@ func TestKeyringFromEnvKMSProviders(t *testing.T) {
 
 	t.Setenv("GODWIT_KEY_PROVIDER", "vault-transit")
 	t.Setenv("GODWIT_KMS_KEY", "godwit")
-	t.Setenv("VAULT_ADDR", "https://vault.example")
+	t.Setenv("GODWIT_VAULT_TRANSIT_ADDR", "https://vault.example")
 	ring, err = creds.KeyringFromEnv()
 	if err != nil || ring.Describe() != "vault-transit:godwit" {
 		t.Fatalf("ring = %q, err = %v", ring.Describe(), err)

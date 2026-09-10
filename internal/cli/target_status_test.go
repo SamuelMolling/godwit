@@ -93,7 +93,7 @@ func TestTargets(t *testing.T) {
 			RequirePlan: true, KeepOld: false, AppliedCount: 7, ReadyPlans: 2, AttentionRuns: 1, UnresolvedDrift: true,
 			LastRun: &godwitv1.Run{Id: "r1", State: godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION},
 		},
-		{Name: "billing", Provider: "vault", KeepOld: true},
+		{Name: "billing", Provider: "vault", KeepOld: true, CredentialStore: "production"},
 	}}
 	url := startStub(t, stub)
 
@@ -101,9 +101,9 @@ func TestTargets(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
-	want := "NAME     PROVIDER  APPLIED  READY PLANS  NEEDS YOU  DRIFT    SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  GITHUB  LAST RUN\n" +
-		"app      static    7        2            1          drifted  app,public   3s    1m         true          none    r1 needs_attention\n" +
-		"billing  vault     0        0            0          clean    none         none  none       false         none    none\n"
+	want := "NAME     PROVIDER  STORE       APPLIED  READY PLANS  NEEDS YOU  DRIFT    SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  GITHUB  LAST RUN\n" +
+		"app      static    none        7        2            1          drifted  app,public   3s    1m         true          none    r1 needs_attention\n" +
+		"billing  vault     production  0        0            0          clean    none         none  none       false         none    none\n"
 	if out != want {
 		t.Fatalf("out = %q\nwant %q", out, want)
 	}

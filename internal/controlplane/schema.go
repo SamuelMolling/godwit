@@ -398,6 +398,27 @@ CREATE INDEX cp_github_runs_pull_idx ON cp_github_runs (repository, pull_request
 CREATE INDEX cp_github_runs_created_idx ON cp_github_runs (created_at);`,
 		DownSQL: `DROP TABLE cp_github_runs;`,
 	},
+	{
+		Version:  20260910000020,
+		Name:     "credential_stores",
+		Checksum: "cp-credential-stores-v1",
+		UpSQL: `
+CREATE TABLE cp_credential_stores (
+	name       text PRIMARY KEY,
+	address    text NOT NULL,
+	k8s_role   text NOT NULL,
+	k8s_mount  text NOT NULL,
+	k8s_jwt    text NOT NULL,
+	token_env  text NOT NULL,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	CONSTRAINT cp_credential_stores_one_auth CHECK ((k8s_role = '') <> (token_env = ''))
+);
+
+ALTER TABLE cp_targets ADD COLUMN credential_store text REFERENCES cp_credential_stores (name);`,
+		DownSQL: `
+ALTER TABLE cp_targets DROP COLUMN credential_store;
+DROP TABLE cp_credential_stores;`,
+	},
 }
 
 // PlansFromFiles loads migration files and plans one direction; down plans come newest first.
