@@ -64,7 +64,7 @@ inputs:
     description: "Provenance recorded on the plan or run (default: <repository>@<pull request head sha, else sha>[:<dir>])"
     default: ""
   comment:
-    description: "Post the report as one sticky pull request comment (needs pull-requests: write)"
+    description: "Post the report, or a refused command's reason, as one sticky pull request comment (needs pull-requests: write)"
     default: "true"
   comment-on-push:
     description: "On push events, post the migrate outcome, or a failed verify, on the pull request(s) merged by the commit (needs pull-requests: write)"
@@ -151,6 +151,7 @@ runs:
         ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
         REQUIRE_APPROVAL: ${{ inputs.require-approval }}
         ACK: ${{ inputs.ack }}
+        COMMENT: ${{ inputs.comment }}
         EVENT_NAME: ${{ github.event_name }}
         EVENT_PATH: ${{ github.event_path }}
         REPOSITORY: ${{ github.repository }}
