@@ -153,8 +153,6 @@ func TestSchedulerAppliesTargetSearchPath(t *testing.T) {
 	}
 }
 
-// The quickstart's scratch role is named godwit, so an unpinned "$user" resolves to the journal schema the
-// replay's own bootstrap creates, and the history lands there instead of public.
 func TestValidateReplaysUnqualifiedDDLIntoPublic(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -186,8 +184,6 @@ func TestValidateReplaysUnqualifiedDDLIntoPublic(t *testing.T) {
 	}
 }
 
-// Pinning must not win over the target's own path: a declared one is still mirrored, which is what keeps the
-// replay's fingerprints comparable with the target's.
 func TestValidateMirrorsTheTargetSearchPath(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -211,8 +207,6 @@ func TestValidateMirrorsTheTargetSearchPath(t *testing.T) {
 	}
 }
 
-// A target whose own role is named godwit resolves "$user" to the journal schema, so its unqualified DDL
-// lands beside the journal's own tables; the observation refuses before anything is planned against it.
 func TestObserveRefusesAPathThatReachesTheJournal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

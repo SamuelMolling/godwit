@@ -17,9 +17,7 @@ func NewBaseliner(sched *Scheduler) *Baseliner {
 	return &Baseliner{sched: sched}
 }
 
-// Baseline marks migs applied on target, records run runID (with provenance p) holding the files of what
-// it put on the books, and snapshots the schema for drift. Both sides are idempotent: a migration the
-// target's journal already records is left alone, and one the ledger already stands on is not recorded twice.
+// Baseline marks migs applied on target, records run runID and snapshots the schema for drift; both sides are idempotent.
 func (b *Baseliner) Baseline(ctx context.Context, runID, target string, migs []engine.Migration, p Provenance) error {
 	dsn, err := b.sched.targetDSN(ctx, target)
 	if err != nil {

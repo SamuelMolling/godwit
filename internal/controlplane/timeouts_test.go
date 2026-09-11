@@ -49,7 +49,7 @@ func TestTimeoutsOptions(t *testing.T) {
 
 func TestTimeoutsOverAndTarget(t *testing.T) {
 	t.Parallel()
-	target := TargetTimeouts(map[string]string{"dsn": "x", ConfigLockTimeout: "5s", ConfigStatementTimeout: "1m"})
+	target := targetTimeouts(map[string]string{"dsn": "x", ConfigLockTimeout: "5s", ConfigStatementTimeout: "1m"})
 	if target != (Timeouts{Lock: "5s", Statement: "1m"}) {
 		t.Fatalf("target = %+v", target)
 	}
@@ -59,7 +59,7 @@ func TestTimeoutsOverAndTarget(t *testing.T) {
 	if got := (Timeouts{Lock: "1s"}).Over(Timeouts{}); got != (Timeouts{Lock: "1s"}) {
 		t.Fatalf("merged = %+v", got)
 	}
-	if got := TargetTimeouts(nil); got != (Timeouts{}) {
+	if got := targetTimeouts(nil); got != (Timeouts{}) {
 		t.Fatalf("nil config = %+v", got)
 	}
 }

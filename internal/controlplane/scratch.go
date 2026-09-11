@@ -9,8 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DefaultScratchTemplate is what scratch databases are cloned from: template0 carries no extension an
-// operator installed into template1, and a non-superuser cannot add dblink or postgres_fdw itself.
+// DefaultScratchTemplate is template0: template1 may carry an extension a non-superuser scratch role cannot add itself.
 const DefaultScratchTemplate = "template0"
 
 // ErrScratchPrivileged marks a scratch connection whose role can act outside its own scratch databases.
@@ -45,8 +44,6 @@ func (s *Scratch) drop(ctx context.Context, name string) {
 		"DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
 }
 
-// connConfig points a copy of the scratch credentials at one scratch database, with a search path that is
-// always pinned: the session must never resolve unqualified names from the scratch role's own name.
 func (s *Scratch) connConfig(name, searchPath string) *pgx.ConnConfig {
 	cfg := s.pool.Config().ConnConfig.Copy()
 	cfg.Database = name
@@ -57,7 +54,6 @@ func (s *Scratch) connConfig(name, searchPath string) *pgx.ConnConfig {
 
 // ScratchFinding is one way the scratch role reaches past the databases it makes for itself.
 type ScratchFinding struct {
-	// Fatal marks a finding that makes an isolated scratch connection pointless.
 	Fatal  bool
 	Detail string
 }
@@ -74,8 +70,7 @@ const scratchProbeSQL = `SELECT current_user,
        (SELECT has_database_privilege(r.oid, d.oid, 'CONNECT') FROM pg_database d WHERE d.datname = $1)
   FROM pg_roles r WHERE r.rolname = current_user`
 
-// Check reports what the scratch role may do besides making and dropping its own databases; storeDB names
-// the control-plane database, which is only found when the scratch connection shares the store's server.
+// Check reports what the scratch role may do besides making and dropping its own databases; storeDB names the control-plane database.
 func (s *Scratch) Check(ctx context.Context, storeDB string) ([]ScratchFinding, error) {
 	var role string
 	var super, createRole, replication, bypassRLS, execProgram, readFiles, writeFiles, ownsStore bool

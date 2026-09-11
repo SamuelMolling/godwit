@@ -33,7 +33,6 @@ func TestHistoryReplaysRunsInCreationOrder(t *testing.T) {
 	if err := s.Finish(ctx, second, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
-	// One statement stamps both runs with its own transaction timestamp: two runs queued in the same tick.
 	if _, err := pool.Exec(ctx, `UPDATE cp_runs SET created_at = now() WHERE target = 'app'`); err != nil {
 		t.Fatal(err)
 	}

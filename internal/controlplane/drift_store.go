@@ -120,24 +120,20 @@ func (s *Store) ResolveDrift(ctx context.Context, target string) (bool, error) {
 	return tag.RowsAffected() > 0, nil
 }
 
-// HistoryRun is one run's contribution to a target's history: the migrations it applied that still
-// stand, in the order it applied them.
+// HistoryRun is one run's contribution to a target's history: the migrations it applied that still stand, in the order it applied them.
 type HistoryRun struct {
 	Migrations []HistoryMigration
 }
 
 // HistoryMigration is one standing ledger row: the pair the run carried for it and the expansion it froze.
 type HistoryMigration struct {
-	ID      string
-	UpSQL   string
-	DownSQL string
-	// Expansion is what the run ran in place of the migration's directives, nil when it had none.
+	ID        string
+	UpSQL     string
+	DownSQL   string
 	Expansion *Expansion
 }
 
-// History returns what every run of a target applied and no revert undid, oldest first. It is the same
-// row set Applied is derived from, so the replay and the applied set can never disagree; in particular a
-// held migration is in neither, which is why a replayed plan never has to reproduce half of one.
+// History returns what every run of a target applied and no revert undid, oldest first; a held migration is in neither this nor Applied.
 func (s *Store) History(ctx context.Context, target string) ([]HistoryRun, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT a.run_id, a.migration, u.body, coalesce(d.body, ''), a.expansion

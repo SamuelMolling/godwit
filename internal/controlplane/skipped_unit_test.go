@@ -54,7 +54,7 @@ func TestSnapshotScopeOf(t *testing.T) {
 		{map[string]string{ConfigIgnoreAdopted: "true"}, engine.IgnoreAdopted},
 		{map[string]string{ConfigIgnoreAdopted: "false"}, engine.KeepAdopted},
 	} {
-		if got := SnapshotScopeOf(tc.config); got != tc.want {
+		if got := snapshotScopeOf(tc.config); got != tc.want {
 			t.Fatalf("config %v: scope = %v", tc.config, got)
 		}
 	}

@@ -114,7 +114,7 @@ func TestExpandContractHoldsInsideOnePlan(t *testing.T) {
 	if plans[1].HoldFrom != 0 || expand[0].Migration.Version != 1 {
 		t.Fatalf("split must not touch the plans it was given: %+v", plans)
 	}
-	if n := HeldStatements(expand, contract); n != 2 {
+	if n := heldStatements(expand, contract); n != 2 {
 		t.Fatalf("held statements = %d, want 2", n)
 	}
 
@@ -136,7 +136,7 @@ func TestExpandContractHoldsWholePlanFromStatementZero(t *testing.T) {
 	if len(contract) != 2 || contract[0].HoldFrom != 0 {
 		t.Fatalf("contract = %+v", contract)
 	}
-	if n := HeldStatements(expand, contract); n != 4 {
+	if n := heldStatements(expand, contract); n != 4 {
 		t.Fatalf("held statements = %d, want 4", n)
 	}
 }

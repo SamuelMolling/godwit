@@ -31,8 +31,6 @@ func sleepFiles(seconds string) map[string]string {
 	}
 }
 
-// A run that takes minutes used to hold the replica's only slot: Tick executed inline on the ticker
-// goroutine, so nothing was claimed for any other target until it finished.
 func TestSlowRunDoesNotStarveAnotherTarget(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)
@@ -59,7 +57,6 @@ func TestSlowRunDoesNotStarveAnotherTarget(t *testing.T) {
 	cancel()
 }
 
-// dispatch never starts more than MaxConcurrentRuns at once, and Run waits for what it started.
 func TestDispatchRespectsTheSlotLimit(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)
@@ -86,8 +83,6 @@ func TestDispatchRespectsTheSlotLimit(t *testing.T) {
 	sched.Run(ctx)
 }
 
-// Without a deadline a run holds its slot for as long as its statements take, which a submitted
-// migration controls through batch=, pause= and statement_timeout: "0".
 func TestRunTimeoutFinishesTheRun(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)

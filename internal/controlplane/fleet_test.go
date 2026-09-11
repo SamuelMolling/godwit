@@ -85,9 +85,6 @@ func gap(m FleetMigration, target string) (FleetGap, bool) {
 	return FleetGap{}, false
 }
 
-// fleetStore stages the fleet every test below reads: production and staging both carry users and orders,
-// staging alone carries add_status (from a run that then failed), the two disagree on the content of x and
-// of the repeatable, and newbie was built from a checkpoint that collapsed users and orders.
 func fleetStore(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
@@ -162,7 +159,6 @@ func TestFleetMigrations(t *testing.T) {
 		t.Fatalf("a checkpoint does not collapse itself: %+v", o)
 	}
 
-	// A run that failed after applying it leaves the migration standing, and production is simply past it.
 	status := entry(f, "20260902090000_add_status")
 	if len(status.On) != 1 || status.On[0].Target != "staging" {
 		t.Fatalf("add_status = %+v", status)
@@ -207,7 +203,6 @@ func TestFleetMigrationsDivergence(t *testing.T) {
 		}
 	}
 
-	// A repeatable is keyed by name and content, so an edited one diverges the same way a version does.
 	var reps []FleetMigration
 	for _, m := range f.Migrations {
 		if m.Repeatable {
@@ -283,8 +278,6 @@ func TestFleetMigrationsUnknownTarget(t *testing.T) {
 	}
 }
 
-// A held migration is on the target's disk but not in its history, and a reverted one is gone from it;
-// neither stands, so neither is in the fleet view.
 func TestFleetMigrationsSkipsHeldAndReverted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -310,8 +303,6 @@ func TestFleetMigrationsSkipsHeldAndReverted(t *testing.T) {
 	}
 }
 
-// Retention that swept a run's file bodies leaves the migration in the answer with its content unknown,
-// rather than dropping it and reporting the target as missing it.
 func TestFleetMigrationsWithoutBodies(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

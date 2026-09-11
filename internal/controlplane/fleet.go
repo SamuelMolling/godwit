@@ -26,10 +26,9 @@ type FleetFilter struct {
 
 // FleetOn is a target standing on one migration under the entry's checksum.
 type FleetOn struct {
-	Target    string
-	AppliedAt time.Time
-	RunID     string
-	// CollapsedBy names the checkpoint that recorded the migration on this target without running it.
+	Target      string
+	AppliedAt   time.Time
+	RunID       string
 	CollapsedBy string
 }
 
@@ -37,9 +36,7 @@ type FleetOn struct {
 type FleetGap struct {
 	Target        string
 	NewestVersion int64
-	// Behind marks a target that has not reached the migration yet, as opposed to one that skipped it.
-	Behind bool
-	// Holds marks a target standing on the same migration under other content.
+	Behind        bool
 	Holds         bool
 	OtherChecksum string
 }
@@ -63,8 +60,7 @@ type Fleet struct {
 	Migrations []FleetMigration
 }
 
-// FleetMigrations reports which targets hold each migration and which do not. It reads the ledger and the
-// bodies the runs carried, and opens no connection to any target, so it answers while one is unreachable.
+// FleetMigrations reports which targets hold each migration; it reads the ledger only, so it answers while a target is unreachable.
 func (s *Store) FleetMigrations(ctx context.Context, f FleetFilter) (Fleet, error) {
 	targets, err := s.fleetTargets(ctx, f)
 	if err != nil {
@@ -113,8 +109,6 @@ type ledgerRow struct {
 	Body      string
 }
 
-// standingLedger reads the newest standing row per target and migration. A run whose file bodies retention
-// swept leaves an empty checksum rather than dropping the migration out of the answer.
 func (s *Store) standingLedger(ctx context.Context, targets []string) ([]ledgerRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT ON (r.target, a.migration) r.target, a.migration, a.applied_at, a.run_id::text,
@@ -180,7 +174,6 @@ type fleetState struct {
 	stands   map[[2]string]string
 }
 
-// finish fills each entry's gaps and divergence flag, then applies the filter and the reading order.
 func finish(entries []*FleetMigration, targets []string, f FleetFilter, st fleetState) []FleetMigration {
 	contents := map[string]map[string]bool{}
 	for _, e := range entries {
@@ -244,7 +237,6 @@ func compareFleet(a, b FleetMigration) int {
 		strings.Compare(a.Name, b.Name), strings.Compare(a.Checksum, b.Checksum))
 }
 
-// fleetOrder sorts versions ascending and puts the versionless repeatables after all of them.
 func fleetOrder(m FleetMigration) int64 {
 	if m.Repeatable {
 		return math.MaxInt64
@@ -258,8 +250,6 @@ type checkpointIndex struct {
 	by map[[2]string]string
 }
 
-// collapsedBy finds, for each row, the checkpoint of the same run that recorded it without running it: a
-// database with no history runs the checkpoint and records the versions below it in that same run.
 func collapsedBy(rows []ledgerRow) checkpointIndex {
 	idx := checkpointIndex{is: map[string]bool{}, by: map[[2]string]string{}}
 	newest := map[string]engine.Migration{}

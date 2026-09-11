@@ -173,8 +173,6 @@ func TestRecordedOn(t *testing.T) {
 	}
 }
 
-// A repeatable is CREATE OR REPLACE-shaped: scratch replay must apply it in the same order as the run,
-// or the fingerprints admission compares would not match the target.
 func TestValidateReplaysRepeatables(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

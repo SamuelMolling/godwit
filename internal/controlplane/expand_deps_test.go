@@ -9,7 +9,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// depCase is one dependent kind bound to <tbl>.age and the fragment its refusal must name.
 type depCase struct {
 	tbl  string
 	ddl  []string
@@ -26,8 +25,6 @@ func depTable(name string) string {
 	)`, name)
 }
 
-// changeTypeDependents is every dependent kind pg_depend reports on a column. Each one silently follows
-// the physical attribute across the contract phase's two renames.
 var changeTypeDependents = map[string]depCase{
 	"view": {
 		tbl:  "d_view",
@@ -147,8 +144,6 @@ func TestExpandRefusesChangeTypeDependents(t *testing.T) {
 	}
 }
 
-// TestChangeTypeSwapRebindsDependents is the hazard the refusal exists for, shown on PostgreSQL itself:
-// the two renames of the contract phase move every dependent onto the retired column without an error.
 func TestChangeTypeSwapRebindsDependents(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -194,8 +189,6 @@ func TestExpandChangeTypeAllowsAnUndependedColumn(t *testing.T) {
 	}
 }
 
-// TestExpandChangeTypeCarriesTheDefault covers the one thing a rename loses that belongs to the column
-// itself rather than to another object: godwit puts it back on the new column instead of refusing.
 func TestExpandChangeTypeCarriesTheDefault(t *testing.T) {
 	t.Parallel()
 	conn := newScratch(t, usersDDL, `ALTER TABLE public.users ALTER COLUMN age SET DEFAULT 7`,
@@ -232,8 +225,6 @@ func TestExpandKeepOldFalseRefusesDependents(t *testing.T) {
 	}
 }
 
-// dropColumnDependents splits by what PostgreSQL does to the object when the column goes: a normal
-// dependency makes DROP COLUMN fail outright, an auto one is destroyed silently.
 var dropColumnDependents = map[string]depCase{
 	"view": {
 		tbl:  "k_view",
@@ -320,8 +311,6 @@ func TestExpandRefusesDropColumnDependents(t *testing.T) {
 	}
 }
 
-// TestExpandDropColumnKeepsWhatBelongsToTheColumn is the other half of the line droppable draws: an object
-// that exists only for this column is meant to go with it.
 func TestExpandDropColumnKeepsWhatBelongsToTheColumn(t *testing.T) {
 	t.Parallel()
 	conn := newScratch(t, depTable("own"),

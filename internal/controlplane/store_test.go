@@ -268,11 +268,9 @@ func TestClaimRecoversExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// h1 claims with a lease that expires immediately.
 	if _, ok, err := s.Claim(ctx, "h1", -time.Second); err != nil || !ok {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
-	// h2 recovers the same run: state stays running, attempts increments.
 	r, ok, err := s.Claim(ctx, "h2", time.Minute)
 	if err != nil || !ok || r.Attempts != 2 {
 		t.Fatalf("recovered = %+v, ok = %v, err = %v", r, ok, err)
@@ -300,7 +298,6 @@ func TestClaimSerializesPerTarget(t *testing.T) {
 		}
 	}
 
-	// Two claims must land on different targets; the third finds nothing.
 	first, ok, err := s.Claim(ctx, "h", time.Minute)
 	if err != nil || !ok {
 		t.Fatal(err)

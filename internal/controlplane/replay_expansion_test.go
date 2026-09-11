@@ -63,7 +63,6 @@ func succeededRun(t *testing.T, s *Store, target string, files map[string]string
 	return id
 }
 
-// revertRun undoes every migration run id applied, the way a succeeded revert run leaves the store.
 func revertRun(t *testing.T, s *Store, id string) {
 	t.Helper()
 	ctx := context.Background()
@@ -112,8 +111,6 @@ func replayFixture(t *testing.T, targets ...string) (*Store, *Validator) {
 	return s, NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 }
 
-// applyDirective validates the directive while it is still pending, then records it as a succeeded run
-// carrying the expansion that run froze — the history a later validation replays.
 func applyDirective(t *testing.T, s *Store, v *Validator, directive, down string) (string, []engine.Plan) {
 	t.Helper()
 	const target = "app"
@@ -181,8 +178,6 @@ func TestValidateExpandsWhereTheTargetIsBehind(t *testing.T) {
 	}
 }
 
-// A baseline records the files with no expansion, so the replay leaves the directive unrendered; it is
-// still history, and expanding it again against the live catalog is what this guards.
 func TestValidateDoesNotReexpandBaselinedDirectives(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -211,8 +206,6 @@ func withShops(files map[string]string) map[string]string {
 	return files
 }
 
-// Every run submits the whole directory, so a later run carries files it never applied. The replay must
-// read what each run applied and still stands, or a reverted migration comes back on the scratch.
 func TestReplayLeavesOutARevertedMigration(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -241,8 +234,6 @@ func TestReplayLeavesOutARevertedMigration(t *testing.T) {
 	}
 }
 
-// #59 freezes an applied directive and never expands it again. A reverted one is not applied, and the
-// later run that merely carried its file must not put it back into the replayed set.
 func TestReplayReexpandsARevertedDirective(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

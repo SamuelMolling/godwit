@@ -9,7 +9,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// storeMigrations is the control plane's own schema.
 var storeMigrations = []engine.Migration{
 	{
 		Version:  20260901000000,
@@ -423,8 +422,6 @@ DROP TABLE cp_credential_stores;`,
 		Version:  20260910000021,
 		Name:     "credential_store_audience",
 		Checksum: "cp-credential-store-audience-v1",
-		// A store registered before this migration named no audience, and no audience can be inferred
-		// from a file path, so those rows resolve to '' and their targets refuse until re-registered.
 		UpSQL: `
 ALTER TABLE cp_credential_stores DROP COLUMN k8s_jwt;
 ALTER TABLE cp_credential_stores ADD COLUMN k8s_audience text NOT NULL DEFAULT '';`,
@@ -453,7 +450,6 @@ func PlansFromFiles(files map[string]string, dir engine.Direction) ([]engine.Pla
 	return buildPlans(migs, dir)
 }
 
-// pairOf names one migration's files; a checkpoint has no inverse, so it contributes no down file.
 func pairOf(id, up, down string) map[string]string {
 	out := map[string]string{id + ".up.sql": up}
 	if down != "" {

@@ -16,8 +16,7 @@ const JournalSchema = "godwit"
 
 var schemaName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_$]*$`)
 
-// ParseSearchPath validates a comma-separated list of unquoted schema names and folds it the way PostgreSQL does;
-// empty keeps the target role's own default.
+// ParseSearchPath validates a comma-separated list of unquoted schema names and folds it the way PostgreSQL does.
 func ParseSearchPath(value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
 		return "", nil
@@ -42,8 +41,6 @@ func ParseSearchPath(value string) (string, error) {
 // ErrJournalOnSearchPath marks a target whose sessions resolve unqualified names against the journal schema.
 var ErrJournalOnSearchPath = errors.New("the target's search_path reaches godwit's journal schema")
 
-// journalOnPath names the search_path element that resolves to the journal schema: the schema itself, or
-// `$user` under a role named after it — which resolves the moment godwit bootstraps the journal.
 func journalOnPath(effective, setting, role string) (string, bool) {
 	for _, element := range append(strings.Split(effective, ","), strings.Split(setting, ",")...) {
 		name := strings.TrimSpace(element)
@@ -71,9 +68,7 @@ func journalPathError(element, role string) error {
 		ErrJournalOnSearchPath, element, JournalSchema, role, ConfigSearchPath, JournalSchema)
 }
 
-// scratchSearchPath is what a scratch session resolves unqualified names against: the target's own effective
-// path when there is one, and never PostgreSQL's default `"$user", public` — `"$user"` resolves to the journal
-// schema whenever the scratch role is named after it, and godwit creates that schema on every scratch database.
+// Never PostgreSQL's default `"$user", public`: on a scratch role named godwit that resolves to the journal schema.
 func scratchSearchPath(observed string) string {
 	if observed == "" {
 		return "public"
@@ -82,7 +77,6 @@ func scratchSearchPath(observed string) string {
 	return observed
 }
 
-// dsnWithSearchPath pins the search path as a connection parameter, so every session godwit opens on the target carries it.
 func dsnWithSearchPath(dsn, searchPath string) string {
 	if searchPath == "" {
 		return dsn

@@ -12,7 +12,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// noExpansion is the NULL a ledger row carries when its migration had no directives.
 var noExpansion *Expansion
 
 func appliedRows() *pgxmock.Rows {

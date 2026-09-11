@@ -56,10 +56,8 @@ var (
 	ErrBaselineRun         = errors.New("baseline runs cannot be reverted")
 )
 
-// Run kinds that adopt what the target already holds instead of applying anything.
 var adoptionKinds = []string{KindBaseline, KindReconcile}
 
-// Reasons a run cannot be reverted, appended to ErrNotRevertable.
 const (
 	reasonState      = "its state is %q; a revertable run is succeeded, awaiting_contract, failed or needs_attention"
 	reasonBusy       = "target %s has a queued or running run"
@@ -79,8 +77,7 @@ const (
 
 // Run is one migration run tracked by the control plane.
 type Run struct {
-	ID string
-	// Seq is the run's creation order on the control plane, unique across runs; created_at is not.
+	ID         string
 	Seq        int64
 	Target     string
 	State      string
@@ -98,7 +95,6 @@ type Run struct {
 	CreatedAt  time.Time
 	FinishedAt *time.Time
 	Progress   *RunProgress
-	// Expansions is the SQL godwit generated for the run's directives, keyed by migration id.
 	Expansions map[string]Expansion
 }
 
@@ -166,8 +162,7 @@ func applyMigrations(ctx context.Context, db engine.DB, migs []engine.Migration,
 	return applyPlans(ctx, db, engine.Options{}, plans, nil, append(extra, engine.WithAtomic())...)
 }
 
-// RegisterTarget upserts a target, replacing whatever config the row held.
-// The credential store is a column, not a config key, so a foreign key refuses a dangling one.
+// RegisterTarget upserts a target, replacing whatever config the row held; the credential store is a column, so a foreign key refuses a dangling one.
 func (s *Store) RegisterTarget(ctx context.Context, name, provider string, config map[string]string) error {
 	rest := make(map[string]string, len(config))
 	maps.Copy(rest, config)
@@ -304,8 +299,7 @@ func (s *Store) lastRuns(ctx context.Context) (map[string]*Run, error) {
 	return out, nil
 }
 
-// CreateRun queues a run with its migration files, per-run timeout overrides, provenance, bound plan
-// (empty when implicit) and the directive expansions the run applies in place of the file bodies.
+// CreateRun queues a run with its migration files, timeout overrides, provenance, bound plan and the expansions it applies in place of the file bodies.
 func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files map[string]string, t Timeouts, p Provenance, planID string, exps map[string]Expansion) error {
 	names := make([]string, 0, len(files))
 	bodies := make([]string, 0, len(files))
@@ -325,8 +319,7 @@ func (s *Store) CreateRun(ctx context.Context, id, target, rollout string, files
 	return nil
 }
 
-// SaveProgress records what the newest statement of a running run reported. Every transition that starts
-// or ends an attempt clears it, so a progress row always describes work in flight and never a leftover.
+// SaveProgress records what the newest statement of a running run reported; every transition that starts or ends an attempt clears it.
 func (s *Store) SaveProgress(ctx context.Context, id string, p RunProgress) error {
 	if _, err := s.pool.Exec(ctx, `UPDATE cp_runs SET progress = $2 WHERE id = $1`, id, jsonOf(p)); err != nil {
 		return fmt.Errorf("save run progress: %w", err)
@@ -393,8 +386,7 @@ func (s *Store) AwaitingContract(ctx context.Context, target string) (Run, bool,
 	return r, true, nil
 }
 
-// CreateAdoption records an already-succeeded run of kind that carries migs' files and one adopted
-// ledger row per migration: what the target already held, put on the control plane's books.
+// CreateAdoption records an already-succeeded run of kind carrying migs' files and one adopted ledger row per migration.
 func (s *Store) CreateAdoption(ctx context.Context, id, target, kind string, migs []engine.Migration, p Provenance) error {
 	files := adoptionFiles(migs)
 	names := make([]string, 0, len(files))
@@ -430,8 +422,7 @@ func adoptionFiles(migs []engine.Migration) map[string]string {
 	return files
 }
 
-// CreateRevert queues a run that undoes what another run applied; force allows a run that is not the
-// newest un-reverted one on its target.
+// CreateRevert queues a run that undoes what another run applied; force allows a run that is not the newest un-reverted one on its target.
 func (s *Store) CreateRevert(ctx context.Context, id string, orig Run, force bool, t Timeouts, p Provenance) error {
 	if err := s.checkRevertable(ctx, orig, force); err != nil {
 		return err
@@ -457,7 +448,6 @@ func notRevertable(id, reason string, args ...any) error {
 
 var revertableStates = []string{StateSucceeded, StateAwaitingContract, StateFailed, StateNeedsAttention}
 
-// checkRevertable reports why orig cannot be reverted right now, or nil.
 func (s *Store) checkRevertable(ctx context.Context, orig Run, force bool) error {
 	if slices.Contains(adoptionKinds, orig.Kind) {
 		return fmt.Errorf("run %q: %w", orig.ID, ErrBaselineRun)
@@ -607,21 +597,15 @@ func (s *Store) RunFiles(ctx context.Context, id string) (map[string]string, err
 	return files, nil
 }
 
-// standingRow matches a ledger row the target records: a migration applied to completion that no revert
-// undid. The run's own state is not part of it — a run that failed half way leaves what it did apply
-// standing, and a held row is on the target's disk but not in its history until the contract phase lands.
+// The run's own state is not part of it: a run that failed half way leaves what it did apply standing.
 const standingRow = `NOT a.held AND a.reverted_by IS NULL`
 
-// versionedMigration matches a ledger migration id that carries a version; repeatables are named R__<name>.
 const versionedMigration = `a.migration ~ '^[0-9]{14}_'`
 
-// appliedEntry keys a ledger row the way the target counts it: by version, or by whole name for a
-// repeatable, which carries no version and whose name two truncations to 14 characters would collide.
+// A repeatable is keyed by its whole name: it carries no version, and two truncations to 14 would collide.
 const appliedEntry = `CASE WHEN ` + versionedMigration + ` THEN left(a.migration, 14) ELSE a.migration END`
 
-// Applied returns what a target's runs actually applied and no revert undid, whether or not the run
-// that applied it went on to succeed: their versions ascending, and the content last recorded under
-// each repeatable name.
+// Applied returns what a target's runs applied and no revert undid, whether or not the run that applied it went on to succeed.
 func (s *Store) Applied(ctx context.Context, target string) (AppliedSet, error) {
 	versions, err := s.appliedVersions(ctx, target)
 	if err != nil {
@@ -722,8 +706,7 @@ func (s *Store) Claim(ctx context.Context, holder string, ttl time.Duration) (Ru
 	return run, true, nil
 }
 
-// Heartbeat extends the holder's lease; ErrLeaseLost means another holder took it. holder is matched
-// whole, so it has to identify the process rather than the machine it runs on (NewHolder).
+// Heartbeat extends the holder's lease; ErrLeaseLost means another holder took it, and holder is matched whole.
 func (s *Store) Heartbeat(ctx context.Context, runID, holder string, ttl time.Duration) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE cp_leases SET expires_at = now() + $3 WHERE run_id = $1 AND holder = $2`,
@@ -738,11 +721,7 @@ func (s *Store) Heartbeat(ctx context.Context, runID, holder string, ttl time.Du
 	return nil
 }
 
-// Finish records a terminal state and releases the lease by run id rather than by holder, because an
-// operator parking a run holds none; the executing replica's guard is that it gives the run up the
-// moment its own lease is gone. A succeeded revert marks its original reverted
-// and withdraws every ledger row of it the revert had nothing left to undo, so the run and its rows say
-// the same thing.
+// Finish records a terminal state and releases the lease by run id rather than by holder, because an operator parking a run holds none.
 func (s *Store) Finish(ctx context.Context, id, state, errText string) error {
 	tag, err := s.pool.Exec(ctx, `
 		WITH del AS (DELETE FROM cp_leases WHERE run_id = $1),

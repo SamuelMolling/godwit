@@ -111,8 +111,7 @@ func (s *Store) SweepDeliveries(ctx context.Context, before time.Time) (int64, e
 	return tag.RowsAffected(), nil
 }
 
-// GitHubRun binds a run to the pull request whose command created it, so a replica that did not accept
-// that command can still report the run back when it settles.
+// GitHubRun binds a run to the pull request whose command created it, so a replica that did not accept that command can still report it back.
 type GitHubRun struct {
 	RunID        string
 	Repository   string
@@ -125,10 +124,8 @@ type GitHubRun struct {
 	Marker       string
 	Format       string
 	CheckRun     int64
-	// State is the run's live state, read from cp_runs rather than from this row.
-	State string
-	// Reverts is the run this one undoes, empty for every other kind.
-	Reverts string
+	State        string
+	Reverts      string
 }
 
 const githubRunColumns = `g.run_id, g.repository, g.repository_id, g.installation, g.pull_request, g.head,
@@ -141,8 +138,7 @@ func (g *GitHubRun) fields() []any {
 	}
 }
 
-// RecordGitHubRun binds run to a pull request; a second command over the same run replaces the binding,
-// which is how `godwit confirm` takes over the check its own comment opened.
+// RecordGitHubRun binds run to a pull request; a second command over the same run replaces the binding.
 func (s *Store) RecordGitHubRun(ctx context.Context, g GitHubRun) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO cp_github_runs (run_id, repository, repository_id, installation, pull_request, head,
@@ -161,13 +157,9 @@ func (s *Store) RecordGitHubRun(ctx context.Context, g GitHubRun) error {
 	return nil
 }
 
-// reportable are the states worth telling a pull request about. `reverted` is not one: the run that did
-// the reverting reports itself, and the original turning reverted would overwrite that with older news.
 var reportable = []string{StateSucceeded, StateFailed, StateNeedsAttention, StateAwaitingContract}
 
-// ClaimGitHubReports takes the bindings whose run has reached a state nobody has reported yet, and holds
-// them for lease. A claim that is not marked reported within it is taken again, so a replica dying mid
-// report costs a repeat rather than silence.
+// ClaimGitHubReports takes the bindings whose run reached a state nobody reported yet and holds them for lease; an unmarked claim is taken again.
 func (s *Store) ClaimGitHubReports(ctx context.Context, lease time.Duration, limit int) ([]GitHubRun, error) {
 	rows, err := s.pool.Query(ctx, `
 		UPDATE cp_github_runs g SET claimed_at = now()

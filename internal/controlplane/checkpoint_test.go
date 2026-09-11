@@ -16,8 +16,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// longHistory is a directory of n versioned migrations, each adding a table and an index; it is what a
-// checkpoint is for, and what the replay of a checkpointed target must stop replaying.
 func longHistory(n int) map[string]string {
 	files := map[string]string{}
 	for i := 1; i <= n; i++ {
@@ -30,8 +28,6 @@ func longHistory(n int) map[string]string {
 	return files
 }
 
-// churningHistory is a directory that builds and discards as it goes: what is left at the end is one
-// table, and a checkpoint over it is a fraction of the statements the history ran to get there.
 func churningHistory(n int) map[string]string {
 	files := map[string]string{}
 	for i := 1; i <= n; i++ {
@@ -97,8 +93,6 @@ func TestCheckpointGeneratesAVerifiedSchema(t *testing.T) {
 	}
 }
 
-// The scratch role of these tests is called godwit, which is also the schema the journal lives in and the
-// schema the render excludes. Unqualified DDL must not land there, whatever the role is called.
 func TestCheckpointRendersUnqualifiedDDL(t *testing.T) {
 	t.Parallel()
 	c, _ := newCheckpointer(t)
@@ -114,8 +108,6 @@ func TestCheckpointRendersUnqualifiedDDL(t *testing.T) {
 	}
 }
 
-// A checkpoint body only ever meets an empty database, so it is rendered for one: no concurrent index
-// build outside a transaction, and no constraint adopting an index the same body just created.
 func TestCheckpointBodyIsRenderedForAnEmptyDatabase(t *testing.T) {
 	t.Parallel()
 	c, _ := newCheckpointer(t)
@@ -142,8 +134,6 @@ func TestCheckpointBodyIsRenderedForAnEmptyDatabase(t *testing.T) {
 	}
 }
 
-// The checkpoint's body is generated from the scratch replay, so a directive below it lands as the SQL
-// godwit expanded, not as the directive: nothing under a checkpoint is ever expanded again.
 func TestCheckpointExpandsDirectivesBelowIt(t *testing.T) {
 	t.Parallel()
 	c, _ := newCheckpointer(t)
@@ -184,7 +174,6 @@ func TestCheckpointRefusals(t *testing.T) {
 	}
 }
 
-// A directory stamped in the future must not produce a checkpoint that sorts below what it collapses.
 func TestCheckpointVersionStaysAboveTheDirectory(t *testing.T) {
 	t.Parallel()
 	c, _ := newCheckpointer(t)
@@ -236,8 +225,6 @@ func firstLineOf(s string) string {
 	return line
 }
 
-// checkpointedTarget records the history of a target that ran the whole directory and then took the
-// checkpoint on top, which is what an existing target does the moment a checkpoint is merged.
 func checkpointedTarget(t *testing.T, s *Store, files map[string]string, cp Checkpoint) {
 	t.Helper()
 	succeededRun(t, s, "app", files, nil)
@@ -275,7 +262,6 @@ func TestReplayStartsAtTheCheckpoint(t *testing.T) {
 	}
 }
 
-// The whole point: the replay of a checkpointed target executes the checkpoint and nothing below it.
 func TestReplayCollapsesTheHistory(t *testing.T) {
 	t.Parallel()
 	steps := func(files map[string]string, cp *Checkpoint) ([]historyStep, []historyStep) {
@@ -319,9 +305,7 @@ func TestReplayCollapsesTheHistory(t *testing.T) {
 	}
 }
 
-// The measured half of the same claim: a checkpointed target replays one migration where a plain one
-// replays all of them, for the same schema. The wall clock is logged, not asserted: it is the reason
-// the feature exists, but under -race on a shared container it is not a stable number.
+// The wall clock is logged, not asserted: under -race on a shared container it is not a stable number.
 func TestReplayGetsShorterWithACheckpoint(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -362,7 +346,6 @@ func timeValidate(t *testing.T, v *Validator, target string) (Validation, time.D
 	return val, time.Since(start)
 }
 
-// A repeatable is not collapsed: the checkpoint carries none of them, so every one still replays on top.
 func TestReplayKeepsRepeatablesAboveTheCheckpoint(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -469,7 +452,6 @@ func TestCheckpointsStoreErrors(t *testing.T) {
 	if _, err := s.Checkpoints(ctx, "app"); err == nil || !strings.Contains(err.Error(), "read checkpoints") {
 		t.Fatalf("err = %v", err)
 	}
-	// A body that mentions the marker without being a checkpoint is not one.
 	mock.ExpectQuery("ORDER BY a.migration DESC").WithArgs(anyArgs(2)...).WillReturnRows(
 		pgxmock.NewRows([]string{"migration", "body"}).AddRow("20260101000000_a", "SELECT 'godwit: checkpoint';"))
 	if cps, err := s.Checkpoints(ctx, "app"); err != nil || len(cps) != 0 {
@@ -480,7 +462,6 @@ func TestCheckpointsStoreErrors(t *testing.T) {
 	}
 }
 
-// forced makes every scratch database of a Checkpointer take the same name, so the second create collides.
 func forced(c *Checkpointer, name string) {
 	c.newID = func() string { return name }
 }
@@ -597,7 +578,6 @@ func TestCheckpointVerifyScratchFailures(t *testing.T) {
 	}
 }
 
-// A directive under the checkpoint that cannot be expanded stops the generation with its own error.
 func TestCheckpointRefusesAnUnexpandableDirective(t *testing.T) {
 	t.Parallel()
 	c, _ := newCheckpointer(t)
@@ -610,7 +590,6 @@ func TestCheckpointRefusesAnUnexpandableDirective(t *testing.T) {
 	}
 }
 
-// A file that loads but does not parse is refused before anything reaches the scratch database.
 func TestCheckpointRefusesAnUnparseableMigration(t *testing.T) {
 	t.Parallel()
 	c, _ := newCheckpointer(t)
@@ -627,8 +606,6 @@ func (appliedFails) Applied(context.Context, string) ([]engine.Applied, []engine
 	return nil, nil, errBoom
 }
 
-// The scheduler decides what the checkpoint does against the target's own history, so a run it cannot
-// place fails there rather than half-applying.
 func TestSchedulerRefusesACheckpointGap(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -665,7 +642,6 @@ func TestSchedulerRefusesACheckpointGap(t *testing.T) {
 	}
 }
 
-// A repeatable has no version, so a checkpoint never bars its revert.
 func TestCheckpointBarSkipsRepeatables(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -682,7 +658,6 @@ func TestCheckpointBarSkipsRepeatables(t *testing.T) {
 	}
 }
 
-// Replay is the diff's files base; a set it cannot place under the checkpoint is refused there too.
 func TestReplayRefusesACheckpointGap(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -706,8 +681,6 @@ func TestReplayRefusesACheckpointGap(t *testing.T) {
 	}
 }
 
-// The replay records what a checkpoint collapsed on the scratch database; a connection that cannot take
-// those rows stops the replay instead of leaving a history the plans would contradict.
 func TestReplayReportsAFailedCollapse(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

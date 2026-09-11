@@ -21,7 +21,6 @@ import (
 
 var testLog = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-// plainProvider returns the DSN stored unencrypted in config.
 type plainProvider struct{}
 
 func (plainProvider) DSN(_ context.Context, config map[string]string) (string, error) {
@@ -51,7 +50,6 @@ func queueRun(t *testing.T, s *Store, id string, files map[string]string) {
 	}
 }
 
-// ledger records what a run applied, which is what the scheduler writes and what a revert reads back.
 func ledger(t *testing.T, s *Store, id string, migrations ...string) {
 	t.Helper()
 	for _, m := range migrations {
@@ -142,7 +140,6 @@ func TestSchedulerFailureAndPark(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Third failure exhausts MaxAttempts=2... resume resets attempts, so re-fail once more, then park.
 	sched.Tick(ctx)
 	waitState(t, s, "11111111-0000-0000-0000-000000000003", StateFailed)
 	if got := notifier.types(); got != "run:running run:failed run:running run:failed run:running run:failed" {
@@ -165,16 +162,13 @@ func TestSchedulerParksAfterBudget(t *testing.T) {
 	}
 	queueRun(t, s, "11111111-0000-0000-0000-000000000004", bad)
 
-	// Attempt 1 fails; force requeue keeping attempts by expiring the lease path:
 	sched.Tick(ctx)
 	waitState(t, s, "11111111-0000-0000-0000-000000000004", StateFailed)
-	// Simulate a crashed executor: put it back to running with an expired lease.
 	if _, err := s.pool.Exec(ctx, `
 		UPDATE cp_runs SET state = 'running', finished_at = NULL WHERE id = $1`,
 		"11111111-0000-0000-0000-000000000004"); err != nil {
 		t.Fatal(err)
 	}
-	// Claim (attempt 2) exceeds MaxAttempts=1 → parked.
 	sched.Tick(ctx)
 	r := waitState(t, s, "11111111-0000-0000-0000-000000000004", StateNeedsAttention)
 	if !strings.Contains(r.Error, "gave up") {
@@ -187,14 +181,12 @@ func TestSchedulerFailoverBetweenReplicas(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)
 
-	// Replica 1 claims with an immediately-expiring lease and dies.
 	newScheduler(t, s, Config{Holder: "replica-1"})
 	queueRun(t, s, "11111111-0000-0000-0000-000000000005", goodFiles())
 	if _, ok, err := s.Claim(ctx, "replica-1", -time.Second); err != nil || !ok {
 		t.Fatalf("ok = %v, err = %v", ok, err)
 	}
 
-	// Replica 2 recovers the abandoned run and finishes it.
 	providers := map[string]creds.Provider{"plain": plainProvider{}}
 	m := metrics.New()
 	sched2 := NewScheduler(s, providers, PGEngine{Metrics: m}, Policies(), Config{Holder: "replica-2"}, testLog)
@@ -454,7 +446,6 @@ func TestSchedulerHeartbeatKeepsLease(t *testing.T) {
 
 	sched, _ := newScheduler(t, s, Config{Holder: "h1", TTL: 300 * time.Millisecond})
 
-	// A migration slow enough to need at least one heartbeat cycle.
 	files := map[string]string{
 		"20260901120000_slow.up.sql":   "SELECT pg_sleep(1);",
 		"20260901120000_slow.down.sql": "SELECT 1;",
@@ -468,7 +459,6 @@ func TestSchedulerHeartbeatKeepsLease(t *testing.T) {
 	}
 }
 
-// phaseFrom marks the tail of the last plan as contract statements, the way the expander will.
 type phaseFrom struct{ at int }
 
 func (p phaseFrom) Split(plans []engine.Plan) ([]engine.Plan, []engine.Plan) {

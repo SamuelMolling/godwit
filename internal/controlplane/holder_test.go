@@ -37,8 +37,6 @@ func TestNewHolderNames(t *testing.T) {
 	}
 }
 
-// Two replicas on one machine derive their identity from the same hostname, so the half godwit draws
-// is the only thing keeping them apart.
 func TestNewHolderIsDrawnPerCall(t *testing.T) {
 	t.Parallel()
 	seen := map[string]bool{}
@@ -68,8 +66,6 @@ func expireLease(t *testing.T, pool *pgxpool.Pool, id string) {
 	}
 }
 
-// Both replicas answer to one hostname, which is what the holder used to be: replica A could then extend,
-// and on Finish delete, the lease replica B had legitimately taken off it.
 func TestOneHostnameIsNotOneLease(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -97,8 +93,6 @@ func TestOneHostnameIsNotOneLease(t *testing.T) {
 	}
 }
 
-// The same two replicas around a run in flight: A stalls past its TTL, B claims the run, and A comes
-// back. A must discover the lease is gone and leave the run — and B's lease — alone.
 func TestAStalledReplicaOnTheSameHostGivesTheRunUp(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

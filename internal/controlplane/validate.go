@@ -22,7 +22,6 @@ var (
 
 // Validator replays a target's history on a scratch database and applies new plans on top.
 type Validator struct {
-	// Expander renders `-- godwit:` directives against the scratch catalog before each plan is applied.
 	Expander *Expander
 
 	scratch *Scratch
@@ -42,13 +41,10 @@ type Validation struct {
 	Effects      [][]string
 	Fingerprints []string
 	Changes      [][]engine.ObjectChange
-	// Expansions is the SQL godwit generated per migration id, empty when no plan carried a directive.
-	Expansions map[string]Expansion
-	// Plans is the validated set: every directive migration replaced by its expansion.
-	Plans []engine.Plan
-	// Replayed counts the history migrations the replay executed, Collapsed the ones a checkpoint spared it.
-	Replayed  int
-	Collapsed int
+	Expansions   map[string]Expansion
+	Plans        []engine.Plan
+	Replayed     int
+	Collapsed    int
 }
 
 // Validate replays the history, applies each plan on top and snapshots the schema after every step.
@@ -84,8 +80,7 @@ func (v *Validator) Validate(ctx context.Context, target string, plans []engine.
 	return val, err
 }
 
-// Replay rebuilds target's recorded history on conn and applies plans on top, so conn ends up holding the
-// schema the committed files claim to produce; a migration the history already covers keeps its own expansion.
+// Replay rebuilds target's recorded history on conn and applies plans on top; a migration the history already covers keeps its own expansion.
 func (v *Validator) Replay(ctx context.Context, conn engine.DB, target, searchPath string, plans []engine.Plan) error {
 	history, expander, err := v.historyOf(ctx, target)
 	if err != nil {
@@ -124,12 +119,9 @@ func (v *Validator) historyOf(ctx context.Context, target string) ([]HistoryRun,
 	return history, expander, nil
 }
 
-// replayState is what a replay left on the scratch database: the migrations it accounted for, whether by
-// running them or by collapsing them into a checkpoint, and the newest version among them.
 type replayState struct {
-	seen   map[string]bool
-	newest int64
-	// replayed counts the migrations the replay executed, collapsed the ones a checkpoint spared it.
+	seen      map[string]bool
+	newest    int64
 	replayed  int
 	collapsed int
 }
@@ -141,8 +133,6 @@ func (s *replayState) add(m engine.Migration) {
 	}
 }
 
-// historyStep is one migration of the history with the run that applied it, so a replay failure still
-// names the run the body came from.
 type historyStep struct {
 	plan engine.Plan
 	run  int
@@ -193,9 +183,6 @@ func historySteps(history []HistoryRun) ([]historyStep, error) {
 	return out, nil
 }
 
-// collapseAtCheckpoint puts the newest checkpoint the history holds first and takes every version it
-// subsumes out of the replay: those are what its body already builds, so they are recorded, never run.
-// A repeatable is never collapsed — its identity is its body, and the checkpoint carries none of them.
 func collapseAtCheckpoint(steps []historyStep) (ordered, collapsed []historyStep) {
 	at := -1
 	for i, s := range steps {
@@ -221,8 +208,6 @@ func collapseAtCheckpoint(steps []historyStep) (ordered, collapsed []historyStep
 	return ordered, collapsed
 }
 
-// historyPlans rebuilds one run's up plans from its ledger: the migrations it applied, in the order it
-// applied them, each carrying the expansion frozen on its own row.
 func historyPlans(run HistoryRun) ([]engine.Plan, error) {
 	out := make([]engine.Plan, 0, len(run.Migrations))
 	for _, m := range run.Migrations {
@@ -243,7 +228,6 @@ func historyPlans(run HistoryRun) ([]engine.Plan, error) {
 	return out, nil
 }
 
-// recordUnexpanded marks a history plan no run ever expanded — a baseline records without running — so the replay records it too.
 func recordUnexpanded(plans []engine.Plan) []engine.Plan {
 	for i, p := range plans {
 		if len(p.Statements) == 0 && len(p.Migration.Directives) > 0 {
@@ -254,14 +238,13 @@ func recordUnexpanded(plans []engine.Plan) []engine.Plan {
 	return plans
 }
 
-// expander applies the target's keep_old default over the service's; a directive can still override it.
 func (v *Validator) expander(ctx context.Context, target string) (*Validator, error) {
 	_, config, err := v.store.Target(ctx, target)
 	if err != nil {
 		return nil, err
 	}
 	next := *v
-	next.scope = SnapshotScopeOf(config)
+	next.scope = snapshotScopeOf(config)
 	if config[ConfigKeepOld] == "" {
 		return &next, nil
 	}
@@ -272,7 +255,6 @@ func (v *Validator) expander(ctx context.Context, target string) (*Validator, er
 	return &next, nil
 }
 
-// The scratch role is not the target's; without this, unqualified names land in a different schema than on the target.
 func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) error {
 	if searchPath == "" {
 		return nil
@@ -294,8 +276,6 @@ func mirrorSearchPath(ctx context.Context, conn engine.DB, searchPath string) er
 	return nil
 }
 
-// validateEach applies the plans in order, expanding each directive migration against the catalog the
-// ones before it left behind, and snapshots the schema after every step.
 func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []engine.Plan, replayed map[string]bool) (Validation, error) {
 	base, err := snapshotScratch(ctx, conn, v.scope)
 	if err != nil {
@@ -324,8 +304,6 @@ func (v *Validator) validateEach(ctx context.Context, conn engine.DB, plans []en
 	return val, nil
 }
 
-// expandPlan renders an up plan's directives; a down plan already carries the inverse its run froze, and a
-// migration the history replayed keeps the expansion its own run froze.
 func (v *Validator) expandPlan(ctx context.Context, conn engine.DB, p engine.Plan, into map[string]Expansion, replayed map[string]bool) (engine.Plan, error) {
 	if len(p.Migration.Directives) == 0 || p.Direction != engine.DirectionUp || replayed[p.Migration.ID()] {
 		return p, nil
@@ -339,8 +317,7 @@ func (v *Validator) expandPlan(ctx context.Context, conn engine.DB, p engine.Pla
 	return ExpandPlan(p, exp)
 }
 
-// ExpandPlan rebuilds a plan from its frozen expansion; the migration keeps the checksum of the file,
-// so the target records what the pull request carried and not what godwit generated from it.
+// ExpandPlan rebuilds a plan from its frozen expansion; the migration keeps the checksum of the file, not of what godwit generated from it.
 func ExpandPlan(p engine.Plan, exp Expansion) (engine.Plan, error) {
 	m := p.Migration
 	m.UpSQL, m.DownSQL = exp.UpSQL, exp.DownSQL
@@ -349,8 +326,6 @@ func ExpandPlan(p engine.Plan, exp Expansion) (engine.Plan, error) {
 		return engine.Plan{}, fmt.Errorf("%w: %s: expansion does not parse: %w", ErrDirective, exp.ID, err)
 	}
 	if p.Direction == engine.DirectionDown {
-		// The whole body is generated, and godwit only generates an inverse it considers lossless, so
-		// neither the hazard gate nor the data-loss gate has anything of the author's to speak about.
 		for i := range out.Statements {
 			out.Statements[i].Hazards, out.Statements[i].Drops = nil, nil
 		}
@@ -367,7 +342,6 @@ func ExpandPlan(p engine.Plan, exp Expansion) (engine.Plan, error) {
 		if st.Phase == "" {
 			continue
 		}
-		// godwit generated these; the hazard gate speaks about what the author wrote.
 		st.Hazards = nil
 		st.Assert = exp.assertAt(i)
 		if b := exp.Batches[i]; b != nil {

@@ -27,7 +27,7 @@ type TargetRegistration struct {
 func RegistrationOf(name, provider string, config map[string]string) TargetRegistration {
 	r := TargetRegistration{
 		Name: name, Provider: provider, CredentialStore: config[creds.StoreConfigKey],
-		Timeouts: TargetTimeouts(config), SearchPath: config[ConfigSearchPath],
+		Timeouts: targetTimeouts(config), SearchPath: config[ConfigSearchPath],
 		RequirePlan: config[ConfigRequirePlan] == "true",
 		KeepOld:     config[ConfigKeepOld] != "false", IgnoreAdoptedTables: config[ConfigIgnoreAdopted] != "false",
 		GitHubRepositories: splitRepositories(config[configGitHubRepositories]),

@@ -18,24 +18,16 @@ import (
 
 // Config tunes a Scheduler.
 type Config struct {
-	// Holder is this replica's lease identity and must be unique per process: everything that keeps two
-	// replicas off one run compares it whole. Empty takes NewHolder("").
-	Holder      string
-	TTL         time.Duration
-	Interval    time.Duration
-	MaxAttempts int
-	// MaxConcurrentRuns is how many runs this replica executes at once; zero takes the default.
+	Holder            string
+	TTL               time.Duration
+	Interval          time.Duration
+	MaxAttempts       int
 	MaxConcurrentRuns int
-	// RunTimeout bounds one run's execution; zero takes the default. It never bounds the bookkeeping
-	// that finishes the run, so a run that hits it is still recorded as failed.
-	RunTimeout time.Duration
-	// Jitter returns a value in [0, 1) that spreads retry backoff; nil means random.
-	Jitter func() float64
+	RunTimeout        time.Duration
+	Jitter            func() float64
 }
 
-// Scheduler defaults. MaxConcurrentRuns keeps a long backfill on one target from parking every other
-// target on the replica; RunTimeout is the wall clock no single run may exceed, generous enough for an
-// overnight backfill and finite enough that a statement nothing else bounds cannot hold a slot forever.
+// Scheduler defaults: a long backfill on one target must not park the others, and no run may hold a slot forever.
 const (
 	DefaultMaxConcurrentRuns = 4
 	DefaultRunTimeout        = 24 * time.Hour
@@ -69,9 +61,7 @@ func (c Config) withDefaults() Config {
 
 // Scheduler claims runnable runs and executes them under a heartbeated lease.
 type Scheduler struct {
-	// Metrics receives run events; replace it before Run to share a registry.
-	Metrics *metrics.Metrics
-	// Notifier receives run lifecycle events; replace it before Run.
+	Metrics  *metrics.Metrics
 	Notifier notify.Notifier
 
 	store     *Store
@@ -124,15 +114,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// Stop tells Run to claim nothing more; Run returns once the runs it already started have finished.
-// Their leases keep beating throughout, so nothing else may take them, and what ends them is the
-// context Run was given.
+// Stop tells Run to claim nothing more; the runs it already started keep their leases and end with the context Run was given.
 func (s *Scheduler) Stop() {
 	s.stopOnce.Do(func() { close(s.stopped) })
 }
 
-// dispatch starts one Tick per free slot, off the ticker's goroutine, so a run that takes an hour
-// neither blocks the next tick nor keeps this replica from claiming work for another target.
 func (s *Scheduler) dispatch(ctx context.Context) {
 	select {
 	case s.slots <- struct{}{}:
@@ -200,7 +186,6 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 	go s.heartbeat(hbCtx, run.ID, func() { lost.Store(true); stopRun() })
 
 	held, err := s.applyRun(applyCtx, run)
-	// Without the lease this replica may no longer write the run: another one can already be executing it.
 	if lost.Load() {
 		log.Error("lease lost mid-run; leaving the run to the next claimer", "error", err)
 
@@ -211,7 +196,6 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 
 		return
 	}
-	// Watchers must find the snapshot once they see the final state.
 	s.baseline(ctx, run, log)
 	if held.plans == 0 {
 		s.retire(ctx, run, log)
@@ -228,7 +212,7 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 func (s *Scheduler) fail(ctx context.Context, run Run, err error, finish func(state, errText string)) {
 	code, transient := classify(err)
 	if !transient {
-		finish(StateFailed, FailureDetail(err))
+		finish(StateFailed, failureDetail(err))
 
 		return
 	}
@@ -237,10 +221,10 @@ func (s *Scheduler) fail(ctx context.Context, run Run, err error, finish func(st
 
 		return
 	}
-	wait := Backoff(s.cfg.Interval, run.Attempts, s.cfg.Jitter)
+	wait := backoff(s.cfg.Interval, run.Attempts, s.cfg.Jitter)
 	detail := retryDetail(err, wait)
 	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
-	if err := s.store.Retry(ctx, run.ID, FailureDetail(err), wait); err != nil {
+	if err := s.store.Retry(ctx, run.ID, failureDetail(err), wait); err != nil {
 		log.Error("retry not recorded; lease expiry will requeue the run", "error", err)
 
 		return
@@ -286,13 +270,11 @@ func (s *Scheduler) baseline(ctx context.Context, run Run, log *slog.Logger) {
 	}
 }
 
-// heldWork is what the expand phase left for the contract phase.
 type heldWork struct {
 	plans      int
 	statements int
 }
 
-// applyRun applies the current phase and reports what it held back.
 func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	plans, err := s.plans(ctx, run)
 	if err != nil {
@@ -315,7 +297,7 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 		}
 		var contract []engine.Plan
 		plans, contract = policy.Split(plans)
-		held = heldWork{plans: len(contract), statements: HeldStatements(plans, contract)}
+		held = heldWork{plans: len(contract), statements: heldStatements(plans, contract)}
 	}
 
 	opts, err := run.Timeouts.Over(tg.timeouts).Options()
@@ -338,8 +320,6 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	})
 }
 
-// plans is what the run executes: the up side of its own files with the directive expansions frozen
-// when it was created, or, for a revert, the down side of what the run it undoes actually applied.
 func (s *Scheduler) plans(ctx context.Context, run Run) ([]engine.Plan, error) {
 	if run.Reverts != "" {
 		rp, err := s.store.PlanRevert(ctx, run.Reverts)
@@ -361,10 +341,6 @@ func (s *Scheduler) plans(ctx context.Context, run Run) ([]engine.Plan, error) {
 	return ExpandUp(plans, run.Expansions)
 }
 
-// record keeps the ledger of what the run actually applied, statement by statement, so a later revert
-// acts on that and not on the directory the run submitted. A migration the run skipped because the
-// target's own journal already recorded it is adopted instead: the target is what says a migration is
-// applied, and a ledger that cannot see an out-of-band apply leaves it pending forever.
 func (s *Scheduler) record(run Run, plans []engine.Plan, applied AppliedSet) Recorder {
 	return func(ctx context.Context, res engine.Result) error {
 		if run.Reverts != "" {
@@ -386,8 +362,6 @@ func (s *Scheduler) record(run Run, plans []engine.Plan, applied AppliedSet) Rec
 	}
 }
 
-// adopt records a skip the ledger does not already account for; a re-run of the same directory adopts
-// nothing, so a run's ledger never claims a migration another standing row already holds.
 func (s *Scheduler) adopt(ctx context.Context, run Run, plans []engine.Plan, applied AppliedSet, res engine.Result) error {
 	i := slices.IndexFunc(plans, func(p engine.Plan) bool { return p.Migration.ID() == res.Migration })
 	if !res.Recorded || i < 0 || applied.Has(plans[i].Migration) {
@@ -404,11 +378,8 @@ func (s *Scheduler) adopt(ctx context.Context, run Run, plans []engine.Plan, app
 	return nil
 }
 
-// progressEvery bounds the writes a fast backfill produces; the end of a statement is always recorded.
 const progressEvery = time.Second
 
-// progress records the newest statement event under the heartbeat, so a backfill that runs for an hour
-// is visible without notifying once per batch.
 func (s *Scheduler) progress(ctx context.Context, runID string) func(engine.StatementEvent) {
 	var last time.Time
 
@@ -428,8 +399,6 @@ func (s *Scheduler) progress(ctx context.Context, runID string) func(engine.Stat
 	}
 }
 
-// retire records the columns a completed run left behind as its rollback, and clears the ones a revert
-// just renamed back, so a desired-schema diff stops proposing to drop them.
 func (s *Scheduler) retire(ctx context.Context, run Run, log *slog.Logger) {
 	exps, err := s.expansions(ctx, run)
 	if err != nil {
@@ -445,8 +414,6 @@ func (s *Scheduler) retire(ctx context.Context, run Run, log *slog.Logger) {
 	s.unretire(ctx, run, exps, log)
 }
 
-// unretire clears the columns a drop-column just removed; a revert has none to clear, since godwit
-// generates no inverse that would put a dropped column back.
 func (s *Scheduler) unretire(ctx context.Context, run Run, exps map[string]Expansion, log *slog.Logger) {
 	cols := Unretired(exps)
 	if run.Reverts != "" || len(cols) == 0 {
@@ -457,8 +424,6 @@ func (s *Scheduler) unretire(ctx context.Context, run Run, exps map[string]Expan
 	}
 }
 
-// expansions are the ones this run is accountable for: its own going up, and the ones it just undid
-// going down, each read back from the ledger row of the migration it belongs to.
 func (s *Scheduler) expansions(ctx context.Context, run Run) (map[string]Expansion, error) {
 	if run.Reverts == "" {
 		return run.Expansions, nil
@@ -485,9 +450,6 @@ func (s *Scheduler) retired(ctx context.Context, run Run, migration string, cols
 	return s.store.RetireColumns(ctx, run.Target, run.ID, migration, cols)
 }
 
-// shapeCheckpoint re-decides at apply time what the set's checkpoint does, against the target's own
-// history rather than the one the plan was taken against; the decision is a function of the files and
-// that history, so it is never persisted and never goes stale.
 func (s *Scheduler) shapeCheckpoint(ctx context.Context, plans []engine.Plan, dsn string) ([]engine.Plan, error) {
 	if !slices.ContainsFunc(plans, func(p engine.Plan) bool { return p.Migration.Checkpoint }) {
 		return plans, nil
@@ -586,14 +548,10 @@ func (s *Scheduler) resolve(ctx context.Context, name, providerName string, conf
 
 	return resolvedTarget{
 		dsn: dsnWithSearchPath(dsn, searchPath), provider: providerName,
-		timeouts: TargetTimeouts(config), searchPath: searchPath, scope: SnapshotScopeOf(config),
+		timeouts: targetTimeouts(config), searchPath: searchPath, scope: snapshotScopeOf(config),
 	}, nil
 }
 
-// heartbeat holds the lease for the run until ctx ends. A beat that fails is retried faster than the
-// beat interval, because a store blip must not cost the lease. The lease still expires TTL after the
-// beat that landed, so a fifth of it earlier the run is given up: past that another replica can claim a
-// run this one is still executing. A lease taken by another holder is that moment arriving early.
 func (s *Scheduler) heartbeat(ctx context.Context, runID string, lost func()) {
 	beat := s.cfg.TTL / 4
 	giveUp := s.cfg.TTL - s.cfg.TTL/5

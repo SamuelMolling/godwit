@@ -12,7 +12,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// stubEngine answers the two calls adoption makes on a target and nothing else.
 type stubEngine struct {
 	Engine
 	marked []engine.Migration
@@ -106,7 +105,6 @@ func TestSchedulerAdoptStoreErrors(t *testing.T) {
 	ctx := context.Background()
 	mock, sched := mockScheduler(t, stubEngine{})
 
-	// A revert skips a down plan for a migration the target never recorded: nothing to write either way.
 	if err := sched.record(Run{ID: "r1", Reverts: "r0"}, nil, AppliedSet{})(ctx, engine.Result{Skipped: true}); err != nil {
 		t.Fatalf("skipped down plan = %v", err)
 	}
@@ -134,7 +132,6 @@ func TestSchedulerAdoptStoreErrors(t *testing.T) {
 	}
 }
 
-// Repeatables are named, not numbered, so they diverge by content rather than by absence.
 func TestDivergedOnRepeatables(t *testing.T) {
 	t.Parallel()
 	obs := Observation{Repeatables: []engine.Repeatable{{Name: "stats", Checksum: "new"}}}

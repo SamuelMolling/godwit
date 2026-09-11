@@ -57,10 +57,10 @@ func TestTransientAndFailureDetail(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			code, ok := classify(tc.err)
-			if ok != tc.transient || code != tc.code || Transient(tc.err) != tc.transient {
+			if ok != tc.transient || code != tc.code || transient(tc.err) != tc.transient {
 				t.Fatalf("classify = %q, %v", code, ok)
 			}
-			if got := FailureDetail(tc.err); got != tc.prefix+tc.err.Error() {
+			if got := failureDetail(tc.err); got != tc.prefix+tc.err.Error() {
 				t.Fatalf("detail = %q", got)
 			}
 		})
@@ -78,16 +78,16 @@ func TestBackoff(t *testing.T) {
 		{1, half, 2 * time.Second},
 		{2, half, 4 * time.Second},
 		{4, half, 16 * time.Second},
-		{60, half, MaxBackoff},
+		{60, half, maxBackoff},
 		{1, func() float64 { return 0 }, 1600 * time.Millisecond},
 		{1, func() float64 { return 1 }, 2400 * time.Millisecond},
 	}
 	for _, tc := range cases {
-		if got := Backoff(2*time.Second, tc.attempts, tc.jitter); got != tc.want {
+		if got := backoff(2*time.Second, tc.attempts, tc.jitter); got != tc.want {
 			t.Fatalf("Backoff(attempts=%d) = %s, want %s", tc.attempts, got, tc.want)
 		}
 	}
-	if d := Backoff(time.Second, 1, defaultJitter); d < 800*time.Millisecond || d > 1200*time.Millisecond {
+	if d := backoff(time.Second, 1, defaultJitter); d < 800*time.Millisecond || d > 1200*time.Millisecond {
 		t.Fatalf("default jitter = %s", d)
 	}
 	if got := retryDetail(errors.New("x"), 1500*time.Millisecond); got != "x (retry in 1.5s)" {
@@ -127,7 +127,6 @@ func TestSchedulerTransientRequeuesWithBackoff(t *testing.T) {
 	if !tableExists(t, targetDSN, "flaky") {
 		t.Fatal("first migration should stay applied across the retry")
 	}
-	// Expiring not_before in the store's own clock is what lets the next tick claim without racing the host's.
 	if _, err := pool.Exec(ctx, "UPDATE cp_runs SET not_before = now() WHERE id = $1", id); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +146,6 @@ func TestSchedulerTransientRequeuesWithBackoff(t *testing.T) {
 	}
 }
 
-// The store's clock sets not_before, so the test polls Tick instead of sleeping on the host's clock.
 func tickUntil(t *testing.T, sched *Scheduler, s *Store, id, want string) Run {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)

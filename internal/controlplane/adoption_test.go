@@ -14,8 +14,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// appliedOutside puts migrations into a target's own journal the way another tool, another godwit
-// instance, or `godwit up` does: the target records them and this control plane never saw it.
 func appliedOutside(t *testing.T, dsn string, files map[string]string) []engine.Migration {
 	t.Helper()
 	ctx := context.Background()
@@ -62,8 +60,6 @@ func journalIDs(t *testing.T, dsn string) []string {
 	return ids
 }
 
-// A run that meets a migration the target's own journal already records must put it on the control
-// plane's books. Before this, the run succeeded and the ledger stayed empty for ever.
 func TestRunAdoptsWhatTheTargetAlreadyRecords(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -94,13 +90,11 @@ func TestRunAdoptsWhatTheTargetAlreadyRecords(t *testing.T) {
 		t.Fatalf("ledger = %+v, err = %v", rows, err)
 	}
 
-	// An adopted row is what the run found, not what it applied, so it is out of the revert's scope.
 	if _, err := s.PlanRevert(ctx, id); !errors.Is(err, ErrNotRevertable) ||
 		!strings.Contains(err.Error(), "applied no migration that still stands") {
 		t.Fatalf("revert of an adoption-only run: %v", err)
 	}
 
-	// A second run over the same directory adopts nothing: the rows already stand.
 	second := "aaaaaaaa-0000-0000-0000-000000000002"
 	queueRun(t, s, second, files)
 	sched.Tick(ctx)
@@ -110,7 +104,6 @@ func TestRunAdoptsWhatTheTargetAlreadyRecords(t *testing.T) {
 	}
 }
 
-// The revert undoes what the run applied and leaves what it merely found.
 func TestRevertLeavesAdoptedMigrations(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -134,8 +127,6 @@ func TestRevertLeavesAdoptedMigrations(t *testing.T) {
 	}
 }
 
-// A baseline over a target another instance already journalled is the adoption case that mattered:
-// it used to refuse outright.
 func TestBaselineAdoptsAJournalledTarget(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -164,8 +155,6 @@ func TestBaselineAdoptsAJournalledTarget(t *testing.T) {
 	}
 }
 
-// The store is rebuilt or restored from a backup older than the target: the targets still know what
-// they hold, and reconciling reads it back so the replay can rebuild it.
 func TestReconcileRepairsALostLedger(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -188,8 +177,6 @@ func TestReconcileRepairsALostLedger(t *testing.T) {
 		t.Fatalf("second reconcile = %+v, err = %v", d, err)
 	}
 
-	// The point of the repair: the scratch replay can rebuild the target again, so a later migration
-	// validates on top of what the target really holds.
 	v := NewValidator(NewScratch(pool, ""), s, uuid.NewString)
 	next := map[string]string{
 		"20260101000002_c.up.sql":   "ALTER TABLE public.a ADD COLUMN name text;",
