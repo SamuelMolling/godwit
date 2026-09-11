@@ -27,7 +27,7 @@ The test is not whether a setting is important, or secret, or hard to type. It i
 | In the chart | Not in the chart |
 |---|---|
 | `serve.keyProvider.*` — which KMS seals `static` DSNs, a property of this process | a target, a credential store |
-| `existingSecret.*` — which Secret this Deployment reads, and under which keys | the DSN behind a target |
+| `existingSecret.name` — which Secret this Deployment reads whole | the DSN behind a target, and every value that Secret already carries |
 | `serve.port`, `serve.githubApp.*`, the routes — what this process listens on and where it is published | which repositories are bound to a target |
 | `serve.limits.*`, `serve.driftInterval` — how this process behaves | what it behaves *on* |
 | `stores.allowedHosts` — the hosts an admin may register a store at | the stores themselves |

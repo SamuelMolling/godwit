@@ -7,23 +7,16 @@ image:
 
 existingSecret:
   name: godwit
-  keys:
-    masterKey: GODWIT_MASTER_KEY
-    tokens: GODWIT_TOKENS
-    storeDSN: GODWIT_STORE_DSN
-    scratchDSN: GODWIT_SCRATCH_DSN
 
 serve:
   port: 8474
   scratch:
-    enabled: true
     template: template0
   driftInterval: 5m
   logFormat: json
   logLevel: info
   ui:
     enabled: true
-    basicAuth: false
     scope: operator
     origins:
       - https://godwit.example.com

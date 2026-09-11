@@ -72,8 +72,8 @@ type Config struct {
 	UIUser     string
 	UIPassword string
 	UIScope    string
-	// UIAnonymousScope serves /ui with no authentication at all, at that scope, whatever Tokens,
-	// UIUser and UIPassword hold. Empty keeps /ui behind basic auth.
+	// UIAnonymousScope serves /ui with no authentication at all, at that scope, whatever Tokens
+	// hold. It is refused alongside UIUser. Empty keeps /ui behind basic auth.
 	UIAnonymousScope string
 	// UIOrigins are the scheme://host[:port] origins /ui is reached at; empty compares the browser's Origin with the request Host.
 	UIOrigins []string
@@ -117,6 +117,10 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if (cfg.UIUser == "") != (cfg.UIPassword == "") {
 		return errors.New("ui user and ui password must be set together")
+	}
+	if cfg.UIAnonymousScope != "" && cfg.UIUser != "" {
+		return errors.New("--ui-anonymous-scope serves /ui unauthenticated; GODWIT_UI_USER then " +
+			"configures an identity nobody is ever asked for")
 	}
 	uiScope := authz.ScopeOperator
 	if cfg.UIScope != "" {

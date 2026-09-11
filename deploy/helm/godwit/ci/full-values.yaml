@@ -8,15 +8,6 @@ imagePullSecrets:
   - name: registry-pull
 existingSecret:
   name: godwit-credentials
-  keys:
-    masterKey: master-key
-    masterKeyPrevious: master-key-previous
-    tokens: tokens
-    storeDSN: store-dsn
-    scratchDSN: scratch-dsn
-    slackToken: slack-token
-    uiUser: ui-user
-    uiPassword: ui-password
 serve:
   port: 9000
   keyProvider:
@@ -25,13 +16,11 @@ serve:
   driftInterval: 1m
   skipValidation: true
   scratch:
-    enabled: true
     template: godwit_scratch_template
   logFormat: text
   logLevel: debug
   ui:
     enabled: true
-    basicAuth: true
     scope: read
     origins: ["https://godwit.example.com"]
   extraArgs: ["--drift-interval=2m"]

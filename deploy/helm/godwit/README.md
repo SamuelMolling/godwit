@@ -7,7 +7,7 @@ Runs `godwit serve` as a two-replica Deployment: the second replica is what turn
 - A PostgreSQL database for the control-plane store (any version the service supports; it creates its own tables).
 - A second PostgreSQL for the scratch databases validation and `godwit diff` execute submitted SQL on, with a role that owns nothing else. Skipping it leaves that execution on the store server as the store role, and the pods say so on every start ([security](../../../docs/security.md#the-scratch-database)).
 - An image. The chart defaults to `ghcr.io/samuelmolling/godwit:main`, published from every merge to `main` (also tagged `sha-<short commit>`); to run from your own registry, `docker build -t <registry>/godwit:<tag> .` at the repo root, push it, set `image.repository` / `image.tag`.
-- A Secret with the credentials. The chart never creates it:
+- A Secret with the credentials. The chart never creates it, and reads it whole: every entry in it becomes an environment variable of that name, so what godwit reads from the Secret is configured there and in no value.
 
 ```bash
 kubectl -n godwit create secret generic godwit \
@@ -22,15 +22,15 @@ CREATE ROLE godwit_scratch LOGIN PASSWORD 'secret'
   CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 ```
 
-Then `--set serve.scratch.enabled=true`. The pods refuse to start when that role is a superuser or owns the store database.
+The `GODWIT_SCRATCH_DSN` entry is what puts scratch there; leave it out and that execution stays on the store server. The pods refuse to start when the scratch role is a superuser or owns the store database.
 
-**No master key is in that Secret, because `existingSecret.keys.masterKey` defaults to empty and only `static` targets need a key** — theirs is the one DSN godwit stores, and a `kubernetes` or `vault` target stores a path. To register a `static` target, opt in: add `--from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32)` to the Secret above and set `existingSecret.keys.masterKey: GODWIT_MASTER_KEY`. Without it, `godwit target add --provider static` is refused with
+**No master key is in that Secret, because only `static` targets need a key** — theirs is the one DSN godwit stores, and a `kubernetes` or `vault` target stores a path. To register a `static` target, add `--from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32)` to the Secret above. Without it, `godwit target add --provider static` is refused with
 
 ```
 invalid_argument: static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY
 ```
 
-and a `static` target already in the store makes every pod log `static targets are sealed and no key is configured` naming it, with its runs refused. Rotating the key needs no re-registration: put the new key in the Secret, the old one under `existingSecret.keys.masterKeyPrevious` (which the chart refuses to render on its own, since it configures no key by itself), roll, and every replica reseals what it finds at start-up. `serve.keyProvider.name: gcpkms` or `vault-transit` moves the key into a KMS instead — `existingSecret.keys.masterKey` is then unread — wrapping a per-value data key so the DSN never leaves the process ([security](../../../docs/security.md#the-key-and-where-it-comes-from)).
+and a `static` target already in the store makes every pod log `static targets are sealed and no key is configured` naming it, with its runs refused. Rotating the key needs no re-registration: put the new key in the Secret, the old one under `GODWIT_MASTER_KEY_PREVIOUS` (which on its own makes the pods refuse to start, since it configures no key to seal with), roll, and every replica reseals what it finds at start-up. `serve.keyProvider.name: gcpkms` or `vault-transit` moves the key into a KMS instead — `GODWIT_MASTER_KEY` is then unread — wrapping a per-value data key so the DSN never leaves the process ([security](../../../docs/security.md#the-key-and-where-it-comes-from)).
 
 `GODWIT_TOKENS` is the comma-separated list of `name:scope:secret` bearer tokens the API accepts (scopes `read`, `pipeline`, `operator`, `admin`, cumulative; a bare secret is admin, and a two-field `name:secret` entry is refused at start-up); the name is recorded as the actor on runs, logs, notifications and the audit log (a bare secret is named `anonymous`).
 
@@ -86,7 +86,7 @@ Either way the API is connect over HTTP/2: a browser reaching `/ui` is ordinary 
 
 ## The GitHub App listener
 
-`serve.githubApp.enabled` opens a second listener, on its own port, serving `/github/webhook` and 404 for everything else. It is the only part of godwit that has to be reachable from the internet, and it is a separate listener precisely so that exposing it exposes nothing else.
+`serve.githubApp.enabled` opens a second listener, on its own port, serving `/github/webhook` and 404 for everything else. It needs `GODWIT_GITHUB_APP_ID` and `GODWIT_GITHUB_WEBHOOK_SECRET` in the Secret, and the pods refuse to start without either — an unverified webhook endpoint is an open one. It is the only part of godwit that has to be reachable from the internet, and it is a separate listener precisely so that exposing it exposes nothing else.
 
 The chart renders that listener its **own Service**, `<release>-webhook`, rather than a second port on the API's. Point the public route at that Service:
 
@@ -99,9 +99,9 @@ backendRefs:
 
 A Service is the unit a route attaches to, and this one has no API port on it. So the failure that matters — a public hostname that reaches the API — is not a wrong port number away; it needs someone to name the other Service. `chart/ci/platform-github-app-values.yaml` shows the whole shape, including the route and a NetworkPolicy, and `scripts/helm-assert.sh` asserts the webhook Service never carries `serve.port`.
 
-Off is off: with `serve.githubApp.enabled: false` (the default) the render has no `--github-webhook-addr`, no second container port, no webhook Service and no App environment. The listener is not opened and closed to callers — it never binds.
+Off is off: with `serve.githubApp.enabled: false` (the default) the render has no `--github-webhook-addr`, no second container port and no webhook Service. The listener is not opened and closed to callers — it never binds.
 
-The App's private key is mounted as a file (`serve.githubApp.privateKeyPath`, read with `--github-private-key-file`) rather than passed as environment. It is multi-line, and unlike a DSN it is the App's whole identity: it mints an installation token for every repository the App is installed on. A file keeps it out of the process environment, which a sidecar, a core dump and `kubectl exec -- env` all read. The webhook secret and the app id are single-line and stay environment; the app id is not a secret at all.
+The App's private key is mounted as a file (`serve.githubApp.privateKeyPath`, read with `--github-private-key-file`) rather than passed as environment. It is multi-line, and unlike a DSN it is the App's whole identity: it mints an installation token for every repository the App is installed on. A file keeps it out of the process environment, which a sidecar, a core dump and `kubectl exec -- env` all read. It is therefore the one Secret entry the chart has to be told about — `existingSecret.githubPrivateKey`, so the volume can project it — and naming it something a shell would accept as a variable fails the render, because the Secret reaches the process whole and the PEM would be back in the environment. The webhook secret and the app id are single-line and stay environment; the app id is not a secret at all.
 
 Standing the App up the first time — creating it, its permissions, its events, and binding a repository to a target — is [CI/CD: registering the App](../../../docs/ci-cd.md#registering-the-app).
 
@@ -151,11 +151,11 @@ Registration is not adoption. A database that already has a schema still needs `
 - `vault`: every `vault` target names a credential store, registered with `godwit credential-store add`, and that store is the only thing that says which Vault the secret is read from — no chart value reaches any target, and a target whose store is missing refuses its runs. With `--vault-k8s-role` the service logs in at that Vault with the ServiceAccount token this chart projects at `/var/run/secrets/godwit/vault/token`, minted for the audience `godwit`; `--vault-token-env` names an environment variable of the service holding a token instead, whose name must begin with `VAULT_TOKEN` and which `extraEnv` / `extraEnvFrom` brings in from a Secret. The chart has no key here: the audience is a constant, and the one thing to configure is `audience="godwit"` on each Vault's Kubernetes auth role ([security](../../../docs/security.md#credential-stores)).
 - **`serve.keyProvider.vaultAddr` and its siblings are not that.** They configure the `vault-transit` key provider, where godwit seals the DSNs of `static` targets; leave them empty unless `serve.keyProvider.name` is `vault-transit`.
 - `kubernetes`: mount the target's Secret with `extraVolumes` / `extraVolumeMounts` and register the target with `--secret-path` pointing at the file.
-- `static`: the only one that needs a key, and the chart configures none by default. Set `existingSecret.keys.masterKey` (or a `serve.keyProvider` of `gcpkms` / `vault-transit`) before registering one; the DSN is sealed with it.
+- `static`: the only one that needs a key, and no key is in the Secret by default. Add `GODWIT_MASTER_KEY` to it (or set a `serve.keyProvider` of `gcpkms` / `vault-transit`) before registering one; the DSN is sealed with it.
 
 ## Notifications
 
-`notifications.webhookUrl` sets `GODWIT_WEBHOOK_URL`. For Slack, add `GODWIT_SLACK_TOKEN` to the Secret (`existingSecret.keys.slackToken` names the key) and set `notifications.slack.channel`; `notifications.slack.mode` picks `thread` or `edit` and `notifications.publicUrl` is the base of the "Open run" links.
+`notifications.webhookUrl` sets `GODWIT_WEBHOOK_URL`. For Slack, add `GODWIT_SLACK_TOKEN` to the Secret and set `notifications.slack.channel`; `notifications.slack.mode` picks `thread` or `edit` and `notifications.publicUrl` is the base of the "Open run" links.
 
 Anything else the process should see (proxies) goes through `extraEnv` / `extraEnvFrom`.
 
@@ -165,9 +165,9 @@ Anything else the process should see (proxies) goes through `extraEnv` / `extraE
 
 ## Web UI
 
-`serve.ui.enabled` adds `--ui` and `--ui-scope`, serving the operator web UI at `/ui` on the same port. With `GODWIT_TOKENS` set the UI is already behind basic auth: any token secret is a valid password and signs in as that token with its own scope, so pages offer only the actions that scope allows. `serve.ui.basicAuth` adds a shared identity on top — put `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD` in the Secret (`existingSecret.keys.uiUser` / `uiPassword` name the keys) — whose rights are `serve.ui.scope` (default `operator`; `read` makes it a viewer). Without tokens and without that pair, anyone who reaches the port acts as `ui:anonymous` with scope `read` — `serve.ui.scope` belongs to the identity that signed in, and is not handed to a visitor who signed in with nothing.
+`serve.ui.enabled` adds `--ui` and `--ui-scope`, serving the operator web UI at `/ui` on the same port. With `GODWIT_TOKENS` set the UI is already behind basic auth: any token secret is a valid password and signs in as that token with its own scope, so pages offer only the actions that scope allows. A `GODWIT_UI_USER` / `GODWIT_UI_PASSWORD` pair in the Secret adds a shared identity on top, whose rights are `serve.ui.scope` (default `operator`; `read` makes it a viewer). Without tokens and without that pair, anyone who reaches the port acts as `ui:anonymous` with scope `read` — `serve.ui.scope` belongs to the identity that signed in, and is not handed to a visitor who signed in with nothing.
 
-**`serve.ui.auth: false`** drops authentication from `/ui` entirely (`--ui-anonymous-scope`): no password is asked for whatever `GODWIT_TOKENS` holds, and every visitor is `ui:anonymous` with `serve.ui.anonymousScope` — `operator` by default, so the UI can do everything it offers; `read` serves a dashboard nobody can act from. Set it only when nothing but trusted operators can route to the port — an internal Service, a VPN, an authenticating proxy in front — because the network is then the entire boundary and the audit trail records `ui:anonymous` with no identity behind it. The pod logs `ui served without authentication` on every start, `serve.ui.basicAuth` alongside it fails the render, and the API keeps its own tokens either way. `ci/platform-internal-values.yaml` renders this shape; [security](../../../docs/security.md#an-unauthenticated-ui) states the threat model.
+**`serve.ui.auth: false`** drops authentication from `/ui` entirely (`--ui-anonymous-scope`): no password is asked for whatever `GODWIT_TOKENS` holds, and every visitor is `ui:anonymous` with `serve.ui.anonymousScope` — `operator` by default, so the UI can do everything it offers; `read` serves a dashboard nobody can act from. Set it only when nothing but trusted operators can route to the port — an internal Service, a VPN, an authenticating proxy in front — because the network is then the entire boundary and the audit trail records `ui:anonymous` with no identity behind it. The pod logs `ui served without authentication` on every start, refuses to start with a `GODWIT_UI_USER` in the Secret alongside it — an identity nobody is ever asked for — and the API keeps its own tokens either way. `ci/platform-internal-values.yaml` renders this shape; [security](../../../docs/security.md#an-unauthenticated-ui) states the threat model.
 
 ## Scheduling and the pod
 

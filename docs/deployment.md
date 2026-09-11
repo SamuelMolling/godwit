@@ -428,8 +428,8 @@ The chart in [deploy/helm/godwit](../deploy/helm/godwit/README.md) assumes nothi
    REVOKE CONNECT ON DATABASE godwit_store FROM PUBLIC;
    ```
 
-   Then `serve.scratch.enabled: true`. Left off, scratch databases stay on the store server under the store's own role, submitted DDL runs as the owner of the control plane, and every pod logs `scratch database is not isolated` on every start. That warning is accurate; do not ship staging without `--scratch-dsn` if anyone but you holds a token.
-3. **The Secret.** The chart never creates it. The Deployment references `tokens` and `storeDSN` unconditionally, and a Secret missing either leaves the pod in `CreateContainerConfigError`. The master key is *not* one of them: `existingSecret.keys.masterKey` defaults to empty and is wrapped in a `with`, so `GODWIT_MASTER_KEY` is omitted unless you ask for it — which is what a deployment whose targets are all `vault` or `kubernetes` wants, since [only `static` needs a key](#the-three-credential-providers). A deployment that does register `static` targets adds `--from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32)` below and `existingSecret.keys.masterKey: GODWIT_MASTER_KEY` in the values.
+   Then put its DSN in the Secret as `GODWIT_SCRATCH_DSN`. Left out, scratch databases stay on the store server under the store's own role, submitted DDL runs as the owner of the control plane, and every pod logs `scratch database is not isolated` on every start. That warning is accurate; do not ship staging without a scratch DSN if anyone but you holds a token.
+3. **The Secret.** The chart never creates it, and reads it whole: every entry becomes an environment variable of that name, so what godwit reads from the Secret is configured in the Secret and never also in a value. `GODWIT_STORE_DSN` is the one entry it cannot start without, and a Secret that does not exist at all leaves the pod in `CreateContainerConfigError`; everything else in [configuration's table](configuration.md#environment) is optional and configures itself by being there — a missing `GODWIT_TOKENS` starts and logs `no tokens configured`. The master key is one of the optional ones — a deployment whose targets are all `vault` or `kubernetes` needs none, since [only `static` needs a key](#the-three-credential-providers) — and a deployment that does register `static` targets adds `--from-literal=GODWIT_MASTER_KEY=$(openssl rand -hex 32)` below.
 
    ```bash
    kubectl -n godwit create secret generic godwit \
@@ -468,8 +468,6 @@ existingSecret:
   name: godwit
 
 serve:
-  scratch:
-    enabled: true
   driftInterval: 5m       # see "how often godwit asks Vault"
   limits:
     runTimeout: 24h       # the wall clock one attempt gets; pair it with the Vault TTL
@@ -604,7 +602,7 @@ kubectl -n godwit create secret generic godwit \
   --from-literal=GODWIT_SCRATCH_DSN='postgres://godwit_scratch:...@scratch:5432/postgres'
 ```
 
-**3. Vault** (skip for a first pass with `--provider static`, and come back — a `static` target also needs `--set existingSecret.keys.masterKey=GODWIT_MASTER_KEY` in step 4, since the chart wires no key by default):
+**3. Vault** (skip for a first pass with `--provider static`, and come back — a `static` target needs the `GODWIT_MASTER_KEY` entry step 2 put in the Secret):
 
 ```bash
 vault kv put secret/orders/db username=godwit_orders password='...'
@@ -623,12 +621,11 @@ vault write auth/kubernetes/role/godwit \
 
 ```bash
 helm upgrade --install godwit deploy/helm/godwit -n godwit \
-  --set image.tag=sha-1a2b3c4 \
-  --set serve.scratch.enabled=true
+  --set image.tag=sha-1a2b3c4
 kubectl -n godwit logs deploy/godwit | grep -E 'listening|not isolated|no tokens'
 ```
 
-A clean start logs `store migrated` and `listening`. Any `scratch database is not isolated` line means step 1's second server is not wired; `no tokens configured` means the Secret's `GODWIT_TOKENS` is empty and every caller is an anonymous admin.
+A clean start logs `store migrated` and `listening`. Any `scratch database is not isolated` line means the Secret has no `GODWIT_SCRATCH_DSN` for step 1's second server; `no tokens configured` means the Secret's `GODWIT_TOKENS` is empty and every caller is an anonymous admin.
 
 **5. Register the target.**
 
