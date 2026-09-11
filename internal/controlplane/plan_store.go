@@ -199,8 +199,7 @@ func (s *Store) SupersedePlan(ctx context.Context, id string, next Plan, files m
 	return nil
 }
 
-// RunsApplying maps each migration held by a succeeded run of the target created after since to that run's id,
-// keyed the way engine.Migration.ID renders it.
+// RunsApplying maps each migration held by a succeeded run of target created after since to that run's id.
 func (s *Store) RunsApplying(ctx context.Context, target string, since time.Time) (map[string]string, error) {
 	const migrationID = `regexp_replace(f.name, '\.(up|down)\.sql$', '')`
 	rows, err := s.pool.Query(ctx, `
@@ -233,7 +232,7 @@ func scanPlan(row pgx.Row) (Plan, error) {
 	return p, err
 }
 
-// orEmpty keeps a nil map out of the column: jsonb is NOT NULL and 'null' is not an object.
+// The column is jsonb NOT NULL, and a nil map marshals to 'null' rather than an object.
 func orEmpty(m map[string]Expansion) map[string]Expansion {
 	if m == nil {
 		return map[string]Expansion{}

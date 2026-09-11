@@ -22,9 +22,7 @@ type Drift struct {
 
 // DriftMonitor periodically compares live schemas against their baselines.
 type DriftMonitor struct {
-	// Metrics receives check outcomes; replace it before Run to share a registry.
-	Metrics *metrics.Metrics
-	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
+	Metrics           *metrics.Metrics
 	PlanRetention     time.Duration
 	DeliveryRetention time.Duration
 
@@ -113,7 +111,6 @@ func (m *DriftMonitor) sweepDeliveries(ctx context.Context) {
 	if n > 0 {
 		m.log.Info("webhook deliveries swept", "deleted", n, "retention", m.DeliveryRetention)
 	}
-	// A binding outlives its delivery: it is what a run reports back through, so it goes once reported.
 	bound, err := m.store.SweepGitHubRuns(ctx, before)
 	if err != nil {
 		m.log.Error("github run sweep failed", "error", err)

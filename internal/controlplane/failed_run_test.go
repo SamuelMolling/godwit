@@ -30,8 +30,6 @@ func twoTableFiles() map[string]string {
 	}
 }
 
-// failedRun records a run that applied some of its migrations and then failed, the way the scheduler
-// leaves the store when a statement errors part way through.
 func failedRun(t *testing.T, s *Store, target string, files map[string]string, exps map[string]Expansion, applied ...string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -55,8 +53,6 @@ func failedRun(t *testing.T, s *Store, target string, files map[string]string, e
 	return id
 }
 
-// A run that applies two migrations and then fails on a third leaves the two standing on the target;
-// the control plane must account for them, not act as if the run had done nothing.
 func TestFailedRunKeepsWhatItApplied(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -104,8 +100,6 @@ func TestFailedRunKeepsWhatItApplied(t *testing.T) {
 	}
 }
 
-// #59 expands a directive once. A failed run's directive is applied, so a later validation must replay
-// it from the ledger instead of generating a second expansion against a catalog that already has it.
 func TestFailedRunDoesNotReexpandItsDirective(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -134,9 +128,6 @@ func TestFailedRunDoesNotReexpandItsDirective(t *testing.T) {
 	}
 }
 
-// A held row is the other half of the rule: the run applied the migration's expand phase, but the target
-// records nothing until the contract phase lands, so neither the applied set nor the replay may claim it.
-// The contract phase failing leaves such a row on a run that is not awaiting_contract.
 func TestHeldMigrationIsNotAppliedUntilItsContractPhase(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

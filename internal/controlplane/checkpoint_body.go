@@ -12,8 +12,6 @@ import (
 	"github.com/stripe/pg-schema-diff/pkg/tempdb"
 )
 
-// renderForEmptyDatabase renders the schema for what a checkpoint body meets: an empty scratch database or
-// a target with no history, neither of which has rows, readers or writers for the online shape to protect.
 func renderForEmptyDatabase(ctx context.Context, from, to *sql.DB, factory tempdb.Factory) (string, error) {
 	ddl, err := generate(ctx, from, to, factory, diff.WithNoConcurrentIndexOps())
 	if err != nil {
@@ -29,9 +27,6 @@ type bodyStmt struct {
 	dropped bool
 }
 
-// foldStatements collapses the two shapes pg-schema-diff spreads over several statements so a populated
-// table keeps serving: the index a constraint then adopts, and the constraint added NOT VALID then
-// validated. Anything the fold cannot reproduce exactly is left as the generator wrote it.
 func foldStatements(ddl string) (string, error) {
 	stmts, err := bodyStatements(ddl)
 	if err != nil {
@@ -139,7 +134,6 @@ func addedConstraint(node *pgquery.Node) (*pgquery.RangeVar, *pgquery.Constraint
 	return a.GetRelation(), con
 }
 
-// adoptedConstraint narrows addedConstraint to the pair a table constraint can carry instead.
 func adoptedConstraint(node *pgquery.Node) (*pgquery.RangeVar, *pgquery.Constraint) {
 	rel, con := addedConstraint(node)
 	if con == nil || con.GetIndexname() == "" || con.GetDeferrable() || con.GetInitdeferred() ||
@@ -150,7 +144,6 @@ func adoptedConstraint(node *pgquery.Node) (*pgquery.RangeVar, *pgquery.Constrai
 	return rel, con
 }
 
-// constraintClause is the table constraint that builds the same index inline, false for a shape it cannot.
 func constraintClause(ix *pgquery.IndexStmt, con *pgquery.Constraint) (string, bool) {
 	if ix == nil || !ix.GetUnique() || ix.GetWhereClause() != nil || ix.GetNullsNotDistinct() ||
 		len(ix.GetIndexIncludingParams()) > 0 || len(ix.GetOptions()) > 0 || ix.GetTableSpace() != "" ||

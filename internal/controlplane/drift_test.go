@@ -89,7 +89,6 @@ func TestDriftLifecycle(t *testing.T) {
 		t.Fatalf("drift = %+v, err = %v", d, err)
 	}
 
-	// Manual out-of-band change → drift detected + notified once.
 	execTarget(t, targetDSN, "ALTER TABLE t ADD COLUMN sneaky text")
 	mon.Tick(ctx)
 	mon.Tick(ctx) // identical open drift must not re-notify
@@ -102,7 +101,6 @@ func TestDriftLifecycle(t *testing.T) {
 		t.Fatalf("events = %+v, err = %v", events, err)
 	}
 
-	// Reverting the change resolves the drift on the next check.
 	execTarget(t, targetDSN, "ALTER TABLE t DROP COLUMN sneaky")
 	d, err = mon.Check(ctx, "app")
 	if err != nil || d.Drifted {
@@ -139,7 +137,6 @@ func TestAcceptBaseline(t *testing.T) {
 		t.Fatalf("drift after accept = %+v, err = %v", d, err)
 	}
 
-	// New manual change drifts again; failing notifier doesn't block the event.
 	execTarget(t, targetDSN, "CREATE TABLE manual2 (id int)")
 	d, err = mon.Check(ctx, "app")
 	if err != nil || !d.Drifted {
@@ -170,7 +167,6 @@ func TestDriftErrorBranches(t *testing.T) {
 		if err := s.SaveSnapshot(ctx, "app", "fp", engine.SchemaFormat+"\ndef", ""); err != nil {
 			t.Fatal(err)
 		}
-		// Break the target's provider config so DSN resolution fails.
 		if err := s.RegisterTarget(ctx, "app", "plain", map[string]string{}); err != nil {
 			t.Fatal(err)
 		}
@@ -294,7 +290,6 @@ func TestValidator(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// A pre-existing scratch database makes CREATE DATABASE fail.
 	taken := fmt.Sprintf("dup%d", dbSeq.Add(1))
 	dup := NewValidator(NewScratch(pool, ""), s2, func() string { return taken })
 	if _, err := pool.Exec(ctx, "CREATE DATABASE godwit_validate_"+taken); err != nil {
@@ -377,7 +372,6 @@ func TestTick_SweepsDeliveries(t *testing.T) {
 		t.Fatalf("the delivery survived the sweep: %t, %v", first, err)
 	}
 
-	// A binding goes on the same schedule, once the pull request has been told.
 	if err := s.RegisterTarget(ctx, "orders", "static", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}

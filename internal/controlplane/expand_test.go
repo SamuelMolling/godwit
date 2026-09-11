@@ -120,9 +120,6 @@ func TestExpandChangeType(t *testing.T) {
 	}
 }
 
-// TestExpandChangeTypeFailsWhenTheUsingDoesNotConverge moves what the expression depends on after the
-// first batch, so the rows that batch wrote no longer agree with it and the cursor never looks at them
-// again. That is the shape the swap used to make irreversible.
 func TestExpandChangeTypeFailsWhenTheUsingDoesNotConverge(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -244,8 +241,6 @@ func TestExpandBackfill(t *testing.T) {
 	}
 }
 
-// TestExpandBackfillResumesAfterCrash kills the backfill between batches and re-applies it; the second
-// pass must start from the journalled cursor and leave every row correct.
 func TestExpandBackfillResumesAfterCrash(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -466,8 +461,6 @@ func TestRetiredHelper(t *testing.T) {
 	}
 }
 
-// flakyDB fails or rewrites the nth statement the expander runs, so every catalog probe's error branch
-// is reachable without breaking the database itself.
 type flakyDB struct {
 	engine.DB
 	n    *int
@@ -585,8 +578,6 @@ func TestExpandBackfillRefusals(t *testing.T) {
 	}
 }
 
-// TestExpandBackfillKeepsConcurrentWritesInSync writes to the table between two batches — below the
-// cursor, where the loop will never look again, and above it — and asserts the run leaves nothing stale.
 func TestExpandBackfillKeepsConcurrentWritesInSync(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -647,8 +638,6 @@ func TestExpandBackfillKeepsConcurrentWritesInSync(t *testing.T) {
 	}
 }
 
-// TestExpandBackfillFailsRatherThanReportSuccess drops the sync trigger under a running backfill and
-// dirties a row the cursor has passed, which is exactly the shape that used to be reported as succeeded.
 func TestExpandBackfillFailsRatherThanReportSuccess(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1063,8 +1052,6 @@ func TestExpandSimpleRefusals(t *testing.T) {
 	}
 }
 
-// TestExpandSimpleCatalogErrors walks every catalog probe of each operation, failing one per pass, so no
-// probe reports a broken database as a successful expansion.
 func TestExpandSimpleCatalogErrors(t *testing.T) {
 	t.Parallel()
 	conn := newScratch(t, shopDDL, itemDDL, `CREATE INDEX shop_tag_idx ON public.shop (tag)`)

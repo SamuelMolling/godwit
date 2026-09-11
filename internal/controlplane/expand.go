@@ -24,10 +24,8 @@ var ErrDirective = errors.New("godwit directive")
 // DefaultBatchSize is how many rows a generated backfill touches per transaction when the directive is silent.
 const DefaultBatchSize = 5000
 
-// batchKeyAlias names the cursor column the batched backfill returns, kept distinct from the table's own columns.
 const batchKeyAlias = "godwit_key"
 
-// backfillSyncSuffix names the trigger and the function a backfill holds on its table while it runs.
 const backfillSyncSuffix = "_backfill_sync"
 
 // RetiredColumn is a column a change-type left behind as the rollback of a completed swap.
@@ -43,22 +41,20 @@ func (c RetiredColumn) String() string {
 	return c.Schema + "." + c.Table + "." + c.Column
 }
 
-// Expansion is the SQL godwit generates for one migration's directives, frozen into the plan so the run
-// applies what the pull request showed.
+// Expansion is the SQL godwit generates for one migration's directives, frozen into the plan so the run applies what the pull request showed.
 type Expansion struct {
-	ID       string               `json:"id"`
-	UpSQL    string               `json:"up_sql"`
-	DownSQL  string               `json:"down_sql"`
-	DownHeld string               `json:"down_held_sql,omitempty"`
-	Phase    []string             `json:"phase"`
-	Batches  []*engine.BatchSpec  `json:"batches,omitempty"`
-	Asserts  []*engine.AssertSpec `json:"asserts,omitempty"`
-	Notes    []string             `json:"notes,omitempty"`
-	Retired  []RetiredColumn      `json:"retired,omitempty"`
-	// Unretired are the columns the expansion removes, so a drop-column clears what a change-type retired.
-	Unretired []RetiredColumn `json:"unretired,omitempty"`
-	Lines     []string        `json:"lines,omitempty"`
-	Hash      string          `json:"hash"`
+	ID        string               `json:"id"`
+	UpSQL     string               `json:"up_sql"`
+	DownSQL   string               `json:"down_sql"`
+	DownHeld  string               `json:"down_held_sql,omitempty"`
+	Phase     []string             `json:"phase"`
+	Batches   []*engine.BatchSpec  `json:"batches,omitempty"`
+	Asserts   []*engine.AssertSpec `json:"asserts,omitempty"`
+	Notes     []string             `json:"notes,omitempty"`
+	Retired   []RetiredColumn      `json:"retired,omitempty"`
+	Unretired []RetiredColumn      `json:"unretired,omitempty"`
+	Lines     []string             `json:"lines,omitempty"`
+	Hash      string               `json:"hash"`
 }
 
 // Contract is the index of the first contract statement, or -1 when the expansion has one phase.
@@ -66,7 +62,7 @@ func (e Expansion) Contract() int {
 	return slices.Index(e.Phase, engine.PhaseContract)
 }
 
-// assertAt is the condition frozen for statement i, or nil; expansions frozen before assertions existed carry none.
+// Expansions frozen before assertions existed carry none.
 func (e Expansion) assertAt(i int) *engine.AssertSpec {
 	if i >= len(e.Asserts) {
 		return nil
@@ -77,9 +73,7 @@ func (e Expansion) assertAt(i int) *engine.AssertSpec {
 
 // Expander turns directives into statements using a catalog that already holds the target's history.
 type Expander struct {
-	// KeepOld leaves the pre-swap column in place unless a directive says otherwise.
-	KeepOld bool
-	// BatchSize is the default rows per backfill transaction; zero means DefaultBatchSize.
+	KeepOld   bool
 	BatchSize int
 }
 
@@ -169,8 +163,6 @@ func refuse(d engine.Directive, format string, args ...any) error {
 
 var contractHazardCodes = []string{"H002", "H003", "H008"}
 
-// checkDestructive refuses a directive migration whose own SQL is destructive: the generated contract block
-// is a suffix of the plan, so a destructive statement before it would run in the expand phase.
 func checkDestructive(m engine.Migration) error {
 	if !slices.ContainsFunc(m.Directives, func(d engine.Directive) bool { return d.Op != engine.DirectiveAssert }) {
 		return nil
@@ -204,8 +196,6 @@ func checkDuplicates(ds []engine.Directive) error {
 	return nil
 }
 
-// subject names what a directive acts on, so two directives on it are ambiguous. For most operations the
-// first argument is the object; the ones whose first argument is only the table need the finer name.
 func subject(d engine.Directive) string {
 	switch {
 	case len(d.Args) == 0:
@@ -223,8 +213,6 @@ func subject(d engine.Directive) string {
 	}
 }
 
-// spliceExpansion replaces each directive line with its expand statements and appends every contract
-// block at the end, so the contract phase is always a suffix the executor can hold from one index.
 func spliceExpansion(m engine.Migration, all []built) (Expansion, error) {
 	exp := Expansion{ID: m.ID()}
 	lines := strings.Split(m.UpSQL, "\n")
@@ -270,8 +258,6 @@ func spliceExpansion(m engine.Migration, all []built) (Expansion, error) {
 	return exp, nil
 }
 
-// expandedHeader names the directive above the statements it produced; an assert's query is quoted back
-// so the comparison stays readable beside the SQL godwit runs.
 func expandedHeader(d engine.Directive) string {
 	args := d.Args
 	if d.Op == engine.DirectiveAssert {
@@ -348,8 +334,6 @@ func heldBody(all []built) string {
 	return strings.Join(out, "\n")
 }
 
-// expansionHash covers the conditions as well as the SQL: an edited comparison changes nothing in the
-// bodies, and a re-plan whose expansion changed must still fail SameStatements.
 func expansionHash(e Expansion) string {
 	body := e.UpSQL + "\x00" + e.DownSQL + "\x00" + e.DownHeld
 	for i, a := range e.Asserts {
@@ -370,7 +354,6 @@ func (x *Expander) keepOld(d engine.Directive) bool {
 	return x.KeepOld
 }
 
-// batchSize and pauseOf trust the grammar: ValidateDirective already refused a value that does not parse.
 func (x *Expander) batchSize(d engine.Directive) int {
 	if n, err := strconv.Atoi(d.Opts["batch"]); err == nil && n > 0 {
 		return n
@@ -388,10 +371,6 @@ func pauseOf(d engine.Directive) time.Duration {
 	return p
 }
 
-// changeType expands the lock-safe type change: a new column kept in sync by a trigger, a batched
-// backfill, a closing count of the rows still pending, and a contract phase that swaps the two. One
-// predicate carries all three — the batches select it, the trigger falsifies it for every row it is
-// handed, and the assertion counts it — so an expression that does not converge cannot become a swap.
 func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	col, err := resolveColumn(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -455,7 +434,6 @@ func (x *Expander) changeType(ctx context.Context, conn engine.DB, d engine.Dire
 			step{sql: fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL", col.rel(), engine.Ident(col.Column))},
 			step{sql: fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s", col.rel(), engine.Ident(constraint))})
 	}
-	// Last of the expand phase, so the contract phase's rename is reached only over a column that converged.
 	b.expand = append(b.expand, step{
 		sql:    fmt.Sprintf("SELECT count(*) FROM %s WHERE %s", col.rel(), pending),
 		assert: &engine.AssertSpec{Op: "=", Kind: engine.AssertInt, Value: "0"},
@@ -495,10 +473,6 @@ func (x *Expander) retire(b *built, d engine.Directive, col columnFacts, newCol,
 	}
 }
 
-// backfill expands a directive-driven UPDATE into a resumable batched statement a sync trigger keeps
-// honest. The trigger applies the same assignment to every row written while the batches run, so a row
-// written below the cursor after it passed — the case a plain batched UPDATE never revisits — lands
-// already backfilled; a closing assertion counts what is left rather than trusting the loop.
 func (x *Expander) backfill(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	tbl, err := resolveTable(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -554,7 +528,6 @@ func (x *Expander) backfill(ctx context.Context, conn engine.DB, d engine.Direct
 	}, nil
 }
 
-// assignment is one column of a `set=` and the expression the backfill and its trigger both write into it.
 type assignment struct {
 	column string
 	val    *pgquery.Node
@@ -591,17 +564,12 @@ func (as assignments) exprs() string {
 	return strings.Join(out, ", ")
 }
 
-// qualify binds every assignment to the trigger's NEW row, which is what lets the guard sit in the
-// trigger's WHEN clause instead of inside its body.
 func (as assignments) qualify() {
 	for i := range as {
 		as[i].fresh = qualifiedText(as[i].val)
 	}
 }
 
-// pending is the predicate for a row the backfill has still to touch: the author's filter, and the
-// assignment not yet in place. The batches select it and the closing assertion counts it; pendingNew is
-// the same predicate on the row a trigger is handed, so the three cannot disagree about "backfilled".
 func (as assignments) pending(where string) string {
 	return as.notYet(where, func(a assignment) (string, string) { return engine.Ident(a.column), a.expr })
 }
@@ -621,8 +589,6 @@ func (as assignments) notYet(where string, of func(assignment) (string, string))
 		where, strings.Join(cols, ", "), strings.Join(exprs, ", "))
 }
 
-// parseAssignments splits a `set=` into the columns it writes and the expressions it writes into them,
-// refusing the assignment forms a row-level trigger cannot repeat.
 func parseAssignments(d engine.Directive) (assignments, error) {
 	set := d.Opts["set"]
 	res, err := pgquery.Parse("UPDATE t SET " + set)
@@ -650,8 +616,6 @@ func parseAssignments(d engine.Directive) (assignments, error) {
 	return out, nil
 }
 
-// syncable refuses a `set=` the trigger would not reproduce the way the batches do: an expression the
-// trigger form cannot carry, one that is not idempotent, and a target the run could not verify.
 func (as assignments) syncable(ctx context.Context, conn engine.DB, d engine.Directive, t columnFacts, spec *engine.BatchSpec) error {
 	written := make([]string, len(as))
 	for i, a := range as {
@@ -677,8 +641,6 @@ func (as assignments) syncable(ctx context.Context, conn engine.DB, d engine.Dir
 	return as.comparable(ctx, conn, d, t, written)
 }
 
-// comparable refuses a target godwit cannot compare against its own expression: the run's guarantee is a
-// count of the rows still matching, and a type with no equality operator makes that count unaskable.
 func (as assignments) comparable(ctx context.Context, conn engine.DB, d engine.Directive, t columnFacts, cols []string) error {
 	rows, err := conn.Query(ctx, `
 		SELECT w.name, coalesce(format_type(a.atttypid, a.atttypmod), ''),
@@ -714,8 +676,6 @@ type setTarget struct {
 	Equality bool
 }
 
-// syncFree refuses the directive when the names the expansion needs are taken; a leftover from a run that
-// never finished is named here rather than discovered when the CREATE fails.
 func (c columnFacts) syncFree(ctx context.Context, conn engine.DB, d engine.Directive, name string) error {
 	var n int
 	if err := conn.QueryRow(ctx, `
@@ -732,8 +692,6 @@ func (c columnFacts) syncFree(ctx context.Context, conn engine.DB, d engine.Dire
 	return nil
 }
 
-// backfillSyncFunction assigns unconditionally: the guard is the trigger's WHEN clause, so a row that
-// needs nothing never enters plpgsql at all — which matters because the backfill's own batches fire it.
 func backfillSyncFunction(t columnFacts, sync string, set assignments) string {
 	rel := engine.Ident(t.Table)
 	body := fmt.Sprintf(" BEGIN SELECT %s INTO %s FROM (SELECT new.*) AS %s; RETURN new; END ",
@@ -749,8 +707,6 @@ func backfillSyncTrigger(t columnFacts, sync, when string) string {
 		engine.Ident(sync), t.rel(), when, engine.Ident(t.Schema), engine.Ident(sync))
 }
 
-// qualifiedText renders an expression with every column reference bound to the trigger's NEW row. The
-// tree has already been deparsed once and rewriting a column reference cannot make it undeparsable.
 func qualifiedText(val *pgquery.Node) string {
 	walkNodes(val.ProtoReflect(), func(m protoreflect.Message) bool {
 		if ref, ok := m.Interface().(*pgquery.ColumnRef); ok {
@@ -768,8 +724,6 @@ func qualifiedText(val *pgquery.Node) string {
 	return out
 }
 
-// exprText renders one parsed expression back as SQL; the deparser refuses a multi-column assignment,
-// which is the only shape of a `set=` target it cannot write out.
 func exprText(val *pgquery.Node) (string, error) {
 	sel := &pgquery.SelectStmt{TargetList: []*pgquery.Node{pgquery.MakeResTargetNodeWithVal(val, 0)}}
 	out, err := pgquery.Deparse(&pgquery.ParseResult{Stmts: []*pgquery.RawStmt{
@@ -782,9 +736,6 @@ func exprText(val *pgquery.Node) (string, error) {
 	return strings.TrimPrefix(out, "SELECT "), nil
 }
 
-// addColumn adds the column nullable and, when it must end up NOT NULL, fills it in batches before the
-// H007 recipe constrains it. The default is set in its own statement: an inline DEFAULT on a volatile
-// expression rewrites the whole table under an ACCESS EXCLUSIVE lock.
 func (x *Expander) addColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	col, err := resolveNewColumn(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -824,7 +775,6 @@ func (x *Expander) addColumn(ctx context.Context, conn engine.DB, d engine.Direc
 	return b, nil
 }
 
-// addNotNull constrains an existing column without the scan a bare SET NOT NULL takes.
 func addNotNull(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	col, err := resolveColumn(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -845,8 +795,6 @@ func addNotNull(ctx context.Context, conn engine.DB, d engine.Directive) (built,
 	return built{expand: steps, notes: notes, down: down, downHeld: down}, nil
 }
 
-// notNullSteps is the H007 recipe: a CHECK validated on its own lets SET NOT NULL skip the table scan.
-// A CHECK already saying the same thing is reused, and only godwit's own name is dropped afterwards.
 func notNullSteps(ctx context.Context, conn engine.DB, col columnFacts) ([]step, []string, error) {
 	generated := col.Column + "_not_null"
 	name, valid, found, err := notNullCheck(ctx, conn, col)
@@ -874,7 +822,6 @@ func notNullSteps(ctx context.Context, conn engine.DB, col columnFacts) ([]step,
 	return steps, notes, nil
 }
 
-// notNullCheck finds a single-column CHECK on col that already says it is not null.
 func notNullCheck(ctx context.Context, conn engine.DB, col columnFacts) (string, bool, bool, error) {
 	var name string
 	var valid bool
@@ -896,8 +843,6 @@ func notNullCheck(ctx context.Context, conn engine.DB, col columnFacts) (string,
 	return name, valid, true, nil
 }
 
-// addIndex builds the index without blocking writes, clearing first the invalid leftover a previous
-// CREATE INDEX CONCURRENTLY leaves behind when it is interrupted.
 func addIndex(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	tbl, err := resolveTable(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -936,8 +881,6 @@ func addIndex(ctx context.Context, conn engine.DB, d engine.Directive) (built, e
 	return b, nil
 }
 
-// indexColumns names the parts of a column list the grammar has already parsed; an expression is "expr",
-// which is how the H010 recipe names it too.
 func indexColumns(cols string) []string {
 	res, err := pgquery.Parse("CREATE INDEX ON t " + cols)
 	if err != nil {
@@ -979,8 +922,6 @@ func invalidIndex(ctx context.Context, conn engine.DB, d engine.Directive, tbl c
 	return true, nil
 }
 
-// dropIndex removes the index without blocking reads; IF EXISTS makes the retry after an interrupted
-// concurrent drop a no-op.
 func dropIndex(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	schema, name := splitRef(d.Args[0])
 	var nspname, relkind, constraint string
@@ -1013,8 +954,6 @@ var fkDeleteActions = map[string]string{
 	"set-default": "SET DEFAULT", "no-action": "NO ACTION",
 }
 
-// addForeignKey adds the constraint unvalidated so that only the VALIDATE reads the rows, under a lock
-// that lets writes through.
 func addForeignKey(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	col, err := resolveColumn(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -1048,7 +987,6 @@ func addForeignKey(ctx context.Context, conn engine.DB, d engine.Directive) (bui
 	return constraintSteps(col, name, sql), nil
 }
 
-// addCheck adds the constraint unvalidated so the scan never holds the lock that blocks writes.
 func addCheck(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	tbl, err := resolveTable(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -1076,8 +1014,6 @@ func constraintSteps(t columnFacts, name, add string) built {
 	}
 }
 
-// dropColumn is the one operation in the contract phase: the column goes only after a human confirms the
-// application that reads it is gone.
 func dropColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built, error) {
 	col, err := resolveColumn(ctx, conn, d, d.Args[0])
 	if err != nil {
@@ -1096,8 +1032,6 @@ func dropColumn(ctx context.Context, conn engine.DB, d engine.Directive) (built,
 	}, nil
 }
 
-// assertion needs no catalog: the query is checked offline by the grammar and executed on the scratch
-// with the rest of the expanded plan, which is where a name the target does not have is refused.
 func assertion(d engine.Directive) (built, error) {
 	query, spec, err := engine.ParseAssert(d)
 	if err != nil {
@@ -1134,8 +1068,6 @@ func uniquelyIndexed(ctx context.Context, conn engine.DB, c columnFacts) (bool, 
 	return ok, nil
 }
 
-// backfillSQL renders one batch: the cursor picks at most Size keys, the update touches those rows and
-// returns their keys so the executor can advance and resume.
 func backfillSQL(t columnFacts, spec *engine.BatchSpec, set, where string) string {
 	return fmt.Sprintf(
 		"WITH b AS (SELECT %s AS %s FROM %s WHERE %s > %s AND (%s) ORDER BY %s LIMIT %d)\n"+
@@ -1144,8 +1076,6 @@ func backfillSQL(t columnFacts, spec *engine.BatchSpec, set, where string) strin
 		t.rel(), set, spec.Key, batchKeyAlias, batchKeyAlias)
 }
 
-// cursorParam casts the journalled cursor to its own type: a key narrower than bigint would otherwise
-// refuse the int8 the executor binds.
 func cursorParam(kind string) string {
 	switch kind {
 	case engine.BatchKeyInt:
@@ -1166,8 +1096,6 @@ func syncFunction(col columnFacts, sync, newCol, expr string) string {
 		engine.Ident(col.Schema), engine.Ident(sync), tag, body, tag)
 }
 
-// dollarTag picks a tag the body cannot close: a fixed one inside the author's raw `using=` would end the
-// function body and leave the rest at statement level.
 func dollarTag(body string) string {
 	tag := "$godwit$"
 	for n := 0; strings.Contains(body, tag); n++ {
@@ -1182,7 +1110,6 @@ func syncTrigger(col columnFacts, sync string) string {
 		engine.Ident(sync), col.rel(), engine.Ident(col.Schema), engine.Ident(sync))
 }
 
-// columnFacts is what the scratch catalog says about the object a directive names.
 type columnFacts struct {
 	Schema    string
 	Table     string
@@ -1278,8 +1205,6 @@ func resolveColumn(ctx context.Context, conn engine.DB, d engine.Directive, ref 
 	return facts, nil
 }
 
-// resolveNewColumn locates the table of a column the migration is about to create, and refuses the name
-// the table already carries.
 func resolveNewColumn(ctx context.Context, conn engine.DB, d engine.Directive, ref string) (columnFacts, error) {
 	parts := strings.Split(ref, ".")
 	facts, err := resolveTable(ctx, conn, d, strings.Join(parts[:len(parts)-1], "."))
@@ -1313,11 +1238,7 @@ func (c columnFacts) free(ctx context.Context, conn engine.DB, d engine.Directiv
 	return nil
 }
 
-// dependentsSQL lists every catalog object bound to one column. `auto` decides what a DROP COLUMN does to it:
-// PostgreSQL destroys an auto dependent silently and refuses to drop a column a normal one reads. `covers` is
-// how many of the table's columns the object spans, which separates an index existing only for this column from
-// one that also serves others. The column's own default, and its NOT NULL constraint on PostgreSQL 18, are
-// excluded: neither is another object.
+// The column's own default, and its NOT NULL constraint on PostgreSQL 18, are excluded: neither is another object.
 const dependentsSQL = `
 WITH col AS (
 	SELECT a.attrelid AS relid, a.attnum
@@ -1434,8 +1355,6 @@ func (c columnFacts) dependents(ctx context.Context, conn engine.DB) ([]dependen
 	return deps, nil
 }
 
-// undepended refuses a swap when anything else is bound to the column. A rename moves every dependency
-// with the physical attribute, so each dependent silently ends up reading <c>_old.
 func (c columnFacts) undepended(ctx context.Context, conn engine.DB, d engine.Directive) error {
 	deps, err := c.dependents(ctx, conn)
 	if err != nil {
@@ -1451,8 +1370,6 @@ func (c columnFacts) undepended(ctx context.Context, conn engine.DB, d engine.Di
 		namesOf(deps), verb(deps), c.ref(), c.Column, c.ref(), c.Column)
 }
 
-// droppable refuses a DROP COLUMN that PostgreSQL would reject outright, and one that would silently take
-// an object also covering other columns. An auto dependent spanning this column alone goes with it by design.
 func (c columnFacts) droppable(ctx context.Context, conn engine.DB, d engine.Directive) error {
 	deps, err := c.dependents(ctx, conn)
 	if err != nil {
@@ -1498,7 +1415,6 @@ func (c columnFacts) unreferenced(ctx context.Context, conn engine.DB, d engine.
 	return nil
 }
 
-// cursor picks the batching key: the directive's key= or the table's single-column primary key.
 func (x *Expander) cursor(ctx context.Context, conn engine.DB, d engine.Directive, t columnFacts) (*engine.BatchSpec, error) {
 	key, ok := d.Opts["key"]
 	if !ok {
@@ -1518,7 +1434,6 @@ func (x *Expander) cursor(ctx context.Context, conn engine.DB, d engine.Directiv
 	}, nil
 }
 
-// keyed lists the operations whose directive can override the batching key.
 var keyed = map[string]bool{"change-type": true, "backfill": true}
 
 func keyAdvice(op string) string {
@@ -1583,16 +1498,12 @@ func keyKind(ctx context.Context, conn engine.DB, d engine.Directive, t columnFa
 	}
 }
 
-// checkUsing refuses an expression the trigger form cannot carry: another table, a subquery, or a
-// function the catalog reports as VOLATILE.
 func checkUsing(ctx context.Context, conn engine.DB, d engine.Directive, using, table string) error {
 	_, err := checkedExpr(ctx, conn, d, "using="+using, using, table)
 
 	return err
 }
 
-// checkedExpr is the one gate on every raw expression a directive hands to a trigger — a change-type's
-// `using=` and a backfill's `where=` — and returns the tree so the caller can render it as it needs.
 func checkedExpr(ctx context.Context, conn engine.DB, d engine.Directive, label, expr, table string) (*pgquery.Node, error) {
 	res, err := pgquery.Parse("SELECT " + expr)
 	if err != nil {
@@ -1624,9 +1535,6 @@ func checkVolatile(ctx context.Context, conn engine.DB, d engine.Directive, labe
 	return refuse(d, "%s calls the VOLATILE function %s(); the trigger and the backfill would disagree", label, volatile)
 }
 
-// scanExpr walks the whole parse tree of one expression, so a shape the trigger cannot carry is caught
-// wherever it sits rather than only in the handful of node kinds a hand-written walk knows about. It
-// returns every column the expression reads and every function it calls.
 func scanExpr(root *pgquery.Node, table string) ([]string, []string, error) {
 	r := exprRefs{table: table}
 	walkNodes(root.ProtoReflect(), r.visit)
@@ -1637,7 +1545,6 @@ func scanExpr(root *pgquery.Node, table string) ([]string, []string, error) {
 	return r.cols, r.funcs, nil
 }
 
-// walkNodes visits every message of a parse tree, depth first and in field order, until visit stops it.
 func walkNodes(m protoreflect.Message, visit func(protoreflect.Message) bool) bool {
 	if !visit(m) {
 		return false
@@ -1692,8 +1599,6 @@ func (r *exprRefs) visit(m protoreflect.Message) bool {
 	return true
 }
 
-// column records the name the reference reads, and refuses a qualifier that is not the table the trigger
-// runs on: only that row's own columns are in scope inside it.
 func (r *exprRefs) column(ref *pgquery.ColumnRef) bool {
 	var name string
 	for i, f := range ref.GetFields() {
@@ -1709,15 +1614,12 @@ func (r *exprRefs) column(ref *pgquery.ColumnRef) bool {
 	return true
 }
 
-// ExpandUp replaces each directive migration's body with the expansion frozen on the plan or the run,
-// so what executes is byte for byte what the reviewer saw.
+// ExpandUp replaces each directive migration's body with the expansion frozen on the plan or the run.
 func ExpandUp(plans []engine.Plan, exps map[string]Expansion) ([]engine.Plan, error) {
 	return substitute(plans, exps, func(e Expansion) string { return e.UpSQL })
 }
 
-// ExpandDown substitutes each migration's own frozen inverse, taken from the ledger of what the run
-// applied; a migration whose contract phase never ran gets the pre-swap form. A hand-written
-// .down.sql has no expansion and wins untouched.
+// ExpandDown substitutes each migration's own frozen inverse from the ledger; a hand-written .down.sql has no expansion and wins untouched.
 func ExpandDown(plans []engine.Plan, applied []RunMigration) ([]engine.Plan, error) {
 	exps := make(map[string]Expansion, len(applied))
 	for _, m := range applied {
@@ -1754,8 +1656,7 @@ func substitute(plans []engine.Plan, exps map[string]Expansion, body func(Expans
 	return out, nil
 }
 
-// Unretired lists every column the expansions of one run remove, so the ones a change-type had retired
-// stop being reported as a rollback the target still holds.
+// Unretired lists every column the expansions of one run remove, so a retired one stops being reported as a rollback the target holds.
 func Unretired(exps map[string]Expansion) []RetiredColumn {
 	var out []RetiredColumn
 	for _, e := range exps {

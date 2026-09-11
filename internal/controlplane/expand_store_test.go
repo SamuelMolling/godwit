@@ -79,8 +79,6 @@ func TestRunExpansionsAndProgress(t *testing.T) {
 	}
 }
 
-// Progress describes work in flight, so every transition that starts or ends an attempt drops it; a
-// settled run carrying the last statement it happened to report is a leftover, not a record.
 func TestProgressClearedOnEveryTransition(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -204,8 +202,6 @@ func TestSchedulerPlansErrors(t *testing.T) {
 
 const dropAgeOld = "-- godwit: drop-column users.age_old\n"
 
-// A change-type with keep-old records the pre-swap column as the target's rollback; the drop-column that
-// finally removes it has to take that record with it, or the store keeps claiming a column that is gone.
 func TestDropColumnClearsTheRetiredColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -309,7 +305,6 @@ func TestSchedulerRetireAndProgressWarn(t *testing.T) {
 	sched.retire(ctx, stored, testLog)
 }
 
-// failPool refuses every statement, so the scheduler's best-effort bookkeeping takes its warning path.
 type failPool struct{ Pool }
 
 func (failPool) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {

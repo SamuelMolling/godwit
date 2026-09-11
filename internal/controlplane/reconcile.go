@@ -11,25 +11,18 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// ErrDiverged marks a target whose own journal and the control plane's ledger cannot be reconciled
-// without a decision only a person can take.
+// ErrDiverged marks a target whose journal and the ledger cannot be reconciled without a decision only a person can take.
 var ErrDiverged = errors.New("target and ledger disagree")
 
-// Divergence is how a target's journal and the control plane's ledger differ. Adopt is repairable;
-// everything else is a fact about the world that a reconcile must not paper over.
+// Divergence is how a target's journal and the control plane's ledger differ; Adopt is repairable, everything else is not.
 type Divergence struct {
-	// Adopt names what the target records and the ledger does not; reconciling writes these.
-	Adopt []string
-	// Conflicting names what both record, under different content.
+	Adopt       []string
 	Conflicting []string
-	// Unknown names what the target records and the given directory does not carry.
-	Unknown []string
-	// Withdrawn names what the ledger stands on and the target does not record.
-	Withdrawn []string
+	Unknown     []string
+	Withdrawn   []string
 }
 
-// Unreconciled names the migrations a target's journal records that no standing ledger row accounts
-// for. An observation with no history at all reports none: nothing was looked at.
+// Unreconciled names the migrations a target's journal records that no standing ledger row accounts for; an observation with no history reports none.
 func Unreconciled(obs Observation, applied AppliedSet) []string {
 	var out []string
 	for _, a := range obs.Applied {
@@ -83,7 +76,6 @@ func Diverged(obs Observation, applied AppliedSet, migs []engine.Migration) Dive
 	return d
 }
 
-// journalOf keys a target's recorded history by migration id.
 func journalOf(obs Observation) map[string]string {
 	out := make(map[string]string, len(obs.Applied)+len(obs.Repeatables))
 	for _, a := range obs.Applied {
@@ -128,8 +120,7 @@ func NewReconciler(sched *Scheduler) *Reconciler {
 	return &Reconciler{sched: sched}
 }
 
-// Reconcile adopts into run runID every migration target's journal records that the ledger does not,
-// taking each body from migs, and reports what it found.
+// Reconcile adopts into run runID every migration target's journal records that the ledger does not, taking each body from migs.
 func (r *Reconciler) Reconcile(ctx context.Context, runID, target string, migs []engine.Migration, p Provenance) (Divergence, error) {
 	tg, err := r.sched.target(ctx, target)
 	if err != nil {

@@ -103,7 +103,6 @@ type PlanMigration struct {
 	// Stored inverted: a plan written before the field existed keeps counting every hazard rather than none.
 	Skipped bool `json:"skipped,omitempty"`
 
-	// Checkpoint marks the migration that carries the whole schema of everything through Through.
 	Checkpoint bool  `json:"checkpoint,omitempty"`
 	Through    int64 `json:"collapses_through,omitempty"`
 
@@ -173,8 +172,7 @@ func HistoryHash(applied []engine.Applied, reps []engine.Repeatable) string {
 	return sum(b.String())
 }
 
-// Pending returns the migrations the target would run: versions it has not applied, plus repeatables
-// whose content differs from what it last recorded under that name.
+// Pending returns the migrations the target would run: versions it has not applied, plus repeatables whose content differs.
 func Pending(migs []engine.Migration, applied []engine.Applied, reps []engine.Repeatable) ([]engine.Migration, error) {
 	live := map[int64]string{}
 	for _, a := range applied {
@@ -448,14 +446,12 @@ type PlanDiff struct {
 	Path    string
 }
 
-// PathMoved reports whether the target's effective search_path changed since the plan was taken;
-// a plan stored before the path was recorded never moved.
+// PathMoved reports whether the target's effective search_path changed since the plan was taken; one stored before the path was recorded never moved.
 func (p Plan) PathMoved(obs Observation) bool {
 	return p.SearchPath != "" && p.SearchPath != obs.SearchPath
 }
 
-// StaleDiff compares a plan's observation with a fresh one; a repeatable recorded under new content
-// counts as removed and added, because the target no longer holds what the plan was taken against.
+// StaleDiff compares a plan's observation with a fresh one; a repeatable recorded under new content counts as removed and added.
 func StaleDiff(p Plan, obs Observation) PlanDiff {
 	then, now := historyOf(p.Applied, p.Repeatables), historyOf(obs.Applied, obs.Repeatables)
 	var d PlanDiff
@@ -486,7 +482,6 @@ func StaleDiff(p Plan, obs Observation) PlanDiff {
 	return d
 }
 
-// historyOf keys each recorded migration by identity and content, so a changed repeatable is a different entry.
 func historyOf(applied []engine.Applied, reps []engine.Repeatable) map[string]HistoryChange {
 	out := make(map[string]HistoryChange, len(applied)+len(reps))
 	for _, a := range applied {
@@ -516,9 +511,7 @@ func compareChanges(a, b HistoryChange) int {
 	return cmp.Compare(a.Version, b.Version)
 }
 
-// Explained reports whether every change was made by godwit itself: nothing removed except the old content of a
-// re-recorded repeatable, everything added by a run, the live schema exactly what the last run left
-// (baseline is the stored snapshot fingerprint), and the search_path unmoved.
+// Explained reports whether every change since the plan was made by godwit itself; baseline is the stored snapshot fingerprint.
 func (d PlanDiff) Explained(baseline, fingerprint string) bool {
 	return d.Path == "" && baseline == fingerprint && d.attributed()
 }
@@ -547,7 +540,6 @@ func (d PlanDiff) attributed() bool {
 	return true
 }
 
-// rerecorded reports whether a removed entry is a repeatable that came back under new content.
 func (d PlanDiff) rerecorded(c HistoryChange) bool {
 	return c.Repeatable && slices.ContainsFunc(d.Added, func(a HistoryChange) bool {
 		return a.Repeatable && a.Name == c.Name

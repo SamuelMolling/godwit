@@ -22,10 +22,8 @@ type Checkpoint struct {
 	Version int64
 	Name    string
 	Through int64
-	// Covers is what the checkpoint collapses, oldest first.
-	Covers []string
-	// Body is the whole file, directive header included.
-	Body string
+	Covers  []string
+	Body    string
 }
 
 // UpFile is the name the checkpoint is written under.
@@ -33,12 +31,10 @@ func (c Checkpoint) UpFile() string {
 	return engine.MigrationID(c.Version, c.Name, false) + ".up.sql"
 }
 
-// Checkpointer generates a checkpoint by replaying the files on a scratch database and rendering the
-// schema they left behind as DDL.
+// Checkpointer generates a checkpoint by replaying the files on a scratch database and rendering the schema they left as DDL.
 type Checkpointer struct {
-	scratch *Scratch
-	newID   func() string
-	// Expander renders `-- godwit:` directives below the checkpoint against the scratch catalog.
+	scratch  *Scratch
+	newID    func() string
 	Expander *Expander
 }
 
@@ -47,9 +43,7 @@ func NewCheckpointer(scratch *Scratch, newID func() string) *Checkpointer {
 	return &Checkpointer{scratch: scratch, newID: newID, Expander: NewExpander()}
 }
 
-// Generate collapses every version of files at or below at (zero takes the newest) into one checkpoint
-// named name. It replays those versions on a scratch database, renders that schema as DDL, and refuses
-// unless replaying the DDL alone reproduces the same schema fingerprint.
+// Generate collapses every version of files at or below at (zero takes the newest) into one checkpoint named name, and refuses unless replaying its DDL alone reproduces the same fingerprint.
 func (c *Checkpointer) Generate(ctx context.Context, files map[string]string, at int64, name string, now time.Time) (Checkpoint, error) {
 	migs, err := MigrationsFromFiles(files)
 	if err != nil {
@@ -112,8 +106,6 @@ type replayedSchema struct {
 	definition string
 }
 
-// replay applies collapsed on a fresh scratch database, expanding any directive against the catalog the
-// migrations before it left, and returns the schema they produced.
 func (c *Checkpointer) replay(ctx context.Context, factory *scratchFactory, collapsed []engine.Migration) (replayedSchema, func(), error) {
 	name, scratch, err := factory.create(ctx)
 	if err != nil {
@@ -160,9 +152,6 @@ func (c *Checkpointer) applyCollapsed(ctx context.Context, conn engine.DB, colla
 	return schema.Definition, nil
 }
 
-// verify refuses a checkpoint whose DDL does not reproduce the schema the migrations produced; the
-// generated file is only worth what the replay of it is. It applies the body through the executor, the
-// way a run would, so a statement godwit cannot plan is refused here and not on a target.
 func (c *Checkpointer) verify(ctx context.Context, factory *scratchFactory, ddl, want string) error {
 	name, scratch, err := factory.create(ctx)
 	if err != nil {
@@ -194,8 +183,6 @@ func (c *Checkpointer) verify(ctx context.Context, factory *scratchFactory, ddl,
 	return nil
 }
 
-// checkpointVersion stamps the checkpoint now, or one above the newest file when the directory is ahead
-// of the clock, so the checkpoint always sorts last.
 func checkpointVersion(migs []engine.Migration, now time.Time) int64 {
 	v, _ := strconv.ParseInt(now.UTC().Format("20060102150405"), 10, 64) // a formatted timestamp always parses
 	for _, m := range migs {
@@ -244,7 +231,6 @@ func (s *Store) Checkpoints(ctx context.Context, target string) ([]engine.Migrat
 	return out, nil
 }
 
-// checkpointOf rebuilds one migration from a ledger row; a body that does not load is not a checkpoint.
 func checkpointOf(id, body string) (engine.Migration, bool) {
 	migs, err := MigrationsFromFiles(map[string]string{id + ".up.sql": body})
 	if err != nil || len(migs) != 1 || !migs[0].Checkpoint {

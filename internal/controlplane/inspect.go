@@ -18,7 +18,6 @@ type TargetStatus struct {
 	LastRun     *Run
 	Snapshot    *Snapshot
 	OpenDrift   bool
-	// Unreachable is why the target's own journal was not read, when its credential does not resolve.
 	Unreachable string
 }
 
@@ -40,7 +39,7 @@ func (i *Inspector) Status(ctx context.Context, name string) (TargetStatus, erro
 	}
 	st := TargetStatus{
 		Target: name, Provider: provider,
-		Timeouts: TargetTimeouts(config), SearchPath: config[ConfigSearchPath],
+		Timeouts: targetTimeouts(config), SearchPath: config[ConfigSearchPath],
 	}
 	tg, err := i.sched.resolve(ctx, name, provider, config)
 	if err != nil {

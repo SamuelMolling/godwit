@@ -10,7 +10,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
-// beat runs the heartbeat to completion and reports whether it gave the run up.
 func beat(t *testing.T, sched *Scheduler, ctx context.Context, runID string) bool {
 	t.Helper()
 	var lost atomic.Bool
@@ -32,7 +31,6 @@ func TestHeartbeatStopsOnLostLease(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t)
 
-	// No lease exists, so the first beat reports ErrLeaseLost and gives the run up at once.
 	sched := NewScheduler(s, nil, PGEngine{}, Policies(), Config{Holder: "h", TTL: 60 * time.Millisecond}, testLog)
 	if !beat(t, sched, context.Background(), "99999999-9999-9999-9999-999999999999") {
 		t.Fatal("a lease taken by another holder must stop the run")
@@ -71,7 +69,6 @@ func TestHeartbeatRidesOutABlipAndGivesUpOnAnOutage(t *testing.T) {
 		t.Fatal("beats that land must not stop the run")
 	}
 
-	// The store never comes back: the beats retry, and give the run up before its lease expires.
 	pool.Close()
 	if !beat(t, sched, ctx, id) {
 		t.Fatal("a store outage past the lease must stop the run")
@@ -93,7 +90,6 @@ func TestExecuteStopsWhenTheLeaseIsGone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Nothing holds a lease for this run, so the first beat reports it lost while the run is still going.
 	sched.execute(ctx, run)
 
 	after, err := s.Run(ctx, id)

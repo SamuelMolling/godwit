@@ -25,8 +25,7 @@ var ErrMigrationFiles = errors.New("migration files failed to replay")
 // ErrValidationDisabled marks a diff against the committed files on a service started with validation off.
 var ErrValidationDisabled = errors.New("diffing against the committed files needs validation, which is disabled on this service")
 
-// ErrRepeatablesUnknown marks a diff whose request carried no migration files while the target records
-// repeatable migrations, so the objects those files build cannot be told from objects nothing manages.
+// ErrRepeatablesUnknown marks a diff whose request carried no migration files while the target records repeatable migrations.
 var ErrRepeatablesUnknown = errors.New("target records repeatable migrations and the request carried no migration files")
 
 // ErrRepeatableSchema marks a repeatable migration that does not build on the desired schema.
@@ -56,18 +55,14 @@ type HistoryReplayer interface {
 
 // SchemaDiff is the migration from a target's live schema to a desired one, and back.
 type SchemaDiff struct {
-	Observed Observation
-	UpSQL    string
-	DownSQL  string
-	Drift    []string
-	// Retained names the retired columns whose drop was taken out of UpSQL.
-	Retained []string
-	// RepeatableObjects names what the request's repeatable migrations build on the desired schema.
+	Observed          Observation
+	UpSQL             string
+	DownSQL           string
+	Drift             []string
+	Retained          []string
 	RepeatableObjects []string
 }
 
-// keepRetired drops the statements that would remove a column a change-type kept as its rollback; the
-// ORM never knew about it, so every diff would otherwise propose the same drop again.
 func keepRetired(sql string, retired []RetiredColumn) (string, []string) {
 	if sql == "" || len(retired) == 0 {
 		return sql, nil
@@ -96,8 +91,6 @@ func dropsRetired(line string, retired []RetiredColumn) (RetiredColumn, bool) {
 	return RetiredColumn{}, false
 }
 
-// mentions matches a reference however the generator quoted it: pg-schema-diff always quotes, godwit's
-// own recipes only where PostgreSQL requires it.
 func mentions(line string, parts ...string) bool {
 	prefix := ""
 	if n := strings.LastIndex(parts[len(parts)-1], " "); n >= 0 {
@@ -196,8 +189,6 @@ func (d *Differ) Diff(ctx context.Context, target, ddl string, base DiffBase, fi
 	return out, nil
 }
 
-// filesBase builds the schema the committed files claim to produce: a scratch database carrying the
-// target's recorded history with the files it has not run yet replayed on top.
 func (d *Differ) filesBase(ctx context.Context, factory *scratchFactory, target, searchPath string, files map[string]string) (*sql.DB, func(), error) {
 	if d.history == nil {
 		return nil, nil, ErrValidationDisabled
@@ -229,8 +220,6 @@ func (d *Differ) filesBase(ctx context.Context, factory *scratchFactory, target,
 	return scratch.ConnPool, done, nil
 }
 
-// repeatablesIn loads the R__ pairs of a request, in the order a run applies them; the versioned files are
-// left alone so a directory a run would refuse still diffs.
 func repeatablesIn(files map[string]string) ([]engine.Migration, error) {
 	sub := map[string]string{}
 	for name, body := range files {
@@ -258,8 +247,6 @@ func recordedRepeatables(reps []engine.Repeatable) string {
 	return strings.Join(names, ", ")
 }
 
-// buildRepeatables applies the request's repeatable migrations on the desired schema, so the objects they
-// declare are on both sides of the comparison, and names the objects that appeared.
 func buildRepeatables(ctx context.Context, db *sql.DB, reps []engine.Migration) ([]string, error) {
 	if len(reps) == 0 {
 		return nil, nil

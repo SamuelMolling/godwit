@@ -22,12 +22,9 @@ type RunMigration struct {
 	Migration  string
 	AppliedAt  time.Time
 	RevertedBy string
-	// Held marks a migration whose contract phase never ran: applied, but not recorded on the target.
-	Held bool
-	// Adopted marks a migration the run found already recorded on the target instead of applying it.
-	Adopted bool
-	// Expansion is what godwit generated for the migration's directives, or nil when it had none.
-	Expansion *Expansion
+	Held       bool
+	Adopted    bool
+	Expansion  *Expansion
 }
 
 // RecordApplied adds a migration to a run's ledger, or updates it when the contract phase completes it.
@@ -47,8 +44,7 @@ func (s *Store) RecordApplied(ctx context.Context, runID, migration string, held
 	return nil
 }
 
-// AdoptApplied records a migration the run found the target already holding, so the ledger catches up
-// with the journal instead of leaving it invisible. It reports whether it wrote a row.
+// AdoptApplied records a migration the run found the target already holding, and reports whether it wrote a row.
 func (s *Store) AdoptApplied(ctx context.Context, runID, migration string) (bool, error) {
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO cp_run_applied (run_id, migration, seq, adopted)
@@ -98,8 +94,7 @@ type RevertPlan struct {
 	Run     Run
 	Applied []RunMigration
 	Plans   []engine.Plan
-	// Newer marks a run another one already stands on top of: reverting it takes a force.
-	Newer bool
+	Newer   bool
 }
 
 // Drops lists every table and column the plan would remove, keyed by migration.
@@ -107,8 +102,7 @@ func (r RevertPlan) Drops() map[string][]engine.Drop {
 	return engine.PlanDrops(r.Plans)
 }
 
-// PlanRevert builds the plans that undo run id: the down side of every migration its ledger still
-// holds, in reverse order of application, each expanded from the inverse frozen for it.
+// PlanRevert builds the plans that undo run id: the down side of every migration its ledger still holds, in reverse order of application.
 func (s *Store) PlanRevert(ctx context.Context, id string) (RevertPlan, error) {
 	run, err := s.Run(ctx, id)
 	if err != nil {
@@ -121,7 +115,6 @@ func (s *Store) PlanRevert(ctx context.Context, id string) (RevertPlan, error) {
 	if err != nil {
 		return RevertPlan{}, err
 	}
-	// An adopted row is what the run found, not what it applied, and a revert undoes what it applied.
 	standing := make([]RunMigration, 0, len(applied))
 	for _, m := range applied {
 		if m.RevertedBy == "" && !m.Adopted {
@@ -157,10 +150,6 @@ func (s *Store) PlanRevert(ctx context.Context, id string) (RevertPlan, error) {
 	return RevertPlan{Run: run, Applied: standing, Plans: plans, Newer: newer}, nil
 }
 
-// checkpointBar refuses a revert that would reach at or below a checkpoint the target holds. Below it
-// there is no history left to undo: the versions it collapses were recorded without running, their
-// inverses were written against a state the target never passed through, and the replay rebuilds them
-// from the checkpoint's body, which a revert cannot edit.
 func (s *Store) checkpointBar(ctx context.Context, target string, standing []RunMigration) error {
 	cps, err := s.Checkpoints(ctx, target)
 	if err != nil {
@@ -191,7 +180,6 @@ func versionOf(id string) (int64, bool) {
 	return v, err == nil
 }
 
-// filesOf narrows a run's submitted files to the up/down pair of each migration it applied.
 func filesOf(files map[string]string, applied []RunMigration) (map[string]string, error) {
 	out := make(map[string]string, 2*len(applied))
 	for _, m := range applied {

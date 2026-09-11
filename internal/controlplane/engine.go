@@ -14,15 +14,13 @@ import (
 
 // ApplyRequest is one run's worth of plans plus the effective execution options.
 type ApplyRequest struct {
-	RunID  string
-	Target string
-	DSN    string
-	Plans  []engine.Plan
-	Opts   engine.Options
-	// Progress receives every statement event; nil drops them.
+	RunID    string
+	Target   string
+	DSN      string
+	Plans    []engine.Plan
+	Opts     engine.Options
 	Progress func(engine.StatementEvent)
-	// Record receives each plan's outcome as it completes; nil drops them.
-	Record Recorder
+	Record   Recorder
 }
 
 // Engine applies plans to a target database, marks migrations applied and inspects its schema and journal.

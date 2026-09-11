@@ -63,7 +63,6 @@ func TestFoldStatementsRefusesAnUnparseableBody(t *testing.T) {
 	}
 }
 
-// Everything the fold cannot reproduce as a table constraint is left exactly as the generator wrote it.
 func TestFoldStatementsLeavesWhatItCannotReproduce(t *testing.T) {
 	t.Parallel()
 	for name, ddl := range map[string]string{

@@ -16,8 +16,7 @@ const (
 	ConfigIgnoreAdopted    = "ignore_adopted_tables"
 )
 
-// SnapshotScopeOf reads the target's ignore_adopted_tables setting; only "false" keeps the adopted tables.
-func SnapshotScopeOf(config map[string]string) engine.SnapshotScope {
+func snapshotScopeOf(config map[string]string) engine.SnapshotScope {
 	if config[ConfigIgnoreAdopted] == "false" {
 		return engine.KeepAdopted
 	}
@@ -31,8 +30,7 @@ type Timeouts struct {
 	Statement string
 }
 
-// TargetTimeouts extracts the timeouts stored in a target's config.
-func TargetTimeouts(config map[string]string) Timeouts {
+func targetTimeouts(config map[string]string) Timeouts {
 	return Timeouts{Lock: config[ConfigLockTimeout], Statement: config[ConfigStatementTimeout]}
 }
 

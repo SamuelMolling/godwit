@@ -47,7 +47,6 @@ func TestAGitHubRunIsClaimedOnceForEachStateItReaches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Queued is not news.
 	got, err := s.ClaimGitHubReports(ctx, time.Minute, 10)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("claimed %d before the run settled, %v", len(got), err)
@@ -69,7 +68,6 @@ func TestAGitHubRunIsClaimedOnceForEachStateItReaches(t *testing.T) {
 		t.Fatalf("the same state was claimed twice: %+v, %v", got, err)
 	}
 
-	// The contract phase is a new state, so it is news again.
 	if err := s.Finish(ctx, runOne, StateSucceeded, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +76,6 @@ func TestAGitHubRunIsClaimedOnceForEachStateItReaches(t *testing.T) {
 	}
 }
 
-// A claim held by a replica that died is taken again once its lease lapses; one held by a live replica
-// is not, which is what keeps two replicas from reporting the same run at once.
 func TestAClaimIsHeldForItsLeaseAndNoLonger(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -102,7 +98,6 @@ func TestAClaimIsHeldForItsLeaseAndNoLonger(t *testing.T) {
 	}
 }
 
-// Two replicas claiming at once: the row is locked, so exactly one of them gets it.
 func TestConcurrentClaimantsGetTheRunOnlyOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -155,8 +150,6 @@ func TestABindingIsReplacedWhenASecondCommandTakesTheRunOver(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// godwit confirm opens its own check and takes the binding over; the state it reported is cleared,
-	// so the phase it releases is reported against the new check.
 	taken := githubRun(runOne)
 	taken.Command, taken.CheckRun = "confirm", 92
 	if err := s.RecordGitHubRun(ctx, taken); err != nil {
@@ -220,7 +213,6 @@ func TestABindingIsSweptOnlyOnceItIsReported(t *testing.T) {
 	}
 }
 
-// A row that is not the shape the scan expects has to fail loudly rather than come back half read.
 func TestAGitHubRunRowThatWillNotScan(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

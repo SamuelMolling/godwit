@@ -67,7 +67,6 @@ func TestListAuditRowError(t *testing.T) {
 	}
 }
 
-// A read token used to be able to pass int32 max and materialise a whole table into one response.
 func TestPageSizeClamps(t *testing.T) {
 	t.Parallel()
 

@@ -47,8 +47,6 @@ func TestExpandAssertBecomesOneCheckedStatement(t *testing.T) {
 	}
 }
 
-// An assertion produces no contract block, so it may sit in a migration whose own SQL is destructive:
-// that is the precondition shape, and it runs before the statement it guards.
 func TestExpandAssertGuardsADestructiveStatement(t *testing.T) {
 	t.Parallel()
 	conn := newScratch(t, ordersDDL)
@@ -69,7 +67,6 @@ func TestExpandAssertGuardsADestructiveStatement(t *testing.T) {
 	}
 }
 
-// A directive that does produce a contract block still refuses the destructive statement beside it.
 func TestExpandAssertBesideChangeTypeKeepsTheDestructiveRefusal(t *testing.T) {
 	t.Parallel()
 	conn := newScratch(t, usersDDL)
@@ -131,7 +128,6 @@ func TestExpandAssertRefusals(t *testing.T) {
 	}
 }
 
-// The comparison is not in the statement, so the expansion hash has to carry it beside the SQL.
 func TestExpandAssertHashCoversTheComparison(t *testing.T) {
 	t.Parallel()
 	base := Expansion{

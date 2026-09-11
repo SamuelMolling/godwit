@@ -45,7 +45,6 @@ func (ExpandContract) Split(plans []engine.Plan) ([]engine.Plan, []engine.Plan) 
 	return plans, nil
 }
 
-// contractFrom is the first statement of p belonging to the contract phase, or -1 when p has none.
 func contractFrom(p engine.Plan) int {
 	for i, st := range p.Statements {
 		if st.Phase == engine.PhaseContract {
@@ -71,8 +70,7 @@ func destructive(p engine.Plan) bool {
 	return false
 }
 
-// HeldStatements counts what the contract phase still has to run after a split.
-func HeldStatements(expand, contract []engine.Plan) int {
+func heldStatements(expand, contract []engine.Plan) int {
 	n := 0
 	for _, p := range contract {
 		n += len(p.Statements)
