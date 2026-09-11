@@ -10,8 +10,7 @@ import (
 	"strings"
 )
 
-// Rails is a Source over a Rails application's committed db/structure.sql, stripped of the
-// session settings, psql meta-commands and schema_migrations rows pg_dump leaves in it.
+// Rails is a Source over a Rails application's committed db/structure.sql, stripped of the session settings, meta-commands and schema_migrations rows pg_dump leaves in it.
 type Rails struct {
 	Path string
 }

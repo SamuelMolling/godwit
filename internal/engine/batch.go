@@ -20,8 +20,7 @@ const (
 	BatchKeyText = "text"
 )
 
-// BatchSpec turns one statement into a resumable loop: the statement takes the cursor as $1, touches
-// at most Size rows and returns the key of every row it touched.
+// BatchSpec turns one statement into a resumable loop: it takes the cursor as $1, touches at most Size rows and returns the key of every row it touched.
 type BatchSpec struct {
 	Key      string
 	KeyKind  string
@@ -127,8 +126,7 @@ func scanKey(rows pgx.Rows, kind string) (batchCursor, error) {
 	return next, nil
 }
 
-// scanBatch lifts the cursor to the highest returned key; a key the database orders higher than the
-// pick was in this batch too, so picking low repeats work but never skips it.
+// scanBatch lifts the cursor to the highest returned key, so picking low repeats work but never skips it.
 func scanBatch(rows pgx.Rows, cursor batchCursor) (int, batchCursor, error) {
 	defer rows.Close()
 

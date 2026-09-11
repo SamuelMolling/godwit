@@ -50,7 +50,6 @@ func TestSnapshotAndDiff(t *testing.T) {
 		t.Fatalf("fingerprint unstable: %s vs %s (err %v)", fp, again.Fingerprint, err)
 	}
 
-	// A manual change flips the fingerprint and shows up in the diff.
 	if _, err := conn.Exec(ctx, `ALTER TABLE users ADD COLUMN sneaky text`); err != nil {
 		t.Fatal(err)
 	}

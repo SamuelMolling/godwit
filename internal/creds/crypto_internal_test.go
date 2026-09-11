@@ -9,7 +9,7 @@ import (
 
 func TestSealNonceReaderFails(t *testing.T) {
 	orig := randReader
-	randReader = bytes.NewReader(nil) // EOF
+	randReader = bytes.NewReader(nil)
 	defer func() { randReader = orig }()
 
 	if _, err := sealGCM(bytes.Repeat([]byte("k"), 32), nil, "x"); err == nil {

@@ -38,7 +38,6 @@ func TestCheckRepeatableHazards(t *testing.T) {
 	}
 }
 
-// E003 freezes merged versioned files; a repeatable is meant to be edited in place.
 func TestCheckRepeatableEditedAfterMergeIsNotE003(t *testing.T) {
 	t.Parallel()
 

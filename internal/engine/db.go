@@ -15,8 +15,7 @@ type DB interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-// Session is a DB that remembers the godwit schema has been bootstrapped on it, so a caller running many
-// Executors over one connection pays for it once; it is no more concurrency-safe than that connection.
+// Session is a DB that remembers the godwit schema has been bootstrapped on it; it is no more concurrency-safe than the connection under it.
 type Session struct {
 	DB
 	ready bool

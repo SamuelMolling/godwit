@@ -198,7 +198,6 @@ var snapshotQueries = []struct {
 		    WHERE d.classid = 'pg_trigger'::regclass AND d.objid = t.oid AND d.deptype = 'e')`},
 }
 
-// routineQuery reads pg_proc for one prokind; the body is an md5 because a snapshot line holds one object.
 func routineQuery(prokind, result string) string {
 	return `
 		SELECT n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')',
@@ -234,11 +233,11 @@ func Snapshot(ctx context.Context, db DB, scope SnapshotScope) (Schema, error) {
 		excluded[o] = true
 	}
 	if scope == IgnoreAdopted {
-		if out.Ignored, err = DetectAdopted(ctx, db); err != nil {
+		if out.Ignored, err = detectAdopted(ctx, db); err != nil {
 			return Schema{}, err
 		}
 		for _, a := range out.Ignored {
-			excluded[a.Qualified()] = true
+			excluded[a.qualified()] = true
 		}
 	}
 
@@ -297,8 +296,8 @@ func extensionOwned(ctx context.Context, db DB) ([]string, error) {
 	return out, nil
 }
 
-// InvalidIndexes lists the indexes a failed CONCURRENTLY build left behind, schema-qualified and sorted.
-func InvalidIndexes(ctx context.Context, db DB) ([]string, error) {
+// invalidIndexes lists the indexes a failed CONCURRENTLY build left behind, schema-qualified and sorted.
+func invalidIndexes(ctx context.Context, db DB) ([]string, error) {
 	rows, err := db.Query(ctx, `
 		SELECT n.nspname || '.' || c.relname
 		FROM pg_index i

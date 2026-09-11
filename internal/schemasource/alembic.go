@@ -12,8 +12,7 @@ import (
 // DefaultAlembicBin is the command line used to run the Alembic CLI when none is configured.
 const DefaultAlembicBin = "alembic"
 
-// Alembic is a Source over an Alembic project: the SQL of every revision from base to head,
-// as `alembic upgrade head --sql` renders it in offline mode. No database is contacted.
+// Alembic is a Source over an Alembic project: the SQL of every revision from base to head, as `alembic upgrade head --sql` renders it offline.
 type Alembic struct {
 	Config string
 	Bin    string

@@ -81,9 +81,7 @@ func TestVaultKubernetesLoginAndTemplate(t *testing.T) {
 	}
 }
 
-// The error crosses the API, lands in cp_runs.error and is posted to Slack, so it must name only the
-// template's own keys. It used to return the partially rendered template from the first unresolved
-// marker to the end, which put every field substituted after it — the password included — in the message.
+// It used to return the rendered template from the first unresolved marker on, which put every field substituted after it — the password included — in the message.
 func TestVaultTemplateErrorCarriesNoSecret(t *testing.T) {
 	t.Parallel()
 
@@ -106,7 +104,6 @@ func TestVaultTemplateErrorCarriesNoSecret(t *testing.T) {
 	}
 }
 
-// A field whose value contains a marker is substituted once and never rescanned.
 func TestVaultRenderDoesNotRescan(t *testing.T) {
 	t.Parallel()
 

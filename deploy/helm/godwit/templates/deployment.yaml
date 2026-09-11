@@ -220,8 +220,7 @@ spec:
         - name: github-app-key
           secret:
             secretName: {{ .Values.existingSecret.name }}
-            # Group-readable, not owner-only: a secret volume is owned by root and the group is
-            # fsGroup, and the container runs as podSecurityContext.runAsUser.
+            # Group-readable: the volume is owned by root:fsGroup and the container is not root.
             defaultMode: 0440
             items:
               - key: {{ .Values.existingSecret.githubPrivateKey }}

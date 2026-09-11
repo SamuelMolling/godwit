@@ -1,6 +1,4 @@
-# The GitHub App switched on: two listeners, two Services, two hostnames. The API keeps its internal
-# route; the webhook Service is the only thing the public Gateway is pointed at, and it carries no
-# API port, so the public hostname cannot reach the API however the route's port is written.
+# The GitHub App switched on: two listeners, two Services, two hostnames.
 replicaCount: 2
 
 image:
@@ -24,11 +22,9 @@ serve:
       annotations:
         cloud.google.com/neg: '{"ingress": true}'
 
-# The App's check runs link back here, so it is what makes `details_url` point at anything.
 notifications:
   publicUrl: https://godwit.example.internal
 
-# The API's route: internal hostname, internal Gateway, backed by the API Service.
 httpRoute:
   enabled: true
   parentRefs:
@@ -41,9 +37,7 @@ httpRoute:
 serviceMonitor:
   enabled: true
 
-# The webhook's route is not the API's: another hostname on another Gateway, one exact path, and a
-# backendRef naming the webhook Service. The chart does not model it because the Gateway, the
-# certificate and the listener are the platform's.
+# The webhook's route is not the API's: another hostname, another Gateway, the webhook Service.
 extraObjects:
   - |
     apiVersion: gateway.networking.k8s.io/v1

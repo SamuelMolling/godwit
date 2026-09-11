@@ -124,7 +124,6 @@ func single(out map[objectKey]*object, kind, ref, name, body string) {
 	o.put("", name, 0, []string{body})
 }
 
-// routine keys on the argument list so overloads differ, and reads returns last: it is the value with spaces.
 func routine(out map[objectKey]*object, kind, rest string) {
 	ident, body, _ := strings.Cut(rest, ") ")
 	head, args, _ := strings.Cut(ident, "(")

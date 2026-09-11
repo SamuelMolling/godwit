@@ -20,21 +20,15 @@ const ProviderGCPKMS = "gcpkms"
 // DefaultGCPKMSEndpoint is the Cloud KMS REST base URL.
 const DefaultGCPKMSEndpoint = "https://cloudkms.googleapis.com"
 
-// GCPKMS seals a fresh data key per value with a Cloud KMS key and stores the wrapped data key beside
-// the ciphertext: KMS is called to unwrap 32 bytes, and never sees the DSN.
+// GCPKMS wraps a per-value data key with a Cloud KMS key, so KMS unwraps 32 bytes and never sees the DSN.
 type GCPKMS struct {
-	// KeyName is the CryptoKey resource name, projects/…/locations/…/keyRings/…/cryptoKeys/…. Key
-	// versions are not named: Cloud KMS picks the primary to encrypt and reads the version out of the
-	// ciphertext to decrypt, which is what makes a KMS key rotation invisible here.
 	KeyName  string
 	Endpoint string
-	// Token returns the OAuth2 access token the calls are made with.
-	Token  func(ctx context.Context) (string, error)
-	Client *http.Client
+	Token    func(ctx context.Context) (string, error)
+	Client   *http.Client
 }
 
-// GCPKMSFromEnv builds the provider from GODWIT_KMS_KEY, GODWIT_KMS_ENDPOINT, GOOGLE_OAUTH_ACCESS_TOKEN
-// and GCE_METADATA_HOST.
+// GCPKMSFromEnv builds the provider from GODWIT_KMS_KEY, GODWIT_KMS_ENDPOINT, GOOGLE_OAUTH_ACCESS_TOKEN and GCE_METADATA_HOST.
 func GCPKMSFromEnv() (GCPKMS, error) {
 	name := os.Getenv("GODWIT_KMS_KEY")
 	if name == "" {
@@ -51,8 +45,7 @@ func GCPKMSFromEnv() (GCPKMS, error) {
 	}, nil
 }
 
-// MetadataToken returns a token source: the static token when one is given, the workload's own token
-// from the GCE metadata server otherwise.
+// MetadataToken returns the static token when one is given, and the workload's own token from the GCE metadata server otherwise.
 func MetadataToken(static, host string, client *http.Client) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
 		if static != "" {
@@ -112,8 +105,7 @@ func (p GCPKMS) Seal(ctx context.Context, aad []byte, plaintext string) ([]byte,
 	return joinBlob(wrapped, inner)
 }
 
-// Open implements KeyProvider. The key the header names is the one asked to unwrap, so a value sealed
-// under a key the deployment has since moved off still opens while IAM still grants that key.
+// Open implements KeyProvider: the key the header names is the one asked to unwrap, so a value sealed under a key the deployment has moved off still opens.
 func (p GCPKMS) Open(ctx context.Context, aad []byte, keyID string, blob []byte) (string, error) {
 	wrapped, inner, err := splitBlob(blob)
 	if err != nil {

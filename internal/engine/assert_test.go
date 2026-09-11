@@ -303,7 +303,6 @@ func TestAssertBooleanCondition(t *testing.T) {
 	wantErr(t, err, "returned false, want = true")
 }
 
-// A read-only transaction is the guard the offline check cannot be: volatility lives in the catalog.
 func TestAssertRefusesAWritingFunctionAtRuntime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -321,7 +320,6 @@ func TestAssertRefusesAWritingFunctionAtRuntime(t *testing.T) {
 	}
 }
 
-// The probe runs the query for its shape and stops before the comparison: the scratch has the schema, not the rows.
 func TestAssertProbeRunsWithoutEnforcing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -337,7 +335,6 @@ func TestAssertProbeRunsWithoutEnforcing(t *testing.T) {
 	wantErr(t, err, "missing_table")
 }
 
-// A resume walks past the assertion again: a condition that held before the crash is not one that holds now.
 func TestAssertIsRecheckedOnResume(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -383,9 +380,6 @@ func TestAssertResumesWhenItStillHolds(t *testing.T) {
 	}
 }
 
-// TestAssertIsPastAskingOnceTheContractPhaseBegan resumes a run that died between two contract statements.
-// An expansion's own assertion names the columns its swap renames, so re-asking there would fail on a
-// schema that has already moved; the resume runs what is left instead.
 func TestAssertIsPastAskingOnceTheContractPhaseBegan(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

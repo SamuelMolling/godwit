@@ -9,16 +9,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// AdoptedTable is the bookkeeping table one other migration tool keeps its own state in.
-type AdoptedTable struct {
+type adoptedTable struct {
 	Tool     string
 	Name     string
 	Required []string
 	Known    []string
 }
 
-// AdoptedTables is the closed list of bookkeeping tables godwit recognises, one per tool it can be adopted from.
-var AdoptedTables = []AdoptedTable{
+var adoptedTables = []adoptedTable{
 	{
 		Tool: "golang-migrate", Name: "schema_migrations",
 		Required: []string{"version", "dirty"}, Known: []string{"version", "dirty"},
@@ -80,20 +78,18 @@ type Adopted struct {
 	Table  string `json:"table"`
 }
 
-// Qualified is the table as the schema snapshot names it.
-func (a Adopted) Qualified() string {
+func (a Adopted) qualified() string {
 	return a.Schema + "." + a.Table
 }
 
 // String names the table and what left it behind, as reports render it.
 func (a Adopted) String() string {
-	return a.Qualified() + " (" + a.Tool + ")"
+	return a.qualified() + " (" + a.Tool + ")"
 }
 
-// DetectAdopted lists the bookkeeping tables of other migration tools this database carries, matched by columns.
-func DetectAdopted(ctx context.Context, db DB) ([]Adopted, error) {
-	names := make([]string, 0, len(AdoptedTables))
-	for _, t := range AdoptedTables {
+func detectAdopted(ctx context.Context, db DB) ([]Adopted, error) {
+	names := make([]string, 0, len(adoptedTables))
+	for _, t := range adoptedTables {
 		if !slices.Contains(names, t.Name) {
 			names = append(names, t.Name)
 		}
@@ -120,13 +116,13 @@ func DetectAdopted(ctx context.Context, db DB) ([]Adopted, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("read adopted tables: %w", err)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Qualified() < out[j].Qualified() })
+	sort.Slice(out, func(i, j int) bool { return out[i].qualified() < out[j].qualified() })
 
 	return out, nil
 }
 
 func matchAdopted(table string, columns []string) (string, bool) {
-	for _, t := range AdoptedTables {
+	for _, t := range adoptedTables {
 		if t.Name == table && covers(t.Known, columns) && covers(columns, t.Required) {
 			return t.Tool, true
 		}

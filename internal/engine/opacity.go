@@ -81,7 +81,6 @@ func plainColumn(col *pgquery.ColumnDef) bool {
 	return true
 }
 
-// snapshotFunctionOptions are the clauses a snapshot records; SET, LEAKPROOF, COST and SUPPORT are not.
 var snapshotFunctionOptions = []string{"as", "language", "volatility", "strict", "security", "parallel"}
 
 func plainFunction(c *pgquery.CreateFunctionStmt) bool {

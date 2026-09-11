@@ -15,9 +15,7 @@ const ProviderEnv = "env"
 
 const masterKeyBytes = 32
 
-// KeyringFromEnv builds the keyring GODWIT_KEY_PROVIDER selects: `env` (the default), `gcpkms` or
-// `vault-transit`. With no provider named and no GODWIT_MASTER_KEY it returns an empty keyring, and
-// the service runs without a key.
+// KeyringFromEnv builds the keyring GODWIT_KEY_PROVIDER selects; with neither that nor GODWIT_MASTER_KEY it returns an empty keyring and runs without a key.
 func KeyringFromEnv() (Keyring, error) {
 	name := os.Getenv("GODWIT_KEY_PROVIDER")
 	switch name {
@@ -55,8 +53,7 @@ func KeyringFromEnv() (Keyring, error) {
 	}
 }
 
-// Env seals with AES-256-GCM under a key read from the process environment. Further keys are accepted
-// for opening only, so a new key can be in force before every value sealed under the old one is gone.
+// Env seals with AES-256-GCM under a key from the process environment; further keys open only, so a new key can be in force before the old one's values are gone.
 type Env struct {
 	keys []envKey
 }
@@ -122,8 +119,7 @@ func previousKeys() []string {
 // Name implements KeyProvider.
 func (Env) Name() string { return ProviderEnv }
 
-// KeyID implements KeyProvider: the first four bytes of the key's SHA-256, which names the key
-// without revealing it.
+// KeyID implements KeyProvider: the first four bytes of the key's SHA-256, which names the key without revealing it.
 func (p Env) KeyID() string { return p.keys[0].id }
 
 // Seal implements KeyProvider.
@@ -131,8 +127,7 @@ func (p Env) Seal(_ context.Context, aad []byte, plaintext string) ([]byte, erro
 	return sealGCM(p.keys[0].key, aad, plaintext)
 }
 
-// Open implements KeyProvider. An empty keyID is a value sealed before the header existed: every key
-// is tried, and GCM authentication decides.
+// Open implements KeyProvider. An empty keyID is a value sealed before the header existed: every key is tried, and GCM authentication decides.
 func (p Env) Open(_ context.Context, aad []byte, keyID string, blob []byte) (string, error) {
 	var last error
 	for _, k := range p.keys {

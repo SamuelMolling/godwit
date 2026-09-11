@@ -48,7 +48,6 @@ func TestApplyRefusesUnexpandedDirectives(t *testing.T) {
 	}
 }
 
-// A migration the target already recorded is skipped whatever its body: its own run is what expanded it.
 func TestApplySkipsRecordedDirectiveMigration(t *testing.T) {
 	t.Parallel()
 	mock, exec := newMockExec(t)
@@ -92,8 +91,6 @@ func TestDownHeldRunErrors(t *testing.T) {
 	}
 }
 
-// heldDown drives a down over a migration with no history row but an unfinished up run, which is the
-// state a run parked between its phases leaves behind.
 func heldDown(t *testing.T, mock pgxmock.PgxConnIface) {
 	t.Helper()
 	expectLock(mock)

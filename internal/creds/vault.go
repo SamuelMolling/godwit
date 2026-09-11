@@ -42,8 +42,7 @@ type VaultStore struct {
 	TokenEnv string
 }
 
-// VaultAudience is what every Vault Kubernetes auth role godwit logs in at must require: a deployment
-// is one identity, so this is a constant rather than a property of a store.
+// VaultAudience is what every Vault Kubernetes auth role godwit logs in at must require: a deployment is one identity, not a property of a store.
 const VaultAudience = "godwit"
 
 // VaultTokenPath is where the deployment projects the token minted for VaultAudience.
@@ -166,9 +165,7 @@ func (p Vault) call(ctx context.Context, method, path, token string, body, out a
 
 var marker = regexp.MustCompile(`{{([^{}]*)}}`)
 
-// render substitutes the secret's fields into the template in one pass, so a value that itself contains
-// a marker is never re-substituted, and names only the template's own keys on failure — the error travels
-// to the caller, to cp_runs.error and to notifications, and must carry nothing the secret held.
+// render names only the template's own keys on failure: the error travels to cp_runs.error and to notifications, and must carry nothing the secret held.
 func render(template string, data map[string]any) (string, error) {
 	if template == "" {
 		template = "{{dsn}}"

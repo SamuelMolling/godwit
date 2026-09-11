@@ -33,17 +33,14 @@ type TSStore interface {
 
 // Slack posts one Block Kit message per run (or drift detection) and keeps it current.
 type Slack struct {
-	Token   string
-	Channel string
-	// Mode is thread (root message plus threaded replies, root kept current) or edit (one message rewritten).
-	Mode    string
-	Client  *http.Client
-	Store   TSStore
-	BaseURL string
-	// PublicURL, when set, adds an "Open run" button pointing at the UI.
+	Token     string
+	Channel   string
+	Mode      string
+	Client    *http.Client
+	Store     TSStore
+	BaseURL   string
 	PublicURL string
-	// Sleep is the retry backoff wait; nil means a context-aware time.Sleep.
-	Sleep func(ctx context.Context, d time.Duration) error
+	Sleep     func(ctx context.Context, d time.Duration) error
 }
 
 var slackBackoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}

@@ -34,8 +34,6 @@ func projectedTokenVault(t *testing.T, presented *[]string) *httptest.Server {
 	return srv
 }
 
-// The kubelet rewrites a projected token long before it expires and the one it replaced stops working,
-// so the file is read at every login rather than once at start-up.
 func TestAStoreLogsInWithTheProjectedTokenAndARotatedOneIsPickedUp(t *testing.T) {
 	t.Parallel()
 

@@ -66,8 +66,6 @@ func newLintCmd() *cobra.Command {
 	return cmd
 }
 
-// schemaCheck renders the declared schema source and hands lint a Diff that replays the committed files
-// on a scratch database; without a server the check degrades to W002 rather than running the ORM at all.
 func schemaCheck(cmd *cobra.Command, flags *clientFlags, target string, off bool) (*lint.SchemaCheck, error) {
 	declared := configFrom(cmd.Context()).SchemaSource
 	if off || declared == nil {
@@ -103,8 +101,6 @@ func schemaCheck(cmd *cobra.Command, flags *clientFlags, target string, off bool
 	return check, nil
 }
 
-// configSource is sourceFlags.fromConfig for a command that registers no source flag, so every binary
-// falls back to the same environment variable godwit diff defaults it to.
 func configSource(declared config.SchemaSource, cmd *cobra.Command) (schemasource.Source, string, error) {
 	src := &sourceFlags{
 		prismaBin:  envOr("GODWIT_PRISMA_BIN", schemasource.DefaultPrismaBin),

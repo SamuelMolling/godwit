@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# What `helm lint` cannot say: that the Secret is the only home of what it carries, that the GitHub
-# App is off unless it is asked for, and that asking for it opens one listener on one Service of its own.
+# What `helm lint` cannot say about a render; every assertion below carries its own failure message.
 chart="${1:-deploy/helm/godwit}"
 
 fail() {
@@ -28,7 +27,6 @@ absent "${off}" 'name: webhook' 'the default render carries a webhook port or Se
 absent "${off}" 'GODWIT_GITHUB_' 'the default render carries GitHub App environment'
 absent "${off}" 'github-app-key' 'the default render mounts the App private key'
 
-# One home: the Secret reaches the process whole, and nothing in the chart names an entry of it.
 present "${off}" 'envFrom:' 'the default render does not source the Secret'
 present "${off}" '^ +- secretRef:$' 'the Secret does not reach the process as a whole'
 absent "${off}" 'secretKeyRef' 'a value names an entry of the Secret the operator already named there'
@@ -36,8 +34,6 @@ full="$(helm template godwit "${chart}" -f "${chart}/ci/full-values.yaml")"
 absent "${full}" 'secretKeyRef' 'switching every optional block on made the chart name Secret entries again'
 present "${full}" 'name: godwit-credentials' 'the full render does not source the Secret it was given'
 
-# The identity godwit presents at Vault is the deployment's, not a value: every render carries it, at
-# the file internal/creds names, and it is not the generic ServiceAccount token.
 present "${off}" 'audience: godwit$' 'the default render mints no token for the godwit audience'
 present "${off}" 'mountPath: /var/run/secrets/godwit/vault$' 'the token is not mounted where godwit reads it'
 present "${off}" 'path: token$' 'the token is projected at a name godwit does not read'
@@ -45,8 +41,6 @@ if [[ "$(grep -c 'serviceAccountToken:' <<<"${off}")" != 1 ]]; then
   fail 'a deployment is one identity and rendered more than one projected token'
 fi
 
-# An explicit serviceAccountToken projection does not depend on the automounted one, so a deployment
-# can hold its own token and not the generic one every Vault accepts.
 noauto="$(helm template godwit "${chart}" -f "${chart}/ci/platform-gitops-values.yaml")"
 present "${noauto}" 'automountServiceAccountToken: false' 'the gitops render still automounts the generic token'
 present "${noauto}" 'audience: godwit$' 'turning the automount off took the projected token with it'
@@ -59,18 +53,13 @@ present "${on}" 'name: godwit-webhook' 'the App render has no webhook Service'
 present "${on}" '- --github-private-key-file=/secrets/github/private-key.pem' 'the App render does not point at the mounted key'
 absent "${on}" 'name: GODWIT_GITHUB_PRIVATE_KEY' 'the App private key has a second home: a file and an environment variable'
 present "${on}" '^ +- key: github-private-key.pem$' 'the App render does not project the Secret entry holding the PEM'
-# A secret volume is owned by root:fsGroup and the container is not root, so owner-only is unreadable.
 present "${on}" 'defaultMode: 0440' 'the App private key is not mounted group-readable'
 
-# The PEM reaches the process one of two ways, and naming no Secret entry is the other one: envFrom
-# carries it as GODWIT_GITHUB_PRIVATE_KEY, so the chart mounts nothing and points at no file.
 env_key="$(helm template godwit "${chart}" "${app[@]}" --set existingSecret.githubPrivateKey=)"
 present "${env_key}" '- --github-webhook-addr=:8475' 'the App stopped opening its listener without a key file'
 absent "${env_key}" 'github-private-key-file' 'the App render reads a key file the chart projects no entry into'
 absent "${env_key}" 'github-app-key' 'the App render mounts a key volume with no Secret entry to project'
 
-# The API Service and the webhook Service are two objects, so a route attached to one cannot reach
-# the other's port. Assert the webhook Service carries exactly one port, and that it is not the API's.
 webhook="$(awk '/^# Source: godwit\/templates\/webhook-service.yaml/,/^---/' <<<"${on}")"
 present "${webhook}" 'port: 8475' 'the webhook Service does not carry the webhook port'
 absent "${webhook}" 'port: 8474' 'the webhook Service also carries the API port'

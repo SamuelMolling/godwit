@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Env: MESSAGE GH_TOKEN COMMAND DRY_RUN COMMENT EVENT_NAME EVENT_PATH REPOSITORY RUN_URL RUNNER_TEMP
 MARKER="<!-- godwit:refused -->"
 export MARKER
 COMMENT="${COMMENT:-true}"

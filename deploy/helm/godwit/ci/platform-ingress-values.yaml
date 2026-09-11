@@ -1,5 +1,4 @@
-# The ordinary shape: ingress-nginx, a Secret created by hand or by a sealed-secrets
-# controller, targets registered from the operator's laptop. No Gateway API CRDs.
+# The ordinary shape: ingress-nginx, a Secret created by hand, no Gateway API CRDs.
 replicaCount: 2
 
 image:
@@ -21,9 +20,7 @@ ingress:
   enabled: true
   className: nginx
   annotations:
-    # The listener is an ordinary HTTP backend: connect's unary calls and its one server stream both
-    # work over HTTP/1.1, so nothing here needs backend-protocol GRPC — and grpc_pass applies to the
-    # whole nginx server block, so setting it would stop this host serving /ui at all.
+    # No backend-protocol GRPC: grpc_pass applies to the whole server block and would break /ui.
     nginx.ingress.kubernetes.io/proxy-body-size: 32m
     nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"

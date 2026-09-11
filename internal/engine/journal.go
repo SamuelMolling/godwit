@@ -49,8 +49,7 @@ var bootstrapDDL = []string{
 	`ALTER TABLE godwit.journal ADD COLUMN IF NOT EXISTS rows_total bigint`,
 }
 
-// IF NOT EXISTS is checked before the object is locked, so two sessions creating it both pass the
-// check; advisory keys are scoped to one database, so a constant is one bootstrap at a time per target.
+// IF NOT EXISTS is checked before the object is locked, so two sessions creating it both pass; one constant key is one bootstrap at a time per target.
 var bootstrapLock = lockKey("bootstrap")
 
 func bootstrap(ctx context.Context, db DB) error {
@@ -75,8 +74,6 @@ func bootstrap(ctx context.Context, db DB) error {
 	return nil
 }
 
-// ensureSchema bootstraps once per session: the DDL is a locked transaction and a scratch replay runs
-// an Executor per migration over one connection.
 func ensureSchema(ctx context.Context, db DB) error {
 	if s, ok := db.(*Session); ok {
 		return s.ensure(ctx)
@@ -85,7 +82,6 @@ func ensureSchema(ctx context.Context, db DB) error {
 	return bootstrap(ctx, db)
 }
 
-// runProgress is what the journal says about an unfinished run.
 type runProgress struct {
 	runID         string
 	lastDone      int
@@ -113,8 +109,7 @@ func keyOf(m Migration) runKey {
 	return runKey{version: &m.Version, checksum: m.Checksum}
 }
 
-// openRun resumes the latest unfinished run for the plan or starts a new one; an edited repeatable
-// is a different key, so it starts a run of its own instead of resuming one it no longer matches.
+// openRun resumes the latest unfinished run for the plan or starts a new one; an edited repeatable is a different key, so it never resumes one it no longer matches.
 func openRun(ctx context.Context, db DB, p Plan, newID string) (runProgress, error) {
 	k := keyOf(p.Migration)
 	var id string

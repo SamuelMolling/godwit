@@ -150,7 +150,6 @@ func targetsTable(targets []*godwitv1.TargetSummary) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// optionalFiles is the committed set for a command that only reads or generates: nothing is applied over it, so an absent directory is nothing to compare against.
 func optionalFiles(dir string) ([]*godwitv1.MigrationFile, error) {
 	migs, _, err := emptySet(dir)
 	if err != nil {

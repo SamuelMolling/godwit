@@ -29,8 +29,7 @@ func Exec(ctx context.Context, name string, args ...string) ([]byte, []byte, err
 	return out.Bytes(), errOut.Bytes(), err
 }
 
-// Prisma is a Source over a Prisma schema: the DDL of the whole datamodel from an empty database,
-// as `prisma migrate diff --from-empty --script` renders it. No database is contacted.
+// Prisma is a Source over a Prisma schema: the DDL of the whole datamodel from an empty database, as `prisma migrate diff --from-empty --script` renders it.
 type Prisma struct {
 	Schema string
 	Bin    string

@@ -27,10 +27,8 @@ type Migration struct {
 	Checksum        string
 	Directives      []Directive
 	RevertDirective bool
-	// Checkpoint marks a migration whose body is the whole schema the versions up to Through produce.
-	Checkpoint bool
-	// Through is the newest version a checkpoint collapses; zero on every other migration.
-	Through int64
+	Checkpoint      bool
+	Through         int64
 }
 
 // Collapses reports whether cp, a checkpoint, subsumes m.
@@ -223,9 +221,6 @@ func (m *Migration) loadDirectives() error {
 	return nil
 }
 
-// loadCheckpoint validates the checkpoint directive at up[i]: it stands alone, on a versioned migration,
-// over a version below its own, and the file has no inverse because the versions it collapses can never
-// be reverted through it.
 func (m *Migration) loadCheckpoint(up []Directive, i int) error {
 	d := up[i]
 	fail := func(format string, args ...any) error {

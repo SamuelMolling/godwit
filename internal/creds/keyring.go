@@ -11,23 +11,16 @@ import (
 
 // KeyProvider seals and opens the secrets godwit keeps in a target's config.
 type KeyProvider interface {
-	// Name selects the provider when a stored value is opened; it travels in the ciphertext header.
 	Name() string
-	// KeyID names the key a new value is sealed under; it travels in the header too, so a stored
-	// value says what opens it.
 	KeyID() string
-	// Seal returns the payload for plaintext, with aad bound into it.
 	Seal(ctx context.Context, aad []byte, plaintext string) ([]byte, error)
-	// Open reverses Seal. keyID is the one the header carried, empty for a value sealed before headers.
 	Open(ctx context.Context, aad []byte, keyID string, blob []byte) (string, error)
 }
 
 // ErrNoKey reports that a value needs a key and the service was started without one.
 var ErrNoKey = errors.New("no key is configured: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY")
 
-// Keyring seals and opens target secrets under one key provider. Its zero value holds none: it seals
-// nothing and opens nothing, which is what a deployment whose targets all use `vault` or `kubernetes`
-// runs with, since those store no secret of godwit's own.
+// Keyring seals and opens target secrets under one key provider; its zero value holds none, which is what an all-`vault` or all-`kubernetes` deployment runs with.
 type Keyring struct {
 	provider KeyProvider
 }
@@ -47,16 +40,14 @@ func (k Keyring) Describe() string {
 	return k.provider.Name() + ":" + k.provider.KeyID()
 }
 
-// headerPrefix opens every sealed value written since the format carried a header. Base64 has no
-// colon, so a value without it is one of the headerless ciphertexts the `env` provider wrote before.
+// Base64 has no colon, so a value without this header is one of the headerless ciphertexts the `env` provider wrote before.
 const headerPrefix = "godwit1"
 
 func header(name, keyID string) string {
 	return headerPrefix + ":" + name + ":" + base64.RawURLEncoding.EncodeToString([]byte(keyID))
 }
 
-// Seal returns plaintext sealed under the configured key, prefixed by a header naming the provider
-// and key that opens it. The header is bound into the payload as additional authenticated data.
+// Seal prefixes a header naming the provider and key that opens the value, bound into the payload as additional authenticated data.
 func (k Keyring) Seal(ctx context.Context, plaintext string) (string, error) {
 	if k.provider == nil {
 		return "", ErrNoKey
@@ -86,8 +77,7 @@ func (k Keyring) Open(ctx context.Context, encoded string) (string, error) {
 	return k.provider.Open(ctx, s.aad, s.keyID, s.blob)
 }
 
-// NeedsReseal reports whether encoded is readable but sealed under something other than the key in
-// force, so re-sealing it would move it onto the current key.
+// NeedsReseal reports whether encoded is readable but sealed under something other than the key in force.
 func (k Keyring) NeedsReseal(encoded string) bool {
 	if k.provider == nil {
 		return false
@@ -132,7 +122,6 @@ func parseSealed(encoded string) (sealed, error) {
 	}, nil
 }
 
-// maxWrappedKey bounds the length prefix an envelope payload carries.
 const maxWrappedKey = 1 << 16
 
 func joinBlob(wrapped, inner []byte) ([]byte, error) {

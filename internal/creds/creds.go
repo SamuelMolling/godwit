@@ -18,8 +18,7 @@ const (
 	ProviderVault      = "vault"
 )
 
-// Registry returns the built-in providers. Only `static` needs a key: `kubernetes` and `vault` read a
-// secret godwit never held, so an empty keyring leaves them working.
+// Registry returns the built-in providers; only `static` needs a key, so an empty keyring leaves the others working.
 func Registry(keys Keyring, stores func(ctx context.Context, name string) (VaultStore, error)) map[string]Provider {
 	return map[string]Provider{
 		ProviderStatic:     Static{Keys: keys},

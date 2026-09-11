@@ -138,7 +138,7 @@ func TestUpErrorPaths(t *testing.T) {
 				mock.ExpectRollback()
 				mock.ExpectQuery("FROM pg_locks").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).
 					WillReturnRows(pgxmock.NewRows([]string{"pid", "application_name", "state", "since"}).
-						AddRow(int32(42), AppName, "idle", 900.0))
+						AddRow(int32(42), appName, "idle", 900.0))
 			},
 			wantErr: `acquire advisory lock on db (held by pid 42, application_name "godwit", idle for 900s)`,
 		},
@@ -781,7 +781,7 @@ func TestQuoteIndexQualified(t *testing.T) {
 func TestWithIDGenerator(t *testing.T) {
 	t.Parallel()
 
-	mock, exec := newMockExec(t, WithIDGenerator(func() string { return "fixed-id" }))
+	mock, exec := newMockExec(t, withIDGenerator(func() string { return "fixed-id" }))
 	expectLock(mock)
 	expectBootstrap(mock)
 	expectNotApplied(mock)

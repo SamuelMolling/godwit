@@ -247,7 +247,6 @@ func (r Plan) Verdict() string {
 	return strings.Join(parts, ", ")
 }
 
-// identityLines is what a terminal reader has nowhere else to read; markdown keeps the id in an HTML comment.
 func (r Plan) identityLines() []string {
 	if !r.live {
 		return nil
@@ -263,7 +262,6 @@ func (r Plan) identityLines() []string {
 	return lines
 }
 
-// notRun leaves out what the target already has: there is nothing left to do about it.
 func (r Plan) notRun() []item {
 	out := make([]item, 0, len(r.items))
 	for _, p := range r.items {
@@ -486,7 +484,6 @@ func ignoredLine(tables []string, m markup) string {
 		strings.Join(tables, ", "), m.code(controlplane.ConfigIgnoreAdopted+"=false"))
 }
 
-// withheldLine names what a version target left out, so the plan and the pull-request comment cannot be read as the whole set.
 func (r Plan) withheldLine() string {
 	ids := make([]string, 0, len(r.items))
 	for _, p := range r.items {
@@ -913,7 +910,6 @@ func statementMode(st engine.Statement) string {
 	}
 }
 
-// firstLine skips the expander's marker: a reader shown only that never sees the statement.
 func firstLine(sql string) string {
 	_, body := engine.SplitExpanded(sql)
 	line, _, _ := strings.Cut(body, "\n")

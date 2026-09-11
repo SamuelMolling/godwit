@@ -76,7 +76,7 @@ func TestDetectAdoptedMatchesOnColumnsNotOnName(t *testing.T) {
 			checksum int, installed_by text, installed_on timestamp, execution_time int, success boolean NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	got, err := DetectAdopted(ctx, conn)
+	got, err := detectAdopted(ctx, conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestDetectAdoptedQueryErrors(t *testing.T) {
 	mock2.ExpectQuery("array_agg").WithArgs(pgxmock.AnyArg()).WillReturnRows(
 		pgxmock.NewRows([]string{"table_schema", "table_name", "columns"}).
 			AddRow("public", "alembic_version", []string{"version_num"}).RowError(0, errBoom))
-	if _, err := DetectAdopted(context.Background(), mock2); err == nil ||
+	if _, err := detectAdopted(context.Background(), mock2); err == nil ||
 		!strings.Contains(err.Error(), "read adopted tables") {
 		t.Fatalf("err = %v", err)
 	}

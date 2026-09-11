@@ -55,8 +55,7 @@ func TestTransportForScheme(t *testing.T) {
 	}
 }
 
-// TestClientOverTLS guards the regression where the h2c transport dialled https:// in cleartext: a TLS
-// listener rejects a plaintext dial, so the call completes only if the client really negotiated TLS.
+// Guards the regression where the h2c transport dialled https:// in cleartext: a TLS listener rejects a plaintext dial, so this passes only over real TLS.
 func TestClientOverTLS(t *testing.T) {
 	t.Parallel()
 

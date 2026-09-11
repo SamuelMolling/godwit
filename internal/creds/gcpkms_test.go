@@ -13,9 +13,6 @@ import (
 	"testing"
 )
 
-// fakeKMS answers the two Cloud KMS methods godwit calls, wrapping the data key as
-// base64("<plaintext>|<aad>") so a decrypt under the wrong additional data is refused, as the real
-// service refuses it.
 func fakeKMS(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
