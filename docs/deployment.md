@@ -525,7 +525,7 @@ Two Services rather than two ports on one is the point: a Service is what a rout
 
 With `serve.githubApp.enabled: false` (the default) none of it is rendered: no flag, no second container port, no Service. Registering the App itself is [CI/CD](ci-cd.md#registering-the-app).
 
-The App's private key comes in either way, and `existingSecret.githubPrivateKey` chooses. It defaults to `github-private-key.pem`: that Secret entry is projected as a file and read with `--github-private-key-file`, which keeps the PEM out of the environment, which a sidecar, a core dump and `kubectl exec -- env` all read. Set it empty and no volume is mounted — the PEM arrives with everything else through `envFrom`, under the name `GODWIT_GITHUB_PRIVATE_KEY`, which is where a Secret written for godwit's environment already has it. Naming both is a start-up failure, not a precedence rule.
+The App's private key comes in either way, and `existingSecret.githubPrivateKey` chooses. It defaults to empty: no volume is mounted and the PEM arrives with everything else through `envFrom`, under the name `GODWIT_GITHUB_PRIVATE_KEY`, which is where a Secret written for godwit's environment already has it. Name an entry instead and it is projected as a file and read with `--github-private-key-file`, which keeps the PEM out of the environment that a sidecar, a core dump and `kubectl exec -- env` all read. Naming both is a start-up failure, not a precedence rule.
 
 ### Replicas and the lease
 
