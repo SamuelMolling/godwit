@@ -106,7 +106,6 @@ func TestScratchDSNErrors(t *testing.T) {
 	}
 }
 
-// The scratch pool's only source of demand is the concurrency gate in front of the calls that use it.
 func TestScratchConnsFollowsTheGate(t *testing.T) {
 	t.Parallel()
 

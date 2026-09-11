@@ -31,22 +31,16 @@ var files embed.FS
 //go:embed app.js
 var script []byte
 
-// Config names the replica and how /ui authenticates: a basic-auth password matching one of Tokens
-// resolves to that token's name and scope, and User with Password is the shared identity, which carries Scope.
-// Origins, when set, are the only origins a form post may come from and the only hosts the UI answers on.
+// Config names the replica and how /ui authenticates; docs/security.md#web-ui holds the table.
 type Config struct {
-	Replica  string
-	Tokens   []authz.Token
-	User     string
-	Password string
-	Scope    authz.Scope
-	Origins  []Origin
-	// AnonymousScope is what a visitor gets when neither Tokens nor User/Password can sign anyone in;
-	// it defaults to AnonymousScope, never to Scope, and widening it is an explicit choice.
+	Replica        string
+	Tokens         []authz.Token
+	User           string
+	Password       string
+	Scope          authz.Scope
+	Origins        []Origin
 	AnonymousScope authz.Scope
-	// Anonymous serves /ui with no authentication at all, even when Tokens or User/Password could sign
-	// someone in. Every visitor is then ui:anonymous with AnonymousScope.
-	Anonymous bool
+	Anonymous      bool
 }
 
 // Handler renders the UI by calling svc in-process with a ui:<user> principal.
@@ -108,9 +102,7 @@ func digestEqual(a, b string) int {
 	return subtle.ConstantTimeCompare(x[:], y[:])
 }
 
-// AnonymousScope is what an unauthenticated visitor gets when the UI has no way to sign anyone in.
-// It is read, never Config.Scope: a service with no credential configured must not hand out the rights
-// of the identity it would have authenticated.
+// AnonymousScope is what an unauthenticated visitor gets; it is read, never Config.Scope, because a service with no credential configured must not hand out the rights of the identity it would have authenticated.
 const AnonymousScope = authz.ScopeRead
 
 func (h *Handler) principal(r *http.Request) (authz.Principal, bool) {
@@ -328,7 +320,6 @@ type planned struct {
 	Hazards        []*godwitv1.PlannedHazard
 }
 
-// backfill is the live view of a batched statement: Done and Batches are counted, Total is an estimate.
 type backfill struct {
 	Migration string
 	Statement int32
@@ -663,7 +654,6 @@ func timeline(run *godwitv1.Run, entries []*godwitv1.AuditEntry) []step {
 	return steps
 }
 
-// statementLine names the newest statement the run reported, which is the one it is on unless it has just finished it.
 func statementLine(p *godwitv1.RunProgress) string {
 	if p == nil {
 		return ""

@@ -57,7 +57,6 @@ func TestTheMigrationSetIsTheDirectoryAtTheHead(t *testing.T) {
 	}
 }
 
-// A directory godwit knows it read short would plan a set nobody wrote, so it refuses instead.
 func TestAPartialDirectoryIsRefusedRatherThanPlanned(t *testing.T) {
 	t.Parallel()
 
@@ -71,7 +70,6 @@ func TestAPartialDirectoryIsRefusedRatherThanPlanned(t *testing.T) {
 	}
 }
 
-// The listing carries every size, so a directory over the limits costs one request, not one per file.
 func TestTheLimitsAreAppliedToTheListingBeforeAnyBodyIsFetched(t *testing.T) {
 	t.Parallel()
 
@@ -143,7 +141,6 @@ func TestABodyGodwitCannotReadNamesTheFile(t *testing.T) {
 	}
 }
 
-// One unreadable body stops the fetch rather than letting the rest of a set godwit cannot complete go on.
 func TestOneUnreadableBodyStopsTheWholeSet(t *testing.T) {
 	t.Parallel()
 

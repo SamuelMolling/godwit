@@ -76,8 +76,6 @@ func revertAndWait(t *testing.T, client godwitv1connect.GodwitServiceClient, req
 	return res.Msg
 }
 
-// TestRevertActsOnWhatTheRunApplied is the incident PR #67 reported: `migrate` sends the whole
-// directory every time, so reverting the second run used to drop the first run's table too.
 func TestRevertActsOnWhatTheRunApplied(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -113,8 +111,6 @@ func TestRevertActsOnWhatTheRunApplied(t *testing.T) {
 		t.Fatalf("godwit.migrations = %v; only run B's version may go", v)
 	}
 
-	// The revert is a new ledger entry, not a hole in the history: both runs are still listed, the
-	// original marked reverted, and its ledger row points at the run that undid it.
 	list, err := client.ListRuns(ctx, connect.NewRequest(&godwitv1.ListRunsRequest{Target: "app"}))
 	if err != nil || len(list.Msg.Runs) != 3 {
 		t.Fatalf("runs = %+v, err = %v", list, err)
@@ -125,7 +121,6 @@ func TestRevertActsOnWhatTheRunApplied(t *testing.T) {
 	}
 }
 
-// TestRevertOlderRunNeedsForce keeps the default at "the newest un-reverted run and nothing wider".
 func TestRevertOlderRunNeedsForce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -165,7 +160,6 @@ func TestRevertOlderRunNeedsForce(t *testing.T) {
 		t.Fatal("a forced revert undoes only the run it names")
 	}
 
-	// With no run id the newest un-reverted run is the target, and there is one left.
 	plan := revertAndWait(t, client, &godwitv1.RevertRunRequest{Target: "app", AcknowledgeHazards: []string{"H002"}})
 	if len(plan.Migrations) != 1 || plan.Migrations[0].Name != "b" {
 		t.Fatalf("default target = %+v", plan)
@@ -176,7 +170,6 @@ func TestRevertOlderRunNeedsForce(t *testing.T) {
 	}
 }
 
-// TestRevertRefusesDataLoss holds Atlas's line: refuse, do not warn, when the plan destroys data.
 func TestRevertRefusesDataLoss(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -213,7 +206,6 @@ func TestRevertRefusesDataLoss(t *testing.T) {
 	}
 }
 
-// TestRevertRefusesDataLossOnColumn measures a dropped column by the values it still holds.
 func TestRevertRefusesDataLossOnColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -231,7 +223,6 @@ func TestRevertRefusesDataLossOnColumn(t *testing.T) {
 	}
 	runToSuccess(t, client, addNote, []string{"H003"})
 
-	// Nothing has been written to the column yet, so the revert is not destructive.
 	dry, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{
 		Target: "app", AcknowledgeHazards: []string{"H003"}, DryRun: true,
 	}))
@@ -247,8 +238,6 @@ func TestRevertRefusesDataLossOnColumn(t *testing.T) {
 	}
 }
 
-// TestRevertAfterDirectiveRun is the second bug PR #67 reported: a migration carrying a directive used
-// to make every later run non-revertable, because the revert was expanded with the wrong run's expansions.
 func TestRevertAfterDirectiveRun(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -262,7 +251,6 @@ func TestRevertAfterDirectiveRun(t *testing.T) {
 	}
 	waitState(t, client, directiveRun, godwitv1.RunState_RUN_STATE_SUCCEEDED)
 
-	// A later plain run whose directory still carries the directive migration.
 	plain := []*godwitv1.MigrationFile{
 		{Name: "20260901140000_b.up.sql", Body: "CREATE TABLE b (id int);"},
 		{Name: "20260901140000_b.down.sql", Body: "DROP TABLE b;"},
@@ -286,7 +274,6 @@ func TestRevertAfterDirectiveRun(t *testing.T) {
 		t.Fatal("the directive run must be untouched")
 	}
 
-	// And the directive run itself still reverts, from the inverse frozen on its own ledger row.
 	revertAndWait(t, client, &godwitv1.RevertRunRequest{RunId: directiveRun, AllowDataLoss: true})
 	if columnType(t, targetDSN, "age") != "integer" {
 		t.Fatal("reverting the directive run must put age back")
@@ -297,7 +284,6 @@ func TestRevertAfterDirectiveRun(t *testing.T) {
 	}
 }
 
-// TestRevertTargetUnreachable covers the gate failing on the target rather than on the plan.
 func TestRevertTargetUnreachable(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -311,7 +297,6 @@ func TestRevertTargetUnreachable(t *testing.T) {
 	}
 	firstRun := list.Msg.Runs[0].Id
 
-	// A down side that drops nothing skips the probe and stops at the search-path observation instead.
 	runToSuccess(t, client, []*godwitv1.MigrationFile{
 		{Name: "20260101000002_c.up.sql", Body: "CREATE TABLE c (id int);"},
 		{Name: "20260101000002_c.down.sql", Body: "TRUNCATE c;"},
@@ -330,7 +315,6 @@ func TestRevertTargetUnreachable(t *testing.T) {
 	}
 }
 
-// TestRevertRefusals covers the shapes the API turns away before it plans anything.
 func TestRevertRefusals(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

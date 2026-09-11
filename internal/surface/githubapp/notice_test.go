@@ -42,7 +42,7 @@ func TestNoReactionIsConfigurable(t *testing.T) {
 
 	repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": ordersYAML})
 	f := newFixture(t, bound, repo)
-	f.receiver.cfg.Reaction = NoReaction
+	f.receiver.cfg.Reaction = noReaction
 	body := strings.Replace(commentBody("godwit apply", "MEMBER", "alice", now), `"body":"godwit apply"`,
 		`"id":77,"body":"godwit apply"`, 1)
 	check(t, f.post(t, eventIssueComment, "d1", body), http.StatusAccepted, "accepted")

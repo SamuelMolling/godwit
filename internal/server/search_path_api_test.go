@@ -128,8 +128,6 @@ func TestAPISearchPathAppliedAndJournalUntouched(t *testing.T) {
 	}
 }
 
-// A target connected with a role named godwit resolves "$user" to the journal schema, so its unqualified DDL
-// would land beside the journal's own tables; godwit refuses it until the target declares a path of its own.
 func TestAPIRefusesATargetWhosePathReachesTheJournal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

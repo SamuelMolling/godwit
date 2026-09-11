@@ -56,7 +56,6 @@ func TestServeClosedListener(t *testing.T) {
 func TestRunWithoutOnReadyShutsDownCleanly(t *testing.T) {
 	t.Parallel()
 
-	// Without OnReady, a fully migrated store is the only readiness signal.
 	ref := newDatabase(t, "ref")
 	if _, err := controlplane.Migrate(context.Background(), mustPool(t, ref)); err != nil {
 		t.Fatal(err)

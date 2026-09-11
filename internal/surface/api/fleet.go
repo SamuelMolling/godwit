@@ -11,8 +11,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
-// ListMigrations reports which targets hold each migration and which do not, keyed by migration and by the
-// content applied under it, from the control plane's ledger alone: no target is connected to.
+// ListMigrations reports which targets hold each migration, from the control plane's ledger alone: no target is connected to.
 func (s *Server) ListMigrations(ctx context.Context, req *connect.Request[godwitv1.ListMigrationsRequest]) (*connect.Response[godwitv1.ListMigrationsResponse], error) {
 	m := req.Msg
 	if m.FromVersion < 0 || m.ToVersion < 0 {

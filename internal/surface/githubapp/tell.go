@@ -40,8 +40,7 @@ func (w *Worker) told(ctx context.Context) {
 	}
 }
 
-// outcome marks the run told only once GitHub has it: a replica dying part way leaves the claim to
-// lapse, and the repeat replaces its own comment rather than adding a second.
+// outcome marks the run told only once GitHub has it: a replica dying part way leaves the claim to lapse, and the repeat replaces its own comment.
 func (w *Worker) outcome(ctx context.Context, g controlplane.GitHubRun) {
 	log := w.cfg.Log.With("repository", g.Repository, "pull_request", g.PullRequest,
 		"run", g.RunID, "command", g.Command, "state", g.State)

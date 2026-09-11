@@ -18,7 +18,6 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
 
-// forge records what godwit posted back, which is the only place the App's work is visible.
 type forge struct {
 	mu       sync.Mutex
 	comments []string
@@ -106,7 +105,6 @@ func (f *forge) recordComment(body []byte) {
 	f.comments = append(f.comments, out.Body)
 }
 
-// concluded waits for the check the App closes when the command ends, which is the last thing it does.
 func (f *forge) concluded(t *testing.T) map[string]any {
 	t.Helper()
 	deadline := time.After(60 * time.Second)
@@ -135,8 +133,6 @@ func (f *forge) posted() []string {
 	return append([]string(nil), f.comments...)
 }
 
-// An opened pull request reaches a plan on the real target and comes back as a report and a green
-// check, with nothing in the repository but godwit.yaml.
 func TestAPullRequestIsPlannedFromTheAppAlone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

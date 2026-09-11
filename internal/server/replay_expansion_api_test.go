@@ -49,7 +49,6 @@ func planFiles(t *testing.T, client godwitv1connect.GodwitServiceClient, files [
 	return res.Msg
 }
 
-// The whole reported failure: once a change-type has run, every later plan, verify and migrate was refused.
 func TestPlanAndMigrateAfterAppliedChangeType(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -89,7 +88,6 @@ func TestPlanAndMigrateAfterAppliedChangeType(t *testing.T) {
 	}
 }
 
-// A baseline records a directive migration with no expansion, so the replay records it the same way.
 func TestBaselinedDirectiveStillPlans(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

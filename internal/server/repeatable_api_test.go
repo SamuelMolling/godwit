@@ -83,7 +83,6 @@ func TestRepeatableRunAndStatus(t *testing.T) {
 	}
 }
 
-// Editing a repeatable changes the pending set, so a plan taken before the edit no longer covers it.
 func TestRepeatablePlanGoesStaleAfterEdit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -110,7 +109,6 @@ func TestRepeatablePlanGoesStaleAfterEdit(t *testing.T) {
 	}
 }
 
-// A repeatable re-recorded on the target by something other than a run refuses the bind.
 func TestRepeatablePlanGoesStaleWhenTargetMoves(t *testing.T) {
 	t.Parallel()
 	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")

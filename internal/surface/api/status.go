@@ -45,8 +45,7 @@ func (s *Server) GetTargetStatus(ctx context.Context, req *connect.Request[godwi
 	return connect.NewResponse(out), nil
 }
 
-// ListTargets summarises every registered target from the control plane alone: its settings, what it has applied,
-// its last run, open drift and the plans still bindable on it.
+// ListTargets summarises every registered target from the control plane alone, connecting to none of them.
 func (s *Server) ListTargets(ctx context.Context, _ *connect.Request[godwitv1.ListTargetsRequest]) (*connect.Response[godwitv1.ListTargetsResponse], error) {
 	targets, err := s.store.ListTargets(ctx, s.gate().PlanSince())
 	if err != nil {

@@ -147,8 +147,7 @@ func (s *stub) AcceptBaseline(ctx context.Context, req *connect.Request[godwitv1
 	return connect.NewResponse(&godwitv1.AcceptBaselineResponse{}), s.call(ctx, "AcceptBaseline:"+req.Msg.Target)
 }
 
-// newUI opts the open handler back up to operator; New itself gives an anonymous visitor read only,
-// which TestAnonymousScopeIsRead covers.
+// newUI opts the open handler back up to operator; New itself gives an anonymous visitor read only.
 func newUI(s godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	if cfg.AnonymousScope == "" {
 		cfg.AnonymousScope = authz.ScopeOperator
@@ -617,7 +616,6 @@ func TestAnonymousServesWithoutAuthentication(t *testing.T) {
 		"AcceptBaseline requires scope operator; token ui:anonymous has scope read")
 }
 
-// Anonymous without a scope must not widen anything: New still defaults the visitor to read.
 func TestAnonymousWithoutAScopeStaysRead(t *testing.T) {
 	t.Parallel()
 
@@ -626,8 +624,6 @@ func TestAnonymousWithoutAScopeStaysRead(t *testing.T) {
 	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusOK, `class="chip">read<`)
 }
 
-// A service with no way to sign anyone in must not hand a visitor the rights of the identity it would
-// have authenticated: New defaults the anonymous principal to read, whatever Scope says.
 func TestAnonymousScopeIsRead(t *testing.T) {
 	t.Parallel()
 

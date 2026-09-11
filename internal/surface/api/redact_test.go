@@ -11,9 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// pgx redacts the password of a DSN it cannot parse or dial and nothing else, so the host, the user, the
-// database name and — for a credential provider that hands back a file instead of a DSN — the file body
-// would otherwise travel to a read-scope caller inside an internal error.
 func TestSafeHidesConnectionDetail(t *testing.T) {
 	t.Parallel()
 

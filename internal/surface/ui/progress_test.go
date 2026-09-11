@@ -75,7 +75,6 @@ func TestRunPageNoBackfillBlock(t *testing.T) {
 	}
 }
 
-// A finished run keeps the progress of its last statement; it is history, not something still moving.
 func TestSettledRunShowsNoBackfill(t *testing.T) {
 	t.Parallel()
 	s := fixture()

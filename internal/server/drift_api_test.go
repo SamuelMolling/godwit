@@ -57,7 +57,6 @@ func TestDriftEndToEnd(t *testing.T) {
 		t.Fatalf("drift = %+v, err = %v", drift, err)
 	}
 
-	// Manual change → CheckDrift reports it with the diff.
 	conn, err := pgx.Connect(ctx, targetDSN)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +75,6 @@ func TestDriftEndToEnd(t *testing.T) {
 		t.Fatalf("events = %+v, err = %v", events, err)
 	}
 
-	// Accepting the baseline blesses the manual change.
 	if _, err := client.AcceptBaseline(ctx, connect.NewRequest(&godwitv1.AcceptBaselineRequest{Target: "app"})); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +121,6 @@ func TestAdmissionValidation(t *testing.T) {
 	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
 	registerTarget(t, client, newDatabase(t, "tg"))
 
-	// Parses fine, fails at execution: caught by the scratch database, never queued.
 	broken := []*godwitv1.MigrationFile{
 		{Name: "20260901120000_broken.up.sql", Body: "SELECT 1/0;"},
 		{Name: "20260901120000_broken.down.sql", Body: "SELECT 1;"},
@@ -135,7 +132,6 @@ func TestAdmissionValidation(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	// skip_validation lets it through (and it fails later at execution).
 	created, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: broken, SkipValidation: true,
 	}))

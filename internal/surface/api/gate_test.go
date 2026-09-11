@@ -63,7 +63,6 @@ func TestGateAdmitsAndRefuses(t *testing.T) {
 	if _, err := g.enter(ctx, godwitv1connect.GodwitServicePlanRunProcedure); connect.CodeOf(err) != connect.CodeCanceled {
 		t.Fatalf("a cancelled caller must not wait out the gate: %v", err)
 	}
-	// Checkpoint needs only read and builds two scratch databases per call.
 	if _, err := g.enter(context.Background(), godwitv1connect.GodwitServiceCheckpointProcedure); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("Checkpoint must queue with the other scratch-database calls: %v", err)
 	}

@@ -29,9 +29,8 @@ type GitHubApp struct {
 	MaxAge        time.Duration
 	Associations  []string
 	Reaction      string
-	// Workers bounds how many accepted commands the App carries out at once.
-	Workers int
-	OnReady func(addr net.Addr)
+	Workers       int
+	OnReady       func(addr net.Addr)
 }
 
 const (
@@ -148,7 +147,6 @@ func serveWebhook(cfg Config, key crypto.Signer, store *controlplane.Store, svc 
 	}
 	go func() { _ = srv.Serve(ln) }()
 
-	// The listener closes first, so nothing new is accepted while what was accepted is carried out.
 	return func(ctx context.Context) {
 		_ = srv.Shutdown(ctx)
 		worker.Stop(ctx)

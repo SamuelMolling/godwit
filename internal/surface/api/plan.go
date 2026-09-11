@@ -18,8 +18,7 @@ import (
 
 var errPlanDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("stored plans are not enabled"))
 
-// PlanRun runs CreateRun's admission on the files and returns what the run would do without queueing it;
-// with persist the plan is stored together with an observation of the target so a later CreateRun binds to it.
+// PlanRun returns what CreateRun would do without queueing it; with persist it stores the plan so a later CreateRun binds to it.
 func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
 	m := req.Msg
 	set, err := s.upSet(m.Target, m.Rollout, m.Files)

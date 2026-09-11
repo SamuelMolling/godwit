@@ -28,7 +28,6 @@ func (p project) String() string {
 	return p.target + " (" + p.root + ")"
 }
 
-// path is where the migrations are in the repository, which is not p.dir: that is relative to godwit.yaml.
 func (p project) path() string {
 	return path.Join(p.root, p.dir)
 }
@@ -42,7 +41,6 @@ type resolution struct {
 	skipped []string
 }
 
-// errTruncated is a listing godwit knows is partial, which it refuses rather than reads as nothing to plan.
 var errTruncated = errors.New("truncated")
 
 func resolve(ctx context.Context, repo repoView, bound bindings, req *request, head string, files int) (resolution, error) {
@@ -137,7 +135,7 @@ func load(ctx context.Context, repo repoView, bound bindings, repository, root, 
 	}, ""
 }
 
-// trigger widens the default rather than replacing it, so a project cannot stop planning its own migrations.
+// trigger widens the default rather than replacing it, so a project cannot configure its own migrations out of being planned.
 func trigger(cfg config.Config, auto bool) ([]string, error) {
 	when := defaultWhenModified(cfg.Dir)
 	if a := cfg.Autoplan; a != nil {

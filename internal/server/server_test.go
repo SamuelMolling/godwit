@@ -72,7 +72,6 @@ func newDatabase(t *testing.T, prefix string) string {
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
 		t.Fatal(err)
 	}
-	// The container's only role is named godwit, so a target here would resolve "$user" to the journal schema.
 	if _, err := admin.Exec(ctx, "ALTER DATABASE "+name+" SET search_path TO public"); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,6 @@ func newDatabase(t *testing.T, prefix string) string {
 	return strings.Replace(testDSN, "/godwit?", "/"+name+"?", 1)
 }
 
-// startService boots a replica against storeDSN and returns its base URL.
 func startService(t *testing.T, storeDSN, holder string, tokens []string) string {
 	t.Helper()
 
@@ -109,7 +107,6 @@ func startServiceOpts(t *testing.T, storeDSN, holder string, tokens []string, ke
 
 func startServiceCfg(t *testing.T, cfg Config) string {
 	t.Helper()
-	// One shared container serves every parallel service here; the production default would exhaust it.
 	if cfg.StoreMaxConns == 0 {
 		cfg.StoreMaxConns = 8
 	}
@@ -255,8 +252,6 @@ func TestServiceFailover(t *testing.T) {
 	ctx := context.Background()
 	storeDSN := newDatabase(t, "st")
 
-	// Replica 1: short-TTL claim then immediate death. A grace period this short leaves the run no
-	// chance to drain, which is the abrupt exit a SIGKILL or a lost node gives.
 	replicaCtx, killReplica := context.WithCancel(context.Background())
 	ready := make(chan net.Addr, 1)
 	go func() {
@@ -285,7 +280,6 @@ func TestServiceFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A migration slower than replica 1's remaining life.
 	files := []*godwitv1.MigrationFile{
 		{Name: "20260901120000_slow.up.sql", Body: "CREATE TABLE slow_t (id int); SELECT pg_sleep(3);"},
 		{Name: "20260901120000_slow.down.sql", Body: "DROP TABLE slow_t;"},
@@ -298,7 +292,6 @@ func TestServiceFailover(t *testing.T) {
 	}
 	runID := created.Msg.RunId
 
-	// Wait until replica 1 has claimed it, then kill the whole replica mid-run.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		r, err := client.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: runID}))
@@ -309,7 +302,6 @@ func TestServiceFailover(t *testing.T) {
 	}
 	killReplica()
 
-	// Replica 2 must recover the abandoned lease and finish the run.
 	baseURL2 := startService(t, storeDSN, "replica-2", nil)
 	client2 := newClient(baseURL2, "")
 

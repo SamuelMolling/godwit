@@ -16,9 +16,6 @@ type targetStore interface {
 	RegisterTarget(ctx context.Context, name, provider string, config map[string]string) error
 }
 
-// settleKeys moves every static target onto the key in force and names the ones it cannot. It never
-// fails a start-up: a target whose key is gone is that target's problem, and the replica still serves
-// the rest — the call that needs it is refused, naming the key it wants.
 func settleKeys(ctx context.Context, store targetStore, keys creds.Keyring, log *slog.Logger) {
 	targets, err := store.ListTargets(ctx, time.Time{})
 	if err != nil {

@@ -13,8 +13,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 )
 
-// TestRevertRunWithoutInspector plans a revert on a server that cannot reach its targets: no schema to
-// probe, so no data-loss verdict and no observed search path.
 func TestRevertRunWithoutInspector(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -105,7 +105,6 @@ func TestVaultTargetWithoutAStoreRefuses(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	// A row that predates the column, which RegisterTarget can no longer write.
 	conn, err := pgx.Connect(ctx, storeDSN)
 	if err != nil {
 		t.Fatal(err)

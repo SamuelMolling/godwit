@@ -50,8 +50,6 @@ func (w *Worker) confirm(ctx context.Context, cmd command, p project) done {
 	return queued(cmd, p, held, "contract phase released")
 }
 
-// revert undoes the newest un-reverted run of this pull request. The Action loops over every one of them
-// oldest first, which refuses on the second without --force, so the two agree wherever the Action works.
 func (w *Worker) revert(ctx context.Context, cmd command, p project) done {
 	if err := authz.Authorize(godwitv1connect.GodwitServiceRevertRunProcedure, cmd.principal); err != nil {
 		return refusedBy(cmd, p, err)
@@ -101,7 +99,6 @@ func (w *Worker) pick(ctx context.Context, cmd command, p project, want func(con
 	return "", nil
 }
 
-// queued leaves the check open: the pull request is owed the run's outcome, which it does not have yet.
 func queued(cmd command, p project, run, detail string) done {
 	if run == "" {
 		return refusedBy(cmd, p, errors.New("godwit created no run"))

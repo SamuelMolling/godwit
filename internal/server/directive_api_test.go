@@ -109,7 +109,6 @@ func startRun(t *testing.T, client godwitv1connect.GodwitServiceClient, files []
 	return created.Msg.RunId
 }
 
-// directiveService boots a replica with the users table already applied on a fresh target.
 func directiveService(t *testing.T) (godwitv1connect.GodwitServiceClient, string) {
 	t.Helper()
 	client, targetDSN, _ := directiveServiceStore(t)
@@ -223,8 +222,6 @@ func TestCreateRunAppliesTheStoredExpansion(t *testing.T) {
 	assertNoSync(t, targetDSN)
 }
 
-// TestConfirmRolloutRechecksTheChangeTypeCount parks the run, then puts the two columns out of sync behind
-// the trigger's back. The confirm re-evaluates the closing count and stops there, so the rename never runs.
 func TestConfirmRolloutRechecksTheChangeTypeCount(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -258,8 +255,6 @@ func TestConfirmRolloutRechecksTheChangeTypeCount(t *testing.T) {
 	}
 }
 
-// insertDuringBackfill waits for the sync trigger and writes a row while the backfill is still running;
-// the trigger, not the backfill, is what must make that row consistent.
 func insertDuringBackfill(t *testing.T, dsn string) {
 	t.Helper()
 	ctx := context.Background()
@@ -308,7 +303,6 @@ func assertNoSync(t *testing.T, dsn string) {
 	}
 }
 
-// assertChecksum proves the target records the checksum of the committed file, not of the expansion.
 func assertChecksum(t *testing.T, dsn string, files []*godwitv1.MigrationFile) {
 	t.Helper()
 	migs, err := controlplane.MigrationsFromFiles(fileMap(files))
@@ -396,8 +390,6 @@ func TestPlanRunReplanChangesExpansionIsStale(t *testing.T) {
 	files := changeTypeFiles("change-type public.users.age bigint", "-- godwit: revert\n")
 	planWith(t, client, append(usersFiles(), files...))
 
-	// A godwit run of its own: the history moves in an attributable way, so the bind gets as far as
-	// comparing the statements instead of stopping at the schema check.
 	runToSuccess(t, client, append(usersFiles(), []*godwitv1.MigrationFile{
 		{Name: "20260901125000_nullable.up.sql", Body: "ALTER TABLE public.users ALTER COLUMN age DROP NOT NULL;"},
 		{Name: "20260901125000_nullable.down.sql", Body: "ALTER TABLE public.users ALTER COLUMN age SET NOT NULL;"},
@@ -585,7 +577,6 @@ func TestTargetKeepOldDefault(t *testing.T) {
 	}
 }
 
-// shopFiles is what the simple directives act on: a nullable column, an index to drop, a table to reference.
 func shopFiles() []*godwitv1.MigrationFile {
 	return []*godwitv1.MigrationFile{
 		{Name: "20260901120000_shop.up.sql", Body: "CREATE TABLE public.shop (id bigserial PRIMARY KEY, tag text, price integer);\n" +
@@ -624,8 +615,6 @@ func scalar[T any](t *testing.T, dsn, query string) T {
 	return out
 }
 
-// TestCreateRunAppliesTheSimpleDirectives walks every expand-phase operation end to end against a real
-// target, one migration each, in the order that lets the later ones use what the earlier ones built.
 func TestCreateRunAppliesTheSimpleDirectives(t *testing.T) {
 	t.Parallel()
 	client, targetDSN := shopService(t)
@@ -672,8 +661,6 @@ func TestCreateRunAppliesTheSimpleDirectives(t *testing.T) {
 	}
 }
 
-// TestCreateRunDropColumnHoldsTheContractPhase proves the one operation that lands in the contract phase:
-// the run parks until a human confirms, and only then does the column go.
 func TestCreateRunDropColumnHoldsTheContractPhase(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -729,8 +716,6 @@ func viewFiles() []*godwitv1.MigrationFile {
 	}
 }
 
-// TestPlanRunRefusesChangeTypeWithADependentView is the incident from the walkthrough: the swap would have
-// left the view reading age_old, and nothing would have said so.
 func TestPlanRunRefusesChangeTypeWithADependentView(t *testing.T) {
 	t.Parallel()
 	client, _ := directiveService(t)

@@ -35,7 +35,6 @@ func directory(n, size int) []Listed {
 	return out
 }
 
-// A real 200-migration directory must pass, and so must the 1000-migration one the load rig builds.
 func TestCheckListing(t *testing.T) {
 	t.Parallel()
 

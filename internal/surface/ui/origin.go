@@ -51,7 +51,7 @@ func safeMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead
 }
 
-// sameOrigin trusts Sec-Fetch-Site where the browser sends it and falls back to Origin; neither means not a browser.
+// sameOrigin trusts Sec-Fetch-Site where the browser sends it and falls back to Origin; neither header means not a browser.
 func (h *Handler) sameOrigin(r *http.Request) bool {
 	switch r.Header.Get("Sec-Fetch-Site") {
 	case "same-origin":

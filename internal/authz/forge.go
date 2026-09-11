@@ -60,7 +60,6 @@ type Command struct {
 
 func refuse(format string, a ...any) string { return fmt.Sprintf(format, a...) }
 
-// forked is the one sentence both paths refuse a fork with; name is empty for an event nobody commanded.
 func forked(name string, number int, headRepo, repository string) string {
 	commanded := ""
 	if name != "" {
@@ -191,7 +190,7 @@ func approved(ctx context.Context, repo Repository, c Command) (string, error) {
 	return permitted(ctx, repo, approver, "approver")
 }
 
-// A later CHANGES_REQUESTED supersedes that reviewer's approval (decision 0007), the one point godwit is stricter than Atlantis.
+// standingApproval takes each reviewer's latest review, so a later CHANGES_REQUESTED supersedes that reviewer's approval (decision 0007).
 func standingApproval(all []Review) string {
 	approved := map[string]bool{}
 	var order []string

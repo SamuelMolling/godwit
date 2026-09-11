@@ -158,7 +158,6 @@ func planMigrations(p *godwitv1.Plan) []planMigration {
 	return out
 }
 
-// planTargets fans out: ListPlans takes one target and refuses an empty one.
 func planTargets(p page) []string {
 	if p.Target != "" {
 		return []string{p.Target}

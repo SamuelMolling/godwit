@@ -12,8 +12,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/metrics"
 )
 
-// Observer reports a target's live history and schema.
-type Observer interface {
+type observer interface {
 	Observe(ctx context.Context, target string) (controlplane.Observation, error)
 }
 
@@ -25,7 +24,7 @@ type Validator interface {
 // Gate is what every admission decision reads; a nil Observer leaves every run implicit and a nil Validator skips the scratch replay.
 type Gate struct {
 	Store       *controlplane.Store
-	Observer    Observer
+	Observer    observer
 	Validator   Validator
 	Log         *slog.Logger
 	Metrics     *metrics.Metrics

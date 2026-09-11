@@ -11,7 +11,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
-// heavy names the procedures that build scratch databases, one or more per call.
 var heavy = map[string]bool{
 	godwitv1connect.GodwitServiceDiffProcedure:       true,
 	godwitv1connect.GodwitServicePlanRunProcedure:    true,
