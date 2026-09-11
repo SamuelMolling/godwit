@@ -69,8 +69,6 @@ func TestADirectoryGitHubRefusesToList(t *testing.T) {
 	}
 }
 
-// The contents API answers a full page for a directory it truncated and says nothing, so a full page
-// is the only sign there is.
 func TestADirectoryAtTheContentsCapIsReadAsPartial(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +113,6 @@ func TestABlobComesBackAsItsOwnBytes(t *testing.T) {
 	}
 }
 
-// A body read short would be planned as a migration nobody wrote, so the limit refuses rather than trims.
 func TestABlobOverTheLimitIsRefusedRatherThanTrimmed(t *testing.T) {
 	t.Parallel()
 

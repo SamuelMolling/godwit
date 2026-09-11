@@ -25,7 +25,6 @@ func (v policyView) Reviews(ctx context.Context, number int) ([]authz.Review, bo
 }
 
 type authorizer struct {
-	// open mints the token only after the association narrowed, so an idle comment spends no GitHub budget.
 	open     func(ctx context.Context) (repoView, error)
 	forge    authz.Forge
 	reaction string
@@ -76,9 +75,8 @@ func outcomeOf(ref string) *outcome {
 	return refused("%s", ref)
 }
 
-// seen marks the comment read before godwit knows whether it will obey it, which is the whole point of it.
 func (a authorizer) seen(ctx context.Context, repo repoView, req *request) {
-	if a.reaction == unsetReaction || a.reaction == NoReaction || req.comment == 0 {
+	if a.reaction == unsetReaction || a.reaction == noReaction || req.comment == 0 {
 		return
 	}
 	if err := repo.react(ctx, req.comment, a.reaction); err != nil {

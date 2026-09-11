@@ -22,8 +22,6 @@ func adoptedFiles() []*godwitv1.MigrationFile {
 	}
 }
 
-// journalledElsewhere builds the database the way another godwit instance left it: the schema and a
-// full godwit journal, with no run in this control plane's store.
 func journalledElsewhere(t *testing.T, dsn string, files []*godwitv1.MigrationFile) {
 	t.Helper()
 	ctx := context.Background()
@@ -48,7 +46,6 @@ func journalledElsewhere(t *testing.T, dsn string, files []*godwitv1.MigrationFi
 	}
 }
 
-// The whole adoption story: a database with history godwit never ran, taken over, then migrated.
 func TestAdoptADatabaseThatAlreadyHasHistory(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -114,7 +111,6 @@ func TestAdoptADatabaseThatAlreadyHasHistory(t *testing.T) {
 	}
 }
 
-// A reconcile the control plane cannot decide on its own refuses, and says which migrations it means.
 func TestReconcileTargetRefusals(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -154,8 +150,6 @@ func TestReconcileTargetRefusals(t *testing.T) {
 	}
 }
 
-// A database with the schema but no godwit journal is adopted by baseline, and the migration above the
-// baseline still runs.
 func TestBaselineAdoptsAnUnjournalledDatabase(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

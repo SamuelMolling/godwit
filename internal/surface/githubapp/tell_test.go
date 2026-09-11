@@ -47,7 +47,6 @@ func TestARunThatSettledIsReportedOnItsPullRequest(t *testing.T) {
 	}
 }
 
-// The expand phase is news, the contract phase is news again, and neither is news twice.
 func TestExpandAndContractAreEachReportedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -110,8 +109,6 @@ func TestAStoppedRunTurnsTheCheckRed(t *testing.T) {
 	}
 }
 
-// A run whose plan the pull request stored is reported against that plan, so the report says what each
-// migration did rather than only that it landed.
 func TestAReportReadsThePlanTheRunWasBoundTo(t *testing.T) {
 	t.Parallel()
 
@@ -141,8 +138,6 @@ func TestAReportReadsThePlanTheRunWasBoundTo(t *testing.T) {
 	}
 }
 
-// Marking told only after GitHub has it: a replica that dies part way leaves the claim to lapse, and the
-// repeat replaces its own comment rather than adding a second.
 func TestARunIsNotMarkedToldUntilGitHubHasIt(t *testing.T) {
 	t.Parallel()
 
@@ -234,7 +229,6 @@ func TestAStoreThatCannotBeAskedWhatToReport(t *testing.T) {
 	}
 }
 
-// A run still queued or running is not news; only a state a person can act on is.
 func TestARunStillInFlightIsNotReported(t *testing.T) {
 	t.Parallel()
 

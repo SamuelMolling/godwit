@@ -1,7 +1,4 @@
-// Package link composes the UI addresses that leave the process: Slack buttons, pull-request reports.
-//
-// It sits beside ui rather than inside it, and imports nothing of godwit's, because ui already reaches
-// notify through api and controlplane: were these two functions to live in ui, notify could not call them.
+// Package link composes the UI addresses that leave the process; it sits outside ui and imports nothing of godwit's, because ui already reaches notify and could not be called back from it.
 package link
 
 import "strings"

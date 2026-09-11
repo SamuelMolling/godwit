@@ -28,7 +28,7 @@ func (s *stubCheckpointer) Generate(_ context.Context, _ map[string]string, at i
 	return s.cp, s.err
 }
 
-func checkpointServer(t *testing.T, gen CheckpointGenerator) *Server {
+func checkpointServer(t *testing.T, gen checkpointGenerator) *Server {
 	t.Helper()
 	mock, err := pgxmock.NewPool()
 	if err != nil {

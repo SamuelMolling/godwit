@@ -16,9 +16,6 @@ func failingC() []*godwitv1.MigrationFile {
 	}
 }
 
-// A run that applies two migrations and then fails on a third leaves the two on the target. The control
-// plane must say so: the applied count, the plan's per-migration applied flag and the ledger all agree
-// with godwit.migrations, and the plan is not asked to run them a second time.
 func TestFailedRunIsAccountedForOnTheTarget(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

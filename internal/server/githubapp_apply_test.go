@@ -14,8 +14,6 @@ import (
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 )
 
-// applied waits for the comment the reporter posts once the run has settled, which is the last thing
-// that happens on a pull request that commanded an apply.
 func (f *forge) applied(t *testing.T) string {
 	t.Helper()
 	deadline := time.After(90 * time.Second)
@@ -39,8 +37,6 @@ func (f *forge) reviewed() {
 	f.approved = true
 }
 
-// A `godwit apply` comment reaches the database and comes back as the run's own report, on a pull
-// request holding nothing but godwit.yaml.
 func TestAnApplyCommentReachesTheDatabaseAndReportsBack(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -70,7 +66,6 @@ func TestAnApplyCommentReachesTheDatabaseAndReportsBack(t *testing.T) {
 	if !strings.Contains(report, "1 migration applied to `orders`") {
 		t.Fatalf("report = %s", report)
 	}
-	// The migration is on the database, not merely reported as such.
 	if got := scalar[int64](t, targetDSN, `SELECT count(*) FROM information_schema.tables WHERE table_name = 'orders'`); got != 1 {
 		t.Fatalf("the orders table is not there (%d)", got)
 	}

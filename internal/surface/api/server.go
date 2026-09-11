@@ -29,8 +29,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/notify"
 )
 
-// DriftOps is the drift surface the API exposes (implemented by the monitor).
-type DriftOps interface {
+type driftOps interface {
 	Check(ctx context.Context, target string) (controlplane.Drift, error)
 	AcceptBaseline(ctx context.Context, target string) error
 }
@@ -38,56 +37,40 @@ type DriftOps interface {
 // Validator checks migrations before admission.
 type Validator = admission.Validator
 
-// Baseliner marks migrations applied on a target without running them (implemented by the control plane).
-type Baseliner interface {
+type baseliner interface {
 	Baseline(ctx context.Context, runID, target string, migs []engine.Migration, p controlplane.Provenance) error
 }
 
-// Reconciler repairs the ledger from a target's own journal (implemented by the control plane).
-type Reconciler interface {
+type reconciler interface {
 	Reconcile(ctx context.Context, runID, target string, migs []engine.Migration, p controlplane.Provenance) (controlplane.Divergence, error)
 }
 
-// Inspector reports a target's applied versions, last run and drift baseline, and observes its live history and schema
-// (implemented by the control plane).
-type Inspector interface {
+type inspector interface {
 	Status(ctx context.Context, target string) (controlplane.TargetStatus, error)
 	Observe(ctx context.Context, target string) (controlplane.Observation, error)
 	DataLoss(ctx context.Context, target string, drops []engine.Drop) ([]engine.Loss, error)
 }
 
-// Differ generates the migration between a base schema and a desired DDL (implemented by the control plane).
-type Differ interface {
+type differ interface {
 	Diff(ctx context.Context, target, ddl string, base controlplane.DiffBase, files map[string]string) (controlplane.SchemaDiff, error)
 }
 
 // Server implements godwit.v1.GodwitService over the control-plane store.
 type Server struct {
-	// Metrics receives admission and API events; replace it before Handler to share a registry.
-	Metrics *metrics.Metrics
-	// Log receives admission and operator events plus the access log; replace it before Handler.
-	Log *slog.Logger
-	// Notifier receives operator-driven run events; replace it before Handler.
-	Notifier notify.Notifier
-	// Baseliner serves BaselineTarget; nil leaves it unimplemented.
-	Baseliner Baseliner
-	// Reconciler serves ReconcileTarget; nil leaves it unimplemented.
-	Reconciler Reconciler
-	// Inspector serves GetTargetStatus and stored plans; nil leaves both unimplemented and every run implicit.
-	Inspector Inspector
-	// Differ serves Diff; nil leaves it unimplemented.
-	Differ Differ
-	// Checkpointer serves Checkpoint; nil leaves it unimplemented.
-	Checkpointer CheckpointGenerator
-	// RequirePlan refuses runs without a stored plan on every target, not only those registered with require_plan.
-	RequirePlan bool
-	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
-	PlanTTL time.Duration
-	// Limits are the admission bounds; a zero field takes its default. Set them before Handler.
-	Limits limits.Limits
+	Metrics      *metrics.Metrics
+	Log          *slog.Logger
+	Notifier     notify.Notifier
+	Baseliner    baseliner
+	Reconciler   reconciler
+	Inspector    inspector
+	Differ       differ
+	Checkpointer checkpointGenerator
+	RequirePlan  bool
+	PlanTTL      time.Duration
+	Limits       limits.Limits
 
 	store         *controlplane.Store
-	drift         DriftOps
+	drift         driftOps
 	validator     Validator
 	keys          creds.Keyring
 	watchInterval time.Duration
@@ -95,9 +78,8 @@ type Server struct {
 	ready         func(context.Context) error
 }
 
-// NewServer wires a Server; drift and validator are optional (nil disables). An unconfigured keyring
-// refuses to register a static target and opens none.
-func NewServer(store *controlplane.Store, drift DriftOps, validator Validator, keys creds.Keyring) *Server {
+// NewServer wires a Server; drift and validator are optional (nil disables).
+func NewServer(store *controlplane.Store, drift driftOps, validator Validator, keys creds.Keyring) *Server {
 	return &Server{
 		Metrics:       metrics.New(),
 		Log:           slog.New(slog.DiscardHandler),
@@ -137,8 +119,7 @@ func (s *Server) checkFiles(in []*godwitv1.MigrationFile) error {
 	return nil
 }
 
-// Handler mounts the connect service with bearer-token auth, admission limits, plus the unauthenticated
-// /metrics, /healthz and /readyz endpoints; serve it with h2c enabled.
+// Handler mounts the service with auth, limits and the unauthenticated /metrics, /healthz and /readyz; it reads Limits once, so a later write to them does nothing.
 func Handler(s *Server, tokens []authz.Token) http.Handler {
 	mux := http.NewServeMux()
 	a := newAuth(tokens)
@@ -332,11 +313,9 @@ func (s *Server) upSet(target, rollout string, in []*godwitv1.MigrationFile) (ad
 	return set, nil
 }
 
-// ErrDataLoss marks a revert plan that would drop a table or column the target still has rows in.
-var ErrDataLoss = errors.New("revert would destroy data")
+var errDataLoss = errors.New("revert would destroy data")
 
-// RevertRun plans, and unless dry_run queues, the down side of what an earlier run actually applied.
-// With no run_id it acts on the newest un-reverted run of target, and never on anything wider.
+// RevertRun plans, and unless dry_run queues, the down side of what an earlier run applied; with no run_id, of the newest un-reverted run of target.
 func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
 	m := req.Msg
 	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
@@ -394,7 +373,6 @@ func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.Re
 	return connect.NewResponse(out), nil
 }
 
-// revertPlan resolves which run the request means and builds the down side of what it applied.
 func (s *Server) revertPlan(ctx context.Context, m *godwitv1.RevertRunRequest) (controlplane.RevertPlan, error) {
 	id := m.RunId
 	if id == "" {
@@ -421,7 +399,6 @@ func (s *Server) revertPlan(ctx context.Context, m *godwitv1.RevertRunRequest) (
 	return rp, nil
 }
 
-// dataLoss refuses a plan that drops a table or column the target still has rows in, unless allowed.
 func (s *Server) dataLoss(ctx context.Context, rp controlplane.RevertPlan, allow bool) (map[string][]engine.Loss, error) {
 	if s.Inspector == nil {
 		return nil, nil
@@ -443,7 +420,7 @@ func (s *Server) dataLoss(ctx context.Context, rp controlplane.RevertPlan, allow
 	s.Log.Warn("revert refused by the data-loss gate", "target", rp.Run.Target, "reverts", rp.Run.ID, "objects", total)
 
 	return nil, connect.NewError(connect.CodeFailedPrecondition,
-		fmt.Errorf("%w: %s; pass allow_data_loss (--allow-data-loss) to run it anyway", ErrDataLoss, lossDetail(out)))
+		fmt.Errorf("%w: %s; pass allow_data_loss (--allow-data-loss) to run it anyway", errDataLoss, lossDetail(out)))
 }
 
 func lossDetail(losses map[string][]engine.Loss) string {
@@ -474,7 +451,7 @@ func (s *Server) emit(ctx context.Context, run controlplane.Run, typ, detail str
 	notify.Emit(ctx, s.Notifier, s.Log, e)
 }
 
-// queue commits mutate and emits typ for the run it returns; the scheduler cannot claim the run before the event is out.
+// queue emits inside the transaction, so the scheduler cannot claim the run before the event is out.
 func (s *Server) queue(ctx context.Context, typ, detail string, mutate func(tx *controlplane.Store) (controlplane.Run, error)) (controlplane.Run, error) {
 	var run controlplane.Run
 	err := s.store.Transact(ctx, func(tx *controlplane.Store) error {
@@ -491,7 +468,6 @@ func (s *Server) queue(ctx context.Context, typ, detail string, mutate func(tx *
 	return run, err
 }
 
-// record audits an operator action on a run and notifies with the run's current state; the audit survives a failed lookup.
 func (s *Server) record(ctx context.Context, id, action, typ, detail string) {
 	run, err := s.store.Run(ctx, id)
 	if err != nil {
@@ -504,7 +480,6 @@ func (s *Server) record(ctx context.Context, id, action, typ, detail string) {
 
 const auditDetailLimit = 500
 
-// audit writes an entry for a mutation that already happened; a store failure is logged, not returned.
 func (s *Server) audit(ctx context.Context, action, runID, target, detail string) {
 	if r := []rune(detail); len(r) > auditDetailLimit {
 		detail = string(r[:auditDetailLimit]) + "…"
@@ -617,7 +592,6 @@ func (s *Server) ListRuns(ctx context.Context, req *connect.Request[godwitv1.Lis
 	return connect.NewResponse(resp), nil
 }
 
-// settled reports whether a run stopped moving on its own.
 func settled(state string) bool {
 	switch state {
 	case controlplane.StateQueued, controlplane.StateRunning:
@@ -634,7 +608,6 @@ func (s *Server) WatchRun(ctx context.Context, req *connect.Request[godwitv1.Wat
 		if err != nil {
 			return rpcErr(err)
 		}
-		// A send failure surfaces as a ctx error on the next store read.
 		_ = stream.Send(&godwitv1.WatchRunResponse{Run: toProto(r)})
 		if settled(r.State) {
 			return nil
@@ -798,8 +771,7 @@ func (s *Server) BaselineTarget(ctx context.Context, req *connect.Request[godwit
 
 var errReconcileDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("reconciling is not enabled"))
 
-// ReconcileTarget writes into the ledger every migration the target's own journal records and the
-// ledger does not. It reads the target and never writes to it.
+// ReconcileTarget writes into the ledger every migration the target's own journal records and the ledger does not; it never writes to the target.
 func (s *Server) ReconcileTarget(ctx context.Context, req *connect.Request[godwitv1.ReconcileTargetRequest]) (*connect.Response[godwitv1.ReconcileTargetResponse], error) {
 	if s.Reconciler == nil {
 		return nil, errReconcileDisabled

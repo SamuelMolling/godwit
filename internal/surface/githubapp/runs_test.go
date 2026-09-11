@@ -8,7 +8,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
-// fakeRuns is the binding table: an in-memory version of the claim the store makes atomic.
 type fakeRuns struct {
 	mu       sync.Mutex
 	rows     []controlplane.GitHubRun

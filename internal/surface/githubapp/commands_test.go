@@ -53,7 +53,6 @@ func TestApplyQueuesARunAndLeavesTheCheckOpen(t *testing.T) {
 	case req.Source != "github.com/"+testRepo+"@"+testHead+":db/migrations":
 		t.Fatalf("source = %q", req.Source)
 	}
-	// The pull request is owed the run's outcome, which it does not have yet.
 	if len(h.repo.ended) != 0 {
 		t.Fatalf("concluded a check over a run that has not run: %+v", h.repo.ended)
 	}
@@ -66,8 +65,6 @@ func TestApplyQueuesARunAndLeavesTheCheckOpen(t *testing.T) {
 	}
 }
 
-// A stale plan is the one refusal an author can act on without reading the service log, so the words the
-// service chose have to reach the pull request whole.
 func TestAStalePlanSaysWhatMovedOnThePullRequest(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +101,6 @@ func TestConfirmReleasesTheRunThisPullRequestHeld(t *testing.T) {
 	if strings.Join(h.svc.confirmed, ",") != "run-7" {
 		t.Fatalf("confirmed = %v", h.svc.confirmed)
 	}
-	// The confirm's own check is what the contract phase concludes, so the binding takes it over.
 	bound := h.runs.bound()
 	if len(bound) != 1 || bound[0].RunID != "run-7" || bound[0].Command != "confirm" {
 		t.Fatalf("binding = %+v", bound)
@@ -159,7 +155,6 @@ func TestRevertUndoesTheNewestRunOfThisPullRequest(t *testing.T) {
 	}
 }
 
-// A run already reverted is not revertable again, and neither is the revert run itself.
 func TestRevertSkipsWhatIsAlreadyUndone(t *testing.T) {
 	t.Parallel()
 
@@ -241,8 +236,6 @@ func TestARevertTheServiceRefuses(t *testing.T) {
 	}
 }
 
-// Every mutating procedure is scope-checked in the process, because the interceptor that would have
-// done it is not in the path.
 func TestNoMutatingCommandReachesTheServiceWithoutItsScope(t *testing.T) {
 	t.Parallel()
 
@@ -332,8 +325,6 @@ func TestAnEmptyDirectoryIsNothingToApply(t *testing.T) {
 	}
 }
 
-// A pull_request delivery carries no comment, so it carries no flags either: an automatic command must
-// never acknowledge a hazard on the author's behalf.
 func TestACommandWithNoCommentAcknowledgesNothing(t *testing.T) {
 	t.Parallel()
 

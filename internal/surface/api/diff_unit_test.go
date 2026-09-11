@@ -38,7 +38,7 @@ func TestDiffErrors(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
-		differ Differ
+		differ differ
 		req    *connect.Request[godwitv1.DiffRequest]
 		code   connect.Code
 	}{

@@ -163,14 +163,12 @@ type changedFile struct {
 	PreviousFilename string `json:"previous_filename"`
 }
 
-// listing is a pull request's changed paths and whether godwit read the whole of it.
 type listing struct {
 	paths  []string
 	listed int
 	capped bool
 }
 
-// whole reports whether the listing may be concluded from; files is GitHub's own count, zero when unknown.
 func (l listing) whole(files int) bool {
 	return !l.capped && (files <= 0 || l.listed >= files)
 }
@@ -202,7 +200,6 @@ func (r *repoClient) changed(ctx context.Context, number int) (listing, error) {
 	return out, nil
 }
 
-// errAbsent marks a path the repository does not carry at that commit, which is not a failure.
 var errAbsent = errors.New("absent")
 
 const maxConfigBytes = 64 << 10
@@ -237,15 +234,12 @@ func (r *repoClient) file(ctx context.Context, path, ref string) ([]byte, error)
 	return body, nil
 }
 
-// content is one entry of a directory listing: what the contents API knows before any body is fetched.
 type content struct {
 	name string
 	size int
 	file bool
 }
 
-// contents is a directory at one commit and whether godwit read the whole of it; the contents API
-// truncates a long directory at contentsCap without saying so, so a full page is read as partial.
 type contents struct {
 	entries []content
 	capped  bool
@@ -304,7 +298,6 @@ type issueComment struct {
 
 const commentsCap = 1000
 
-// speak leaves one comment carrying marker and makes it the newest on the page, as scripts/action-refuse.sh does.
 func (r *repoClient) speak(ctx context.Context, number int, marker, body string) error {
 	old, err := r.mine(ctx, number, marker)
 	if err != nil {
@@ -326,7 +319,6 @@ func (r *repoClient) drop(ctx context.Context, id int64) error {
 	return err
 }
 
-// check is concluded as it is created, so a refusal never leaves a check spinning with nothing to close it.
 func (r *repoClient) check(ctx context.Context, name, head, title, summary string) error {
 	body, _ := json.Marshal(map[string]any{ // only strings and one nested map; cannot fail
 		"name": name, "head_sha": head, "status": "completed", "conclusion": "failure",
@@ -338,7 +330,6 @@ func (r *repoClient) check(ctx context.Context, name, head, title, summary strin
 	return err
 }
 
-// checkRun is the check a command carries on the head commit, from the moment it is accepted to the outcome.
 type checkRun struct {
 	name       string
 	head       string
@@ -497,8 +488,7 @@ func (c *Client) call(ctx context.Context, method, url, token string, body []byt
 	return nextPage(resp.Header.Get("Link")), nil
 }
 
-// fetch reads a blob as its own bytes rather than base64 inside JSON, and refuses one over limit
-// rather than truncating it into a migration godwit would then plan.
+// fetch refuses a blob over limit rather than truncating it into a migration godwit would then plan.
 func (c *Client) fetch(ctx context.Context, url, token string, limit int) ([]byte, error) {
 	resp, err := c.send(ctx, http.MethodGet, url, token, acceptRaw, nil)
 	if err != nil {

@@ -40,7 +40,7 @@ func (b bindings) targets() []string {
 	return out
 }
 
-// grant refuses identically for a target bound elsewhere and one that does not exist: a caller that holds no token has no ListTargets, and a refusal telling the two apart would hand it one.
+// grant refuses identically for a target bound elsewhere and one that does not exist: telling the two apart would hand a repository the target listing it has no token for.
 func (b bindings) grant(repository, dir, target string) error {
 	for _, e := range b {
 		if e.target == target && (e.dir == "" || e.dir == dir) {

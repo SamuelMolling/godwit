@@ -131,7 +131,6 @@ func TestRevertRunEndToEnd(t *testing.T) {
 	runID := created.Msg.RunId
 	watchToEnd(t, client, runID)
 
-	// The down side drops a table, so H002 must be acknowledged.
 	_, err = client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{RunId: runID}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "H002") {
 		t.Fatalf("err = %v", err)
@@ -157,7 +156,6 @@ func TestRevertRunEndToEnd(t *testing.T) {
 		t.Fatalf("second revert: %v", err)
 	}
 
-	// A down file that fails on the scratch database is refused.
 	bad, err := client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: []*godwitv1.MigrationFile{
 			{Name: "20260901140000_v.up.sql", Body: "CREATE TABLE v (id int);"},

@@ -30,8 +30,7 @@ const (
 const (
 	defaultMaxBodyBytes = 1 << 20
 	defaultMaxAge       = time.Hour
-	// defaultReaction is on where Atlantis's --emoji-reaction is off; decision 0018 argues why.
-	defaultReaction = "eyes"
+	defaultReaction     = "eyes"
 )
 
 const (
@@ -71,20 +70,18 @@ type Config struct {
 	MaxBodyBytes int
 	MaxAge       time.Duration
 	Associations []string
-	// Reaction is the emoji godwit adds to a comment it read as a command; empty takes the default, NoReaction adds none.
-	Reaction string
-	Store    store
-	API      forge
-	Runner   runner
-	Record   func(event, result string)
-	Log      *slog.Logger
-	Now      func() time.Time
+	Reaction     string
+	Store        store
+	API          forge
+	Runner       runner
+	Record       func(event, result string)
+	Log          *slog.Logger
+	Now          func() time.Time
 }
 
 const unsetReaction = ""
 
-// NoReaction is what an operator sets to stop godwit reacting to comments at all.
-const NoReaction = "none"
+const noReaction = "none"
 
 type configError struct{ msg string }
 
@@ -279,10 +276,8 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	}, nil, req, nil
 }
 
-// refusedMarker is the Action's, so that if both ever ran on one pull request exactly one refusal stands.
 const refusedMarker = "<!-- godwit:refused -->"
 
-// tellable are the outcomes a person has to act on; an ignored delivery is not one.
 var tellable = map[string]bool{resultRefused: true, resultStale: true}
 
 func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, error) {
@@ -317,7 +312,6 @@ func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outc
 	r.mark(ctx, repo, req, out)
 }
 
-// mark turns the check the command would have set red; a head godwit cannot read leaves the comment alone.
 func (r *Receiver) mark(ctx context.Context, repo repoView, req *request, out *outcome) {
 	name, ok := checks[req.name]
 	if !ok {
@@ -344,14 +338,12 @@ func refusal(req *request, out *outcome) string {
 	return fmt.Sprintf("## godwit %s refused\n\n%s\n\nNothing ran.\n", req.name, out.message)
 }
 
-// tooLarge is what a partial listing gets instead of a wrong answer, and it is never silence.
 func tooLarge(req *request, err error) *outcome {
 	return refused("%s, so it cannot tell which projects this pull request touches and will not guess; "+
 		"godwit %s is refused rather than reported as nothing to do. Split the pull request, or land the "+
 		"migrations in one of their own", err, req.name)
 }
 
-// nothingToDo is silence for a pull request that touched no project, and a reason for a person who asked.
 func nothingToDo(req *request, res resolution) *outcome {
 	if req.commander == "" && len(res.skipped) == 0 {
 		return ignored("no bound project of %s has a when_modified the changed files match", req.repository)
@@ -364,7 +356,6 @@ func nothingToDo(req *request, res resolution) *outcome {
 	return refused("%s", strings.Join(res.skipped, "; "))
 }
 
-// at is the commit a delivery resolved to, the view it resolved through, and what the pull request changes.
 type at struct {
 	head  string
 	repo  repoView
@@ -391,7 +382,7 @@ func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *
 	return at{head: req.headSHA, repo: repo, files: req.files}, nil, nil
 }
 
-// fresh ages a delivery by GitHub's own timestamp inside a body GitHub signed, never by a committer date.
+// fresh ages a delivery by GitHub's own timestamp inside the body GitHub signed, never by a committer date.
 func (r *Receiver) fresh(req *request) *outcome {
 	if req.at.IsZero() {
 		return nil

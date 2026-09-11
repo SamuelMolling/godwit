@@ -14,14 +14,10 @@ import (
 	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
-// scratchConns sizes the pool that creates and drops scratch databases. Only the admitted calls reach it,
-// each holding one connection at a time per database it makes, so the concurrency gate is the demand.
 func scratchConns(heavyCalls int) int {
 	return max(4, 2*cmp.Or(heavyCalls, limits.DefaultHeavyCalls))
 }
 
-// newScratch resolves where scratch databases live and refuses a configured scratch connection that can act
-// outside them; without a scratch DSN they stay on the store server and every finding is only a warning.
 func newScratch(ctx context.Context, cfg Config, store *pgxpool.Pool, log *slog.Logger) (*controlplane.Scratch, func(), error) {
 	pool, closePool := store, func() {}
 	if cfg.ScratchDSN != "" {

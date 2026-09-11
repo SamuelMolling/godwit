@@ -26,7 +26,6 @@ func assertFiles(body string) []*godwitv1.MigrationFile {
 		&godwitv1.MigrationFile{Name: "20260901130000_check.down.sql", Body: "SELECT 1;"})
 }
 
-// assertService boots a service whose target already holds three orders.
 func assertService(t *testing.T) (godwitv1connect.GodwitServiceClient, string) {
 	t.Helper()
 	client := newClient(startService(t, newDatabase(t, "st"), "r1", nil), "")
@@ -62,8 +61,6 @@ const auditTable = "CREATE TABLE public.audit (id int);\n"
 
 const nullTotals = "-- godwit: assert 'SELECT count(*) FROM orders WHERE total IS NULL' = 0\n"
 
-// The plan carries the assertion as a statement with its condition beside it, and the run checks it
-// before the statement it guards.
 func TestAssertionIsPlannedAndChecked(t *testing.T) {
 	client, targetDSN := assertService(t)
 	files := assertFiles(nullTotals + auditTable)
@@ -132,8 +129,6 @@ func TestCreateRunAssertionFailsTheRun(t *testing.T) {
 
 const totalToBigint = "-- godwit: change-type public.orders.total bigint using='total::bigint'\n"
 
-// The assertion sits at the end of the expand phase, so the confirm re-checks it against the data as it
-// is now: a swap that was safe an hour ago does not become safe again.
 func TestConfirmRolloutRecheckstheAssertion(t *testing.T) {
 	ctx := context.Background()
 	client, targetDSN := assertService(t)
@@ -182,7 +177,6 @@ func TestConfirmRolloutSwapsWhenTheAssertionStillHolds(t *testing.T) {
 	}
 }
 
-// The comparison is part of the file, so editing it is editing the migration.
 func TestEditedAssertionMakesThePlanStale(t *testing.T) {
 	ctx := context.Background()
 	client, _ := assertService(t)

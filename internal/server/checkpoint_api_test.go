@@ -14,7 +14,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
-// checkpointFiles is a four-migration directory: three tables and a column on the first.
 func checkpointFiles() []*godwitv1.MigrationFile {
 	return []*godwitv1.MigrationFile{
 		{Name: "20260101000001_a.up.sql", Body: "CREATE TABLE public.a (id bigint PRIMARY KEY);"},
@@ -40,7 +39,6 @@ func checkpointService(t *testing.T) (godwitv1connect.GodwitServiceClient, strin
 	return client, targetDSN
 }
 
-// makeCheckpoint asks the service for a checkpoint over files and returns the directory with it added.
 func makeCheckpoint(t *testing.T, client godwitv1connect.GodwitServiceClient, files []*godwitv1.MigrationFile) ([]*godwitv1.MigrationFile, *godwitv1.CheckpointResponse) {
 	t.Helper()
 	res, err := client.Checkpoint(context.Background(), connect.NewRequest(&godwitv1.CheckpointRequest{
@@ -54,8 +52,6 @@ func makeCheckpoint(t *testing.T, client godwitv1connect.GodwitServiceClient, fi
 	return append(files[:len(files):len(files)], &godwitv1.MigrationFile{Name: name, Body: res.Msg.Body}), res.Msg
 }
 
-// A database with no history runs the checkpoint and records everything below it, exactly once, and ends
-// up with the schema the whole directory would have produced.
 func TestCheckpoint_FreshTargetStartsAtTheCheckpoint(t *testing.T) {
 	t.Parallel()
 	client, targetDSN := checkpointService(t)
@@ -106,7 +102,6 @@ func hasColumn(t *testing.T, dsn, table, column string) bool {
 	return exists
 }
 
-// A run above a checkpoint plans and applies normally; the checkpoint is already recorded and inert.
 func TestCheckpoint_PlanAfterTheCheckpoint(t *testing.T) {
 	t.Parallel()
 	client, targetDSN := checkpointService(t)
@@ -146,8 +141,6 @@ func TestCheckpoint_PlanAfterTheCheckpoint(t *testing.T) {
 	}
 }
 
-// A target that stopped between two collapsed versions moves forward file by file and then records the
-// checkpoint: it is never run on a schema that already holds half of what it carries.
 func TestCheckpoint_TargetMidHistory(t *testing.T) {
 	t.Parallel()
 	client, targetDSN := checkpointService(t)
@@ -168,8 +161,6 @@ func TestCheckpoint_TargetMidHistory(t *testing.T) {
 	}
 }
 
-// With the collapsed files gone from the directory, a target below the checkpoint can neither run it nor
-// record it, and godwit says so instead of guessing.
 func TestCheckpoint_RefusesAGapUnderTheCheckpoint(t *testing.T) {
 	t.Parallel()
 	client, _ := checkpointService(t)
@@ -186,8 +177,6 @@ func TestCheckpoint_RefusesAGapUnderTheCheckpoint(t *testing.T) {
 	}
 }
 
-// Below a checkpoint there is nothing left to undo, and godwit refuses rather than run a down file
-// against a state its target never passed through.
 func TestCheckpoint_RevertRefusedBelowIt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

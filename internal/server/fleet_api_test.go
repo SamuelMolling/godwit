@@ -59,8 +59,6 @@ func migrationOf(res *godwitv1.ListMigrationsResponse, id string, nth int) *godw
 	return nil
 }
 
-// TestListMigrationsEndToEnd runs the same migrations against two real targets, the way an owner promotes
-// staging to production, and reads the fleet back from the control plane alone.
 func TestListMigrationsEndToEnd(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -107,7 +105,6 @@ func TestListMigrationsEndToEnd(t *testing.T) {
 		t.Fatalf("applied on = %+v", shared.AppliedOn[0])
 	}
 
-	// staging alone has add_status, and production is past it: it did not skip a version it never saw.
 	only := migrationOf(res.Msg, "20260902090000_add_status", 0)
 	if only == nil || len(only.AppliedOn) != 1 || only.AppliedOn[0].Target != "staging" {
 		t.Fatalf("add_status = %+v", only)
@@ -116,7 +113,6 @@ func TestListMigrationsEndToEnd(t *testing.T) {
 		t.Fatalf("production gap = %+v", g)
 	}
 
-	// The alarming one: the same version, applied from two different files.
 	first, second := migrationOf(res.Msg, "20260903100000_x", 0), migrationOf(res.Msg, "20260903100000_x", 1)
 	if first == nil || second == nil || !first.Divergent || !second.Divergent || first.Checksum == second.Checksum {
 		t.Fatalf("x = %+v / %+v", first, second)
@@ -130,7 +126,6 @@ func TestListMigrationsEndToEnd(t *testing.T) {
 		}
 	}
 
-	// The question the owner asked: what is in staging that is not in production yet.
 	ahead, err := viewer.ListMigrations(ctx, connect.NewRequest(&godwitv1.ListMigrationsRequest{
 		InTarget: "staging", NotInTarget: "production",
 	}))

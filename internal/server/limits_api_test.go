@@ -12,8 +12,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
-// Nothing bounded a request before: the body was buffered whole, then multiplied through the proto
-// message, the file map, the loader's in-memory FS and the split statements.
 func TestAPIRefusesOversizedRequests(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -62,7 +60,6 @@ func TestAPIRefusesOversizedRequests(t *testing.T) {
 		t.Fatalf("too many checkpoint files: %v", err)
 	}
 
-	// The transport refuses what never reaches a handler.
 	_, err = client.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{
 		Target: "app", Files: []*godwitv1.MigrationFile{{Name: "20260901120000_t.up.sql", Body: strings.Repeat("z", 8192)}},
 	}))

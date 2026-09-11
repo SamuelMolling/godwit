@@ -8,8 +8,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/report"
 )
 
-// planned renders what the CLI renders: `godwit plan` on a laptop, the Action's comment and this one
-// are the same describers over the same response.
 func planned(cmd command, p project, res *godwitv1.PlanRunResponse, public string) done {
 	write, err := report.PlanWriter("markdown", p.format)
 	if err != nil {

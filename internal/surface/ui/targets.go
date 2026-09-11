@@ -114,7 +114,6 @@ func readyPlans(plans []*godwitv1.Plan) []*godwitv1.Plan {
 	return out
 }
 
-// pendingRows takes the pending set from the newest ready plan: the service holds no migration directory of its own.
 func pendingRows(ready []*godwitv1.Plan) []migRow {
 	if len(ready) == 0 {
 		return nil

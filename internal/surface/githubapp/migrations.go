@@ -13,14 +13,10 @@ import (
 	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
-// errPartial is a migration directory godwit knows it did not read whole, which it refuses rather than plans.
 var errPartial = errors.New("partial")
 
-// blobWorkers is how many bodies one command fetches at once; GitHub answers each on its own request.
 const blobWorkers = 8
 
-// migrations reads a directory at head; the limits are decided from the listing, so one over them
-// costs a single request rather than one per file.
 func migrations(ctx context.Context, repo repoView, dir, head string, lim limits.Limits) ([]*godwitv1.MigrationFile, error) {
 	lim = lim.WithDefaults()
 	listed, err := repo.directory(ctx, dir, head)
@@ -45,7 +41,6 @@ func migrations(ctx context.Context, repo repoView, dir, head string, lim limits
 	return bodies(ctx, repo, dir, head, want, lim.FileBytes)
 }
 
-// wanted is what engine.LoadFS would read out of the same directory on disk: files, dot-files left out.
 func wanted(listed contents) []limits.Listed {
 	out := make([]limits.Listed, 0, len(listed.entries))
 	for _, e := range listed.entries {

@@ -7,10 +7,7 @@ import (
 	"time"
 )
 
-// Defaults. A directory is counted in migrations because a file count halves in practice; 2000
-// of them is 4000 files and, at the 8 KiB a file RequestBytes was sized for, 32 MiB — so none of the three
-// stops a directory the others admit. FileBytes holds a generated schema dump; HeavyCalls is how many
-// requests may build scratch databases at once.
+// Defaults, sized against each other so none of the three stops a directory the others admit; docs/security.md#admission-limits argues them.
 const (
 	DefaultRequestBytes = 32 << 20
 	DefaultMigrations   = 2000
@@ -24,18 +21,12 @@ const (
 
 // Limits are the bounds applied to every request; a zero field takes its default.
 type Limits struct {
-	// RequestBytes caps one decoded request body.
 	RequestBytes int
-	// Migrations caps how many migrations one request may carry; the up half is what names one.
-	Migrations int
-	// Files caps how many files one request may carry, migration halves and everything else alike.
-	Files int
-	// FileBytes caps one migration body and one desired schema.
-	FileBytes int
-	// HeavyCalls caps concurrent Diff, PlanRun, CreateRun, RevertRun and Checkpoint calls.
-	HeavyCalls int
-	// HeavyWait is how long a call queues for a free slot before it is refused.
-	HeavyWait time.Duration
+	Migrations   int
+	Files        int
+	FileBytes    int
+	HeavyCalls   int
+	HeavyWait    time.Duration
 }
 
 // WithDefaults returns the bounds in force: every zero field replaced by its default.
@@ -68,8 +59,7 @@ type Listed struct {
 	Size int
 }
 
-// CheckListing is the file, size and migration check applied to names and sizes alone, so a caller
-// reading a directory over an API can refuse it before it spends requests on the bodies.
+// CheckListing applies the file, size and migration bounds to names and sizes alone, before any body is fetched.
 func (l Limits) CheckListing(in []Listed) error {
 	l = l.WithDefaults()
 	if len(in) > l.Files {

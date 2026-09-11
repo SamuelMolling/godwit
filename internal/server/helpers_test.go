@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// dropStoreTables breaks the control-plane schema to force internal errors.
 func dropStoreTables(t *testing.T, storeDSN string) {
 	t.Helper()
 	execStore(t, storeDSN, `DROP TABLE cp_leases, cp_run_applied, cp_plan_files, cp_plans, cp_run_files, cp_runs, cp_drift_events, cp_snapshots, cp_targets, cp_notifications, cp_audit CASCADE`)

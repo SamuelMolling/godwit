@@ -10,8 +10,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/authz"
 )
 
-// auth checks bearer tokens against the allow-set, names the caller and enforces the per-procedure scope;
-// an empty set disables auth and every call runs as open, which newAuth sets explicitly.
+// auth enforces the per-procedure scope; an empty principal set is a service with no tokens, whose open principal newAuth builds explicitly.
 type auth struct {
 	principals map[string]authz.Principal
 	open       authz.Principal
@@ -30,7 +29,6 @@ func newAuth(tokens []authz.Token) *auth {
 
 var errUnauthenticated = connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or missing bearer token"))
 
-// actor resolves the Authorization header to a principal; ok is false when the call must be refused.
 func (a *auth) actor(header string) (authz.Principal, bool) {
 	if len(a.principals) == 0 {
 		return a.open, true

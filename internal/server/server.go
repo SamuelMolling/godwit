@@ -28,70 +28,44 @@ import (
 
 // Config assembles one godwit service instance.
 type Config struct {
-	Listen   string
-	StoreDSN string
-	// ScratchDSN is the PostgreSQL validation and diff create their throwaway databases on; empty runs
-	// them on the store server with the store's own credentials.
-	ScratchDSN string
-	// ScratchTemplate is the database scratch databases are cloned from; empty means template0.
-	ScratchTemplate string
-	// Keys seals and opens the DSNs of static targets; the zero value holds no key, and a deployment
-	// whose targets all use vault or kubernetes runs with it.
-	Keys creds.Keyring
-	// Tokens are bearer token specs, "name:scope:secret"; a bare secret is an admin token named anonymous.
-	Tokens []string
-	// Holder is this replica's identity in leases, log lines and the UI; empty takes controlplane.NewHolder.
-	Holder        string
-	Scheduler     controlplane.Config
-	DriftInterval time.Duration
-	WebhookURL    string
-	SlackToken    string
-	SlackChannel  string
-	SlackMode     string
-	// SlackURL overrides the Slack API base (tests point it at a fake).
-	SlackURL  string
-	PublicURL string
-	// Notifier is an extra synchronous notifier called in-process (tests, embedding).
-	Notifier notify.Notifier
-	// StoreMaxConns caps the API pool against the store; zero takes the default. It wins over
-	// pool_max_conns in the DSN.
-	StoreMaxConns int
-	// Limits are the API admission bounds; a zero field takes its default.
-	Limits limits.Limits
-	// SkipValidation disables the scratch-database admission check.
-	SkipValidation bool
-	RequirePlan    bool
-	// PlanTTL is how long a stored plan stays bindable; zero keeps plans forever.
-	PlanTTL time.Duration
-	// PlanRetention is how long bound and superseded plans are kept; zero keeps them forever.
-	PlanRetention time.Duration
-	GitHub        GitHubApp
-	// UI serves the operator web UI under /ui/. Any Tokens secret is accepted as the basic-auth password;
-	// UIUser and UIPassword add a shared identity whose rights are UIScope (default operator).
-	UI         bool
-	UIUser     string
-	UIPassword string
-	UIScope    string
-	// UIAnonymousScope serves /ui with no authentication at all, at that scope, whatever Tokens
-	// hold. It is refused alongside UIUser. Empty keeps /ui behind basic auth.
+	Listen           string
+	StoreDSN         string
+	ScratchDSN       string
+	ScratchTemplate  string
+	Keys             creds.Keyring
+	Tokens           []string
+	Holder           string
+	Scheduler        controlplane.Config
+	DriftInterval    time.Duration
+	WebhookURL       string
+	SlackToken       string
+	SlackChannel     string
+	SlackMode        string
+	SlackURL         string
+	PublicURL        string
+	Notifier         notify.Notifier
+	StoreMaxConns    int
+	Limits           limits.Limits
+	SkipValidation   bool
+	RequirePlan      bool
+	PlanTTL          time.Duration
+	PlanRetention    time.Duration
+	GitHub           GitHubApp
+	UI               bool
+	UIUser           string
+	UIPassword       string
+	UIScope          string
 	UIAnonymousScope string
-	// UIOrigins are the scheme://host[:port] origins /ui is reached at; empty compares the browser's Origin with the request Host.
-	UIOrigins []string
-	// ShutdownTimeout bounds the whole shutdown once ctx ends: draining the listener and then the runs
-	// this replica claimed. Zero takes the default.
-	ShutdownTimeout time.Duration
-	Log             *slog.Logger
-	// OnReady receives the bound address once the listener is up.
-	OnReady func(addr net.Addr)
+	UIOrigins        []string
+	ShutdownTimeout  time.Duration
+	Log              *slog.Logger
+	OnReady          func(addr net.Addr)
 }
 
-// DefaultStoreMaxConns bounds the pool the API handlers, the scheduler, the drift monitor, the validator
-// and the scratch factory share. Unsized, pgx defaults it to max(4, NumCPU), which is both unpredictable
-// across nodes and small enough that a burst of Diff calls leaves the scheduler waiting on Acquire.
+// DefaultStoreMaxConns sizes the pool every component shares; unsized, pgx takes max(4, NumCPU) and a burst of Diff calls leaves the scheduler waiting on Acquire.
 const DefaultStoreMaxConns = 20
 
-// DefaultShutdownTimeout is the whole shutdown budget. It sits under the 30 seconds Kubernetes,
-// ECS and systemd all default their kill delay to, so the process exits on its own first.
+// DefaultShutdownTimeout sits under the 30 seconds Kubernetes, ECS and systemd default their kill delay to, so the process exits on its own first.
 const DefaultShutdownTimeout = 20 * time.Second
 
 func openPool(ctx context.Context, dsn string, maxConns int) (*pgxpool.Pool, error) {
@@ -232,7 +206,6 @@ func Run(ctx context.Context, cfg Config) error {
 	apiSrv.RequirePlan, apiSrv.PlanTTL = cfg.RequirePlan, cfg.PlanTTL
 	apiSrv.Limits = cfg.Limits
 
-	// After apiSrv: the App carries its commands out against it, in this process.
 	stopWebhook, err := serveWebhook(cfg, githubKey, store, apiSrv, m, log)
 	if err != nil {
 		return err
@@ -257,8 +230,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}))
 		handler = mux
 	}
-	// No ReadTimeout or WriteTimeout: both are per-stream in HTTP/2 and per-connection in HTTP/1, and
-	// WatchRun holds a response open for the length of a run. Request bodies are bounded by size instead.
+	// No ReadTimeout or WriteTimeout: WatchRun holds a response open for the length of a run; request bodies are bounded by size instead.
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -287,8 +259,7 @@ func Run(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-// awaitRuns holds the process open for the runs this replica already claimed. Their leases are still
-// beating, so no other replica may take them; abandoning them here would cost a whole lease TTL.
+// awaitRuns holds the process open for the runs this replica claimed: their leases still beat, so abandoning them costs a whole lease TTL.
 func awaitRuns(ctx context.Context, stopClaiming func(), drained <-chan struct{}, log *slog.Logger) {
 	stopClaiming()
 	select {
@@ -334,7 +305,6 @@ func serve(srv *http.Server, ln net.Listener) error {
 	return nil
 }
 
-// h2cProtocols enables unencrypted HTTP/2, which gRPC needs.
 func h2cProtocols() *http.Protocols {
 	p := new(http.Protocols)
 	p.SetHTTP1(true)

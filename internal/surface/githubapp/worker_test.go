@@ -260,7 +260,6 @@ func TestThePlanRequestCarriesWhatTheProjectAndTheCommentAskedFor(t *testing.T) 
 	}
 }
 
-// A rollout the comment does not name falls back to the project's own, not to the service default.
 func TestTheProjectsRolloutIsUsedWhenTheCommentNamesNone(t *testing.T) {
 	t.Parallel()
 
@@ -274,7 +273,6 @@ func TestTheProjectsRolloutIsUsedWhenTheCommentNamesNone(t *testing.T) {
 	}
 }
 
-// A hazard on what the apply would run is not a broken plan, and not a green light either.
 func TestAnUnacknowledgedHazardLeavesTheCheckNeedingAPerson(t *testing.T) {
 	t.Parallel()
 
@@ -291,8 +289,6 @@ func TestAnUnacknowledgedHazardLeavesTheCheckNeedingAPerson(t *testing.T) {
 	}
 }
 
-// The push that moved the head arrived as its own delivery; planning the old one would report a plan
-// for a commit nobody is looking at.
 func TestAHeadThatMovedBetweenAcceptAndRunIsLeftToTheDeliveryThatMovedIt(t *testing.T) {
 	t.Parallel()
 
@@ -307,7 +303,6 @@ func TestAHeadThatMovedBetweenAcceptAndRunIsLeftToTheDeliveryThatMovedIt(t *test
 	}
 }
 
-// The binding is re-read when the command runs, not only when it was accepted.
 func TestATargetTheRepositoryIsNoLongerBoundToIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -377,7 +372,6 @@ func TestADirectoryWithNoMigrationYetIsNotARefusal(t *testing.T) {
 	}
 }
 
-// The reader of a pull request has no use for a wire code.
 func TestARefusedPlanCarriesTheServicesOwnWords(t *testing.T) {
 	t.Parallel()
 
@@ -394,7 +388,6 @@ func TestARefusedPlanCarriesTheServicesOwnWords(t *testing.T) {
 	}
 }
 
-// No webhook may reach a procedure its command's scope does not carry, interceptor or not.
 func TestAPrincipalWithoutTheScopeNeverReachesTheService(t *testing.T) {
 	t.Parallel()
 
@@ -438,8 +431,6 @@ func TestSeveralProjectsGetOneCommentAndACheckEach(t *testing.T) {
 	})
 	h.worker.carry(context.Background(), cmd)
 
-	// One sticky comment per project, not one carrying both: a run reports itself later under its own
-	// marker, and a shared one would delete the neighbouring project's report.
 	if len(repo.notices) != 2 {
 		t.Fatalf("comments = %d, want one per project", len(repo.notices))
 	}
@@ -544,8 +535,6 @@ func TestACommandTheAuditCouldNotRecordIsNotQueued(t *testing.T) {
 	}
 }
 
-// A full queue must fail the delivery rather than drop it: the transaction rolls back, the delivery id
-// is not recorded, and GitHub's redelivery is a fresh attempt.
 func TestAFullQueueFailsTheDeliveryRatherThanDroppingIt(t *testing.T) {
 	t.Parallel()
 

@@ -64,8 +64,6 @@ func expectIdle(mock pgxmock.PgxPoolIface) {
 	mock.ExpectQuery("state = 'awaiting_contract'").WithArgs("app").WillReturnError(pgx.ErrNoRows)
 }
 
-// expectPlanning is the idle check plus the reconcile gate, which reads the ledger the observed journal
-// is compared against; versions are what the ledger stands on.
 func expectPlanning(mock pgxmock.PgxPoolIface, versions ...int64) {
 	expectIdle(mock)
 	expectAppliedVersions(mock, versions...)

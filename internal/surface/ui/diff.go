@@ -18,7 +18,6 @@ import (
 
 var diffNameRe = regexp.MustCompile(`^[a-z0-9_]+$`)
 
-// diffStatus lists the refusals the form itself explains; every other code is the error page.
 var diffStatus = map[connect.Code]int{
 	connect.CodeInvalidArgument:    http.StatusBadRequest,
 	connect.CodeFailedPrecondition: http.StatusPreconditionFailed,
@@ -32,7 +31,6 @@ const (
 	fromPaste  = "paste"
 )
 
-// repeatables is where the page took the R__ pairs it sent, and how they compare with what the target recorded.
 type repeatables struct {
 	Source   string
 	Kind     string
@@ -127,7 +125,6 @@ func (h *Handler) diffRun(w http.ResponseWriter, r *http.Request) {
 	h.render(w, http.StatusOK, "diff.html", p)
 }
 
-// refuse keeps a refusal the author can act on the form; anything else is a service failure.
 func (h *Handler) refuse(w http.ResponseWriter, p page, err error) {
 	status, shown := diffStatus[connect.CodeOf(err)]
 	if !shown {
@@ -139,7 +136,6 @@ func (h *Handler) refuse(w http.ResponseWriter, p page, err error) {
 	h.render(w, status, "diff.html", p)
 }
 
-// supply resolves the R__ pairs a target that records repeatables needs; godwit cannot see the repository.
 func (h *Handler) supply(ctx context.Context, v *diffView) ([]*godwitv1.MigrationFile, error) {
 	st, err := call(ctx, godwitv1connect.GodwitServiceGetTargetStatusProcedure,
 		&godwitv1.GetTargetStatusRequest{Target: v.Target}, h.svc.GetTargetStatus)
@@ -185,7 +181,6 @@ func (h *Handler) repeatFiles(ctx context.Context, target string, rep *repeatabl
 	return h.runSnapshot(ctx, target, rep)
 }
 
-// planSnapshot takes the files stored with the target's newest plan; retention can sweep it under the listing.
 func (h *Handler) planSnapshot(ctx context.Context, target string, rep *repeatables) (map[string]string, error) {
 	rep.Kind = fromPlan
 	list, err := call(ctx, godwitv1connect.GodwitServiceListPlansProcedure,
@@ -274,7 +269,7 @@ func pastedBodies(r *http.Request) map[string]string {
 	return out
 }
 
-// pastedFiles pairs each body with a placeholder down side: the loader wants a pair, a diff never runs one.
+// pastedFiles pairs each body with a placeholder down side, which the loader wants and a diff never runs.
 func pastedFiles(bodies map[string]string) map[string]string {
 	out := map[string]string{}
 	for name, body := range bodies {
@@ -285,7 +280,6 @@ func pastedFiles(bodies map[string]string) map[string]string {
 	return out
 }
 
-// compare reports the snapshot against what the target recorded; a set the loader refuses is left to Diff.
 func compare(rep *repeatables, recorded map[string]string, files map[string]string) {
 	migs, err := controlplane.MigrationsFromFiles(files)
 	if err != nil {

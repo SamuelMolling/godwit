@@ -17,13 +17,11 @@ var errCheckpointDisabled = connect.NewError(connect.CodeUnimplemented, errors.N
 
 var checkpointName = regexp.MustCompile(`^[a-z0-9_]+$`)
 
-// CheckpointGenerator builds a checkpoint from a migration directory (implemented by controlplane.Checkpointer).
-type CheckpointGenerator interface {
+type checkpointGenerator interface {
 	Generate(ctx context.Context, files map[string]string, at int64, name string, now time.Time) (controlplane.Checkpoint, error)
 }
 
-// Checkpoint collapses a prefix of the submitted directory into one file: the schema those migrations
-// produce on a scratch database, verified by replaying the generated DDL on another one.
+// Checkpoint collapses a prefix of the submitted directory into the schema those migrations produce, verified by replaying it on another scratch database.
 func (s *Server) Checkpoint(ctx context.Context, req *connect.Request[godwitv1.CheckpointRequest]) (*connect.Response[godwitv1.CheckpointResponse], error) {
 	m := req.Msg
 	if len(m.Files) == 0 {
