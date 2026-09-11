@@ -9,22 +9,14 @@ image:
 
 existingSecret:
   name: godwit
-  keys:
-    tokens: GODWIT_TOKENS
-    storeDSN: GODWIT_STORE_DSN
-    scratchDSN: GODWIT_SCRATCH_DSN
-    githubWebhookSecret: GODWIT_GITHUB_WEBHOOK_SECRET
-    githubPrivateKey: github-private-key.pem
+  githubPrivateKey: github-private-key.pem
 
 serve:
-  scratch:
-    enabled: true
   ui:
     enabled: true
     origins: ["https://godwit.example.internal"]
   githubApp:
     enabled: true
-    appId: "1234567"
     maxAge: 30m
     allowedAssociations: [OWNER, MEMBER]
     emojiReaction: rocket

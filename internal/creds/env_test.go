@@ -90,6 +90,11 @@ func TestKeyringFromEnvErrors(t *testing.T) {
 			map[string]string{"GODWIT_MASTER_KEY": strings.Repeat("ab", 32), "GODWIT_MASTER_KEY_PREVIOUS": "nope"},
 			"GODWIT_MASTER_KEY_PREVIOUS",
 		},
+		{
+			"previous without a primary",
+			map[string]string{"GODWIT_MASTER_KEY_PREVIOUS": strings.Repeat("ab", 32)},
+			"GODWIT_MASTER_KEY_PREVIOUS needs GODWIT_MASTER_KEY",
+		},
 		{"env without a key", map[string]string{"GODWIT_KEY_PROVIDER": "env"}, "needs GODWIT_MASTER_KEY"},
 		{"gcpkms without a key", map[string]string{"GODWIT_KEY_PROVIDER": "gcpkms"}, "needs GODWIT_KMS_KEY"},
 		{"vault transit without a key", map[string]string{"GODWIT_KEY_PROVIDER": "vault-transit"}, "needs GODWIT_KMS_KEY"},

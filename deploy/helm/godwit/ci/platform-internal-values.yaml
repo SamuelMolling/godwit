@@ -13,8 +13,6 @@ existingSecret:
   name: godwit
 
 serve:
-  scratch:
-    enabled: true
   ui:
     enabled: true
     auth: false

@@ -10,11 +10,8 @@ existingSecret:
   name: godwit
 
 serve:
-  scratch:
-    enabled: true
   ui:
     enabled: true
-    basicAuth: true
     origins: ["https://godwit.example.com"]
 
 notifications:

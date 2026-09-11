@@ -22,58 +22,36 @@ fullnameOverride: ""
 # Deployment's selector, which is immutable — setting this on a live release is safe.
 commonLabels: {}
 
-# Secret the service reads its credentials from. Create it before installing:
+# Secret the service reads its credentials from, entry by entry: every key in it becomes an
+# environment variable of that name, so what godwit reads from the Secret is configured in the
+# Secret and nowhere here. Create it before installing:
 #   kubectl create secret generic godwit \
 #     --from-literal=GODWIT_TOKENS=ci:pipeline:ci-token,ops:operator:ops-token,admin:admin:admin-token \
 #     --from-literal=GODWIT_STORE_DSN=postgres://godwit:...@store/godwit_store \
 #     --from-literal=GODWIT_SCRATCH_DSN=postgres://godwit_scratch:...@scratch/postgres
+# Only GODWIT_STORE_DSN is required; the rest of docs/configuration.md's table is optional and each
+# entry configures itself by being there. GODWIT_SCRATCH_DSN gives validation an isolated server
+# (serve.scratch), GODWIT_MASTER_KEY lets `static` targets be registered, GODWIT_SLACK_TOKEN pairs
+# with notifications.slack.channel, GODWIT_UI_USER and GODWIT_UI_PASSWORD add a shared UI identity,
+# and GODWIT_GITHUB_APP_ID with GODWIT_GITHUB_WEBHOOK_SECRET are both required by
+# serve.githubApp.enabled — without either, the pods refuse to start.
 # The DSNs reach serve as environment variables and never as arguments, so they appear neither in
 # the pod spec nor in the container's /proc/<pid>/cmdline.
-# GODWIT_SCRATCH_DSN is only read when serve.scratch.enabled is true; see serve.scratch.
-# Add a GODWIT_MASTER_KEY entry and set existingSecret.keys.masterKey to register `static` targets.
-# Add a GODWIT_SLACK_TOKEN entry and set notifications.slack.channel to enable Slack.
-# Add GODWIT_UI_USER and GODWIT_UI_PASSWORD entries and set serve.ui.basicAuth for a shared UI identity.
 existingSecret:
   name: godwit
-  keys:
-    # REQUIRED FOR `static` TARGETS, and for nothing else: their DSN is the only secret godwit
-    # stores, while kubernetes and vault targets store a path. Empty is a deployment with no key,
-    # which starts and runs normally — but `godwit target add --provider static` is then refused
-    # with `invalid_argument: static provider needs a key: set GODWIT_MASTER_KEY, or
-    # GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY`, and a static target already in the store is warned
-    # about at start-up and its runs refused. To opt in, put 64 hex characters
-    # (`openssl rand -hex 32`) in the Secret and name that Secret key here:
-    #   masterKey: GODWIT_MASTER_KEY
-    # Read only when serve.keyProvider.name is env; gcpkms and vault-transit keep the key elsewhere.
-    masterKey: ""
-    # Keys accepted for decryption only, comma-separated, and only alongside masterKey — the chart
-    # refuses to render this one without it, because GODWIT_MASTER_KEY_PREVIOUS alone configures no
-    # key at all. Set it during an `env` key rotation: the new key goes in masterKey, the old one
-    # here, and every replica reseals what it finds at start-up. Drop it on the next roll.
-    # See docs/security.md#rotation.
-    masterKeyPrevious: ""
-    tokens: GODWIT_TOKENS
-    storeDSN: GODWIT_STORE_DSN
-    scratchDSN: GODWIT_SCRATCH_DSN
-    slackToken: GODWIT_SLACK_TOKEN
-    uiUser: GODWIT_UI_USER
-    uiPassword: GODWIT_UI_PASSWORD
-    # Both REQUIRED when serve.githubApp.enabled, and read for nothing else.
-    # githubWebhookSecret is the string configured as the App's webhook secret; every delivery is
-    # HMAC-verified against it before godwit looks at the body.
-    githubWebhookSecret: GODWIT_GITHUB_WEBHOOK_SECRET
-    # githubPrivateKey holds the App's private key, PEM as GitHub downloaded it. It is not named
-    # after an environment variable like the keys above because it never becomes one: it is mounted
-    # as a file. See serve.githubApp.privateKeyPath.
-    githubPrivateKey: github-private-key.pem
+  # The one entry that is not an environment variable: the App's private key, PEM as GitHub
+  # downloaded it, mounted as a file (serve.githubApp.privateKeyPath) so it stays out of the
+  # environment. Naming it anything a shell would accept as a variable puts it back there, and the
+  # chart refuses to render that. REQUIRED when serve.githubApp.enabled.
+  githubPrivateKey: github-private-key.pem
 
 # Flags of `godwit serve`; nothing else is accepted by the binary.
 serve:
   # --listen: the API, /metrics, /healthz and /readyz share this port.
   port: 8474
   # Where the key that seals `static` target DSNs lives (docs/security.md). A deployment with no
-  # `static` targets needs none of this: leave the default and existingSecret.keys.masterKey empty.
-  #   env           reads existingSecret.keys.masterKey, and holds no key when that is empty.
+  # `static` targets needs none of this: leave the default and GODWIT_MASTER_KEY out of the Secret.
+  #   env           reads GODWIT_MASTER_KEY from the Secret, and holds no key when it is not there.
   #                 A store dump plus that key is every static DSN, which is why the two below exist.
   #   gcpkms        wraps a per-value data key with a Cloud KMS CryptoKey; `key` is the
   #                 projects/…/cryptoKeys/… resource name and the pod's service account needs
@@ -104,12 +82,11 @@ serve:
   # that execution, so it belongs on a PostgreSQL that holds nothing:
   #   CREATE ROLE godwit_scratch LOGIN PASSWORD '...'
   #     CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-  # enabled: true wires GODWIT_SCRATCH_DSN from existingSecret.keys.scratchDSN,
-  # and the pods refuse to start if that role is a superuser or owns the store database.
-  # enabled: false leaves scratch databases on the store server under the store's own role —
-  # submitted DDL then runs as the owner of the control plane, and every pod warns on start.
+  # A GODWIT_SCRATCH_DSN entry in the Secret is what puts it there, and the pods refuse to start if
+  # that role is a superuser or owns the store database. Without the entry, scratch databases stay
+  # on the store server under the store's own role — submitted DDL then runs as the owner of the
+  # control plane, and every pod warns on start.
   scratch:
-    enabled: false
     # --scratch-template: what scratch databases are cloned from. template0 carries no extension
     # anyone installed into template1; name a prepared template to give validation extensions.
     template: template0
@@ -120,13 +97,11 @@ serve:
   ui:
     # --ui: serve the operator web UI at /ui on the same port.
     enabled: false
-    # Wire GODWIT_UI_USER / GODWIT_UI_PASSWORD from existingSecret to add a shared /ui identity.
-    # /ui already asks for basic auth whenever GODWIT_TOKENS is set: any token secret is a valid
-    # password and signs in as that token, with its scope. Without tokens and without this pair
-    # the UI is open to anyone who reaches the port and the service logs a warning.
-    basicAuth: false
-    # --ui-scope: what the shared identity may do — read, pipeline, operator or admin.
-    # An anonymous visitor on a UI with no tokens and no basicAuth is always read, whatever this says.
+    # --ui-scope: what a GODWIT_UI_USER / GODWIT_UI_PASSWORD identity in the Secret may do — read,
+    # pipeline, operator or admin. /ui already asks for basic auth whenever GODWIT_TOKENS is set:
+    # any token secret is a valid password and signs in as that token, with its scope. Without
+    # tokens and without that pair the UI is open to anyone who reaches the port, the service logs
+    # a warning, and that visitor is always read whatever this says.
     scope: operator
     # false serves /ui with no authentication at all (--ui-anonymous-scope): no password is asked for,
     # whatever GODWIT_TOKENS holds, and anyone who reaches the address may do whatever anonymousScope
@@ -173,12 +148,9 @@ serve:
     enabled: false
     # --github-webhook-addr: the port that listener binds.
     port: 8475
-    # GODWIT_GITHUB_APP_ID: the App's numeric id, from its settings page. Not a secret — godwit puts
-    # it in the `iss` of every JWT it signs — so it is a value here and not a Secret key.
-    appId: ""
     # GODWIT_GITHUB_API_URL: empty is https://api.github.com; set it for GitHub Enterprise Server.
     apiUrl: ""
-    # Where existingSecret.keys.githubPrivateKey is mounted, as `<privateKeyPath>/private-key.pem`,
+    # Where existingSecret.githubPrivateKey is mounted, as `<privateKeyPath>/private-key.pem`,
     # and read from with --github-private-key-file. The PEM is the App's whole identity: it mints an
     # installation token for every repository the App is installed on. It reaches the process as a
     # file rather than as GODWIT_GITHUB_PRIVATE_KEY so that it is not in the environment, which a
@@ -214,7 +186,8 @@ notifications:
   # GODWIT_PUBLIC_URL: base of the UI links in notifications, e.g. https://godwit.example.com.
   publicUrl: ""
   slack:
-    # GODWIT_SLACK_CHANNEL: setting it wires GODWIT_SLACK_TOKEN from existingSecret.keys.slackToken.
+    # GODWIT_SLACK_CHANNEL: the channel GODWIT_SLACK_TOKEN in the Secret posts to. A token with no
+    # channel is a start-up failure, not a silent no-op.
     channel: ""
     # GODWIT_SLACK_MODE: thread (root message plus threaded replies) or edit (one message rewritten).
     mode: thread

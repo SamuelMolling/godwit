@@ -15,17 +15,8 @@ commonLabels:
 
 existingSecret:
   name: godwit
-  keys:
-    # This deployment has a static target registered, so it opts into a key.
-    masterKey: GODWIT_MASTER_KEY
-    tokens: GODWIT_TOKENS
-    storeDSN: GODWIT_STORE_DSN
-    scratchDSN: GODWIT_SCRATCH_DSN
-    slackToken: GODWIT_SLACK_TOKEN
 
 serve:
-  scratch:
-    enabled: true
   driftInterval: 15m
   ui:
     enabled: true

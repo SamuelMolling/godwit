@@ -85,6 +85,11 @@ func newEnvKey(key []byte) envKey {
 func envKeys() ([]envKey, error) {
 	primary := os.Getenv("GODWIT_MASTER_KEY")
 	if primary == "" {
+		if len(previousKeys()) > 0 {
+			return nil, errors.New("GODWIT_MASTER_KEY_PREVIOUS needs GODWIT_MASTER_KEY: keys kept for " +
+				"decryption configure no key to seal with")
+		}
+
 		return nil, nil
 	}
 	key, err := hex.DecodeString(primary)
@@ -92,11 +97,7 @@ func envKeys() ([]envKey, error) {
 		return nil, errors.New("GODWIT_MASTER_KEY must be 64 hex chars (32 bytes)")
 	}
 	keys := []envKey{newEnvKey(key)}
-	for _, spec := range strings.Split(os.Getenv("GODWIT_MASTER_KEY_PREVIOUS"), ",") {
-		spec = strings.TrimSpace(spec)
-		if spec == "" {
-			continue
-		}
+	for _, spec := range previousKeys() {
 		old, err := hex.DecodeString(spec)
 		if err != nil || len(old) != masterKeyBytes {
 			return nil, errors.New("every key in GODWIT_MASTER_KEY_PREVIOUS must be 64 hex chars (32 bytes)")
@@ -105,6 +106,17 @@ func envKeys() ([]envKey, error) {
 	}
 
 	return keys, nil
+}
+
+func previousKeys() []string {
+	var specs []string
+	for _, spec := range strings.Split(os.Getenv("GODWIT_MASTER_KEY_PREVIOUS"), ",") {
+		if spec = strings.TrimSpace(spec); spec != "" {
+			specs = append(specs, spec)
+		}
+	}
+
+	return specs
 }
 
 // Name implements KeyProvider.

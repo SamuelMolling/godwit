@@ -71,9 +71,6 @@ spec:
             - --skip-validation
             {{- end }}
             {{- if .Values.serve.ui.enabled }}
-            {{- if and (not .Values.serve.ui.auth) .Values.serve.ui.basicAuth }}
-            {{- fail "serve.ui.auth: false serves /ui unauthenticated; serve.ui.basicAuth then configures an identity nobody is ever asked for" }}
-            {{- end }}
             - --ui
             - --ui-scope={{ .Values.serve.ui.scope }}
             {{- if not .Values.serve.ui.auth }}
@@ -84,14 +81,11 @@ spec:
             {{- end }}
             {{- end }}
             {{- if .Values.serve.githubApp.enabled }}
-            {{- if not .Values.serve.githubApp.appId }}
-            {{- fail "serve.githubApp.appId is required when serve.githubApp.enabled: godwit signs its JWT with it" }}
+            {{- if not .Values.existingSecret.githubPrivateKey }}
+            {{- fail "existingSecret.githubPrivateKey is required when serve.githubApp.enabled: without the App's key godwit cannot mint an installation token" }}
             {{- end }}
-            {{- if not .Values.existingSecret.keys.githubWebhookSecret }}
-            {{- fail "existingSecret.keys.githubWebhookSecret is required when serve.githubApp.enabled: an unverified webhook endpoint is an open one" }}
-            {{- end }}
-            {{- if not .Values.existingSecret.keys.githubPrivateKey }}
-            {{- fail "existingSecret.keys.githubPrivateKey is required when serve.githubApp.enabled: without the App's key godwit cannot mint an installation token" }}
+            {{- if regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" .Values.existingSecret.githubPrivateKey }}
+            {{- fail "existingSecret.githubPrivateKey must not be a valid environment variable name: envFrom would then put the App's private key in the environment, which a sidecar, a core dump and `kubectl exec -- env` all read" }}
             {{- end }}
             - --github-webhook-addr=:{{ .Values.serve.githubApp.port }}
             - --github-private-key-file={{ .Values.serve.githubApp.privateKeyPath }}/private-key.pem
@@ -104,25 +98,7 @@ spec:
             - {{ . | quote }}
             {{- end }}
           env:
-            {{- if eq .Values.serve.keyProvider.name "env" }}
-            {{- if and .Values.existingSecret.keys.masterKeyPrevious (not .Values.existingSecret.keys.masterKey) }}
-            {{- fail "existingSecret.keys.masterKeyPrevious needs existingSecret.keys.masterKey: GODWIT_MASTER_KEY_PREVIOUS on its own configures no key" }}
-            {{- end }}
-            {{- with .Values.existingSecret.keys.masterKey }}
-            - name: GODWIT_MASTER_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.existingSecret.name }}
-                  key: {{ . }}
-            {{- end }}
-            {{- with .Values.existingSecret.keys.masterKeyPrevious }}
-            - name: GODWIT_MASTER_KEY_PREVIOUS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.existingSecret.name }}
-                  key: {{ . }}
-            {{- end }}
-            {{- else }}
+            {{- if ne .Values.serve.keyProvider.name "env" }}
             {{- if not .Values.serve.keyProvider.key }}
             {{- fail "serve.keyProvider.key is required for gcpkms and vault-transit" }}
             {{- end }}
@@ -162,52 +138,14 @@ spec:
                   key: {{ $.Values.serve.keyProvider.vaultTokenSecret.key }}
             {{- end }}
             {{- end }}
-            - name: GODWIT_TOKENS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.tokens }}
-            - name: GODWIT_STORE_DSN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.storeDSN }}
-            {{- if .Values.serve.scratch.enabled }}
-            - name: GODWIT_SCRATCH_DSN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.scratchDSN }}
-            {{- end }}
-            {{- if .Values.serve.githubApp.enabled }}
-            - name: GODWIT_GITHUB_APP_ID
-              value: {{ .Values.serve.githubApp.appId | quote }}
-            - name: GODWIT_GITHUB_WEBHOOK_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.githubWebhookSecret }}
-            {{- with .Values.serve.githubApp.apiUrl }}
+            {{- if and .Values.serve.githubApp.enabled .Values.serve.githubApp.apiUrl }}
             - name: GODWIT_GITHUB_API_URL
-              value: {{ . | quote }}
-            {{- end }}
+              value: {{ .Values.serve.githubApp.apiUrl | quote }}
             {{- end }}
             - name: GODWIT_LOG_FORMAT
               value: {{ .Values.serve.logFormat | quote }}
             - name: GODWIT_LOG_LEVEL
               value: {{ .Values.serve.logLevel | quote }}
-            {{- if and .Values.serve.ui.enabled .Values.serve.ui.basicAuth }}
-            - name: GODWIT_UI_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.uiUser }}
-            - name: GODWIT_UI_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.keys.uiPassword }}
-            {{- end }}
             {{- with .Values.notifications }}
             {{- if .webhookUrl }}
             - name: GODWIT_WEBHOOK_URL
@@ -218,11 +156,6 @@ spec:
               value: {{ .publicUrl | quote }}
             {{- end }}
             {{- if .slack.channel }}
-            - name: GODWIT_SLACK_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.existingSecret.name }}
-                  key: {{ $.Values.existingSecret.keys.slackToken }}
             - name: GODWIT_SLACK_CHANNEL
               value: {{ .slack.channel | quote }}
             - name: GODWIT_SLACK_MODE
@@ -232,10 +165,12 @@ spec:
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.extraEnvFrom }}
           envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret.name }}
+            {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.serve.port }}
@@ -293,7 +228,7 @@ spec:
             # fsGroup, and the container runs as podSecurityContext.runAsUser.
             defaultMode: 0440
             items:
-              - key: {{ .Values.existingSecret.keys.githubPrivateKey }}
+              - key: {{ .Values.existingSecret.githubPrivateKey }}
                 path: private-key.pem
         {{- end }}
         {{- with .Values.extraVolumes }}

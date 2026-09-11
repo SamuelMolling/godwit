@@ -42,7 +42,7 @@ kubectl -n godwit create secret generic godwit \
   --from-literal=GODWIT_SCRATCH_DSN='postgres://godwit_scratch:...@scratch.internal:5432/postgres?sslmode=require'
 ```
 
-`GODWIT_MASTER_KEY` is only needed by `static` targets: when every target uses the `kubernetes` or `vault` provider, leave the literal out and set `existingSecret.keys.masterKey: ""` — the Deployment guards that key with `with`, so an empty value drops the reference. `GODWIT_TOKENS` is read once at start-up, so adding an application's token is a pod roll.
+`GODWIT_MASTER_KEY` is only needed by `static` targets: when every target uses the `kubernetes` or `vault` provider, leave the literal out. The chart reads the Secret whole, so an entry that is not there configures nothing and needs no value saying so. `GODWIT_TOKENS` is read once at start-up, so adding an application's token is a pod roll.
 
 ## Install
 
@@ -52,7 +52,7 @@ kubectl -n godwit rollout status deploy/godwit
 kubectl -n godwit logs deploy/godwit | grep -E 'listening|not isolated|no tokens'
 ```
 
-A clean start logs `store migrated` and `listening` and nothing else. `scratch database is not isolated` means `serve.scratch.enabled` is off or the Secret's `GODWIT_SCRATCH_DSN` is empty; `no tokens configured` means every caller is an anonymous admin.
+A clean start logs `store migrated` and `listening` and nothing else. `scratch database is not isolated` means the Secret has no `GODWIT_SCRATCH_DSN`; `no tokens configured` means every caller is an anonymous admin.
 
 ## What the Ingress publishes
 

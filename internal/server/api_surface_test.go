@@ -392,4 +392,11 @@ func TestUIWithoutBasicAuth(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must be set together") {
 		t.Fatalf("half credentials: %v", err)
 	}
+
+	err = Run(context.Background(), Config{
+		UIUser: "sam", UIPassword: "pw", UIAnonymousScope: "operator", Log: testLog,
+	})
+	if err == nil || !strings.Contains(err.Error(), "an identity nobody is ever asked for") {
+		t.Fatalf("an identity on an unauthenticated ui: %v", err)
+	}
 }
