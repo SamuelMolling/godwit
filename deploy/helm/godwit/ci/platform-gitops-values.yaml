@@ -1,6 +1,4 @@
-# A GitOps platform: Gateway API for routing, an operator for the Secret, and the chart's
-# own Ingress off. Nothing here patches the chart. The targets and the Vault they read are
-# rows an admin registers against the API; the values only say which hosts a store may name.
+# A GitOps platform: Gateway API routing, an operator for the Secret, the chart's own Ingress off.
 replicaCount: 2
 
 image:

@@ -53,13 +53,11 @@ func (p Palette) diff(line string) string {
 	return line
 }
 
-// Colors is the palette a report renders with when it is written to w: none at all unless w is a terminal
-// that has not asked to go without.
+// Colors is the palette a report renders with when it is written to w: none unless w is a terminal that has not asked to go without.
 func Colors(w io.Writer) Palette {
 	return paletteFor(os.Getenv("GODWIT_COLOR"), os.Getenv("NO_COLOR"), isTTY(w))
 }
 
-// paletteFor: an explicit GODWIT_COLOR outranks the ambient NO_COLOR, and an unknown value falls back to auto.
 func paletteFor(mode, noColor string, tty bool) Palette {
 	switch mode {
 	case "always":

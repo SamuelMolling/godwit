@@ -458,7 +458,6 @@ func newRunGetCmd() *cobra.Command {
 	return cmd
 }
 
-// appliedText lists the ledger of what the run put into the target's history, which is what a revert acts on.
 func appliedText(applied []*godwitv1.RunMigration) string {
 	if len(applied) == 0 {
 		return "\n  applied: none"

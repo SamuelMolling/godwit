@@ -152,7 +152,6 @@ func offlineCheckpointDir(t *testing.T) string {
 	})
 }
 
-// Offline, a checkpoint has only an up side to plan and print.
 func TestPlanPrintsACheckpointWithoutADown(t *testing.T) {
 	t.Parallel()
 	code, out, errOut := runCLI("plan", "--dir", offlineCheckpointDir(t))
@@ -164,7 +163,6 @@ func TestPlanPrintsACheckpointWithoutADown(t *testing.T) {
 	}
 }
 
-// A database with no history runs the checkpoint and records what it collapses, offline too.
 func TestUpRunsTheCheckpointOnAFreshDatabase(t *testing.T) {
 	t.Parallel()
 	dsn := newTestDSN(t)

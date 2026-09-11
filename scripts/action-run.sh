@@ -2,8 +2,6 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 
-# Env: GODWIT_BIN COMMAND DIR BASE ACK ALLOW_DATA_LOSS FORCE SERVER TARGET ROLLOUT DRY_RUN SOURCE SCHEMA PRISMA PRISMA_BIN NAME GODWIT_TOKEN HEAD_SHA PR_NUMBER
-#      GH_TOKEN REPOSITORY GITHUB_SERVER_URL GITHUB_REPOSITORY GITHUB_SHA RUNNER_TEMP GITHUB_OUTPUT GITHUB_STEP_SUMMARY
 godwit="${GODWIT_BIN}"
 work="$(mktemp -d "${RUNNER_TEMP}/godwit-${COMMAND}.XXXXXX")"
 summary="${work}/summary.md"
@@ -60,8 +58,7 @@ run_summary() {
     + (if .error != "" and .error != null then "\n\n```\n\(.error)\n```" else "" end)'
 }
 
-# report renders the outcome from the service. The one-line run_summary below is the fallback: a report the
-# service could not render must not cost the comment its run id and state.
+# run_summary below is the fallback: a report the service could not render must not cost the comment its run id and state.
 report() {
   local args=()
   if [ -n "${SERVER}" ]; then args+=(--server "${SERVER}"); fi
@@ -155,8 +152,6 @@ pr_runs() {
   fi
 }
 
-# revert_plan puts the dry run in the comment before anything is queued; a refusal (data loss, a newer
-# run) lands there too and stops the revert.
 revert_plan() {
   local plan="${work}/revert-plan.json"
   if ! "${godwit}" revert "$1" ${args[@]+"${args[@]}"} --dry-run --json >"${plan}" 2>"${errors}"; then

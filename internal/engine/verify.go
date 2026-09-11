@@ -59,10 +59,7 @@ func reconcileCreateIndex(ctx context.Context, db DB, st Statement) (bool, error
 	return false, nil
 }
 
-// indexShape is the table a CREATE INDEX statement indexes and a canonical rendering of the index it
-// builds. The name, the schema qualification and CONCURRENTLY are stripped, and the parser fills the
-// omitted access method in, so a planned statement and the catalog's pg_get_indexdef of an existing
-// index compare on definition alone: columns, expressions, uniqueness, method, predicate and storage.
+// indexShape strips the name, the schema and CONCURRENTLY and fills the access method in, so a planned statement and pg_get_indexdef compare on definition alone.
 func indexShape(sql string) (table, shape string, err error) {
 	res, err := pgquery.Parse(sql)
 	if err != nil {

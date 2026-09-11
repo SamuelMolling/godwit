@@ -71,7 +71,6 @@ func execSQL(t *testing.T, dsn, sql string) {
 	}
 }
 
-// withoutCreate hands dsn's database to a role that may connect and nothing else, so the journal cannot be bootstrapped.
 func withoutCreate(t *testing.T, dsn string) string {
 	t.Helper()
 	role := fmt.Sprintf("limited%d", dbSeq.Add(1))

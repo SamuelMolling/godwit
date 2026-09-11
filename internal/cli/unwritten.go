@@ -15,7 +15,6 @@ import (
 	"github.com/SamuelMolling/godwit/internal/report"
 )
 
-// emptySet loads dir and names an empty migration set — an absent directory, or one holding nothing — instead of failing on the first.
 func emptySet(dir string) ([]engine.Migration, string, error) {
 	migs, err := engine.LoadDir(dir)
 	switch {
@@ -30,7 +29,6 @@ func emptySet(dir string) ([]engine.Migration, string, error) {
 	return migs, "", nil
 }
 
-// startedTarget refuses an empty set against a target that already has migrations applied: that directory did not go missing on its own.
 func startedTarget(ctx context.Context, client godwitv1connect.GodwitServiceClient, target, why string) error {
 	st, err := client.GetTargetStatus(ctx, connect.NewRequest(&godwitv1.GetTargetStatusRequest{Target: target}))
 	if err != nil {
@@ -45,7 +43,6 @@ func startedTarget(ctx context.Context, client godwitv1connect.GodwitServiceClie
 	return nil
 }
 
-// nothingLocal is startedTarget for the --dsn commands, whose own journal answers what the service answers for a target.
 func nothingLocal(cmd *cobra.Command, exec *engine.Executor, why string) error {
 	n, err := exec.AppliedCount(cmd.Context())
 	if err != nil {

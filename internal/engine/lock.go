@@ -7,14 +7,10 @@ import (
 	"time"
 )
 
-// AppName is the application_name every executor session carries, so a backend holding a target's
-// advisory lock can be recognised as one of godwit's own.
-const AppName = "godwit"
+const appName = "godwit"
 
-// sessionSetup names the session and asks PostgreSQL to notice when this client disappears. Without
-// keepalives a replica whose network is black-holed leaves a backend holding the advisory lock for the
-// two hours the operating system takes to give up on the socket.
-const sessionSetup = `SET application_name = '` + AppName + `';
+// Without keepalives a black-holed replica leaves a backend holding the advisory lock for the two hours the operating system takes to give up on the socket.
+const sessionSetup = `SET application_name = '` + appName + `';
 SET tcp_keepalives_idle = 30;
 SET tcp_keepalives_interval = 10;
 SET tcp_keepalives_count = 3`
@@ -26,8 +22,6 @@ func lockKey(dbname string) int64 {
 	return int64(h.Sum64())
 }
 
-// acquireLock takes a session advisory lock scoped to the current database, waiting at most wait for
-// whoever else holds it.
 func acquireLock(ctx context.Context, db DB, wait time.Duration) (release func(), err error) {
 	var dbname string
 	if err := db.QueryRow(ctx, `SELECT current_database()`).Scan(&dbname); err != nil {
@@ -45,8 +39,7 @@ func acquireLock(ctx context.Context, db DB, wait time.Duration) (release func()
 	}, nil
 }
 
-// waitForLock blocks on the advisory lock under a statement timeout: lock_timeout does not cover
-// advisory locks, statement_timeout does, and a session lock outlives the transaction that took it.
+// lock_timeout does not cover advisory locks and statement_timeout does, and a session lock outlives the transaction that took it.
 func waitForLock(ctx context.Context, db DB, key int64, wait time.Duration) error {
 	tx, err := db.Begin(ctx)
 	if err != nil {
@@ -62,9 +55,7 @@ func waitForLock(ctx context.Context, db DB, key int64, wait time.Duration) erro
 	return tx.Commit(ctx)
 }
 
-// lockHolder describes the backend holding key so an operator can decide what to do with it. godwit
-// never terminates it: between two statements a peer executor holding the lock looks exactly like an
-// orphan, and killing one mid-migration is worse than waiting for a lock.
+// godwit never terminates the holder: between two statements a peer executor looks exactly like an orphan, and killing one mid-migration is worse than waiting.
 func lockHolder(ctx context.Context, db DB, key int64) string {
 	var pid int32
 	var app, state string

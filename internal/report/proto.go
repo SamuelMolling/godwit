@@ -60,8 +60,7 @@ func PlanFromStored(p *godwitv1.Plan) Plan {
 	return r
 }
 
-// PlanOffline is both sides of every migration as written, which no database was consulted for; nothing
-// names an empty migration directory, and is empty for a directory that holds migrations.
+// PlanOffline is both sides of every migration as written, which no database was consulted for; nothing names an empty migration directory.
 func PlanOffline(nothing string, plans []engine.Plan) Plan {
 	r := Plan{nothing: nothing, items: make([]item, 0, len(plans))}
 	for _, p := range plans {
@@ -76,8 +75,7 @@ func PlanNothing(target, why string) Plan {
 	return Plan{live: true, target: target, nothing: why}
 }
 
-// RunFrom is what one run did to its target, read against the plan it was bound to; a nil plan is an
-// implicit run, and public is the base URL the run and its plan link to, empty to link to nothing.
+// RunFrom is what one run did to its target, read against the plan it was bound to; a nil plan is an implicit run, and an empty public links to nothing.
 func RunFrom(run *godwitv1.Run, applied []*godwitv1.RunMigration, plan *godwitv1.Plan, command, public string) Run {
 	r := Run{
 		command: command, run: run, applied: applied, public: public,

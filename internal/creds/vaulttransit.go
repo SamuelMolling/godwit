@@ -72,8 +72,7 @@ func (p VaultTransit) Seal(ctx context.Context, aad []byte, plaintext string) ([
 	return joinBlob([]byte(out.Data.Ciphertext), inner)
 }
 
-// Open implements KeyProvider. Transit ciphertext carries its own key version, so a rotation inside
-// Vault needs nothing here.
+// Open implements KeyProvider. Transit ciphertext carries its own key version, so a rotation inside Vault needs nothing here.
 func (p VaultTransit) Open(ctx context.Context, aad []byte, keyID string, blob []byte) (string, error) {
 	wrapped, inner, err := splitBlob(blob)
 	if err != nil {

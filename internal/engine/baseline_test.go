@@ -44,8 +44,6 @@ func TestMarkAppliedIntegration(t *testing.T) {
 	}
 }
 
-// A second call over the same content adds nothing; one over different content refuses, because a
-// checksum the target does not agree with is drift between the repository and the database.
 func TestMarkAppliedAdoptsAJournalledTarget(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

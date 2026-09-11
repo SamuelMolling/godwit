@@ -16,10 +16,8 @@ import (
 
 var newNow = time.Now
 
-// versionLayout is the 14-digit head of a migration file name, the only form the engine's loader accepts.
 const versionLayout = "20060102150405"
 
-// versionProbe bounds the walk to a free version: a whole minute of taken seconds is not a collision to step over.
 const versionProbe = 60
 
 const (

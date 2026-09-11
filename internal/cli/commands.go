@@ -157,7 +157,6 @@ func newPlanCmd() *cobra.Command {
 	return cmd
 }
 
-// checkToVersion refuses a version target godwit cannot resolve here; the ones that need the target's history are refused by the service.
 func checkToVersion(cmd *cobra.Command, to int64, planID, target string) error {
 	if !cmd.Flags().Changed("to") {
 		return nil
@@ -174,7 +173,6 @@ func checkToVersion(cmd *cobra.Command, to int64, planID, target string) error {
 	return nil
 }
 
-// directionsOf is the sides a migration has: a checkpoint has no inverse, so it has only an up.
 func directionsOf(m engine.Migration) []engine.Direction {
 	if m.Checkpoint {
 		return []engine.Direction{engine.DirectionUp}
@@ -225,8 +223,6 @@ func newUpCmd() *cobra.Command {
 	return cmd
 }
 
-// upPlans builds the up side of every migration and decides what a checkpoint among them does against
-// the versions the database already holds.
 func upPlans(ctx context.Context, exec *engine.Executor, migs []engine.Migration) ([]engine.Plan, error) {
 	plans := make([]engine.Plan, 0, len(migs))
 	for _, m := range migs {

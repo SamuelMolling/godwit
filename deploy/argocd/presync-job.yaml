@@ -1,7 +1,4 @@
-# PreSync hook: apply the expand phase of the app's migrations before the new
-# pods roll out. Exits 0 on succeeded/awaiting_contract, 1 otherwise, which
-# fails the sync. The migrations come from a ConfigMap rendered from the app's
-# db/migrations directory (see README.md for the Helm and Kustomize snippets).
+# PreSync hook: the expand phase before the new pods roll out; it exits 0 on awaiting_contract.
 apiVersion: batch/v1
 kind: Job
 metadata:

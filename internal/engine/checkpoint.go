@@ -6,13 +6,10 @@ import (
 	"slices"
 )
 
-// ErrCheckpointGap marks a database parked below a checkpoint whose collapsed migrations are no longer in
-// the directory: the checkpoint can neither run on it nor be recorded truthfully.
+// ErrCheckpointGap marks a database parked below a checkpoint whose collapsed migrations are no longer in the directory.
 var ErrCheckpointGap = errors.New("checkpoint cannot be applied")
 
-// ShapeCheckpoint decides what the newest checkpoint in plans does on a database whose newest applied
-// version is newest. With no history it runs and the versions it collapses are recorded without running;
-// on every other database it is itself recorded, because their schema already holds what it carries.
+// ShapeCheckpoint runs the newest checkpoint in plans only on a database with no history; everywhere else it is recorded without running.
 func ShapeCheckpoint(plans []Plan, newest int64) ([]Plan, error) {
 	cp, ok := newestCheckpointOf(plans)
 	if !ok {

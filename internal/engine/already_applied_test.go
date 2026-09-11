@@ -215,7 +215,7 @@ func TestMarkErrorPaths(t *testing.T) {
 
 func TestInvalidIndexesNoneOnFreshDatabase(t *testing.T) {
 	t.Parallel()
-	got, err := InvalidIndexes(context.Background(), newTestDB(t)())
+	got, err := invalidIndexes(context.Background(), newTestDB(t)())
 	if err != nil || got != nil {
 		t.Fatalf("got %v, err %v", got, err)
 	}

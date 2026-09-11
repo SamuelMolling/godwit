@@ -169,8 +169,6 @@ func TestShapeCheckpointOnAnAdvancedDatabase(t *testing.T) {
 	}
 }
 
-// A database that stopped between two collapsed versions still moves forward file by file, and the
-// checkpoint is recorded once it gets there.
 func TestShapeCheckpointMidHistory(t *testing.T) {
 	t.Parallel()
 	plans := plansOf(t, checkpointDir())
@@ -253,8 +251,6 @@ func TestRecordCollapsed(t *testing.T) {
 	}
 }
 
-// A checkpoint body raises no hazard: every hazard godwit knows is about a table that already holds rows,
-// readers or writers, and a checkpoint only ever runs on a database with none of the three.
 func TestCheckpointPlansWithoutHazards(t *testing.T) {
 	t.Parallel()
 	body := "-- godwit: checkpoint through=20260102000000\n" +

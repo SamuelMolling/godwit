@@ -1,6 +1,4 @@
-# PostSync hook: the new pods are healthy, release the contract phase of the
-# run the PreSync hook left in awaiting_contract. --allow-none keeps the hook
-# green on syncs whose migrations held nothing back (or had none at all).
+# PostSync hook: release the contract phase; --allow-none keeps a sync that held nothing back green.
 apiVersion: batch/v1
 kind: Job
 metadata:

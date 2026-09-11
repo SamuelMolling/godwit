@@ -14,13 +14,10 @@ import (
 type Options struct {
 	LockTimeout      time.Duration
 	StatementTimeout time.Duration
-	// LockWait bounds the wait for godwit's own advisory lock on the target; zero takes DefaultLockWait.
-	LockWait time.Duration
+	LockWait         time.Duration
 }
 
-// DefaultLockWait bounds how long a run waits for another session's advisory lock on the target: long
-// enough to ride out a peer executor's statement, short enough to hand the run slot back and let the
-// scheduler retry with backoff rather than park a replica on a lock nobody is going to release.
+// DefaultLockWait bounds the wait for another session's advisory lock: long enough to ride out a peer's statement, short enough to hand the run slot back.
 const DefaultLockWait = 30 * time.Second
 
 func (o Options) withDefaults() Options {
@@ -56,8 +53,7 @@ type StatementEvent struct {
 	RowsDone  int64
 	RowsTotal int64
 	Batches   int
-	// Partial marks a report from inside a still-running statement: counts only, no duration and no outcome.
-	Partial bool
+	Partial   bool
 }
 
 // Executor applies plans over one database session.
@@ -84,13 +80,11 @@ func WithObserver(fn func(StatementEvent)) Option {
 	return func(e *Executor) { e.observe = fn }
 }
 
-// WithIDGenerator overrides run ID generation.
-func WithIDGenerator(fn func() string) Option {
+func withIDGenerator(fn func() string) Option {
 	return func(e *Executor) { e.newID = fn }
 }
 
-// WithAssertProbe runs assertions without enforcing them, for the scratch database that mirrors the
-// target's schema but holds none of its rows.
+// WithAssertProbe runs assertions without enforcing them, for the scratch database that holds the target's schema and none of its rows.
 func WithAssertProbe() Option {
 	return func(e *Executor) { e.assertProbe = true }
 }
@@ -116,8 +110,7 @@ func New(db DB, opts Options, extra ...Option) *Executor {
 	return e
 }
 
-// Result reports what one apply did; Held marks a plan stopped at its contract boundary, and Recorded
-// a skip the target's own journal already accounts for, as against one there was nothing to do for.
+// Result reports what one apply did; Held is a plan stopped at its contract boundary, Recorded a skip the target's own journal already accounts for.
 type Result struct {
 	Migration string
 	Skipped   bool
@@ -184,7 +177,6 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	if p.MarkOnly {
 		return res, e.mark(ctx, p)
 	}
-	// After the skips: a migration that is recorded, or only being recorded, never runs its body.
 	if len(p.Statements) == 0 && awaitsExpansion(p.Migration, p.Direction) {
 		return res, fmt.Errorf("%s (%s): its godwit directives were never expanded", res.Migration, p.Direction)
 	}
@@ -205,9 +197,7 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 	}
 	recheck := prog.lastDone < contractFrom(p)
 	for i := range last {
-		// An assertion is re-evaluated whenever the executor walks past it: a condition that held before
-		// the crash, or before the confirm, is not a condition that holds now. Once the contract phase has
-		// begun it is past asking instead: a change-type's own assertion names the column its swap renames.
+		// An assertion is re-asked on every walk past it, until the contract phase begins: by then a change-type's swap has renamed the column its own assertion names.
 		if i <= prog.lastDone && (p.Statements[i].Assert == nil || !recheck) {
 			continue
 		}
@@ -273,7 +263,6 @@ func (e *Executor) execIn(ctx context.Context, tx DB, migration string, idx int,
 	return err
 }
 
-// contractFrom is the index of the plan's first contract statement, or its length when it has one phase.
 func contractFrom(p Plan) int {
 	for i, st := range p.Statements {
 		if st.Phase == PhaseContract {
@@ -288,7 +277,7 @@ func (e *Executor) mark(ctx context.Context, p Plan) error {
 	if p.Direction != DirectionUp {
 		return fmt.Errorf("mark requires an up plan, got %q", p.Direction)
 	}
-	invalid, err := InvalidIndexes(ctx, e.db)
+	invalid, err := invalidIndexes(ctx, e.db)
 	if err != nil {
 		return err
 	}
@@ -307,8 +296,6 @@ func (e *Executor) mark(ctx context.Context, p Plan) error {
 	return e.finalize(ctx, p, runID, "")
 }
 
-// heldRun is the id of an unfinished up run for m: the contract phase never ran, so the migration has
-// statements to undo even though it has no history row yet.
 func heldRun(ctx context.Context, db DB, m Migration) (string, error) {
 	k := keyOf(m)
 	var id string
@@ -329,7 +316,6 @@ func heldRun(ctx context.Context, db DB, m Migration) (string, error) {
 	return id, nil
 }
 
-// recorded reports what the target holds for a migration: a version row, or a repeatable row keyed by name.
 func (e *Executor) recorded(ctx context.Context, m Migration) (bool, string, error) {
 	query, arg := `SELECT checksum FROM godwit.migrations WHERE version = $1`, any(m.Version)
 	if m.Repeatable {
@@ -465,8 +451,7 @@ func closeRun(ctx context.Context, tx DB, p Plan, runID, held string) error {
 	return nil
 }
 
-// discard drops the journal of an up run this down just undid, so a later apply starts from scratch
-// instead of resuming past statements that no longer took effect.
+// discard drops the journal of the up run this down undid, so a later apply starts from scratch instead of resuming statements that no longer took effect.
 func discard(ctx context.Context, tx DB, runID string) error {
 	if runID == "" {
 		return nil

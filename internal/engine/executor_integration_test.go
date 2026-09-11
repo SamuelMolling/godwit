@@ -29,7 +29,6 @@ func countRows(t *testing.T, conn *pgx.Conn, table string) int {
 	return n
 }
 
-// crashOn closes the session at one hook point, simulating a dead executor.
 func crashOn(conn *pgx.Conn, point HookPoint, idx int) Option {
 	fired := false
 
@@ -140,7 +139,6 @@ func TestStatementFailureMarksRun(t *testing.T) {
 		t.Fatalf("tamper guard: err = %v", err)
 	}
 
-	// Fixing the failed statement resumes from it without re-running statement 0.
 	fixed := m
 	fixed.UpSQL = "CREATE TABLE ok (id int);\nSELECT 1;"
 	res, err := exec.Up(ctx, buildPlanT(t, fixed, DirectionUp))
@@ -281,7 +279,6 @@ func TestResumeRefusesAnIndexItDidNotBuild(t *testing.T) {
 	if _, err := New(crashed, Options{}, crashOn(crashed, HookAfterIntent, 0)).Up(ctx, buildPlanT(t, m, DirectionUp)); err == nil {
 		t.Fatal("crash run must fail")
 	}
-	// Somebody else's index, of the name the plan reserved, over a different column.
 	if _, err := setup.Exec(ctx, "CREATE INDEX big_v_idx ON big (id)"); err != nil {
 		t.Fatal(err)
 	}
@@ -405,8 +402,8 @@ func TestLockBlocksSecondExecutor(t *testing.T) {
 	if err := holder.QueryRow(ctx, `SELECT current_setting('application_name')`).Scan(&app); err != nil {
 		t.Fatal(err)
 	}
-	if app != AppName {
-		t.Fatalf("application_name = %q, want %q", app, AppName)
+	if app != appName {
+		t.Fatalf("application_name = %q, want %q", app, appName)
 	}
 
 	m := Migration{
@@ -422,7 +419,7 @@ func TestLockBlocksSecondExecutor(t *testing.T) {
 	_, err = New(connect(), Options{LockWait: 300 * time.Millisecond}).Up(ctx, buildPlanT(t, m, DirectionUp))
 	wantErr(t, err, "acquire advisory lock")
 	wantErr(t, err, "SQLSTATE 57014")
-	wantErr(t, err, `application_name "`+AppName+`"`)
+	wantErr(t, err, `application_name "`+appName+`"`)
 
 	release()
 	if _, err := New(connect(), Options{}).Up(ctx, buildPlanT(t, m, DirectionUp)); err != nil {

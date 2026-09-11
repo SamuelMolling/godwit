@@ -31,7 +31,6 @@ func (f *clientFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.json, "json", false, "print the raw JSON response")
 }
 
-// registerServer adds the connection flags alone, for a command that also works with no server.
 func (f *clientFlags) registerServer(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.server, "server", os.Getenv("GODWIT_SERVER"), "godwit service URL (env GODWIT_SERVER)")
 	cmd.Flags().StringVar(&f.token, "token", os.Getenv("GODWIT_TOKEN"), "bearer token (env GODWIT_TOKEN)")
@@ -46,7 +45,6 @@ func (f *clientFlags) client() (godwitv1connect.GodwitServiceClient, error) {
 	return f.dial(), nil
 }
 
-// dial builds the client for a caller that has already decided the server is set.
 func (f *clientFlags) dial() godwitv1connect.GodwitServiceClient {
 	transport := transportFor(f.server)
 	if f.token != "" {
@@ -56,8 +54,7 @@ func (f *clientFlags) dial() godwitv1connect.GodwitServiceClient {
 	return godwitv1connect.NewGodwitServiceClient(&http.Client{Transport: transport}, f.server)
 }
 
-// transportFor picks the transport the server URL's scheme needs. http2.Transport calls DialTLSContext
-// for https:// as well as http://, so an h2c transport there would dial port 443 in cleartext.
+// http2.Transport calls DialTLSContext for https:// as well as http://, so an h2c transport there would dial port 443 in cleartext.
 func transportFor(server string) http.RoundTripper {
 	if strings.HasPrefix(strings.ToLower(server), "https://") {
 		return http.DefaultTransport.(*http.Transport).Clone()

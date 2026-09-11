@@ -181,8 +181,6 @@ func TestKeyringNeedsReseal(t *testing.T) {
 	}
 }
 
-// legacySeal writes the headerless base64(nonce ‖ AES-256-GCM) form static targets held before the
-// ciphertext named its key.
 func legacySeal(t *testing.T, k []byte, plaintext string) string {
 	t.Helper()
 	sealed, err := creds.NewKeyring(legacyProvider{key: k}).Seal(context.Background(), plaintext)

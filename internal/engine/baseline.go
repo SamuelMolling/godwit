@@ -6,16 +6,13 @@ import (
 	"fmt"
 )
 
-// ErrAlreadyMigrated reports a set with nothing left to adopt: every migration in it is already
-// recorded, both by the target's journal and by the caller's own ledger.
+// ErrAlreadyMigrated reports a set with nothing left to adopt: every migration in it is already recorded.
 var ErrAlreadyMigrated = errors.New("target already has applied migrations")
 
 // ErrHistoryConflict reports a migration the target's journal records under different content.
 var ErrHistoryConflict = errors.New("recorded on the target under different content")
 
-// RecordCollapsed writes migs into db's history in one statement, without executing them and without the
-// per-migration run rows an executor would add; it is how a scratch replay accounts for what a checkpoint
-// already carries, so the replay's history matches the target's without running any of it.
+// RecordCollapsed writes migs into db's history without executing them, which is how a scratch replay accounts for what a checkpoint already carries.
 func RecordCollapsed(ctx context.Context, db DB, migs []Migration) error {
 	if len(migs) == 0 {
 		return nil
@@ -58,9 +55,7 @@ func Journal(ctx context.Context, db DB) (map[string]string, error) {
 	return out, nil
 }
 
-// MarkApplied records migs in the target's journal without executing them and reports what it added.
-// A migration the journal already holds under the same content is left alone; one it holds under
-// different content refuses the whole call, because that is drift between the repository and the target.
+// MarkApplied records migs without executing them; one the journal holds under different content refuses the whole call, because that is drift.
 func (e *Executor) MarkApplied(ctx context.Context, migs []Migration) ([]Migration, error) {
 	release, err := acquireLock(ctx, e.db, e.opts.LockWait)
 	if err != nil {

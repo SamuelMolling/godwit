@@ -102,15 +102,13 @@ type Statement struct {
 	Opaque      string
 	Batch       *BatchSpec
 	Assert      *AssertSpec
-	// Drops are the tables and columns the statement removes, whatever hazards it carries.
-	Drops []Drop
+	Drops       []Drop
 }
 
 // ExpandedMarker prefixes the comment the directive expander leaves above the first statement it generated.
 const ExpandedMarker = "-- godwit expanded: "
 
-// SplitExpanded separates the comment lines the expander leaves above a generated statement from the SQL
-// under them: marker is the ExpandedMarker line when the statement carries one, body the statement itself.
+// SplitExpanded separates the expander's comment lines from the SQL under them.
 func SplitExpanded(sql string) (marker, body string) {
 	for {
 		line, rest, ok := strings.Cut(sql, "\n")
@@ -125,8 +123,7 @@ func SplitExpanded(sql string) (marker, body string) {
 	}
 }
 
-// Plan is the executable form of one migration direction; HoldFrom is the index of the first
-// statement left for the contract phase, and zero runs the plan whole.
+// Plan is the executable form of one migration direction; HoldFrom is the index of the first statement left for the contract phase, and zero runs the plan whole.
 type Plan struct {
 	Migration  Migration
 	Direction  Direction
@@ -188,8 +185,7 @@ func BuildPlan(m Migration, dir Direction) (Plan, error) {
 		if err := classify(raw.Stmt, &st); err != nil {
 			return Plan{}, fmt.Errorf("%d_%s (%s): %w", m.Version, m.Name, dir, err)
 		}
-		// Every hazard godwit raises is about a table that already holds rows, readers or writers; a
-		// checkpoint body only ever runs on a database with none of the three.
+		// Every hazard is about a table that already holds rows, readers or writers, and a checkpoint body only ever runs on a database with none of the three.
 		if m.Checkpoint {
 			st.Hazards = nil
 		}
@@ -199,7 +195,6 @@ func BuildPlan(m Migration, dir Direction) (Plan, error) {
 	return p, nil
 }
 
-// awaitsExpansion reports whether a body has no SQL because godwit still has to expand its directives.
 func awaitsExpansion(m Migration, dir Direction) bool {
 	if dir == DirectionDown {
 		return m.RevertDirective

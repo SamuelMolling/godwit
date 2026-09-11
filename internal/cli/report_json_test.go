@@ -1,7 +1,6 @@
 package cli
 
-// The shapes below are what godwit's JSON output has to keep looking like, declared here rather than
-// borrowed from internal/report so a renamed field on the producer fails these tests instead of moving with them.
+// Declared here rather than borrowed from internal/report, so a renamed field on the producer fails these tests instead of moving with them.
 
 type planJSON struct {
 	Version    int64           `json:"version"`

@@ -10,7 +10,6 @@ import (
 // Loss is a drop the target would execute over data it still holds.
 type Loss struct {
 	Drop
-	// Rows for a table, non-null values for a column.
 	Rows int64
 }
 
@@ -76,7 +75,6 @@ func rowsHeld(ctx context.Context, db DB, d Drop) (int64, bool, error) {
 	return rows, true, nil
 }
 
-// relationOID resolves the drop's table the way the session would, and returns "" when it is not there.
 func relationOID(ctx context.Context, db DB, d Drop) (string, error) {
 	name := pgx.Identifier{d.Table}.Sanitize()
 	if d.Schema != "" {

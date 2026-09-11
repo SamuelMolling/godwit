@@ -63,7 +63,6 @@ func namesObject(ref string, c engine.ObjectChange) bool {
 	return ref == c.Name
 }
 
-// blockLine has no marker when op is empty, and pad is the column its marker, or its text, starts at.
 type blockLine struct {
 	op   string
 	pad  int
@@ -195,7 +194,6 @@ func (p item) describable() bool {
 	return len(p.changes) > 0
 }
 
-// undescribed is prose, not a comment: it prints outside the fence, where a leading # is a heading.
 func (p item) undescribed() string {
 	if p.effect != "" {
 		return ""

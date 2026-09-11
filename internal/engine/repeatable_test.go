@@ -241,7 +241,6 @@ func TestRepeatableResumesAfterCrash(t *testing.T) {
 	}
 }
 
-// An edited repeatable is a different run key, so it starts a run of its own instead of failing to resume.
 func TestRepeatableEditedAfterCrashStartsNewRun(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

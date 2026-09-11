@@ -53,10 +53,9 @@ type Autoplan struct {
 	WhenModified []string `yaml:"when_modified"`
 }
 
+// Plan report formats.
 const (
-	// PlanFormatSchema describes what the migrations do to the database.
-	PlanFormatSchema = "schema"
-	// PlanFormatStatements lists the SQL the run would execute.
+	PlanFormatSchema     = "schema"
 	PlanFormatStatements = "statements"
 )
 

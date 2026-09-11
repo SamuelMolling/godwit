@@ -285,7 +285,6 @@ func TestStatusCommand(t *testing.T) {
 		t.Fatalf("out = %s", out)
 	}
 
-	// Editing an applied migration shows checksum drift.
 	if err := os.WriteFile(filepath.Join(dir, "20260901120000_users.up.sql"),
 		[]byte("CREATE TABLE users (id bigint);"), 0o600); err != nil {
 		t.Fatal(err)

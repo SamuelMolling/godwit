@@ -403,8 +403,6 @@ func TestSchemaCheckPropagatesTheError(t *testing.T) {
 	}
 }
 
-// A checkpoint has no down side, so the down checks skip it; and it raises no hazard, because every
-// hazard is about a table with rows, readers or writers and a checkpoint only ever runs without them.
 func TestCheckpointLintsWithoutADown(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -75,7 +75,6 @@ func checkAssertValue(v string) error {
 	return fmt.Errorf("%q is not an integer or true/false", v)
 }
 
-// checkAssertQuery refuses offline anything but a single read-only SELECT of one column.
 func checkAssertQuery(v string) error {
 	res, err := pgquery.Parse(v)
 	if err != nil {
@@ -149,7 +148,6 @@ var assertOIDs = map[string][]uint32{
 	AssertBool: {pgtype.BoolOID},
 }
 
-// assertResult is what the assertion's query returned: how many rows, and the first value of the first row.
 type assertResult struct {
 	rows int
 	num  *int64
@@ -203,8 +201,7 @@ func compareInt(op string, got, want int64) bool {
 	}
 }
 
-// execAssert evaluates one assertion inside a read-only transaction, so a volatile function the offline
-// check could not see still cannot write, and journals it done once it holds.
+// execAssert runs the assertion in a read-only transaction, so a volatile function the offline check could not see still cannot write.
 func (e *Executor) execAssert(ctx context.Context, prog runProgress, idx int, st Statement) error {
 	res, err := e.readAssert(ctx, st)
 	if err != nil {
@@ -217,8 +214,6 @@ func (e *Executor) execAssert(ctx context.Context, prog runProgress, idx int, st
 	return recordJournal(ctx, e.db, prog.runID, idx, "done", st.Hash)
 }
 
-// checkAssert compares what the query returned; the probe used by the scratch replay stops before it,
-// because the scratch holds the target's schema and not its rows.
 func (e *Executor) checkAssert(st Statement, res assertResult) error {
 	if e.assertProbe {
 		return nil

@@ -12,8 +12,7 @@ import (
 // DefaultDrizzleBin is the command line used to run Drizzle Kit when none is configured.
 const DefaultDrizzleBin = "npx drizzle-kit"
 
-// Drizzle is a Source over a Drizzle Kit config: the DDL of the whole schema from empty state,
-// as `drizzle-kit export` prints it on stdout. No database is contacted.
+// Drizzle is a Source over a Drizzle Kit config: the DDL of the whole schema from empty state, as `drizzle-kit export` prints it. No database is contacted.
 type Drizzle struct {
 	Config string
 	Bin    string

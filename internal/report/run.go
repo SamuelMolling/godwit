@@ -39,8 +39,6 @@ func (r Run) holding() bool {
 	return r.State() == godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT
 }
 
-// took is silent on a run that came back for its contract phase: created to finished there is the wait for
-// the confirm, not the time the statements spent on the database.
 func (r Run) took() string {
 	created, finished := r.run.GetCreatedAt(), r.run.GetFinishedAt()
 	if created == nil || finished == nil || r.run.GetPhase() == engine.PhaseContract {
@@ -133,7 +131,6 @@ func (r Run) applause(m markup, target string) string {
 	return m.glyph("✅") + m.bold(Count(len(r.applied), "migration")+" applied to "+target+".") + r.tail(what)
 }
 
-// progress is what a stopped run got through, in migrations, which is what the ledger can answer.
 func (r Run) progress() string {
 	planned, _ := r.plan.counts()
 	if planned == 0 {
@@ -143,10 +140,8 @@ func (r Run) progress() string {
 	return fmt.Sprintf("%d of %d migrations applied", len(r.applied), planned)
 }
 
-// stoppedRe reads the position out of the run's error, which the executor wraps around every statement failure.
 var stoppedRe = regexp.MustCompile(`statement (\d+) of (\S+) \((?:up|down)\)`)
 
-// stopPoint is where a run gave up: index -1 when only the migration is known, item unset when the plan does not carry it.
 type stopPoint struct {
 	index     int
 	migration string

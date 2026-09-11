@@ -44,8 +44,7 @@ type Finding struct {
 type Report struct {
 	Findings []Finding `json:"findings"`
 	Blocking int       `json:"blocking"`
-	// Nothing says why there was no migration to check, and is empty when there was one.
-	Nothing string `json:"nothing,omitempty"`
+	Nothing  string    `json:"nothing,omitempty"`
 }
 
 // GitFunc runs git with args inside dir and returns its stdout.
@@ -56,11 +55,8 @@ type DiffFunc func(files map[string]string) (string, error)
 
 // SchemaCheck compares the committed migrations against the schema source godwit.yaml declares.
 type SchemaCheck struct {
-	// Path names the ORM schema in the finding.
 	Path string
-	// Diff is nil when no server was given, which downgrades the check to W002.
 	Diff DiffFunc
-	// Warn reports a stale migration as a warning, as schema_source.lint false asks.
 	Warn bool
 }
 
@@ -119,7 +115,6 @@ func Check(dir string, acked []string, opts Options) (Report, error) {
 	return rep, nil
 }
 
-// checkSchema asks the service what the desired schema still needs once the committed files have run.
 func (r *Report) checkSchema(c *SchemaCheck, migs []engine.Migration) error {
 	if c == nil {
 		return nil
