@@ -113,22 +113,71 @@ func TestServeStoreDSNFromEnv(t *testing.T) {
 	}
 }
 
-func TestServeGitHubPrivateKeyFile(t *testing.T) {
+const unparsablePEM = "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"
+
+func githubApp(t *testing.T) {
+	t.Helper()
 	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
 	t.Setenv("GODWIT_GITHUB_WEBHOOK_SECRET", "s")
 	t.Setenv("GODWIT_GITHUB_APP_ID", "1")
+}
+
+func TestServeGitHubPrivateKeyFile(t *testing.T) {
+	githubApp(t)
 	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--github-private-key-file", "/no/such/key.pem")
 	if code != 1 || !strings.Contains(errOut, "--github-private-key-file") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
 	}
 
 	path := filepath.Join(t.TempDir(), "key.pem")
-	if err := os.WriteFile(path, []byte("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(unparsablePEM), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, _, errOut = runCLI("serve", "--store-dsn", "postgres://x", "--listen", "127.0.0.1:0",
 		"--github-webhook-addr", "127.0.0.1:0", "--github-private-key-file", path)
-	if code != 1 || !strings.Contains(errOut, "private key") {
+	if code != 1 || !strings.Contains(errOut, "github app private key:") {
 		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestServeGitHubPrivateKeyFromEnv(t *testing.T) {
+	githubApp(t)
+	t.Setenv("GODWIT_GITHUB_PRIVATE_KEY", unparsablePEM)
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--listen", "127.0.0.1:0",
+		"--github-webhook-addr", "127.0.0.1:0")
+	if code != 1 || !strings.Contains(errOut, "github app private key:") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestServeGitHubPrivateKeyOneSource(t *testing.T) {
+	githubApp(t)
+	t.Setenv("GODWIT_GITHUB_PRIVATE_KEY", unparsablePEM)
+	t.Setenv("GODWIT_GITHUB_PRIVATE_KEY_FILE", "/no/such/key.pem")
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--listen", "127.0.0.1:0",
+		"--github-webhook-addr", "127.0.0.1:0")
+	if code != 1 || !strings.Contains(errOut, "are both set") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestServeGitHubPrivateKeyMissing(t *testing.T) {
+	githubApp(t)
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x", "--listen", "127.0.0.1:0",
+		"--github-webhook-addr", "127.0.0.1:0")
+	if code != 1 || !strings.Contains(errOut, "github app private key is not PEM") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestServeGitHubPrivateKeyIsNeverAnArgument(t *testing.T) {
+	githubApp(t)
+	t.Setenv("GODWIT_GITHUB_PRIVATE_KEY", unparsablePEM)
+	if f := newServeCmd().Flags().Lookup("github-private-key"); f != nil {
+		t.Fatal("a flag carries the PEM itself: it would then be readable in /proc/<pid>/cmdline")
+	}
+	code, out, errOut := runCLI("serve", "--help")
+	if code != 0 || strings.Contains(out+errOut, "PRIVATE KEY-----") {
+		t.Fatalf("code = %d, usage echoed the key: %s%s", code, out, errOut)
 	}
 }

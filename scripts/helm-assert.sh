@@ -10,14 +10,6 @@ fail() {
   exit 1
 }
 
-refuses() {
-  local why="$1"
-  shift
-  if helm template godwit "${chart}" "$@" >/dev/null 2>&1; then
-    fail "${why}"
-  fi
-}
-
 absent() {
   if grep -qE -e "$2" <<<"$1"; then
     fail "$3"
@@ -59,23 +51,23 @@ noauto="$(helm template godwit "${chart}" -f "${chart}/ci/platform-gitops-values
 present "${noauto}" 'automountServiceAccountToken: false' 'the gitops render still automounts the generic token'
 present "${noauto}" 'audience: godwit$' 'turning the automount off took the projected token with it'
 
-on="$(helm template godwit "${chart}" -f "${chart}/ci/platform-github-app-values.yaml")"
+app=(-f "${chart}/ci/platform-github-app-values.yaml")
+on="$(helm template godwit "${chart}" "${app[@]}")"
 present "${on}" '- --github-webhook-addr=:8475' 'the App render does not open the webhook listener'
 present "${on}" 'containerPort: 8475' 'the App render has no webhook container port'
 present "${on}" 'name: godwit-webhook' 'the App render has no webhook Service'
 present "${on}" '- --github-private-key-file=/secrets/github/private-key.pem' 'the App render does not point at the mounted key'
-absent "${on}" 'name: GODWIT_GITHUB_PRIVATE_KEY' 'the App private key reached the process as environment, not as a file'
+absent "${on}" 'name: GODWIT_GITHUB_PRIVATE_KEY' 'the App private key has a second home: a file and an environment variable'
 present "${on}" '^ +- key: github-private-key.pem$' 'the App render does not project the Secret entry holding the PEM'
 # A secret volume is owned by root:fsGroup and the container is not root, so owner-only is unreadable.
 present "${on}" 'defaultMode: 0440' 'the App private key is not mounted group-readable'
 
-# envFrom turns every entry whose name a shell would accept into an environment variable, so the one
-# entry that must stay out of the environment is refused when it is named like one.
-app=(-f "${chart}/ci/platform-github-app-values.yaml")
-refuses 'the App private key may be named after an environment variable, which envFrom would then set' \
-  "${app[@]}" --set existingSecret.githubPrivateKey=GODWIT_GITHUB_PRIVATE_KEY
-refuses 'the App renders with no Secret entry named for its private key' \
-  "${app[@]}" --set existingSecret.githubPrivateKey=
+# The PEM reaches the process one of two ways, and naming no Secret entry is the other one: envFrom
+# carries it as GODWIT_GITHUB_PRIVATE_KEY, so the chart mounts nothing and points at no file.
+env_key="$(helm template godwit "${chart}" "${app[@]}" --set existingSecret.githubPrivateKey=)"
+present "${env_key}" '- --github-webhook-addr=:8475' 'the App stopped opening its listener without a key file'
+absent "${env_key}" 'github-private-key-file' 'the App render reads a key file the chart projects no entry into'
+absent "${env_key}" 'github-app-key' 'the App render mounts a key volume with no Secret entry to project'
 
 # The API Service and the webhook Service are two objects, so a route attached to one cannot reach
 # the other's port. Assert the webhook Service carries exactly one port, and that it is not the API's.
