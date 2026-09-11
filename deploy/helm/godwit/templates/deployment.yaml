@@ -81,14 +81,10 @@ spec:
             {{- end }}
             {{- end }}
             {{- if .Values.serve.githubApp.enabled }}
-            {{- if not .Values.existingSecret.githubPrivateKey }}
-            {{- fail "existingSecret.githubPrivateKey is required when serve.githubApp.enabled: without the App's key godwit cannot mint an installation token" }}
-            {{- end }}
-            {{- if regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" .Values.existingSecret.githubPrivateKey }}
-            {{- fail "existingSecret.githubPrivateKey must not be a valid environment variable name: envFrom would then put the App's private key in the environment, which a sidecar, a core dump and `kubectl exec -- env` all read" }}
-            {{- end }}
             - --github-webhook-addr=:{{ .Values.serve.githubApp.port }}
+            {{- if .Values.existingSecret.githubPrivateKey }}
             - --github-private-key-file={{ .Values.serve.githubApp.privateKeyPath }}/private-key.pem
+            {{- end }}
             - --github-webhook-max-age={{ .Values.serve.githubApp.maxAge }}
             - --github-webhook-max-bytes={{ int64 .Values.serve.githubApp.maxBytes }}
             - --github-allowed-associations={{ join "," .Values.serve.githubApp.allowedAssociations }}
@@ -197,7 +193,7 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- if .Values.serve.githubApp.enabled }}
+            {{- if and .Values.serve.githubApp.enabled .Values.existingSecret.githubPrivateKey }}
             - name: github-app-key
               mountPath: {{ .Values.serve.githubApp.privateKeyPath }}
               readOnly: true
@@ -220,7 +216,7 @@ spec:
                   audience: godwit
                   expirationSeconds: 3600
                   path: token
-        {{- if .Values.serve.githubApp.enabled }}
+        {{- if and .Values.serve.githubApp.enabled .Values.existingSecret.githubPrivateKey }}
         - name: github-app-key
           secret:
             secretName: {{ .Values.existingSecret.name }}

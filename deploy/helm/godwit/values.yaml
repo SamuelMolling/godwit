@@ -33,16 +33,16 @@ commonLabels: {}
 # entry configures itself by being there. GODWIT_SCRATCH_DSN gives validation an isolated server
 # (serve.scratch), GODWIT_MASTER_KEY lets `static` targets be registered, GODWIT_SLACK_TOKEN pairs
 # with notifications.slack.channel, GODWIT_UI_USER and GODWIT_UI_PASSWORD add a shared UI identity,
-# and GODWIT_GITHUB_APP_ID with GODWIT_GITHUB_WEBHOOK_SECRET are both required by
-# serve.githubApp.enabled — without either, the pods refuse to start.
+# and GODWIT_GITHUB_APP_ID, GODWIT_GITHUB_WEBHOOK_SECRET and the App's private key are all required
+# by serve.githubApp.enabled — without one of them, the pods refuse to start.
 # The DSNs reach serve as environment variables and never as arguments, so they appear neither in
 # the pod spec nor in the container's /proc/<pid>/cmdline.
 existingSecret:
   name: godwit
-  # The one entry that is not an environment variable: the App's private key, PEM as GitHub
-  # downloaded it, mounted as a file (serve.githubApp.privateKeyPath) so it stays out of the
-  # environment. Naming it anything a shell would accept as a variable puts it back there, and the
-  # chart refuses to render that. REQUIRED when serve.githubApp.enabled.
+  # Optional: the entry holding the App's private key, projected as a file under
+  # serve.githubApp.privateKeyPath so the PEM stays out of the environment, which a sidecar, a core
+  # dump and `kubectl exec -- env` all read. Empty mounts nothing and takes the PEM from envFrom,
+  # which needs the entry named GODWIT_GITHUB_PRIVATE_KEY.
   githubPrivateKey: github-private-key.pem
 
 # Flags of `godwit serve`; nothing else is accepted by the binary.
@@ -150,11 +150,8 @@ serve:
     port: 8475
     # GODWIT_GITHUB_API_URL: empty is https://api.github.com; set it for GitHub Enterprise Server.
     apiUrl: ""
-    # Where existingSecret.githubPrivateKey is mounted, as `<privateKeyPath>/private-key.pem`,
-    # and read from with --github-private-key-file. The PEM is the App's whole identity: it mints an
-    # installation token for every repository the App is installed on. It reaches the process as a
-    # file rather than as GODWIT_GITHUB_PRIVATE_KEY so that it is not in the environment, which a
-    # sidecar, a core dump and `kubectl exec -- env` all read.
+    # Where existingSecret.githubPrivateKey is mounted, as `<privateKeyPath>/private-key.pem`, and
+    # read with --github-private-key-file. Nothing is mounted when that entry is empty.
     privateKeyPath: /secrets/github
     # --github-webhook-max-age: how old the comment or review a delivery carries may be before godwit
     # refuses it as a replay. GitHub's own timestamp inside the signed body is what is aged.

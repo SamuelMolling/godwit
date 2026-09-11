@@ -164,7 +164,9 @@ func newServeCmd() *cobra.Command {
 		"address for the GitHub App webhook, on its own listener serving /github/webhook and nothing else "+
 			"(or GODWIT_GITHUB_WEBHOOK_ADDR); empty leaves the App off")
 	cmd.Flags().StringVar(&githubKeyFile, "github-private-key-file", os.Getenv("GODWIT_GITHUB_PRIVATE_KEY_FILE"),
-		"PEM file holding the GitHub App's private key (or GODWIT_GITHUB_PRIVATE_KEY_FILE, or the key itself in GODWIT_GITHUB_PRIVATE_KEY)")
+		"PEM file holding the GitHub App's private key (or GODWIT_GITHUB_PRIVATE_KEY_FILE). "+
+			"GODWIT_GITHUB_PRIVATE_KEY carries the PEM itself instead; it has no flag, so the key cannot reach the process arguments. "+
+			"Setting both is refused")
 	cmd.Flags().DurationVar(&githubMaxAge, "github-webhook-max-age", time.Hour,
 		"how old a comment or review may be before its delivery is refused as a replay")
 	cmd.Flags().IntVar(&githubMaxBodyBytes, "github-webhook-max-bytes", 1<<20,
@@ -184,8 +186,13 @@ func newServeCmd() *cobra.Command {
 }
 
 func githubPrivateKey(file string) (string, error) {
+	inline := os.Getenv("GODWIT_GITHUB_PRIVATE_KEY")
 	if file == "" {
-		return os.Getenv("GODWIT_GITHUB_PRIVATE_KEY"), nil
+		return inline, nil
+	}
+	if inline != "" {
+		return "", errors.New("GODWIT_GITHUB_PRIVATE_KEY and --github-private-key-file " +
+			"(GODWIT_GITHUB_PRIVATE_KEY_FILE) are both set: name one place the App's private key comes from")
 	}
 	pem, err := os.ReadFile(file)
 	if err != nil {

@@ -471,13 +471,14 @@ One App per godwit deployment, registered by the operator — never a shared, pu
 
 **Publish that listener on a hostname of its own.** It is the only part of godwit that has to be reachable from GitHub, and it is a second listener rather than a path on the API's so that publishing it publishes nothing else — a route that reaches `/github/webhook` must not be able to reach `/godwit.v1.GodwitService` by changing its path. The Helm chart renders the App its own Service, `<release>-webhook`, carrying the webhook port and nothing else: point the public route at that Service by name and a wrong port number cannot reach the API ([chart README](../deploy/helm/godwit/README.md#the-github-app-listener)).
 
-**The private key goes in as a file**, `--github-private-key-file`, not as `GODWIT_GITHUB_PRIVATE_KEY`. It is multi-line, and unlike a DSN it is the App's whole identity — it mints an installation token for every repository the App is installed on — so it belongs outside the process environment, which a sidecar, a core dump and `kubectl exec -- env` all read. The chart mounts `existingSecret.githubPrivateKey` at `serve.githubApp.privateKeyPath` for exactly this — it is the one Secret entry the chart has to be named, because every other one reaches the process as an environment variable; `GODWIT_GITHUB_PRIVATE_KEY` is there for a local run.
+**The private key goes in as a file or as environment**, `--github-private-key-file` or `GODWIT_GITHUB_PRIVATE_KEY`, and never as a flag holding the PEM: an argument is readable from `/proc/<pid>/cmdline` on the node and from the pod spec, so godwit has no such flag. Both at once fails `serve` rather than one quietly winning. The file is the stronger of the two: it is the App's whole identity, it mints an installation token for every repository the App is installed on, and a file keeps it out of the environment, which a sidecar, a core dump and `kubectl exec -- env` all read. The chart's default takes the file, projecting `existingSecret.githubPrivateKey` at `serve.githubApp.privateKeyPath`; setting that value empty takes the PEM from the Secret as `GODWIT_GITHUB_PRIVATE_KEY` instead, which is where a Secret written for godwit's environment already has it.
 
 With the chart, steps 5 and 6 are:
 
 ```yaml
 # GODWIT_GITHUB_APP_ID and GODWIT_GITHUB_WEBHOOK_SECRET go in the Secret; the pods refuse to
-# start without either.
+# start without either. Empty githubPrivateKey reads the PEM from GODWIT_GITHUB_PRIVATE_KEY there
+# instead of mounting the entry named here.
 existingSecret:
   githubPrivateKey: github-private-key.pem
 serve:
