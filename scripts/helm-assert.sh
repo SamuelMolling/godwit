@@ -50,15 +50,13 @@ on="$(helm template godwit "${chart}" "${app[@]}")"
 present "${on}" '- --github-webhook-addr=:8475' 'the App render does not open the webhook listener'
 present "${on}" 'containerPort: 8475' 'the App render has no webhook container port'
 present "${on}" 'name: godwit-webhook' 'the App render has no webhook Service'
-present "${on}" '- --github-private-key-file=/secrets/github/private-key.pem' 'the App render does not point at the mounted key'
-absent "${on}" 'name: GODWIT_GITHUB_PRIVATE_KEY' 'the App private key has a second home: a file and an environment variable'
-present "${on}" '^ +- key: github-private-key.pem$' 'the App render does not project the Secret entry holding the PEM'
-present "${on}" 'defaultMode: 0440' 'the App private key is not mounted group-readable'
+absent "${on}" 'github-private-key-file' 'the App render reads a key file the chart projects no entry into'
+absent "${on}" 'github-app-key' 'the App render mounts a key volume with no Secret entry to project'
 
-env_key="$(helm template godwit "${chart}" "${app[@]}" --set existingSecret.githubPrivateKey=)"
-present "${env_key}" '- --github-webhook-addr=:8475' 'the App stopped opening its listener without a key file'
-absent "${env_key}" 'github-private-key-file' 'the App render reads a key file the chart projects no entry into'
-absent "${env_key}" 'github-app-key' 'the App render mounts a key volume with no Secret entry to project'
+file_key="$(helm template godwit "${chart}" "${app[@]}" --set existingSecret.githubPrivateKey=github-private-key.pem)"
+present "${file_key}" '- --github-private-key-file=/secrets/github/private-key.pem' 'the App render does not point at the mounted key'
+present "${file_key}" '^ +- key: github-private-key.pem$' 'the App render does not project the Secret entry holding the PEM'
+present "${file_key}" 'defaultMode: 0440' 'the App private key is not mounted group-readable'
 
 webhook="$(awk '/^# Source: godwit\/templates\/webhook-service.yaml/,/^---/' <<<"${on}")"
 present "${webhook}" 'port: 8475' 'the webhook Service does not carry the webhook port'

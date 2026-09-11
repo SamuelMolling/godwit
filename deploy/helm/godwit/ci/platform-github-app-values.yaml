@@ -5,10 +5,6 @@ image:
   tag: sha-1a2b3c4
   pullPolicy: IfNotPresent
 
-existingSecret:
-  name: godwit
-  githubPrivateKey: github-private-key.pem
-
 serve:
   ui:
     enabled: true

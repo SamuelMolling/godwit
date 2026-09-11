@@ -17,8 +17,8 @@ commonLabels: {}
 # Read whole: every entry becomes an environment variable of that name. Only GODWIT_STORE_DSN is required.
 existingSecret:
   name: godwit
-  # Secret entry projected as a file under serve.githubApp.privateKeyPath; empty takes the PEM from envFrom.
-  githubPrivateKey: github-private-key.pem
+  # Empty takes the PEM from envFrom as GODWIT_GITHUB_PRIVATE_KEY; an entry name projects it as a file.
+  githubPrivateKey: ""
 
 serve:
   # --listen: the API, /metrics, /healthz and /readyz share this port.
