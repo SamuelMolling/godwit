@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -559,6 +560,45 @@ func TestSpeakDeletesTheOneItPostedBeforeSoTheNewestStands(t *testing.T) {
 	}
 	if !posted {
 		t.Fatal("the new refusal was never posted")
+	}
+}
+
+func TestFivePushesLeaveOneReportStanding(t *testing.T) {
+	t.Parallel()
+
+	standing := map[int64]string{}
+	var next int64
+	r := testRepoClient(t, func(w http.ResponseWriter, req *http.Request) {
+		switch req.Method {
+		case http.MethodGet:
+			page := make([]issueComment, 0, len(standing))
+			for id, body := range standing {
+				page = append(page, issueComment{ID: id, Body: body})
+			}
+			slices.SortFunc(page, func(a, b issueComment) int { return int(a.ID - b.ID) })
+			_ = json.NewEncoder(w).Encode(page)
+		case http.MethodDelete:
+			id, _ := strconv.ParseInt(strings.TrimPrefix(req.URL.Path, "/repos/"+testRepo+"/issues/comments/"), 10, 64)
+			delete(standing, id)
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			var posted struct{ Body string }
+			_ = json.NewDecoder(req.Body).Decode(&posted)
+			next++
+			standing[next] = posted.Body
+			_, _ = io.WriteString(w, `{}`)
+		}
+	})
+	for _, body := range []string{"push 1", "push 2", "push 3", "push 4", "push 5"} {
+		if err := r.speak(context.Background(), 3, reportMarker["plan"], body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(standing) != 1 {
+		t.Fatalf("comments standing = %v, want the newest report alone", standing)
+	}
+	if standing[next] != reportMarker["plan"]+"\npush 5" {
+		t.Fatalf("standing = %q", standing[next])
 	}
 }
 

@@ -372,6 +372,74 @@ func TestADirectoryWithNoMigrationYetIsNotARefusal(t *testing.T) {
 	}
 }
 
+func nothingPending() *godwitv1.PlanRunResponse {
+	return &godwitv1.PlanRunResponse{
+		Target: "orders", Rollout: controlplane.RolloutDirect, Validated: true, PlanId: "plan-1", PlanKey: "key-1",
+		Observed:   &godwitv1.PlanObservation{AppliedCount: 4, NewestApplied: 20260909170300},
+		Migrations: []*godwitv1.PlannedMigration{{Version: 20260101000000, Name: "add_orders", Checksum: "abc", Applied: true, Skipped: true}},
+	}
+}
+
+func TestAPlanWithNothingToApplyIsStillPostedOnThePullRequest(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, planningRepo(), WorkerConfig{})
+	h.svc.res = nothingPending()
+	h.worker.carry(context.Background(), planCommand())
+
+	if len(h.repo.notices) != 1 {
+		t.Fatalf("comments = %v", h.repo.notices)
+	}
+	body := h.repo.notices[0]
+	for _, want := range []string{"<!-- godwit:plan -->", "## godwit plan", "**Nothing to apply.**", "is at 20260909170300"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("comment missing %q:\n%s", want, body)
+		}
+	}
+	if len(h.repo.ended) != 1 || h.repo.ended[0].title != "nothing to apply" {
+		t.Fatalf("ended = %+v", h.repo.ended)
+	}
+}
+
+func TestARepeatedPlanReportsUnderTheMarkerItAlreadyUsed(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, planningRepo(), WorkerConfig{})
+	h.svc.res = nothingPending()
+	for range 5 {
+		h.worker.carry(context.Background(), planCommand())
+	}
+
+	if len(h.repo.notices) != 5 {
+		t.Fatalf("comments = %d", len(h.repo.notices))
+	}
+	for i, notice := range h.repo.notices {
+		if !strings.HasPrefix(notice, reportMarker["plan"]+"\n") {
+			t.Fatalf("comment %d does not carry the marker that replaces the one before it: %s", i, notice)
+		}
+	}
+}
+
+func TestAReportGitHubWouldNotTakeSaysSoInTheCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	repo.noticeErr = errBroken
+	h := newHarness(t, repo, WorkerConfig{})
+	h.worker.carry(context.Background(), planCommand())
+
+	if len(repo.ended) != 1 {
+		t.Fatalf("ended = %+v, want the check concluded anyway", repo.ended)
+	}
+	end := repo.ended[0]
+	if end.conclusion != conclusionSuccess || !strings.Contains(end.summary, "20260101000000_add_orders") {
+		t.Fatalf("check = %+v", end)
+	}
+	if !strings.Contains(end.summary, "could not post this on the pull request, so it stands only here: broken") {
+		t.Fatalf("the check does not say the comment never landed:\n%s", end.summary)
+	}
+}
+
 func TestARefusedPlanCarriesTheServicesOwnWords(t *testing.T) {
 	t.Parallel()
 
