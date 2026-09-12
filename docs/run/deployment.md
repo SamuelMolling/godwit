@@ -77,7 +77,7 @@ Runs, plans, drift events and the target's applied history are untouched either 
 
 ### Who runs it
 
-`RegisterTarget` is the only RPC that needs `admin`. Give the admin secret to whatever registers targets and to nothing else; applications and pipelines get `pipeline`, humans get `operator`, pull requests get `read` ([token spec](configuration.md#token-spec)).
+`RegisterTarget` and `RegisterCredentialStore` are the two RPCs that need `admin`, and they are the two calls this page opens with. Give the admin secret to whatever registers targets and stores, and to nothing else; applications and pipelines get `pipeline`, humans get `operator`, pull requests get `read` ([token spec](configuration.md#token-spec)).
 
 Once there is more than one, whatever registers them should be a Job rather than a person: put the full `target add` line in the repository that owns the target and run it from a Job with an `admin` token, and the upsert makes re-running it on every sync the point rather than a hazard.
 
@@ -87,7 +87,7 @@ Registering is not adopting: a target whose database already has a schema still 
 
 ### The UI
 
-`/ui/targets` lists every registered target with its provider, `search_path`, timeouts and `require_plan`; `/ui/targets/{name}` shows one target's applied migrations, pending set, ready plans and open drift. Both are `GET` routes. The only `POST` routes the UI serves are run actions, drift actions and `/ui/diff` — **there is no form that registers, edits or removes a target**, at any scope, including `admin`. This is deliberate: `RegisterTarget` is the one RPC the UI never calls, so an `admin` browser session is worth no more than an `operator` one ([security](security.md#web-ui)).
+`/ui/targets` lists every registered target with its provider, `search_path`, timeouts and `require_plan`; `/ui/targets/{name}` shows one target's applied migrations, pending set, ready plans and open drift. Both are `GET` routes. The only `POST` routes the UI serves are run actions, drift actions and `/ui/diff` — **there is no form that registers, edits or removes a target**, at any scope, including `admin`. This is deliberate: `RegisterTarget` and `RegisterCredentialStore` — the two `admin` RPCs — are the ones the UI never calls, so an `admin` browser session is worth no more than an `operator` one ([security](security.md#web-ui)).
 
 There is also no `target remove` — deleting a target is a `DELETE FROM cp_targets` on the store, and the runs that reference it keep their rows.
 
@@ -476,10 +476,6 @@ serve:
     enabled: true
     origins: ["https://godwit.staging.internal"]
 
-vault:
-  addr: https://vault.internal:8200
-  k8sRole: godwit
-
 notifications:
   publicUrl: https://godwit.staging.internal
   slack:
@@ -488,6 +484,8 @@ notifications:
 serviceMonitor:
   enabled: true
 ```
+
+There is no `vault:` block: a target's Vault is a credential store registered against the API, and the chart has no value that reaches one ([the store, which is where a Vault's address lives](#the-store-which-is-where-a-vaults-address-lives)). `serve.keyProvider.vaultAddr` is the `vault-transit` key provider's own Vault and reaches no target.
 
 Everything not modelled by the chart goes through `serve.extraArgs` — `--lease-ttl`, `--tick-interval`, `--max-attempts`, `--require-plan`, `--plan-ttl` and `--plan-retention` have no values of their own.
 
@@ -523,13 +521,13 @@ rules:
 
 Two Services rather than two ports on one is the point: a Service is what a route attaches to, and this one has no API port, so the failure that matters — a public hostname that reaches the API — needs someone to name the other Service, not to mistype a port. [ci/platform-github-app-values.yaml](../../deploy/helm/godwit/ci/platform-github-app-values.yaml) is the whole shape, route and NetworkPolicy included.
 
-With `serve.githubApp.enabled: false` (the default) none of it is rendered: no flag, no second container port, no Service. Registering the App itself is [CI/CD](../ci-cd.md#registering-the-app).
+With `serve.githubApp.enabled: false` (the default) none of it is rendered: no flag, no second container port, no Service. Registering the App itself is [creating the App](../use/github-app.md#creating-the-app).
 
 The App's private key comes in either way, and `existingSecret.githubPrivateKey` chooses. It defaults to empty: no volume is mounted and the PEM arrives with everything else through `envFrom`, under the name `GODWIT_GITHUB_PRIVATE_KEY`, which is where a Secret written for godwit's environment already has it. Name an entry instead and it is projected as a file and read with `--github-private-key-file`, which keeps the PEM out of the environment that a sidecar, a core dump and `kubectl exec -- env` all read. Naming both is a start-up failure, not a precedence rule.
 
 ### Migrating on deploy: the PreSync and PostSync hooks
 
-The wiring is in [deploy/argocd/](../../deploy/argocd/README.md) and [ci-cd.md](../ci-cd.md#argocd); what matters when you are deciding how to lay this out:
+The wiring is in [deploy/argocd/](../../deploy/argocd/README.md); what matters when you are deciding how to lay this out:
 
 ```
 PreSync   godwit migrate --target orders --dir /migrations --rollout expand-contract
@@ -541,6 +539,12 @@ PostSync  godwit run confirm --latest --allow-none --target orders
 - the migrations reach the PreSync Job through a ConfigMap rendered from the application's own `db/migrations`, so the hook applies exactly the revision ArgoCD is syncing;
 - `backoffLimit: 0`, because the service already retries; a second Job would create a second run;
 - the PreSync Job exits 0 on `succeeded` **or** `awaiting_contract`, 1 on `failed`/`needs_attention`, 3 when the plan the pull request stored is stale — and a non-zero exit fails the sync before any pod changes.
+
+The rest of what the two manifests carry: `GODWIT_SERVER=http://godwit.<namespace>.svc:8474` and `GODWIT_TOKEN` from a Secret of the application's own (`orders-godwit`, key `token`, scope `pipeline`); `hook-delete-policy: BeforeHookCreation`; `activeDeadlineSeconds` 3600 on the PreSync Job and 600 on the PostSync one. The ConfigMap must hold both halves of every migration — the CLI loads the directory and refuses a version with a side missing. Replace `orders`, the Secret name and the image tag (`:main` in the examples; `sha-<short commit>` is the immutable one) for a reproducible hook. Runs these Jobs create carry `created_by = <token name>` and an empty `source` unless `--source` is added to the args.
+
+**The PreSync run binds to the plan the pull request stored** without being told which: the ConfigMap holds the same `.up.sql` / `.down.sql` bodies as the repository, and the plan key is computed from those bodies, the target and the rollout. It matches as long as the pull request planned with the same `target` and `rollout` the Job passes.
+
+**If the sync fails between the two hooks**, the run stays `awaiting_contract`: the old pods keep working against the expanded schema, and the next successful sync's PostSync confirms it — or an operator reverts it.
 
 **One mismatch to fix for long migrations.** `presync-job.yaml` ships `activeDeadlineSeconds: 3600` while `--run-timeout` is `24h`. The Job is a client streaming a run that the *service* executes: when the deadline kills the Job pod, the run keeps going. The sync fails, ArgoCD reports the hook as failed, and the DDL is still being applied. Raise `activeDeadlineSeconds` above the longest migration you expect from that application, or accept that a long one will always report as a failed sync and be watched from `/ui` instead.
 

@@ -17,7 +17,7 @@ Project file for the CLI. Looked up from the working directory upward until a di
 | `allow_out_of_order` | bool | `false` | `GODWIT_ALLOW_OUT_OF_ORDER` | `plan`, `migrate` |
 | `plan.format` | `schema` \| `statements` | `schema` | `GODWIT_PLAN_FORMAT` | `plan`, `plan show`, `migrate --dry-run` (flag: `--plan-format`) |
 | `schema_source` | block ([below](#schema_source)) | — | `GODWIT_SCHEMA_SOURCE_KIND`, `_PATH`, `_BIN` | `diff`, `lint` |
-| `autoplan` | block ([below](#autoplan)) | — | — | the [GitHub App](../ci-cd.md#what-makes-a-pull-request-worth-planning) only; the CLI parses it and ignores it |
+| `autoplan` | block ([below](#autoplan)) | — | — | the [GitHub App](../use/github-app.md#godwityaml-in-the-repository) only; the CLI parses it and ignores it |
 
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
 
@@ -63,7 +63,7 @@ autoplan:
 | `enabled` | bool | `true` | whether a pull request event plans this project at all |
 | `when_modified` | list of globs | — | extra paths, relative to the directory holding this file, that also plan it |
 
-The default trigger is `<dir>/**/*.sql` and `godwit.yaml`, both relative to this file. `*` does not cross `/` and `**` does; a pattern may not begin with `/` or contain `..`. [CI/CD](../ci-cd.md#what-makes-a-pull-request-worth-planning) has the table of what plans and what does not, and [decision 0017](../decisions/0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) says why it widens rather than replaces.
+The default trigger is `<dir>/**/*.sql` and `godwit.yaml`, both relative to this file. `*` does not cross `/` and `**` does; a pattern may not begin with `/` or contain `..`. [the GitHub App](../use/github-app.md#godwityaml-in-the-repository) says what the default trigger watches, and [decision 0017](../decisions/0017-the-repository-asks-for-a-plan-and-the-binding-permits-it.md) says why it widens rather than replaces.
 
 ### `schema_source`
 
@@ -294,7 +294,7 @@ Registered with the target and stored in `cp_targets.config`; they are not `godw
 | `require_plan` | `--require-plan` | bool | `false` | refuse runs whose migration set has no stored plan |
 | `keep_old` | `--keep-old` | bool | `true` | `-- godwit: change-type` on this target keeps the pre-swap column as the rollback; a directive's own `keep-old=` still wins |
 | `search_path` | `--search-path` | comma-separated schema names | — | `search_path` for every session godwit opens on the target ([search_path](../internals/journal.md#search_path)); unquoted identifiers only, `$user` and `godwit` refused, no per-run override |
-| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](../ci-cd.md#binding-a-repository-to-a-target) delivery may reach this target from; `dir` is the directory holding that project's `godwit.yaml`. Empty means none may: an unbound repository gets no apply and no plan. Passing `--github-repo` replaces the whole list, and `--github-repo=""` empties it |
+| `github_repositories` | `--github-repo` | repeatable `owner/repo` or `owner/repo:dir` | — | repositories a [GitHub App](../use/github-app.md#binding-the-repository-to-a-target) delivery may reach this target from; `dir` is the directory holding that project's `godwit.yaml`. Empty means none may: an unbound repository gets no apply and no plan. Passing `--github-repo` replaces the whole list, and `--github-repo=""` empties it |
 | `ignore_adopted_tables` | `--ignore-adopted-tables` | bool | `true` | leave the bookkeeping tables of the migration tool this database was adopted from out of the schema snapshot, and so out of drift ([drift](../internals/drift.md#drift)); `false` puts them back |
 
 A setting the target does not carry is printed as `none` by `godwit target status` and `godwit targets`; it means "nothing registered", not "no limit". An unregistered `lock_timeout` still runs under the executor's own 5s default, and an unregistered `statement_timeout` is genuinely disabled.
@@ -305,14 +305,16 @@ A setting the target does not carry is printed as `none` by `godwit target statu
 
 ## GitHub App
 
-The webhook listener is off until `--github-webhook-addr` is set, and then serves `/github/webhook` and nothing else on its own port. Registering the App, the installation permissions it needs and how a repository is bound to a target are in [CI/CD](../ci-cd.md#github-app); why it is a second listener and what the secret is worth are in [decision 0016](../decisions/0016-the-app-is-bound-to-targets-by-the-server.md).
+The webhook listener is off until `--github-webhook-addr` is set, and then serves `/github/webhook` and nothing else on its own port. Registering the App, the installation permissions it needs and how a repository is bound to a target are in [CI/CD](../use/github-app.md); why it is a second listener and what the secret is worth are in [decision 0016](../decisions/0016-the-app-is-bound-to-targets-by-the-server.md).
 
-`--github-webhook-max-age` also sets how long a delivery id is remembered for de-duplication: four times the age, which outlasts any delivery the age check would still accept. The ids are swept on the drift ticker.
+`--github-webhook-max-age` also sets how long a delivery id is remembered for de-duplication: `max(24h, 4 × the age)`, which outlasts any delivery the age check would still accept. At the default one-hour age that floor is what applies, so the ids live a day rather than four hours. They are swept on the drift ticker.
 
 ## GitHub Action inputs
 
-See [CI/CD](../ci-cd.md#action-inputs-and-outputs); they map one-to-one onto the CLI flags above.
+See [the GitHub Action](../use/github-actions.md#inputs-worth-knowing); they map one-to-one onto the CLI flags above.
 
 ## Helm values
 
-`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `driftInterval`, `skipValidation`, `scratch.template`, `logFormat`, `logLevel`, `ui.enabled`, `ui.scope` and `extraArgs`. **The Secret named by `existingSecret.name` reaches the container whole**: every entry in it becomes an environment variable of that name, so each row of the table above is configured in the Secret and in no value — adding `GODWIT_SCRATCH_DSN` is what moves scratch off the store server, adding `GODWIT_MASTER_KEY` is what lets a `static` target be registered, and neither is named twice. The App's private key is the one entry that can be either: `existingSecret.githubPrivateKey` names the entry to project as a file, and leaving it empty takes the PEM from `envFrom` as `GODWIT_GITHUB_PRIVATE_KEY` like every other entry. `serve.keyProvider` moves the key to `gcpkms` or `vault-transit` instead. `--lease-ttl`, `--tick-interval`, `--max-attempts`, `--require-plan`, `--plan-ttl` and `--plan-retention` have no value of their own and go through `serve.extraArgs`. Standing the chart up on ArgoCD, and where the credentials in it come from, is [deployment](deployment.md).
+`deploy/helm/godwit/values.yaml` documents every value inline; the `serve` block exposes `port`, `keyProvider`, `driftInterval`, `skipValidation`, `scratch.template`, `logFormat`, `logLevel`, `ui`, `limits`, `githubApp` and `extraArgs`. **The Secret named by `existingSecret.name` reaches the container whole**: every entry in it becomes an environment variable of that name, which is how a row of the table above that carries a secret is configured — adding `GODWIT_SCRATCH_DSN` is what moves scratch off the store server, adding `GODWIT_MASTER_KEY` is what lets a `static` target be registered, and neither is named twice.
+
+Seven rows of that table are the exception and **are** chart values, because none of them is a secret: `GODWIT_LOG_FORMAT` (`serve.logFormat`), `GODWIT_LOG_LEVEL` (`serve.logLevel`), `GODWIT_WEBHOOK_URL` (`notifications.webhookUrl`), `GODWIT_PUBLIC_URL` (`notifications.publicUrl`), `GODWIT_SLACK_CHANNEL` and `GODWIT_SLACK_MODE` (`notifications.slack.channel` and `.mode`), and `GODWIT_GITHUB_API_URL` (`serve.githubApp.apiUrl`). The chart renders each as a literal `env` entry, so one of these set in the Secret *and* in a value is set twice with the value winning. The `GODWIT_KEY_PROVIDER`, `GODWIT_KMS_*` and `GODWIT_VAULT_TRANSIT_*` rows behave the same way under `serve.keyProvider`, except `GODWIT_VAULT_TRANSIT_TOKEN`, which the chart reads from a Secret of its own (`serve.keyProvider.vaultTokenSecret`). The App's private key is the one entry that can be either: `existingSecret.githubPrivateKey` names the entry to project as a file, and leaving it empty takes the PEM from `envFrom` as `GODWIT_GITHUB_PRIVATE_KEY` like every other entry. `serve.keyProvider` moves the key to `gcpkms` or `vault-transit` instead. `--lease-ttl`, `--tick-interval`, `--max-attempts`, `--require-plan`, `--plan-ttl` and `--plan-retention` have no value of their own and go through `serve.extraArgs`. Standing the chart up on ArgoCD, and where the credentials in it come from, is [deployment](deployment.md).

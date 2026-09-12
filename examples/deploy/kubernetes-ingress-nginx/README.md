@@ -116,7 +116,7 @@ Two things follow from the lease being keyed on `cp_leases.holder` (matched whol
 
 ## The pipeline
 
-`godwit lint` and `godwit plan` on a pull request need only `read` and a route to the API. A GitHub-hosted runner reaches the TLS Ingress with the CLI or the [composite action](../../../docs/ci-cd.md) — `GODWIT_SERVER=https://godwit.example.com` — as long as the Ingress' certificate chains to a public CA. From a self-hosted runner in the cluster, or from the ArgoCD PreSync hook, the CLI works unchanged against `http://godwit.godwit.svc:8474`.
+`godwit lint` and `godwit plan` on a pull request need only `read` and a route to the API. A GitHub-hosted runner reaches the TLS Ingress with the CLI or the [composite action](../../../docs/use/github-actions.md) — `GODWIT_SERVER=https://godwit.example.com` — as long as the Ingress' certificate chains to a public CA. From a self-hosted runner in the cluster, or from the ArgoCD PreSync hook, the CLI works unchanged against `http://godwit.godwit.svc:8474`.
 
 ## Verified
 

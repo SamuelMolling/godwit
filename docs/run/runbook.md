@@ -73,7 +73,7 @@ Take a [restore point](deployment.md#backups-and-pitr) first. If the deploy was 
 
 **Symptom.** `godwit apply` succeeded, the `## godwit apply` comment says **awaiting_contract**, and the `godwit/applied` status is `pending` ("expand applied; comment `godwit confirm` to run the contract phase"), so branch protection will not let the pull request merge. Nothing is broken: the expand phase is on the database, the contract phase is not, and the status is telling the truth.
 
-**Action.** Once the application version that reads both shapes is out, comment `godwit confirm` on the pull request. It releases the same run (not a new one), the status turns `success` and the pull request becomes mergeable ([CI/CD](../ci-cd.md#pull-request-confirm-the-contract-phase)).
+**Action.** Once the application version that reads both shapes is out, comment `godwit confirm` on the pull request. It releases the same run (not a new one), the status turns `success` and the pull request becomes mergeable ([the merge gate](../use/github-actions.md#the-merge-gate)).
 
 Three ways it does not work, and what to do instead:
 

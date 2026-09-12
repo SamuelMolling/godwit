@@ -103,7 +103,7 @@ Off is off: with `serve.githubApp.enabled: false` (the default) the render has n
 
 The App's private key reaches the process one of two ways, and `existingSecret.githubPrivateKey` picks which. Empty — the default — mounts no volume and renders no file flag: the PEM arrives through `envFrom` as `GODWIT_GITHUB_PRIVATE_KEY`, the same way the Secret's DSNs do. Naming an entry projects it as a file at `serve.githubApp.privateKeyPath`, read with `--github-private-key-file`, which keeps the PEM out of the environment that a sidecar, a core dump and `kubectl exec -- env` all read.
 
-Standing the App up the first time — creating it, its permissions, its events, and binding a repository to a target — is [CI/CD: registering the App](../../../docs/ci-cd.md#registering-the-app).
+Standing the App up the first time — creating it, its permissions, its events, and binding a repository to a target — is [creating the App](../../../docs/use/github-app.md#creating-the-app).
 
 ## extraObjects
 

@@ -48,7 +48,7 @@ Plan: 0 to add, 1 to change, 0 to destroy.
 
 That is fourteen statements. `--plan-format statements` prints them: the trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, one statement is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [directives](docs/internals/admission.md#directives).
 
-**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `godwit apply` bound to the reviewed plan, `godwit confirm` for the contract phase, and a [`godwit/applied` commit status](docs/ci-cd.md#the-merge-signal) that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [plans](docs/internals/admission.md#plans), [CI/CD](docs/ci-cd.md).
+**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `godwit apply` bound to the reviewed plan, `godwit confirm` for the contract phase, and a [`godwit/applied` commit status](docs/use/github-actions.md#the-merge-gate) that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [plans](docs/internals/admission.md#plans), [the GitHub Action](docs/use/github-actions.md).
 
 ## Quickstart
 
@@ -87,8 +87,8 @@ That single-server form executes submitted SQL on the store server as the store 
 | Assertions | `-- godwit: assert '<select>' = 0` makes a condition about the data a statement of the plan, journalled and re-checked at confirm time — [assertions](docs/internals/admission.md#assertions) |
 | Admission | the hazard gate, an out-of-order guard, and a replay of the target's recorded history plus the new files on a throwaway database, before anything is queued — [admission](docs/internals/admission.md#admission) |
 | Plan as contract | the admitted plan is stored with an observation of the target; `migrate` binds to it, re-plans what other runs explain, refuses the rest, and records a migration already applied by hand instead of executing it — [plans](docs/internals/admission.md#plans) |
-| Apply before merge | composite GitHub Action: lint and plan on the pull request, `godwit apply`, `godwit confirm`, `godwit revert`, `verify` on the merge commit; ArgoCD hooks and a Helm chart — [CI/CD](docs/ci-cd.md) |
-| Merge gate | the apply sets the `godwit/applied` commit status; make it a required check and the pull request cannot merge until the migration is on the database — [the merge signal](docs/ci-cd.md#the-merge-signal) |
+| Apply before merge | composite GitHub Action: lint and plan on the pull request, `godwit apply`, `godwit confirm`, `godwit revert`, `verify` on the merge commit; ArgoCD hooks and a Helm chart — [the GitHub Action](docs/use/github-actions.md) |
+| Merge gate | the apply sets the `godwit/applied` commit status; make it a required check and the pull request cannot merge until the migration is on the database — [the merge signal](docs/use/github-actions.md#the-merge-gate) |
 | Expand → contract | the rollout is split by statement: the run parks in `awaiting_contract` and `ConfirmRollout` resumes the same run where it stopped — [rollout policies](docs/internals/runs.md#rollout-policies) |
 | Revert | scoped to what the run actually applied, never to the directory it submitted; a plan that would destroy rows is refused, not warned about — [revert](docs/internals/runs.md#revert) |
 | Version targets | `--to <version>` stops a run short; the migrations above it stay on the plan marked **withheld**, so the report cannot be read as the whole set — [version targets](docs/internals/runs.md#version-targets) |
@@ -111,7 +111,8 @@ The manual is [docs/](docs/README.md), grouped by what you are doing.
 | [Getting started](docs/start/getting-started.md) | dev loop, service, first run, CI |
 | [Comparison](docs/start/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
 | [Command reference](docs/use/cli.md) | what every command is for, in plain language, with a real example each |
-| [CI/CD](docs/ci-cd.md) | Action inputs and outputs, who may command an apply, the GitHub App, ArgoCD hooks, exit codes |
+| [GitHub Action](docs/use/github-actions.md) | the workflow, the merge gate, who may command an apply, inputs and exit codes |
+| [GitHub App](docs/use/github-app.md) | the App route: no workflow and no token in the repository, just a binding |
 | [Deployment](docs/run/deployment.md) | registering a target, the credential providers and Vault end to end, Helm and ArgoCD, a staging checklist, then HA, the store, backups, retention, upgrades, metrics, notifications and logging |
 | [Configuration](docs/run/configuration.md) | every `godwit.yaml` key, `serve` flag, environment variable, the token spec and the per-command flag list |
 | [Security](docs/run/security.md) | tokens, key providers and rotation, credential providers, the scratch database, what is logged |

@@ -95,7 +95,7 @@ Offline plan. Both sides of every migration in the directory, as written; no dat
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
 
-1 hazard must be acknowledged before this runs; use --ack H002.
+1 hazard on what this run would execute: take the recipe printed with it, or accept the risk with --ack H002 (godwit apply --ack H002 on a pull request).
 Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
 
@@ -130,7 +130,7 @@ $ godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --v
 20260901120500_orders_customer_idx: reverted (1 statement(s))
 ```
 
-`apply` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
+`up` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
 
 Those four are the first of about thirty commands. What each one is for, when you would reach for it, and one example each is the [command reference](../use/cli.md); this page keeps to the path through them.
 
@@ -510,9 +510,9 @@ steps:
 
 `lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head, reports what it applied and what that changed on the database, and sets the `godwit/applied` commit status; `verify` on the merge proves `main` carries nothing unapplied.
 
-**That status is the merge gate.** Make `godwit/applied` a required status check on `main` and the pull request cannot merge until the apply has landed — there is nothing else to switch on, and GitHub's own auto-merge waits on it like any other check ([the merge signal](../ci-cd.md#the-merge-signal)). Set `GODWIT_PUBLIC_URL` in the workflow's environment if you run the UI, and the reports link each run and plan to their pages.
+**That status is the merge gate.** Make `godwit/applied` a required status check on `main` and the pull request cannot merge until the apply has landed — there is nothing else to switch on, and GitHub's own auto-merge waits on it like any other check ([the merge signal](../use/github-actions.md#the-merge-gate)). Set `GODWIT_PUBLIC_URL` in the workflow's environment if you run the UI, and the reports link each run and plan to their pages.
 
-The comment has to be exactly `godwit apply` and nothing else — prose around it means nothing fires ([what counts as commanding](../ci-cd.md#what-counts-as-commanding)). It is refused unless the commenter holds write or admin permission on the repository **and** GitHub reports the pull request as approved. Whether a push withdraws that approval is your branch protection's *Dismiss stale pull request approvals when new commits are pushed*, not godwit's rule. Working alone, either approve from a second account — GitHub does not let you approve your own pull request — or pass `require-approval: "false"` ([who may command an apply](../ci-cd.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
+The comment has to be exactly `godwit apply` and nothing else — prose around it means nothing fires ([what counts as commanding](../use/github-actions.md#silence-and-refusals)). It is refused unless the commenter holds write or admin permission on the repository **and** GitHub reports the pull request as approved. Whether a push withdraws that approval is your branch protection's *Dismiss stale pull request approvals when new commits are pushed*, not godwit's rule. Working alone, either approve from a second account — GitHub does not let you approve your own pull request — or pass `require-approval: "false"` ([who may command an apply](../use/github-actions.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
 
 The database changes **before** the merge, on purpose: by the time the pull request lands, `main` describes a schema the target already has. An `expand-contract` apply needs a second comment to finish: it stops at `awaiting_contract`, and until `godwit confirm` runs, `godwit/applied` stays `pending` with *expand applied; comment `godwit confirm` to run the contract phase*, so branch protection holds the pull request. Add the step beside the apply, in the same `issue_comment` job:
 
@@ -527,7 +527,7 @@ The database changes **before** the merge, on purpose: by the time the pull requ
       target: orders
 ```
 
-Inputs, outputs, the revert command, the `apply-on-merge` mode and the ArgoCD variant are in [CI/CD](../ci-cd.md); the pull request stuck at `awaiting_contract` is a [runbook](../run/runbook.md#a-pull-request-stuck-in-awaiting_contract) entry.
+Inputs, outputs, the revert command and the `apply-on-merge` mode are in [the GitHub Action](../use/github-actions.md), the ArgoCD variant in [deployment](../run/deployment.md#migrating-on-deploy-the-presync-and-postsync-hooks); the pull request stuck at `awaiting_contract` is a [runbook](../run/runbook.md#a-pull-request-stuck-in-awaiting_contract) entry.
 
 ## Next
 

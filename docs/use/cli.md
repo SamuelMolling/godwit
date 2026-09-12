@@ -201,7 +201,7 @@ Offline plan. Both sides of every migration in the directory, as written; no dat
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
 
-1 hazard must be acknowledged before this runs; use --ack H002.
+1 hazard on what this run would execute: take the recipe printed with it, or accept the risk with --ack H002 (godwit apply --ack H002 on a pull request).
 Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
 
@@ -361,7 +361,7 @@ godwit: run 9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed: sql: statement 0 of 202
 
 Nothing is left half-applied: the statements that succeeded are journalled as done, and [`godwit run resume`](#godwit-run-resume) continues from there once you have fixed the cause.
 
-Three flags change the shape of the run rather than a detail of it: `--rollout expand-contract` splits it in two ([below](#godwit-run-confirm)), `--to <version>` stops it at a version and reports the rest as *withheld* ([version targets](../internals/runs.md#version-targets)), and `--plan <id>` binds a specific reviewed plan, which is how the GitHub Action applies exactly what the reviewer saw ([CI/CD](../ci-cd.md)).
+Three flags change the shape of the run rather than a detail of it: `--rollout expand-contract` splits it in two ([below](#godwit-run-confirm)), `--to <version>` stops it at a version and reports the rest as *withheld* ([version targets](../internals/runs.md#version-targets)), and `--plan <id>` binds a specific reviewed plan, which is how the GitHub Action applies exactly what the reviewer saw ([the GitHub Action](github-actions.md)).
 
 ### `godwit run confirm`
 
@@ -395,10 +395,14 @@ godwit: unacknowledged hazards (pass acknowledge_hazards to accept):
 H002: DROP TABLE is destructive
 
 $ godwit revert --target app --ack H002
-revert of run 9c60b73c-ac42-42ec-9194-498a2c66cbc3 on app: 1 migration(s), reverse order of application
-  20260908150000_create_notes (down): 1 statement(s)
-    statement 0, runs inside a transaction
+1 migration will be reverted on app, newest first, undoing run 9c60b73c-ac42-42ec-9194-498a2c66cbc3.
+
+- 20260908150000_create_notes (down)  1 statement
+  statement 0, runs inside a transaction
       DROP TABLE notes
+      hazard H002: DROP TABLE is destructive
+
+Plan: 0 to apply, 1 to revert, 1 hazard(s) to acknowledge
 run 635b0cda-d61f-4beb-9550-1adb6da14e3b: queued
 run 635b0cda-d61f-4beb-9550-1adb6da14e3b: succeeded (attempt 1)
 ```
@@ -496,11 +500,13 @@ A target whose credential does not resolve — a `vault` one pointed at no crede
 
 ```console
 $ godwit targets
-NAME    PROVIDER  STORE       APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN
-app     static    none        5        0            0          clean  none         none  none       false         9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed
-orders  vault     production  2        0            0          clean  none         none  none       false         3984dd6f-fce0-4a32-9af2-60c746dc92cd succeeded
-legacy  static    none        2        0            0          clean  none         none  none       false         c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380 succeeded
+NAME    PROVIDER  STORE       APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  GITHUB              LAST RUN
+app     static    none        5        0            0          clean  none         none  none       false         none                9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed
+orders  vault     production  2        0            0          clean  none         none  none       false         acme/orders         3984dd6f-fce0-4a32-9af2-60c746dc92cd succeeded
+legacy  static    none        2        0            0          clean  none         none  none       false         none                c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380 succeeded
 ```
+
+`GITHUB` is the repositories a [GitHub App](github-app.md#binding-the-repository-to-a-target) delivery may reach the target from, and `none` means no pull request can: the App answers such a repository with a refusal rather than a plan.
 
 `STORE` is what answers "why can it not reach that database": it names the Vault the target's credentials are read from, and `none` is right for `static` and `kubernetes`, which read no Vault at all. `godwit credential-stores` turns the name into an address.
 
@@ -606,7 +612,7 @@ the target's history, what they changed in it, how many statements ran and how l
 `expand-contract` run left for `godwit confirm`, and — when it stopped — the statement it stopped at, that
 statement's SQL, the database's error, and what the failure leaves behind.
 
-This is what the GitHub Action posts as the `## godwit apply` comment ([CI/CD](../ci-cd.md#pull-request-apply)).
+This is what the GitHub Action posts as the `## godwit apply` comment ([the GitHub Action](github-actions.md#the-default-mode-apply-on-the-pull-request)).
 Run it by hand for any past run.
 
 ```console
@@ -846,6 +852,6 @@ dev (none)
 
 - The exact flags, environment variables and required token scope for each command: [configuration](../run/configuration.md#cli-reference).
 - What the commands do underneath: [the journal](../internals/journal.md), [runs](../internals/runs.md), [admission](../internals/admission.md) and [drift](../internals/drift.md).
-- The same commands wired into a pull request: [CI/CD](../ci-cd.md).
+- The same commands wired into a pull request: [the GitHub Action](github-actions.md), or [the GitHub App](github-app.md).
 - The same operations as HTTP calls: [API](../internals/api.md).
 - Something is wrong right now: [runbook](../run/runbook.md).
