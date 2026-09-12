@@ -30,4 +30,4 @@ The action builds godwit from source with cgo (`go-version` pins the toolchain),
 
 ## Deploying the service
 
-[deploy/](deploy/README.md): the service itself on the platforms [docs/deployment.md](../docs/deployment.md) does not cover — [Kubernetes with ingress-nginx](deploy/kubernetes-ingress-nginx/README.md), [AWS ECS](deploy/ecs/README.md), [Docker Compose](deploy/docker-compose/README.md) and [a plain VM](deploy/systemd/README.md) — plus the questions all four have to answer: the two databases, where the secrets go, which health endpoint is which, and why more than one replica.
+[deploy/](deploy/README.md): the service itself on the platforms [docs/deployment.md](../docs/run/deployment.md) does not cover — [Kubernetes with ingress-nginx](deploy/kubernetes-ingress-nginx/README.md), [AWS ECS](deploy/ecs/README.md), [Docker Compose](deploy/docker-compose/README.md) and [a plain VM](deploy/systemd/README.md) — plus the questions all four have to answer: the two databases, where the secrets go, which health endpoint is which, and why more than one replica.

@@ -7,11 +7,11 @@
 
 **godwit** is a crash-safe PostgreSQL migration service for pipelines. Migrations are plain SQL files; they run under a statement-level journal in the target database, so a replica killed mid-run is taken over by another and resumed from the last committed statement. There is no dirty state and no `repair`. Apache 2, PostgreSQL only, one binary that is both the service and the CLI.
 
-Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behind paid tiers, and none of them is a service: every pipeline rebuilds the same glue around a CLI. godwit is that glue done once. The honest side-by-side, including what godwit lacks, is in [docs/comparison.md](docs/comparison.md).
+Flyway, Liquibase and Atlas moved undo, dry runs, lint and drift detection behind paid tiers, and none of them is a service: every pipeline rebuilds the same glue around a CLI. godwit is that glue done once. The honest side-by-side, including what godwit lacks, is in [docs/start/comparison.md](docs/start/comparison.md).
 
 ## Three things that are actually different
 
-**The journal is in the target database, committed with the DDL.** A `tx` statement and its `done` row commit together; a `CREATE INDEX CONCURRENTLY` gets a write-ahead intent and a verifier that inspects `pg_index` after a crash; a backfill commits its rows and its cursor in the same transaction. So `kill -9` at any point leaves a state the next attempt can read and continue from, and nothing has to be repaired by hand. The point-by-point [crash timeline](docs/concepts.md#crash-timeline) is in the concepts page.
+**The journal is in the target database, committed with the DDL.** A `tx` statement and its `done` row commit together; a `CREATE INDEX CONCURRENTLY` gets a write-ahead intent and a verifier that inspects `pg_index` after a crash; a backfill commits its rows and its cursor in the same transaction. So `kill -9` at any point leaves a state the next attempt can read and continue from, and nothing has to be repaired by hand. The point-by-point [crash timeline](docs/internals/journal.md#crash-timeline) is in the journal page.
 
 **A directive is a change godwit executes, not a recipe it prints.** A `-- godwit:` comment line says what the migration wants; godwit renders the lock-safe statements against the target's own catalog at plan time — the real primary key, column type and nullability — and freezes them onto the plan, so the run applies what the pull request showed:
 
@@ -46,9 +46,9 @@ godwit will perform the following actions:
 Plan: 0 to add, 1 to change, 0 to destroy.
 ```
 
-That is fourteen statements. `--plan-format statements` prints them: the trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, one statement is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [Concepts: directives](docs/concepts.md#directives).
+That is fourteen statements. `--plan-format statements` prints them: the trigger keeps both columns in sync while the batches walk the table, the batches resume from their journalled cursor after a crash, one statement is godwit's own count of the rows the backfill has still to reach so a `using=` that never converges cannot become the irreversible swap, and the rename waits in `awaiting_contract` — where the count is asked again — until a human confirms it. Ten operations exist; everything godwit will not do safely is refused by name. [directives](docs/internals/admission.md#directives).
 
-**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `godwit apply` bound to the reviewed plan, `godwit confirm` for the contract phase, and a [`godwit/applied` commit status](docs/ci-cd.md#the-merge-signal) that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [Concepts: plans](docs/concepts.md#plans), [CI/CD](docs/ci-cd.md).
+**The plan is a contract, and it applies before the merge.** `godwit plan --target --save` stores the admitted plan with an observation of the live target; `migrate` binds to that plan and refuses with the exact diff when the target moved underneath. On a pull request the GitHub Action turns that into: lint and plan as a sticky comment, `godwit apply` bound to the reviewed plan, `godwit confirm` for the contract phase, and a [`godwit/applied` commit status](docs/ci-cd.md#the-merge-signal) that stays `pending` until the whole migration is on the database. By the time the branch lands, `main` describes a schema the target already has. [plans](docs/internals/admission.md#plans), [CI/CD](docs/ci-cd.md).
 
 ## Quickstart
 
@@ -74,49 +74,50 @@ godwit migrate --target app --dir db/migrations     # streams the run; exit 0 wh
 godwit target status app --dir db/migrations
 ```
 
-That single-server form executes submitted SQL on the store server as the store role, which is why it needs `CREATEDB` and why `serve` warns about it on every start. Anywhere a token is shared, add `--scratch-dsn` pointing at a PostgreSQL that holds nothing ([security](docs/security.md#the-scratch-database)). The full walkthrough — the local `up`/`status`/`down` loop with no service at all, writing a migration from an ORM schema, and the first CI step — is [docs/getting-started.md](docs/getting-started.md).
+That single-server form executes submitted SQL on the store server as the store role, which is why it needs `CREATEDB` and why `serve` warns about it on every start. Anywhere a token is shared, add `--scratch-dsn` pointing at a PostgreSQL that holds nothing ([security](docs/run/security.md#the-scratch-database)). The full walkthrough — the local `up`/`status`/`down` loop with no service at all, writing a migration from an ORM schema, and the first CI step — is [docs/start/getting-started.md](docs/start/getting-started.md).
 
 ## What's inside
 
 | | |
 |---|---|
-| Crash-safe engine | statement-level journal, write-ahead intents and verifiers for non-transactional statements, batched backfills resumed from their cursor — [concepts](docs/concepts.md#the-journal-protocol) |
-| Leased service | any replica claims a run, a lost lease is taken over, transient failures retry with backoff, a re-run of the same pipeline job re-attaches instead of queueing a second — [concepts](docs/concepts.md#leases) |
-| Hazard gate | `H001`–`H010` from a real PostgreSQL parser, each carrying the safe form as ready-to-copy SQL; refused unless acknowledged in the run — [concepts](docs/concepts.md#hazards) |
-| Directives | ten `-- godwit:` operations godwit expands against the target's catalog and freezes onto the plan; `backfill` holds a sync trigger for the length of its batches — [concepts](docs/concepts.md#directives) |
-| Assertions | `-- godwit: assert '<select>' = 0` makes a condition about the data a statement of the plan, journalled and re-checked at confirm time — [concepts](docs/concepts.md#assertions) |
-| Admission | the hazard gate, an out-of-order guard, and a replay of the target's recorded history plus the new files on a throwaway database, before anything is queued — [concepts](docs/concepts.md#admission) |
-| Plan as contract | the admitted plan is stored with an observation of the target; `migrate` binds to it, re-plans what other runs explain, refuses the rest, and records a migration already applied by hand instead of executing it — [concepts](docs/concepts.md#plans) |
+| Crash-safe engine | statement-level journal, write-ahead intents and verifiers for non-transactional statements, batched backfills resumed from their cursor — [the journal protocol](docs/internals/journal.md#the-journal-protocol) |
+| Leased service | any replica claims a run, a lost lease is taken over, transient failures retry with backoff, a re-run of the same pipeline job re-attaches instead of queueing a second — [leases](docs/internals/runs.md#leases) |
+| Hazard gate | `H001`–`H010` from a real PostgreSQL parser, each carrying the safe form as ready-to-copy SQL; refused unless acknowledged in the run — [hazards](docs/internals/admission.md#hazards) |
+| Directives | ten `-- godwit:` operations godwit expands against the target's catalog and freezes onto the plan; `backfill` holds a sync trigger for the length of its batches — [directives](docs/internals/admission.md#directives) |
+| Assertions | `-- godwit: assert '<select>' = 0` makes a condition about the data a statement of the plan, journalled and re-checked at confirm time — [assertions](docs/internals/admission.md#assertions) |
+| Admission | the hazard gate, an out-of-order guard, and a replay of the target's recorded history plus the new files on a throwaway database, before anything is queued — [admission](docs/internals/admission.md#admission) |
+| Plan as contract | the admitted plan is stored with an observation of the target; `migrate` binds to it, re-plans what other runs explain, refuses the rest, and records a migration already applied by hand instead of executing it — [plans](docs/internals/admission.md#plans) |
 | Apply before merge | composite GitHub Action: lint and plan on the pull request, `godwit apply`, `godwit confirm`, `godwit revert`, `verify` on the merge commit; ArgoCD hooks and a Helm chart — [CI/CD](docs/ci-cd.md) |
 | Merge gate | the apply sets the `godwit/applied` commit status; make it a required check and the pull request cannot merge until the migration is on the database — [the merge signal](docs/ci-cd.md#the-merge-signal) |
-| Expand → contract | the rollout is split by statement: the run parks in `awaiting_contract` and `ConfirmRollout` resumes the same run where it stopped — [concepts](docs/concepts.md#rollout-policies) |
-| Revert | scoped to what the run actually applied, never to the directory it submitted; a plan that would destroy rows is refused, not warned about — [concepts](docs/concepts.md#revert) |
-| Version targets | `--to <version>` stops a run short; the migrations above it stay on the plan marked **withheld**, so the report cannot be read as the whole set — [concepts](docs/concepts.md#version-targets) |
-| Repeatables and checkpoints | `R__` files re-applied whenever their content changes; `godwit checkpoint` collapses old history into one file the replay runs instead — [concepts](docs/concepts.md#repeatable-migrations), [checkpoints](docs/concepts.md#checkpoints) |
-| Fleet view | `godwit migrations`: which target has which migration, keyed by version **and** checksum, so the same version meaning two things in staging and production is loud — [concepts](docs/concepts.md#the-fleet-view) |
-| Drift and baseline | a schema fingerprint after every successful run, a periodic monitor, events and accept — [concepts](docs/concepts.md#drift) |
-| Adopting an existing database | `target adopt --version` for a schema godwit never journalled, `target adopt --from-journal` for one whose journal it did not write — [deployment](docs/deployment.md#adopting-an-existing-database) |
-| Migrations from a schema | `godwit diff` writes the next up/down pair from a DDL file or from Prisma, GORM, Django, Alembic, Rails, Drizzle or any command, all rendered client-side — [concepts](docs/concepts.md#generating-migrations-from-a-schema) |
-| ORM drift gate | `godwit lint --server <url> --target <t>` fails (`E005`) when the committed SQL no longer expresses the ORM schema — [concepts](docs/concepts.md#keeping-the-generated-sql-and-the-orm-schema-together) |
-| API, CLI and UI | connect (gRPC + JSON) with scoped bearer tokens (`read`, `pipeline`, `operator`, `admin`); the same binary is the CLI; `serve --ui` adds an operator UI at `/ui` — [API](docs/api.md), [configuration](docs/configuration.md), [operations](docs/operations.md#web-ui) |
-| Credentials | `static` (AES-256-GCM in the store), `kubernetes` (mounted secret), `vault` (KV or dynamic) — [security](docs/security.md#credential-providers) |
-| Operations | per-target timeouts and `search_path`, admission limits, Prometheus `/metrics`, audit on every mutation, webhook and Slack notifications — [operations](docs/operations.md), [configuration](docs/configuration.md) |
+| Expand → contract | the rollout is split by statement: the run parks in `awaiting_contract` and `ConfirmRollout` resumes the same run where it stopped — [rollout policies](docs/internals/runs.md#rollout-policies) |
+| Revert | scoped to what the run actually applied, never to the directory it submitted; a plan that would destroy rows is refused, not warned about — [revert](docs/internals/runs.md#revert) |
+| Version targets | `--to <version>` stops a run short; the migrations above it stay on the plan marked **withheld**, so the report cannot be read as the whole set — [version targets](docs/internals/runs.md#version-targets) |
+| Repeatables and checkpoints | `R__` files re-applied whenever their content changes; `godwit checkpoint` collapses old history into one file the replay runs instead — [repeatable migrations](docs/internals/journal.md#repeatable-migrations), [checkpoints](docs/internals/journal.md#checkpoints) |
+| Fleet view | `godwit migrations`: which target has which migration, keyed by version **and** checksum, so the same version meaning two things in staging and production is loud — [the fleet view](docs/internals/drift.md#the-fleet-view) |
+| Drift and baseline | a schema fingerprint after every successful run, a periodic monitor, events and accept — [drift](docs/internals/drift.md#drift) |
+| Adopting an existing database | `target adopt --version` for a schema godwit never journalled, `target adopt --from-journal` for one whose journal it did not write — [deployment](docs/run/deployment.md#adopting-an-existing-database) |
+| Migrations from a schema | `godwit diff` writes the next up/down pair from a DDL file or from Prisma, GORM, Django, Alembic, Rails, Drizzle or any command, all rendered client-side — [generating migrations from a schema](docs/internals/drift.md#generating-migrations-from-a-schema) |
+| ORM drift gate | `godwit lint --server <url> --target <t>` fails (`E005`) when the committed SQL no longer expresses the ORM schema — [keeping the generated sql and the orm schema together](docs/internals/drift.md#keeping-the-generated-sql-and-the-orm-schema-together) |
+| API, CLI and UI | connect (gRPC + JSON) with scoped bearer tokens (`read`, `pipeline`, `operator`, `admin`); the same binary is the CLI; `serve --ui` adds an operator UI at `/ui` — [API](docs/internals/api.md), [configuration](docs/run/configuration.md), [deployment](docs/run/deployment.md#web-ui) |
+| Credentials | `static` (AES-256-GCM in the store), `kubernetes` (mounted secret), `vault` (KV or dynamic) — [security](docs/run/security.md#credential-providers) |
+| Operations | per-target timeouts and `search_path`, admission limits, Prometheus `/metrics`, audit on every mutation, webhook and Slack notifications — [deployment](docs/run/deployment.md), [configuration](docs/run/configuration.md) |
 
 ## Documentation
 
+The manual is [docs/](docs/README.md), grouped by what you are doing.
+
 | | |
 |---|---|
-| [Getting started](docs/getting-started.md) | dev loop, service, first run, CI |
-| [Command reference](docs/cli.md) | what every command is for, in plain language, with a real example each |
-| [Concepts](docs/concepts.md) | the journal protocol, run states, leases, hazards, directives, validation, rollouts, revert, drift, checkpoints, plans |
-| [Configuration](docs/configuration.md) | every `godwit.yaml` key, `serve` flag, environment variable, the token spec and the CLI reference |
-| [Deployment](docs/deployment.md) | registering a target, the three credential providers, credential stores and Vault end to end, Helm and ArgoCD, a staging checklist |
-| [Operations](docs/operations.md) | HA, the store, backups, retention, upgrades, metrics and alert rules, notifications, logging, the UI |
-| [Runbook](docs/runbook.md) | per symptom: the SQL to look at and the command to run |
+| [Getting started](docs/start/getting-started.md) | dev loop, service, first run, CI |
+| [Comparison](docs/start/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
+| [Command reference](docs/use/cli.md) | what every command is for, in plain language, with a real example each |
 | [CI/CD](docs/ci-cd.md) | Action inputs and outputs, who may command an apply, the GitHub App, ArgoCD hooks, exit codes |
-| [API](docs/api.md) | every RPC with its scope, request, response and curl |
-| [Security](docs/security.md) | tokens, key providers and rotation, credential providers, the scratch database, what is logged |
-| [Comparison](docs/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
+| [Deployment](docs/run/deployment.md) | registering a target, the credential providers and Vault end to end, Helm and ArgoCD, a staging checklist, then HA, the store, backups, retention, upgrades, metrics, notifications and logging |
+| [Configuration](docs/run/configuration.md) | every `godwit.yaml` key, `serve` flag, environment variable, the token spec and the per-command flag list |
+| [Security](docs/run/security.md) | tokens, key providers and rotation, credential providers, the scratch database, what is logged |
+| [Runbook](docs/run/runbook.md) | per symptom: the SQL to look at and the command to run |
+| [Internals](docs/README.md#internals) | the journal protocol, run states and leases, the admission gate, directives, plans, drift |
+| [API](docs/internals/api.md) | every RPC with its scope, request, response and curl |
 | [Decisions](docs/decisions/README.md) | why godwit is shaped this way, and what was refused |
 
 Also: [examples](examples/README.md) (copy-ready pipelines), [examples/deploy](examples/deploy/README.md) (the service on ingress-nginx, ECS, Docker Compose and a plain VM), [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
@@ -132,4 +133,4 @@ Also: [examples](examples/README.md) (copy-ready pipelines), [examples/deploy](e
 
 v1 in progress: PostgreSQL only, API-first. Version stays `0.0.1` until v1 has run in production — nothing here has.
 
-`make all` (lint, proto lint, the suites at 100% statement coverage, build) is the gate on every commit. Outside it, `make e2e` drives the built binary against PostgreSQL in Docker while SIGKILLing replicas mid-statement, `make load` measures a ten-million-row backfill and a thousand-migration target, and `make chaos` kills godwit in the gaps the crash rig cannot reach. Their numbers and knobs are in [docs/testing.md](docs/testing.md).
+`make all` (lint, proto lint, the suites at 100% statement coverage, build) is the gate on every commit. Outside it, `make e2e` drives the built binary against PostgreSQL in Docker while SIGKILLing replicas mid-statement, `make load` measures a ten-million-row backfill and a thousand-migration target, and `make chaos` kills godwit in the gaps the crash rig cannot reach. Their numbers and knobs are in [docs/internals/testing.md](docs/internals/testing.md).

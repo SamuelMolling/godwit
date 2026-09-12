@@ -88,7 +88,7 @@ There is no scan and no rewrite.
 
 That profile is the opposite of what the directives exist for. Every shipped directive removes a
 lock or a rewrite *the database* does to you. **A rename is not a database hazard; it is a
-deployment-coordination hazard** — and [comparison.md](../../comparison.md) already states that the
+deployment-coordination hazard** — and [comparison.md](../../start/comparison.md) already states that the
 two-version window is the deployment's problem. The external corpus agrees on exactly this
 framing: Atlas's own analyzers classify it not as a lock risk but as backward incompatibility
 (BC101 table, BC102 column — *"can cause errors during deployment if applications running the

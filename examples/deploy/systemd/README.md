@@ -24,7 +24,7 @@ Two things have to match. The architecture: the image is published for `linux/am
 
 ## The two databases
 
-Same shape as everywhere else — a **store** godwit owns and migrates itself, and a **scratch** server where validation and `godwit diff` execute the SQL callers submit. Two servers, not two databases, because a `read` token is enough to reach that execution ([security](../../../docs/security.md#the-scratch-database)).
+Same shape as everywhere else — a **store** godwit owns and migrates itself, and a **scratch** server where validation and `godwit diff` execute the SQL callers submit. Two servers, not two databases, because a `read` token is enough to reach that execution ([security](../../../docs/run/security.md#the-scratch-database)).
 
 ```sql
 -- store server
@@ -68,7 +68,7 @@ There is **no watchdog integration** — godwit does not call `sd_notify`, so `W
 curl -fsS http://127.0.0.1:8474/readyz
 ```
 
-`/readyz` returns `200` only when the store answers a ping within two seconds, and `503 store unavailable: …` otherwise; `/healthz` always returns `200 ok` and tells you only that the process is alive. Point a blackbox exporter, a monitoring agent or a `systemd` timer at `/readyz`, and scrape `/metrics` on the same port for the run and drift counters ([operations](../../../docs/operations.md#metrics)). All three are unauthenticated, which is one reason `--listen` is bound to `127.0.0.1` in the unit.
+`/readyz` returns `200` only when the store answers a ping within two seconds, and `503 store unavailable: …` otherwise; `/healthz` always returns `200 ok` and tells you only that the process is alive. Point a blackbox exporter, a monitoring agent or a `systemd` timer at `/readyz`, and scrape `/metrics` on the same port for the run and drift counters ([deployment](../../../docs/run/deployment.md#metrics)). All three are unauthenticated, which is one reason `--listen` is bound to `127.0.0.1` in the unit.
 
 Logs go to stderr and journald picks them up. `GODWIT_LOG_FORMAT=json` is right when something ships them; set `text` while you are reading them by eye. There is no log file and no rotation to configure — that is `journald.conf`'s `SystemMaxUse`, or your shipper's problem.
 
@@ -100,7 +100,7 @@ Two things follow:
 - **The hostnames need not differ, but they should.** The lease holder is `<name>/<16 hex characters>`, the name from `--holder` (or `GODWIT_HOLDER`, or the hostname) and the suffix drawn when the process started, and `Heartbeat` matches it whole — so a cloned VM image that kept the golden image's hostname cannot make two machines share a lease. What it does cost is legibility: `cp_leases.holder` and every log line then name a machine you cannot tell from its twin. Set `--holder` per machine, or fix the hostname.
 - **API traffic can go to either**, in any proportion or none: the API is stateless and the scheduler runs on both whether or not anyone calls them. A load balancer in front is a convenience for the UI and the CLI, not a requirement for the lease.
 
-`--drift-interval` is per replica: two machines fingerprint every baselined target twice per interval, and with a `vault` credential provider that is two Vault reads per target per interval ([deployment](../../../docs/deployment.md#how-often-godwit-asks-vault)).
+`--drift-interval` is per replica: two machines fingerprint every baselined target twice per interval, and with a `vault` credential provider that is two Vault reads per target per interval ([deployment](../../../docs/run/deployment.md#how-often-godwit-asks-vault)).
 
 ## The pipeline
 

@@ -1,6 +1,6 @@
 # Deployment examples
 
-godwit is one distroless binary with a leased, multi-replica design, so it runs anywhere a Linux process runs. [docs/deployment.md](../../docs/deployment.md) covers the part that is the same everywhere — what a target is, where its credentials come from, and the Helm chart under ArgoCD. These are the platforms it does not cover, each complete enough to copy and adapt, each saying what it assumes and what it leaves to you.
+godwit is one distroless binary with a leased, multi-replica design, so it runs anywhere a Linux process runs. [docs/deployment.md](../../docs/run/deployment.md) covers the part that is the same everywhere — what a target is, where its credentials come from, and the Helm chart under ArgoCD. These are the platforms it does not cover, each complete enough to copy and adapt, each saying what it assumes and what it leaves to you.
 
 | | What it is | Verified |
 |---|---|---|
@@ -13,7 +13,7 @@ godwit is one distroless binary with a leased, multi-replica design, so it runs 
 
 ## What every one of them has to answer
 
-**Two PostgreSQL servers.** The store is godwit's own control plane, small, and the thing to back up. The scratch server is where validation and `godwit diff` execute the SQL a caller submits, and it must hold nothing: a `read` token is enough to reach that execution. `serve` inspects the scratch role at start-up and refuses to run if it is a superuser, owns the store database, or holds `CREATEROLE`, `REPLICATION` or the file-access memberships ([security](../../docs/security.md#the-scratch-database)).
+**Two PostgreSQL servers.** The store is godwit's own control plane, small, and the thing to back up. The scratch server is where validation and `godwit diff` execute the SQL a caller submits, and it must hold nothing: a `read` token is enough to reach that execution. `serve` inspects the scratch role at start-up and refuses to run if it is a superuser, owns the store database, or holds `CREATEROLE`, `REPLICATION` or the file-access memberships ([security](../../docs/run/security.md#the-scratch-database)).
 
 **Secrets stay out of the arguments.** `GODWIT_MASTER_KEY`, `GODWIT_TOKENS`, `GODWIT_STORE_DSN` and `GODWIT_SCRATCH_DSN` are environment variables and go wherever the platform puts secrets. Pass the store DSN as `GODWIT_STORE_DSN` rather than `--store-dsn`: an argument is visible in `docker inspect`, `DescribeTaskDefinition`, `kubectl get pod -o yaml` and `/proc/<pid>/cmdline`, and every platform here can set an environment variable. The CLI has the same pair for the DSNs it takes — `GODWIT_DSN` for the local commands, `GODWIT_TARGET_DSN` for `godwit target add`.
 

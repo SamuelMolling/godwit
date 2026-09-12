@@ -14,7 +14,7 @@
 
 *The paragraphs from here to the recommendation are the open record as it stood.*
 
-Writing [`docs/cli.md`](../cli.md) (#106) meant defining every command in one sentence. Three
+Writing [`docs/use/cli.md`](../use/cli.md) (#106) meant defining every command in one sentence. Three
 resisted, and in each case the resistance came from the command rather than from the prose. A
 fourth pair — `revert` and `down` — was suspected and is largely **cleared**; what the check turned
 up instead is a fifth problem nobody had listed, and it is the worst one in the repository.

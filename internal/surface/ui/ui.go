@@ -31,7 +31,7 @@ var files embed.FS
 //go:embed app.js
 var script []byte
 
-// Config names the replica and how /ui authenticates; docs/security.md#web-ui holds the table.
+// Config names the replica and how /ui authenticates; docs/run/security.md#web-ui holds the table.
 type Config struct {
 	Replica        string
 	Tokens         []authz.Token

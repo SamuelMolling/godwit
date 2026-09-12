@@ -8,12 +8,12 @@ The service holds a way to reach every registered target as a role that can run 
 
 ## Tokens and scopes
 
-Bearer tokens are static secrets in `GODWIT_TOKENS`, compared in the auth interceptor on every RPC ([spec](configuration.md#token-spec), [per-RPC table](api.md#authentication-and-scopes)). Recommendations:
+Bearer tokens are static secrets in `GODWIT_TOKENS`, compared in the auth interceptor on every RPC ([spec](configuration.md#token-spec), [per-RPC table](../internals/api.md#authentication-and-scopes)). Recommendations:
 
 - one token per caller (`ci`, `argocd-orders`, `oncall`), named, so `cp_runs.created_by` and `cp_audit.actor` mean something;
 - `read` for pull request plans and dry runs, `pipeline` for merge pipelines and ArgoCD hooks, `operator` for humans on call, `admin` only for the process that registers targets;
 - never run with `GODWIT_TOKENS` unset outside a laptop: everyone becomes `anonymous` with `admin`, and `serve` says so at warn level on every start (`no tokens configured`);
-- write the scope out. A spec is `name:scope:secret` or a bare secret, and nothing else: the old two-field `name:secret` form meant *admin*, so `GODWIT_TOKENS=deploy:pipeline` read as an admin token whose secret was the word `pipeline`. It is refused now ([decision 0011](decisions/0011-token-spec-is-three-fields.md));
+- write the scope out. A spec is `name:scope:secret` or a bare secret, and nothing else: the old two-field `name:secret` form meant *admin*, so `GODWIT_TOKENS=deploy:pipeline` read as an admin token whose secret was the word `pipeline`. It is refused now ([decision 0011](../decisions/0011-token-spec-is-three-fields.md));
 - rotate by adding the new secret under the same name, rolling callers, removing the old one; the service refuses to start when two entries share a secret, and every change needs a restart (tokens are read at start-up).
 
 Tokens are never logged; the access log carries `actor` (the name) and `scope`.
@@ -22,7 +22,7 @@ The identity behind a call fails closed. A context that never passed the auth in
 
 ## The key, and where it comes from
 
-Only `static` targets hold a secret of godwit's own: their DSN sits in `cp_targets.config`, sealed. `kubernetes` and `vault` targets store a *path*, so a deployment that uses only those needs no key at all and **`serve` starts without one** ([decision 0012](decisions/0012-the-key-is-optional-and-comes-from-a-provider.md)).
+Only `static` targets hold a secret of godwit's own: their DSN sits in `cp_targets.config`, sealed. `kubernetes` and `vault` targets store a *path*, so a deployment that uses only those needs no key at all and **`serve` starts without one** ([decision 0012](../decisions/0012-the-key-is-optional-and-comes-from-a-provider.md)).
 
 Where the key lives is a choice, made with `GODWIT_KEY_PROVIDER`:
 
@@ -52,7 +52,7 @@ Values written before this format have no header. They are read as `env` with an
 2. Every replica, at start-up, re-seals each `static` target whose header names anything other than the key in force, logging `static target resealed` with the target and the new key. One roll is enough; the pass is idempotent and concurrent replicas write the same thing.
 3. Drop `GODWIT_MASTER_KEY_PREVIOUS` on the next roll.
 
-The same pass migrates a deployment upgrading into this format: headerless values are re-sealed under the key in force on the first start. There is no `godwit targets reencrypt` command and, after the above, nothing for one to do — [decision 0012](decisions/0012-the-key-is-optional-and-comes-from-a-provider.md) argues that.
+The same pass migrates a deployment upgrading into this format: headerless values are re-sealed under the key in force on the first start. There is no `godwit targets reencrypt` command and, after the above, nothing for one to do — [decision 0012](../decisions/0012-the-key-is-optional-and-comes-from-a-provider.md) argues that.
 
 A target godwit cannot open is **not** a start-up failure. It logs `static target is sealed under another key and was left alone`, the service serves every other target, and the run that needs it is refused naming the key it wants.
 
@@ -65,7 +65,7 @@ A target godwit cannot open is **not** a start-up failure. It logs `static targe
 | No key, registering a `static` target | `invalid_argument: static provider needs a key: set GODWIT_MASTER_KEY, or GODWIT_KEY_PROVIDER with GODWIT_KMS_KEY` |
 | Key present, the target's key gone | `CreateRun` is **refused outright** — admission observes the target before it queues anything, with or without `--skip-validation` — so no run row exists and there is nothing to resume. A run already queued when the key changed fails at claim instead, with the same error in `cp_runs.error` (`failed`, not transient, resumable with `godwit run resume` once the key is back or the target re-registered) |
 
-Targets using the `kubernetes` or `vault` providers store no secret and need nothing. That is the case the Helm chart defaults to: no `GODWIT_MASTER_KEY` is in the Secret, so a release that registers `static` targets has to put one there ([chart README](../deploy/helm/godwit/README.md#prerequisites)).
+Targets using the `kubernetes` or `vault` providers store no secret and need nothing. That is the case the Helm chart defaults to: no `GODWIT_MASTER_KEY` is in the Secret, so a release that registers `static` targets has to put one there ([chart README](../../deploy/helm/godwit/README.md#prerequisites)).
 
 ## Credential providers
 
@@ -81,7 +81,7 @@ Setting each of them up — the manifest a `kubernetes` target's path resolves i
 
 ### Credential stores
 
-A **credential store** is a named Vault: an address, and how godwit authenticates there. Every `vault` target names one, and it is the only thing that says which Vault the target's secret is read from — there is no service-wide address behind it. [Decision 0021](decisions/0021-a-target-names-the-vault-its-credentials-live-in.md) is why.
+A **credential store** is a named Vault: an address, and how godwit authenticates there. Every `vault` target names one, and it is the only thing that says which Vault the target's secret is read from — there is no service-wide address behind it. [Decision 0021](../decisions/0021-a-target-names-the-vault-its-credentials-live-in.md) is why.
 
 ```bash
 godwit credential-store add production \
@@ -105,7 +105,7 @@ Registering a store is `admin`; listing them is `read`, because a store holds no
 
 The second and third are not new privilege in kind: an admin can already register a `static` target with a DSN of their choosing.
 
-**The position on constraining addresses.** One constraint at registration — `http` or `https` with a host, so a malformed address fails where the error is legible rather than at run time — and the audience for everything else. [Decision 0023](decisions/0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) is why the host allowlist that used to sit here is gone, and what it did and did not cover. What the audience leaves standing: an admin can still send the projected token to an address of their choosing and replay it at any Vault whose role requires `audience=godwit`. What it removes: the credential that works everywhere, and a guardrail that was empty by default.
+**The position on constraining addresses.** One constraint at registration — `http` or `https` with a host, so a malformed address fails where the error is legible rather than at run time — and the audience for everything else. [Decision 0023](../decisions/0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) is why the host allowlist that used to sit here is gone, and what it did and did not cover. What the audience leaves standing: an admin can still send the projected token to an address of their choosing and replay it at any Vault whose role requires `audience=godwit`. What it removes: the credential that works everywhere, and a guardrail that was empty by default.
 
 **What the deployment carries.** One identity: the ServiceAccount token minted for the audience `godwit`, projected by the chart with no key to turn it off or aim it elsewhere. The audience is a constant on both sides — the pod spec and `internal/creds` — so nothing an admin token can write chooses which credential godwit presents. Each Vault's Kubernetes auth role must then set `audience="godwit"`, which is the whole operator-facing consequence; without it the role accepts any token the cluster issues for godwit's ServiceAccount, which is the state this is here to leave. `serviceAccount.automountServiceAccountToken: false` finishes the job by taking the generic token out of the pod entirely; godwit calls no Kubernetes API and does not miss it.
 
@@ -164,7 +164,7 @@ Migrations that reference roles, tablespaces or extensions that exist only on th
 
 ## What is logged
 
-Every line in [operations: logging](operations.md#logging). Present: run ids, target names, actor names, scopes, statement index and kind, durations, error messages returned by PostgreSQL. Absent by construction: DSNs, tokens, the master key, Vault tokens, migration SQL text (the planner's statement text stays in the store's `cp_run_files` and in the response of `PlanRun`; the log carries `stmt=<index>` only).
+Every line in [operations: logging](deployment.md#logging). Present: run ids, target names, actor names, scopes, statement index and kind, durations, error messages returned by PostgreSQL. Absent by construction: DSNs, tokens, the master key, Vault tokens, migration SQL text (the planner's statement text stays in the store's `cp_run_files` and in the response of `PlanRun`; the log carries `stmt=<index>` only).
 
 PostgreSQL error messages can quote a fragment of the failing statement (`syntax error at or near "..."`); if migrations embed literals you consider secret, they will appear in `cp_runs.error`, in notifications and in the log.
 
@@ -176,7 +176,7 @@ Notifications carry the same fields as the log plus the error text; a webhook UR
 
 ## Web UI
 
-Why the UI has no account model of its own: [decision 0004](decisions/0004-ui-is-a-scoped-client.md).
+Why the UI has no account model of its own: [decision 0004](../decisions/0004-ui-is-a-scoped-client.md).
 
 `serve --ui` mounts the operator UI at `/ui` on the same plaintext listener. It authenticates with HTTP basic auth — browsers send it natively, so there is no login page, no cookie and no session store — and it resolves to a `Principal` exactly like a bearer token does:
 
@@ -238,7 +238,7 @@ The `Content-Security-Policy` is `default-src 'none'` with `script-src 'self' ht
 
 ## GitHub Action
 
-A job running `command: apply`, `confirm`, `revert` or a real `migrate` holds a `pipeline` token, which by the threat model above is the target's own credential. The Action's guards decide who may make that job run, so they authorise rather than advise. Full mechanics in [CI/CD: who may command an apply](ci-cd.md#who-may-command-an-apply).
+A job running `command: apply`, `confirm`, `revert` or a real `migrate` holds a `pipeline` token, which by the threat model above is the target's own credential. The Action's guards decide who may make that job run, so they authorise rather than advise. Full mechanics in [CI/CD: who may command an apply](../ci-cd.md#who-may-command-an-apply).
 
 **`pull_request_target` never reaches an applying command** (exit 2), and is refused outright for a pull request opened from a fork (exit 1). That event runs in the base repository, with its secrets and a write token, on code the fork controls; anything godwit did under it would be done with credentials the fork's author must not have. Use `pull_request`, which withholds secrets from forks, or command the apply from a comment.
 
@@ -292,4 +292,4 @@ Request size, file count, page size and concurrency are bounded, and the knobs a
 
 The binary embeds `libpg_query` through cgo; the Dockerfile builds it from source in the repository at a pinned Go version and ships a distroless image. `ghcr.io/samuelmolling/godwit` is built from `main` by `.github/workflows/publish.yml` with the workflow's own `GITHUB_TOKEN` (no long-lived registry credential) and carries `org.opencontainers.image.source` / `revision` labels; images are not signed yet, so pin `sha-<short commit>` or build and sign your own from the same Dockerfile. Release binaries (`v*` tags, GoReleaser) ship with a `checksums.txt`, which is itself unsigned: it detects corruption, not substitution.
 
-Every action used by `.github/workflows/` is pinned to a full commit sha, not a tag: `release.yml` holds `contents: write` and `HOMEBREW_TAP_TOKEN`, a token with write access to a second repository, so a moved `v2` tag on any action in that job would publish a trojaned release and formula for a binary that holds production database credentials. Pin the same way in your own workflows, and pin `SamuelMolling/godwit` to a commit rather than `@main` ([CI/CD](ci-cd.md#github-action)).
+Every action used by `.github/workflows/` is pinned to a full commit sha, not a tag: `release.yml` holds `contents: write` and `HOMEBREW_TAP_TOKEN`, a token with write access to a second repository, so a moved `v2` tag on any action in that job would publish a trojaned release and formula for a binary that holds production database credentials. Pin the same way in your own workflows, and pin `SamuelMolling/godwit` to a commit rather than `@main` ([CI/CD](../ci-cd.md#github-action)).
