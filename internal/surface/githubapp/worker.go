@@ -169,8 +169,8 @@ func (w *Worker) carry(ctx context.Context, cmd command) {
 		return
 	}
 	all := w.act(ctx, repo, cmd, log)
-	w.say(ctx, repo, cmd, all, log)
-	w.settle(ctx, repo, cmd, all, log)
+	unsaid := w.say(ctx, repo, cmd, all, log)
+	w.settle(ctx, repo, cmd, all, unsaid, log)
 }
 
 func (w *Worker) moved(ctx context.Context, repo repoView, cmd command, log *slog.Logger) (bool, error) {
@@ -301,7 +301,7 @@ func (w *Worker) begin(ctx context.Context, repo repoView, cmd command, p projec
 	return id
 }
 
-func (w *Worker) settle(ctx context.Context, repo repoView, cmd command, all []done, log *slog.Logger) {
+func (w *Worker) settle(ctx context.Context, repo repoView, cmd command, all []done, unsaid map[string]error, log *slog.Logger) {
 	name := checks[cmd.name]
 	for _, d := range all {
 		if d.run != "" {
@@ -314,7 +314,7 @@ func (w *Worker) settle(ctx context.Context, repo repoView, cmd command, all []d
 		}
 		if err := repo.endCheck(ctx, d.check, checkRun{
 			name: cmd.checkName(name, d.project), head: cmd.head, url: d.url,
-			title: d.title, summary: d.body, conclusion: d.conclusion,
+			title: d.title, summary: onlyHere(d.body, unsaid[cmd.markerFor(d.project)]), conclusion: d.conclusion,
 		}); err != nil {
 			log.Warn("could not conclude the check", "target", d.project.target, "error", err)
 		}
@@ -338,15 +338,28 @@ var reportMarker = map[string]string{
 	"confirm": "<!-- godwit:migrate -->", "revert": "<!-- godwit:migrate -->",
 }
 
-func (w *Worker) say(ctx context.Context, repo repoView, cmd command, all []done, log *slog.Logger) {
+func (w *Worker) say(ctx context.Context, repo repoView, cmd command, all []done, log *slog.Logger) map[string]error {
 	if _, ok := reportMarker[cmd.name]; !ok || len(all) == 0 {
-		return
+		return nil
 	}
+	unsaid := map[string]error{}
 	for _, group := range grouped(cmd, all) {
 		if err := repo.speak(ctx, cmd.number, group.marker, strings.Join(group.bodies, "\n---\n")); err != nil {
 			log.Warn("could not post the report on the pull request", "error", err)
+			unsaid[group.marker] = err
 		}
 	}
+
+	return unsaid
+}
+
+func onlyHere(body string, err error) string {
+	if err == nil {
+		return body
+	}
+
+	return body + "\n---\n\ngodwit could not post this on the pull request, so it stands only here: " +
+		plainError(err) + "\n"
 }
 
 type sticky struct {
