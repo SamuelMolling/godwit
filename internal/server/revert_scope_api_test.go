@@ -302,7 +302,7 @@ func TestRevertTargetUnreachable(t *testing.T) {
 		{Name: "20260101000002_c.down.sql", Body: "TRUNCATE c;"},
 	}, nil)
 	execStore(t, storeDSN, "UPDATE cp_targets SET provider = 'nope'")
-	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{Target: "app"})); connect.CodeOf(err) != connect.CodeInternal ||
+	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{Target: "app"})); connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), "credential provider") {
 		t.Fatalf("search path on a broken target: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestRevertTargetUnreachable(t *testing.T) {
 	execStore(t, storeDSN, "UPDATE cp_runs SET state = 'succeeded' WHERE state = 'reverted'")
 	if _, err := client.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{
 		RunId: firstRun, AcknowledgeHazards: []string{"H002"}, Force: true,
-	})); connect.CodeOf(err) != connect.CodeInternal || !strings.Contains(err.Error(), "credential provider") {
+	})); connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "credential provider") {
 		t.Fatalf("data-loss probe on a broken target: %v", err)
 	}
 }

@@ -144,7 +144,7 @@ func TestParseUsageNamesTheCommand(t *testing.T) {
 		"plan":    "'godwit plan --rollout expand-contract'",
 		"apply":   "'godwit apply --ack H001,H003'",
 		"confirm": "'godwit confirm' or 'godwit confirm <sha>'",
-		"revert":  "'godwit revert --allow-data-loss'",
+		"revert":  "'godwit revert --ack H001'",
 	} {
 		_, err := comment.Parse("godwit "+name+" --unknown", name)
 		if err == nil || !strings.Contains(err.Error(), want) {

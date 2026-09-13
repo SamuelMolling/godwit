@@ -15,7 +15,7 @@ type Kubernetes struct{}
 func (Kubernetes) DSN(_ context.Context, config map[string]string) (string, error) {
 	path, ok := config[PathKey]
 	if !ok {
-		return "", errors.New(`kubernetes target config missing "path"`)
+		return "", Misconfigured(errors.New(`kubernetes target config missing "path"`))
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {

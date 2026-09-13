@@ -170,8 +170,9 @@ func TestPlanRunPersistErrors(t *testing.T) {
 	expectApplied(mock)
 	expectSnapshot(mock, "f1")
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
-	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal || !strings.Contains(err.Error(), "save down") {
-		t.Fatalf("save error: %v", err)
+	if _, err := s.PlanRun(ctx, req()); connect.CodeOf(err) != connect.CodeInternal ||
+		strings.Contains(err.Error(), "save down") || !strings.Contains(detail(err), "save down") {
+		t.Fatalf("save error must be redacted and logged: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -308,8 +309,9 @@ func TestPlanRunDetectsWithValidation(t *testing.T) {
 	expectApplied(mock)
 	mock.ExpectExec("DELETE FROM cp_plan_files").WithArgs("app", pgxmock.AnyArg()).WillReturnError(errors.New("save down"))
 	_, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{Target: "app", Files: files, Persist: true}))
-	if connect.CodeOf(err) != connect.CodeInternal || !strings.Contains(err.Error(), "save down") {
-		t.Fatalf("save error: %v", err)
+	if connect.CodeOf(err) != connect.CodeInternal ||
+		strings.Contains(err.Error(), "save down") || !strings.Contains(detail(err), "save down") {
+		t.Fatalf("save error must be redacted and logged: %v", err)
 	}
 
 	expectReadyPlan(mock, "f1", nil, nil)

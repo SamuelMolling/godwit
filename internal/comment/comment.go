@@ -37,7 +37,7 @@ var grammars = map[string]grammar{
 	},
 	"revert": {
 		flags: map[string]bool{"--ack": true, "--allow-data-loss": true, "--force": true},
-		usage: "'godwit revert', 'godwit revert --ack H001', 'godwit revert --allow-data-loss' or 'godwit revert --force'",
+		usage: "'godwit revert' or 'godwit revert --ack H001'",
 	},
 }
 

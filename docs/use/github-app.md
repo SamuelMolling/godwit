@@ -152,8 +152,12 @@ fire one. `/godwit apply` works as an alias.
 | `godwit apply --ack H001,H003` | applies with those hazards acknowledged. Without the ack the run is refused at admission and the codes are named in the report |
 | `godwit confirm` | releases the contract phase of the run this pull request left in `awaiting_contract` |
 | `godwit revert` | undoes what a run of this pull request applied |
-| `godwit revert --allow-data-loss` | permits a revert whose plan drops a table or column still holding rows |
-| `godwit revert --force` | reverts a run that is not the newest un-reverted one on its target |
+| `godwit revert --ack H001` | reverts with those hazards acknowledged |
+
+`--allow-data-loss` and `--force` are **refused from a comment**. Both remove a gate — the first the one
+that refuses a revert dropping a table or column still holding rows, the second the one that refuses a run
+that is not the newest un-reverted one on its target — and a comment is not where a gate is removed. Take
+those reverts on the CLI or the UI, with a token ([decision 0025](../decisions/0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md)).
 
 Every command also takes a commit SHA as its first argument — `godwit apply 4f2a9c1` — which refuses if the
 pull request has moved on since:
@@ -174,19 +178,23 @@ Three things are checked, in this order, before anything runs:
    to anything. This check runs before godwit spends a single API call, so an idle comment costs nothing.
 2. **Repository permission.** The commander must hold `write` or `admin`. An association is a label GitHub puts
    on a comment; the permission is the thing that means something.
-3. **A standing approval**, for `apply` and `confirm` only. GitHub must report an approving review by someone
-   who *also* holds write or admin. Each reviewer's latest review counts, so a later `CHANGES_REQUESTED` or a
-   dismissal supersedes that reviewer's earlier approval.
+3. **A standing approval**, for `apply`, `confirm` and `revert`. GitHub must report an approving review by
+   someone who *also* holds write or admin. Each reviewer's latest review counts, so a later
+   `CHANGES_REQUESTED` or a dismissal supersedes that reviewer's earlier approval.
 
-`plan` and `revert` need no approval; `revert` in particular is a way out, and requiring a review to take one
-would be the wrong shape.
+`plan` needs no approval. `revert` does: it is the one command that destroys, and the forward path needing
+two people while the path that undoes needs one is the wrong way round. In the ordinary case the approval
+that permitted the apply is still standing and nothing more is asked for. What the flags would remove is
+refused outright rather than approved — see the note under the command table, and
+[decision 0025](../decisions/0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md).
 
 Beyond that:
 
 - **A fork never reaches a target.** A pull request whose head is in another repository is refused for every
   command, and is not even planned automatically.
-- `plan`, `apply` and `confirm` need the pull request open. `revert` refuses once it is merged — the migrations
-  belong to the base branch then, and reverting them is a new pull request.
+- `plan`, `apply` and `confirm` need the pull request open. `revert` does not, because a pull request applied
+  and then closed unmerged is exactly when one is wanted; it refuses once the pull request is merged — the
+  migrations belong to the base branch then, and reverting them is a new pull request.
 - A review command is anchored to the commit it was submitted on: if the head moved after the review, the
   command would run commits nobody reviewed, so it is refused.
 - A delivery older than `--github-webhook-max-age` (one hour by default) is refused as a replay.
