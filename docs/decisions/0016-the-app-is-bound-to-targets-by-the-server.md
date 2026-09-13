@@ -88,7 +88,7 @@ The receiver ends at one internal entry point that takes a verified, de-duplicat
 - **The webhook secret is a target credential by transitivity**, since holding it lets someone apply an already-approved pull request in a bound repository.
 - **One installation token can read every repository in the installation.** Narrowing it per delivery is what keeps that from mattering.
 - **`godwit.yaml` will gain a reader that is not the CLI.** Its parse will run on untrusted content from an arbitrary head sha, in the server process. It has always parsed untrusted files, but not on this path.
-- **This record contradicts one sentence in [security](../security.md).** "Treat the `pipeline` token like the target's own credential" is right; what the page did not say, and now does, is that a `pipeline` token reaches *every* target. The binding above is the first thing in godwit that scopes access by target.
+- **This record contradicts one sentence in [security](../run/security.md).** "Treat the `pipeline` token like the target's own credential" is right; what the page did not say, and now does, is that a `pipeline` token reaches *every* target. The binding above is the first thing in godwit that scopes access by target.
 
 ## Rejected or deferred
 

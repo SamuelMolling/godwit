@@ -14,7 +14,7 @@ cover:
 e2e:
 	go test -tags e2e -count=1 -timeout 15m ./test/e2e/...
 
-# Slow and deliberately outside `all`: see docs/testing.md for the knobs and the numbers.
+# Slow and deliberately outside `all`: see docs/internals/testing.md for the knobs and the numbers.
 load:
 	go test -tags load -count=1 -timeout 120m -v ./test/e2e/...
 

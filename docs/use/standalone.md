@@ -9,6 +9,10 @@ go install github.com/SamuelMolling/godwit/cmd/godwit@main   # needs gcc (libpg_
 docker pull ghcr.io/samuelmolling/godwit:main               # or the image: amd64 + arm64, distroless
 ```
 
+The image is built on every merge to `main`: `main` follows the branch and `sha-<short commit>` pins one
+build, which is the tag to use anywhere a run has to be reproducible. Once a `v*` tag exists there is also a
+GitHub release and `brew install SamuelMolling/tap/godwit`.
+
 ## Without a service at all
 
 `up`, `status` and `down` talk to one database and nothing else. There is no target to register, no plan to

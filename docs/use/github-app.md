@@ -207,3 +207,27 @@ when it truncates either. godwit refuses rather than guesses:
   which a checkpoint is overdue.
 - A pull request carrying more reviews than godwit reads is refused for `apply` and `confirm`: GitHub lists the
   oldest first, so the reviews that *withdraw* an approval are exactly the ones a short read would miss.
+
+## What a delivery is answered with
+
+This is what the App's page shows in *Recent Deliveries*, in the order godwit decides it — the signature is
+checked before anything else about the request, so a malformed request with a bad signature is a `401` and
+says nothing more.
+
+| Answer | When |
+|---|---|
+| `413`, empty | the body is over `--github-webhook-max-bytes` |
+| `400`, empty | the body could not be read |
+| `401`, empty | the signature is missing, malformed or wrong. Nothing but the byte count is learned from such a request |
+| `405` | the signature verified, but the request is not a `POST` |
+| `400` | no `X-GitHub-Delivery`, or a body that is not the GitHub JSON payload |
+| `202 accepted` | verified, authorised, recorded — the command itself runs behind the answer |
+| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing, a pull request no bound project plans), refused (unbound, unauthorised, stale, a fork, a listing godwit could not read the whole of), or a duplicate delivery id |
+| `500` | the store or GitHub could not be reached, or the worker queue had no room. Nothing was recorded, so GitHub's redelivery is a fresh attempt |
+
+**The command runs after the delivery is answered.** GitHub wants a webhook answered in seconds and a plan
+builds scratch databases, so the delivery is recorded, answered `202`, and carried out by `--github-workers`
+workers (2 by default) behind it. The queue is in memory: a replica that dies between the `202` and the plan
+loses that command, the check stays open, and the way out is to comment `godwit plan` again — nothing ran.
+
+Every delivery increments `godwit_webhook_deliveries_total{event,result}`.

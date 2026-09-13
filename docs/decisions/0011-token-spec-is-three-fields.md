@@ -38,7 +38,7 @@ The bare-secret form stays. It has no second reading — one field is a secret, 
 
 ## Consequences to live with
 
-- **This breaks a running service at start-up, deliberately.** A deployment whose `GODWIT_TOKENS` carries a two-field entry will not start after the upgrade; `serve` names the entry by its first field. The fix is one edit — insert the scope the token should have had — and it is worth doing under a start-up error rather than discovering it in an audit. The migration note is in [configuration](../configuration.md#token-spec) and [security](../security.md#tokens-and-scopes).
+- **This breaks a running service at start-up, deliberately.** A deployment whose `GODWIT_TOKENS` carries a two-field entry will not start after the upgrade; `serve` names the entry by its first field. The fix is one edit — insert the scope the token should have had — and it is worth doing under a start-up error rather than discovering it in an audit. The migration note is in [configuration](../run/configuration.md#token-spec) and [security](../run/security.md#tokens-and-scopes).
 - **The failure is loud but not automatic.** Nothing infers the intended scope, because inferring it is the same guess the old parser made. `deploy:pipeline` might have been a pipeline token written wrong or an admin token whose secret is `pipeline`, and only its holder knows which.
 - **`name:secret` disappears from the docs, the chart README and `serve --help`.** Every example in the repository already used the three-field form; the two-field form was documented as a convenience and used only by the demo compose file and the end-to-end rig, both updated here.
 

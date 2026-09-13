@@ -57,7 +57,7 @@ CREATE OR REPLACE VIEW order_stats AS SELECT customer_id, count(*) AS orders FRO
 DROP VIEW IF EXISTS order_stats;
 ```
 
-The down side runs only when the run that applied the repeatable is reverted; godwit does not keep previous bodies, so roll forward by editing the file. See [concepts: repeatable migrations](concepts.md#repeatable-migrations). `godwit diff` reads these files too, so the objects they declare are part of the desired schema and never come back as a proposed drop.
+The down side runs only when the run that applied the repeatable is reverted; godwit does not keep previous bodies, so roll forward by editing the file. See [repeatable migrations](../internals/journal.md#repeatable-migrations). `godwit diff` reads these files too, so the objects they declare are part of the desired schema and never come back as a proposed drop.
 
 ```sql
 -- 20260901120000_create_orders.up.sql
@@ -95,11 +95,11 @@ Offline plan. Both sides of every migration in the directory, as written; no dat
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
 
-1 hazard must be acknowledged before this runs; use --ack H002.
+1 hazard on what this run would execute: take the recipe printed with it, or accept the risk with --ack H002 (godwit apply --ack H002 on a pull request).
 Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
 
-`tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([concepts: hazards](concepts.md#hazards)).
+`tx` statements run inside a transaction with the journal write; `no-tx` statements (`CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `VACUUM`, `REFRESH MATERIALIZED VIEW CONCURRENTLY`, `REINDEX CONCURRENTLY`) get a write-ahead intent and a verifier instead. Hazards are the codes a run must acknowledge; the indented lines under each one are its recipe, the safe form as SQL built from the statement's own names ([hazards](../internals/admission.md#hazards)).
 
 Lint the directory the way a pull request gate does, and apply against a local database. Create two: `app_dev` for this loop, and `app` for the service to manage from section 2 onwards. Keep them apart — what `godwit up` writes goes into the target's own journal and not into the service's ledger, so a database you have already migrated by hand is not a database to register as a target.
 
@@ -130,9 +130,9 @@ $ godwit down --dsn postgres://app:app@localhost/app_dev --dir db/migrations --v
 20260901120500_orders_customer_idx: reverted (1 statement(s))
 ```
 
-`apply` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
+`up` is the same executor the service uses: it takes the advisory lock, creates the `godwit` schema in the target, and journals every statement. Kill it mid-way and run it again; it resumes from the last `done` row.
 
-Those four are the first of about thirty commands. What each one is for, when you would reach for it, and one example each is the [command reference](cli.md); this page keeps to the path through them.
+Those four are the first of about thirty commands. What each one is for, when you would reach for it, and one example each is the [command reference](../use/cli.md); this page keeps to the path through them.
 
 ## 2. The service
 
@@ -161,7 +161,7 @@ Between those two lines it also prints these three, and they mean what they say:
 {"time":"...","level":"WARN","msg":"validation and diff execute submitted DDL on the store server with the store credentials; set --scratch-dsn to a throwaway PostgreSQL that holds nothing"}
 ```
 
-Validation and `godwit diff` execute the SQL a caller submits, to find out what it produces. Without `--scratch-dsn` that happens on the store server as the store role, which is fine on a laptop and wrong anywhere a token is shared. Point it at a second PostgreSQL with a role that owns nothing else, and the store role stops needing `CREATEDB` ([security: the scratch database](security.md#the-scratch-database)):
+Validation and `godwit diff` execute the SQL a caller submits, to find out what it produces. Without `--scratch-dsn` that happens on the store server as the store role, which is fine on a laptop and wrong anywhere a token is shared. Point it at a second PostgreSQL with a role that owns nothing else, and the store role stops needing `CREATEDB` ([security: the scratch database](../run/security.md#the-scratch-database)):
 
 ```bash
 psql -U postgres -h scratch-host -c \
@@ -178,9 +178,9 @@ export GODWIT_TOKEN=s3cret-admin
 godwit target add app --provider static --dsn postgres://app:app@localhost/app --lock-timeout 5s
 ```
 
-`target add` needs the `admin` scope; the `kubernetes` and `vault` providers avoid storing a DSN at all ([security: providers](security.md#credential-providers)). Run it again later with only the flag you want to move — it keeps everything you leave out — and `godwit target show app` prints what it is registered with.
+`target add` needs the `admin` scope; the `kubernetes` and `vault` providers avoid storing a DSN at all ([security: providers](../run/security.md#credential-providers)). Run it again later with only the flag you want to move — it keeps everything you leave out — and `godwit target show app` prints what it is registered with.
 
-The `app` database here is empty, so the next section just runs. **A real first target rarely is**: a database that already has a schema, or a `godwit` journal written by something else, has to be adopted before the first plan — one `godwit target adopt`, with `--version` or `--from-journal`. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database) is the section to read before pointing this at anything that exists.
+The `app` database here is empty, so the next section just runs. **A real first target rarely is**: a database that already has a schema, or a `godwit` journal written by something else, has to be adopted before the first plan — one `godwit target adopt`, with `--version` or `--from-journal`. [Deployment: adopting an existing database](../run/deployment.md#adopting-an-existing-database) is the section to read before pointing this at anything that exists.
 
 ## 3. First run
 
@@ -233,7 +233,7 @@ run b10197aa-8d27-4cdb-87fc-1d7adfd3d1c9: queued
 run b10197aa-8d27-4cdb-87fc-1d7adfd3d1c9: succeeded (attempt 1)
 ```
 
-The migrations above the version stay in the directory and in the plan, marked `withheld`, so the report cannot be read as the whole set; the next `migrate` without `--to` applies them. The withheld list is on the plan, not on the run: `migrate` streams the run and prints no plan, so read `plan --to` (or `migrate --to --dry-run`) when the set matters. A version below what the target has already applied is refused — `--to` stops a run short, it never reverts ([concepts](concepts.md#version-targets)).
+The migrations above the version stay in the directory and in the plan, marked `withheld`, so the report cannot be read as the whole set; the next `migrate` without `--to` applies them. The withheld list is on the plan, not on the run: `migrate` streams the run and prints no plan, so read `plan --to` (or `migrate --to --dry-run`) when the set matters. A version below what the target has already applied is refused — `--to` stops a run short, it never reverts ([version targets](../internals/runs.md#version-targets)).
 
 Look around:
 
@@ -373,7 +373,7 @@ run 2076f415-7188-46ef-9f34-1f495d0fb324: queued
 run 2076f415-7188-46ef-9f34-1f495d0fb324: succeeded (attempt 1)
 ```
 
-`awaiting_contract` is exit code 0, not a failure: the expand half is on the database and the swap waits for a human. `run confirm` waits for the contract phase it released and exits on its outcome — 0 on `succeeded`, 1 on `failed` or `needs_attention` — so a deploy step or a Kubernetes hook cannot go green on a contract phase that then fails; `--no-wait` returns as soon as it is queued, for a caller that watches the run elsewhere. The full directive list, the expansion rules and everything the expander refuses are in [concepts: directives](concepts.md#directives).
+`awaiting_contract` is exit code 0, not a failure: the expand half is on the database and the swap waits for a human. `run confirm` waits for the contract phase it released and exits on its outcome — 0 on `succeeded`, 1 on `failed` or `needs_attention` — so a deploy step or a Kubernetes hook cannot go green on a contract phase that then fails; `--no-wait` returns as soon as it is queued, for a caller that watches the run elsewhere. The full directive list, the expansion rules and everything the expander refuses are in [directives](../internals/admission.md#directives).
 
 One directive reads instead of writing. `-- godwit: assert` states a condition about the **data** and makes it part of the plan, so the swap above is gated on the backfill having actually worked:
 
@@ -383,7 +383,7 @@ One directive reads instead of writing. `-- godwit: assert` states a condition a
 -- godwit: assert 'SELECT count(*) FROM orders WHERE total_new IS DISTINCT FROM (total * 100)::bigint' = 0
 ```
 
-The assertion is a statement of the plan like any other — it shows up in `godwit plan` and in the pull-request comment with the condition beside its SQL — and it runs at the end of the expand phase. If it does not hold the run fails there, `awaiting_contract` is never reached, and no swap happens. `godwit run confirm` re-checks it against the data as it is at confirm time, not as it was when the backfill finished. See [concepts: assertions](concepts.md#assertions).
+The assertion is a statement of the plan like any other — it shows up in `godwit plan` and in the pull-request comment with the condition beside its SQL — and it runs at the end of the expand phase. If it does not hold the run fails there, `awaiting_contract` is never reached, and no swap happens. `godwit run confirm` re-checks it against the data as it is at confirm time, not as it was when the backfill finished. See [assertions](../internals/admission.md#assertions).
 
 ## 3b. Write the next migration from a schema
 
@@ -406,7 +406,7 @@ wrote db/migrations/20260904180008_orders_status.up.sql
 wrote db/migrations/20260904180008_orders_status.down.sql
 ```
 
-The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift`, `files` and `repeatable_objects`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
+The starting point is the live target as `plan` observes it, the end point is `schema.sql` applied on an empty scratch database on the service. Hazards and recipes are printed the way `plan` prints them, a `drift` block comes first when the live schema has hand changes the history does not know about (they end up in the generated `up`), `--dry-run` prints without writing, `--json` returns `up_sql`, `down_sql`, `statements`, `drift`, `files` and `repeatable_objects`, and `no changes` exits 0 with nothing written. Read the files before committing them: the generated SQL goes through the same `lint`, `plan` and hazard gate as a hand-written one ([generating migrations from a schema](../internals/drift.md#generating-migrations-from-a-schema) lists what the diff does and does not cover).
 
 `--schema` takes any file with plain PostgreSQL DDL, so an ORM's schema dump works as the desired state. Seven other flags skip the dump and render the model with the project's own toolchain, next to the repository; the service only ever receives DDL.
 
@@ -435,7 +435,7 @@ godwit diff --target app --exec 'atlas schema inspect --url env://dev --format "
 
 `--prisma` runs `prisma migrate diff --from-empty --script` on the file (`npx prisma` by default, so the `prisma` devDependency the project pins is what renders it; `--prisma-bin` or `GODWIT_PRISMA_BIN` names another command line, such as `node_modules/.bin/prisma --config prisma.config.ts` on Prisma 7, whose `prisma.config.ts` must set a `datasource.url`, any value, nothing connects to it). Prisma 5, 6 and 7 are supported; the CLI's own errors are surfaced as-is.
 
-`--gorm` runs `go run <package>` and takes its stdout: GORM's dry-run migrator is a Go API over your model structs, not a CLI, so the package stays yours — copy [examples/gorm/schema/main.go](../examples/gorm/schema/main.go), point it at your models, and godwit reports a build failure with the package name and the compiler's stderr. `--django` runs `python manage.py showmigrations --plan --no-color` and one `sqlmigrate` per migration, concatenated in plan order with Django's `BEGIN;`/`COMMIT;` wrappers dropped; a `DATABASES` `ENGINE` that is not PostgreSQL is refused before any process starts, and because `sqlmigrate` introspects over the configured connection, `DATABASES` must point at a reachable PostgreSQL (`--django-database` picks the alias). `--go-bin`, `--python-bin`, `--alembic-bin` and `--drizzle-bin` (or `GODWIT_GO_BIN` / `GODWIT_PYTHON_BIN` / `GODWIT_ALEMBIC_BIN` / `GODWIT_DRIZZLE_BIN`) name the interpreter when it is not on `PATH`.
+`--gorm` runs `go run <package>` and takes its stdout: GORM's dry-run migrator is a Go API over your model structs, not a CLI, so the package stays yours — copy [examples/gorm/schema/main.go](../../examples/gorm/schema/main.go), point it at your models, and godwit reports a build failure with the package name and the compiler's stderr. `--django` runs `python manage.py showmigrations --plan --no-color` and one `sqlmigrate` per migration, concatenated in plan order with Django's `BEGIN;`/`COMMIT;` wrappers dropped; a `DATABASES` `ENGINE` that is not PostgreSQL is refused before any process starts, and because `sqlmigrate` introspects over the configured connection, `DATABASES` must point at a reachable PostgreSQL (`--django-database` picks the alias). `--go-bin`, `--python-bin`, `--alembic-bin` and `--drizzle-bin` (or `GODWIT_GO_BIN` / `GODWIT_PYTHON_BIN` / `GODWIT_ALEMBIC_BIN` / `GODWIT_DRIZZLE_BIN`) name the interpreter when it is not on `PATH`.
 
 `--alembic` runs `alembic -c <alembic.ini> upgrade head --sql`, Alembic's documented offline mode: every revision from base rendered into a script with no connection open. The `BEGIN;`/`COMMIT;` wrappers are dropped; the `alembic_version` table and the rows tracking the revision are **kept**, because they exist on your target and a desired schema without them would make the first diff propose dropping your own migration history. A `sqlalchemy.url` godwit can read whose dialect is not PostgreSQL is refused before anything runs — a project that builds the URL in `env.py` declares none in the file and is not refused. Two constraints worth knowing before you point it at a real project: offline mode cannot render a revision that queries the database (`op.get_bind()`, reflection), and a plain relative `script_location` is resolved against the working directory, so write `script_location = %(here)s/alembic` or run `godwit diff` from the project root. `uv run alembic` and `poetry run alembic` work as `--alembic-bin`.
 
@@ -445,7 +445,7 @@ godwit diff --target app --exec 'atlas schema inspect --url env://dev --format "
 
 The ORM keeps owning the model; godwit keeps owning what runs, when, under which lock and with which hazards acknowledged. The file must describe the whole database: anything the target has that the file does not is a `DROP` in the generated `up`, so a Django dump keeps its `django_*` tables and a Prisma project that also has `_prisma_migrations` on the target declares it too. The Alembic and Rails sources already do this for you: `alembic_version` and `schema_migrations` come out of the tools themselves.
 
-The one exception is what a repeatable declares. `godwit diff` sends `--dir` to the service and applies its `R__` migrations on top of the desired schema, so an ORM team that also keeps a couple of views or functions in `R__` files gets them left alone instead of dropped — and `lint`'s `E005` stops firing on them for good. Delete the `R__` file when you want the object gone: then nothing declares it and the next diff proposes the drop. On a target that has run repeatables, a diff that cannot see the directory is refused rather than answered with those drops ([concepts: objects a repeatable declares](concepts.md#objects-a-repeatable-declares)).
+The one exception is what a repeatable declares. `godwit diff` sends `--dir` to the service and applies its `R__` migrations on top of the desired schema, so an ORM team that also keeps a couple of views or functions in `R__` files gets them left alone instead of dropped — and `lint`'s `E005` stops firing on them for good. Delete the `R__` file when you want the object gone: then nothing declares it and the next diff proposes the drop. On a target that has run repeatables, a diff that cannot see the directory is refused rather than answered with those drops ([objects a repeatable declares](../internals/drift.md#objects-a-repeatable-declares)).
 
 ## 4. Stop repeating flags
 
@@ -458,7 +458,7 @@ rollout: expand-contract
 server: http://localhost:8474
 ```
 
-Then `godwit lint`, `godwit plan` and `godwit migrate` work bare. The token stays in `GODWIT_TOKEN`; the file never carries secrets. Every key, its env override and its precedence is in [configuration](configuration.md).
+Then `godwit lint`, `godwit plan` and `godwit migrate` work bare. The token stays in `GODWIT_TOKEN`; the file never carries secrets. Every key, its env override and its precedence is in [configuration](../run/configuration.md).
 
 Two consequences of this particular file worth knowing before you write it:
 
@@ -510,9 +510,9 @@ steps:
 
 `lint` and `plan` keep one sticky comment on the pull request; `apply` runs the stored plan from the pull request head, reports what it applied and what that changed on the database, and sets the `godwit/applied` commit status; `verify` on the merge proves `main` carries nothing unapplied.
 
-**That status is the merge gate.** Make `godwit/applied` a required status check on `main` and the pull request cannot merge until the apply has landed — there is nothing else to switch on, and GitHub's own auto-merge waits on it like any other check ([the merge signal](ci-cd.md#the-merge-signal)). Set `GODWIT_PUBLIC_URL` in the workflow's environment if you run the UI, and the reports link each run and plan to their pages.
+**That status is the merge gate.** Make `godwit/applied` a required status check on `main` and the pull request cannot merge until the apply has landed — there is nothing else to switch on, and GitHub's own auto-merge waits on it like any other check ([the merge signal](../use/github-actions.md#the-merge-gate)). Set `GODWIT_PUBLIC_URL` in the workflow's environment if you run the UI, and the reports link each run and plan to their pages.
 
-The comment has to be exactly `godwit apply` and nothing else — prose around it means nothing fires ([what counts as commanding](ci-cd.md#what-counts-as-commanding)). It is refused unless the commenter holds write or admin permission on the repository **and** GitHub reports the pull request as approved. Whether a push withdraws that approval is your branch protection's *Dismiss stale pull request approvals when new commits are pushed*, not godwit's rule. Working alone, either approve from a second account — GitHub does not let you approve your own pull request — or pass `require-approval: "false"` ([who may command an apply](ci-cd.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
+The comment has to be exactly `godwit apply` and nothing else — prose around it means nothing fires ([what counts as commanding](../use/github-actions.md#silence-and-refusals)). It is refused unless the commenter holds write or admin permission on the repository **and** GitHub reports the pull request as approved. Whether a push withdraws that approval is your branch protection's *Dismiss stale pull request approvals when new commits are pushed*, not godwit's rule. Working alone, either approve from a second account — GitHub does not let you approve your own pull request — or pass `require-approval: "false"` ([who may command an apply](../use/github-actions.md#who-may-command-an-apply)). The action is pinned to a commit rather than `@main` on purpose: the apply job holds a `pipeline` token.
 
 The database changes **before** the merge, on purpose: by the time the pull request lands, `main` describes a schema the target already has. An `expand-contract` apply needs a second comment to finish: it stops at `awaiting_contract`, and until `godwit confirm` runs, `godwit/applied` stays `pending` with *expand applied; comment `godwit confirm` to run the contract phase*, so branch protection holds the pull request. Add the step beside the apply, in the same `issue_comment` job:
 
@@ -527,8 +527,8 @@ The database changes **before** the merge, on purpose: by the time the pull requ
       target: orders
 ```
 
-Inputs, outputs, the revert command, the `apply-on-merge` mode and the ArgoCD variant are in [CI/CD](ci-cd.md); the pull request stuck at `awaiting_contract` is a [runbook](runbook.md#a-pull-request-stuck-in-awaiting_contract) entry.
+Inputs, outputs, the revert command and the `apply-on-merge` mode are in [the GitHub Action](../use/github-actions.md), the ArgoCD variant in [deployment](../run/deployment.md#migrating-on-deploy-the-presync-and-postsync-hooks); the pull request stuck at `awaiting_contract` is a [runbook](../run/runbook.md#a-pull-request-stuck-in-awaiting_contract) entry.
 
 ## Next
 
-The [command reference](cli.md) is the rest of the CLI: the commands this walkthrough did not need, and what each one is for. [Concepts](concepts.md) explains what just happened in the target database and what happens when a replica dies with a run in flight. [Operations](operations.md) is the checklist before the service takes production traffic. Before you first need it: `godwit revert <run-id>` undoes **every** migration the run carried, not the last one — the [runbook](runbook.md#reverting-a-run) shows what that costs.
+The [command reference](../use/cli.md) is the rest of the CLI: the commands this walkthrough did not need, and what each one is for. [The journal](../internals/journal.md) explains what just happened in the target database, and [runs](../internals/runs.md) what happens when a replica dies with a run in flight. [Deployment](../run/deployment.md) is the checklist before the service takes production traffic. Before you first need it: `godwit revert <run-id>` undoes **every** migration the run carried, not the last one — the [runbook](../run/runbook.md#reverting-a-run) shows what that costs.

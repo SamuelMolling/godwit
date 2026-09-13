@@ -89,7 +89,7 @@ The journal does not grow with the backfill: a batched statement keeps one `inte
 
 Before, the run reported `succeeded` over 34 402 stale rows: a row written below the cursor after the cursor passed it was never revisited, and a row appended after the final batch was never seen. `rows_done` was exactly what the database changed, so the journal did not lie — but "the backfill succeeded" did not mean "every row now satisfies the predicate". `change-type` never had the problem, because its expansion installs a sync trigger before the backfill; a plain `backfill` installed nothing.
 
-Now it installs the same thing, and refuses to finish without counting what is left ([concepts](concepts.md#backfill-keeps-its-rows-in-sync-while-it-runs)). `rows_done` is no longer the seeded row count and should not be: the trigger reaches some rows before the batches do, and the batches then skip them. The rig bounds it from below by `seeded − appended − updated` instead, and the check that matters is that **no row is left**.
+Now it installs the same thing, and refuses to finish without counting what is left ([backfill keeps its rows in sync while it runs](admission.md#backfill-keeps-its-rows-in-sync-while-it-runs)). `rows_done` is no longer the seeded row count and should not be: the trigger reaches some rows before the batches do, and the batches then skip them. The rig bounds it from below by `seeded − appended − updated` instead, and the check that matters is that **no row is left**.
 
 ### A target with a long history
 

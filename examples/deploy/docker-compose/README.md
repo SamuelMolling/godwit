@@ -12,7 +12,7 @@ Files: [`compose.yaml`](compose.yaml), [`init/scratch.sh`](init/scratch.sh), and
 
 `store` holds godwit's own control plane and is the only stateful thing here — it gets the named volume, and it is what you back up. `scratch` is where validation and `godwit diff` execute the SQL a caller submits; it has **no volume at all**, because every database on it is created and dropped inside the call that made it. Losing it costs the one role in `init/scratch.sh`.
 
-They are separate services rather than two databases on one server because a `read` token is enough to reach that execution ([security](../../../docs/security.md#the-scratch-database)). `serve` checks the scratch role at start-up and refuses to run if it is a superuser or owns the store database, which is why `init/scratch.sh` spells out `CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS` and why the store's own role never gets `CREATEDB`.
+They are separate services rather than two databases on one server because a `read` token is enough to reach that execution ([security](../../../docs/run/security.md#the-scratch-database)). `serve` checks the scratch role at start-up and refuses to run if it is a superuser or owns the store database, which is why `init/scratch.sh` spells out `CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS` and why the store's own role never gets `CREATEDB`.
 
 The store role and database are made by the postgres image's own entrypoint from `POSTGRES_USER`, `POSTGRES_DB` and `POSTGRES_PASSWORD`, so no init script and no password in a committed file.
 
@@ -38,7 +38,7 @@ openssl rand -hex 32   # GODWIT_MASTER_KEY: exactly 64 hex characters
 openssl rand -hex 16   # one per token secret
 ```
 
-`GODWIT_TOKENS` entries are `name:scope:secret` — three fields, always; a two-field entry is refused at start-up. Scopes are `read`, `pipeline`, `operator`, `admin`, cumulative in that order ([token spec](../../../docs/configuration.md#token-spec)).
+`GODWIT_TOKENS` entries are `name:scope:secret` — three fields, always; a two-field entry is refused at start-up. Scopes are `read`, `pipeline`, `operator`, `admin`, cumulative in that order ([token spec](../../../docs/run/configuration.md#token-spec)).
 
 ### Why both DSNs are in the env file and not in `command`
 

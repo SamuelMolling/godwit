@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Defaults, sized against each other so none of the three stops a directory the others admit; docs/security.md#admission-limits argues them.
+// Defaults, sized against each other so none of the three stops a directory the others admit; docs/run/security.md#admission-limits argues them.
 const (
 	DefaultRequestBytes = 32 << 20
 	DefaultMigrations   = 2000

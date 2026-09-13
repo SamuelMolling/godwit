@@ -1,16 +1,16 @@
 # Kubernetes with ingress-nginx
 
-The chart in [deploy/helm/godwit](../../../deploy/helm/godwit) supports an Ingress and nobody has shown one end to end: which annotations `ingress-nginx` needs, what to publish and what to keep off it, where TLS goes, and which clients can then actually reach the API. [deployment.md](../../../docs/deployment.md) is the reference for what a target is and where its credentials come from; this page is the part in front of the service, which that page leaves to you.
+The chart in [deploy/helm/godwit](../../../deploy/helm/godwit) supports an Ingress and nobody has shown one end to end: which annotations `ingress-nginx` needs, what to publish and what to keep off it, where TLS goes, and which clients can then actually reach the API. [deployment.md](../../../docs/run/deployment.md) is the reference for what a target is and where its credentials come from; this page is the part in front of the service, which that page leaves to you.
 
 **Assumes:** a cluster with `ingress-nginx` installed and an `IngressClass` named `nginx`, cert-manager with a `ClusterIssuer` named `letsencrypt-prod`, the Prometheus Operator CRDs (for `serviceMonitor.enabled`), and a DNS record for `godwit.example.com` pointing at the ingress controller.
 
-**Leaves to you:** where the two PostgreSQL servers come from (a managed service, CloudNativePG, a StatefulSet), and the credential provider for your targets. Registering the targets is the `godwit credential-store add` and `godwit target add` calls [deployment.md](../../../docs/deployment.md#registering-a-target) describes; the chart declares neither.
+**Leaves to you:** where the two PostgreSQL servers come from (a managed service, CloudNativePG, a StatefulSet), and the credential provider for your targets. Registering the targets is the `godwit credential-store add` and `godwit target add` calls [deployment.md](../../../docs/run/deployment.md#registering-a-target) describes; the chart declares neither.
 
 Files here: [`values.yaml`](values.yaml) (the chart values, rendered and validated) and [`ingress-grpc.yaml`](ingress-grpc.yaml) (a second Ingress for HTTP/2 clients — read [Reaching the API](#reaching-the-api) before you apply it).
 
 ## The two databases
 
-godwit needs a **store** — its own control plane, which it migrates itself — and a **scratch** server, where validation and `Diff` execute the SQL a caller submits. They must be two servers, not two databases on one: a `read` token is enough to reach that execution, so the scratch role must be unable to see the store ([security](../../../docs/security.md#the-scratch-database)).
+godwit needs a **store** — its own control plane, which it migrates itself — and a **scratch** server, where validation and `Diff` execute the SQL a caller submits. They must be two servers, not two databases on one: a `read` token is enough to reach that execution, so the scratch role must be unable to see the store ([security](../../../docs/run/security.md#the-scratch-database)).
 
 On the store server:
 
@@ -116,7 +116,7 @@ Two things follow from the lease being keyed on `cp_leases.holder` (matched whol
 
 ## The pipeline
 
-`godwit lint` and `godwit plan` on a pull request need only `read` and a route to the API. A GitHub-hosted runner reaches the TLS Ingress with the CLI or the [composite action](../../../docs/ci-cd.md) — `GODWIT_SERVER=https://godwit.example.com` — as long as the Ingress' certificate chains to a public CA. From a self-hosted runner in the cluster, or from the ArgoCD PreSync hook, the CLI works unchanged against `http://godwit.godwit.svc:8474`.
+`godwit lint` and `godwit plan` on a pull request need only `read` and a route to the API. A GitHub-hosted runner reaches the TLS Ingress with the CLI or the [composite action](../../../docs/use/github-actions.md) — `GODWIT_SERVER=https://godwit.example.com` — as long as the Ingress' certificate chains to a public CA. From a self-hosted runner in the cluster, or from the ArgoCD PreSync hook, the CLI works unchanged against `http://godwit.godwit.svc:8474`.
 
 ## Verified
 

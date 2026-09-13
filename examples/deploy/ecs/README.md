@@ -20,7 +20,7 @@ CREATE DATABASE godwit_store OWNER godwit;
 REVOKE CONNECT ON DATABASE godwit_store FROM PUBLIC;
 ```
 
-**Scratch** — `db.t4g.micro`, `--backup-retention-period 0`, no deletion protection, `--skip-final-snapshot`, private, in one AZ. Cattle: every database on it is created and dropped inside the call that made it, and if you delete the instance the only thing to recreate is the role. It exists because `Diff` needs a `read` token and executes the DDL its caller submits, so that execution must reach nothing ([security](../../../docs/security.md#the-scratch-database)).
+**Scratch** — `db.t4g.micro`, `--backup-retention-period 0`, no deletion protection, `--skip-final-snapshot`, private, in one AZ. Cattle: every database on it is created and dropped inside the call that made it, and if you delete the instance the only thing to recreate is the role. It exists because `Diff` needs a `read` token and executes the DDL its caller submits, so that execution must reach nothing ([security](../../../docs/run/security.md#the-scratch-database)).
 
 ```sql
 CREATE ROLE godwit_scratch LOGIN PASSWORD '...'

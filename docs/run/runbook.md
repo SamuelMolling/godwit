@@ -67,13 +67,13 @@ godwit run confirm <run-id>                        # pipeline scope
 godwit run confirm --latest --target <target>      # or by target
 ```
 
-Take a [restore point](operations.md#backups-and-pitr) first. If the deploy was rolled back instead, `godwit revert <run-id>` runs the down side of the migrations that run applied.
+Take a [restore point](deployment.md#backups-and-pitr) first. If the deploy was rolled back instead, `godwit revert <run-id>` runs the down side of the migrations that run applied.
 
 ### A pull request stuck in `awaiting_contract`
 
 **Symptom.** `godwit apply` succeeded, the `## godwit apply` comment says **awaiting_contract**, and the `godwit/applied` status is `pending` ("expand applied; comment `godwit confirm` to run the contract phase"), so branch protection will not let the pull request merge. Nothing is broken: the expand phase is on the database, the contract phase is not, and the status is telling the truth.
 
-**Action.** Once the application version that reads both shapes is out, comment `godwit confirm` on the pull request. It releases the same run (not a new one), the status turns `success` and the pull request becomes mergeable ([CI/CD](ci-cd.md#pull-request-confirm-the-contract-phase)).
+**Action.** Once the application version that reads both shapes is out, comment `godwit confirm` on the pull request. It releases the same run (not a new one), the status turns `success` and the pull request becomes mergeable ([the merge gate](../use/github-actions.md#the-merge-gate)).
 
 Three ways it does not work, and what to do instead:
 
@@ -147,7 +147,7 @@ WHERE r.target = :'target' AND NOT a.held AND a.reverted_by IS NULL
 GROUP BY r.id ORDER BY r.created_at;
 ```
 
-**Action.** For `migration failed validation`: fix the migration. For `replay history`: put the missing extension in the database `--scratch-template` names, or, when the history is legitimately unreplayable, adopt the target at a version (`godwit target adopt <target> --version <newest applied>`, see [adopting an existing database](concepts.md#adopting-an-existing-database)) so replay starts from the run that adoption wrote. When the replay is *short* rather than broken — it rebuilds less than the target holds — the ledger is behind the target's journal; see [below](#the-ledger-is-behind-a-target). `--skip-validation` on a single run is the escape hatch; it leaves no trace in the audit trail, so note it in the pull request.
+**Action.** For `migration failed validation`: fix the migration. For `replay history`: put the missing extension in the database `--scratch-template` names, or, when the history is legitimately unreplayable, adopt the target at a version (`godwit target adopt <target> --version <newest applied>`, see [adopting an existing database](../internals/drift.md#adopting-an-existing-database)) so replay starts from the run that adoption wrote. When the replay is *short* rather than broken — it rebuilds less than the target holds — the ledger is behind the target's journal; see [below](#the-ledger-is-behind-a-target). `--skip-validation` on a single run is the escape hatch; it leaves no trace in the audit trail, so note it in the pull request.
 
 Scratch databases are dropped after every validation; a leftover after a crash is harmless. On the scratch server (the store server when `--scratch-dsn` is unset):
 
@@ -169,7 +169,7 @@ An index or constraint gives no error at all — it simply stops covering the co
 
 **Meaning.** The contract phase renames `<c>` to `<c>_old` and `<c>_new` to `<c>`, and PostgreSQL moves every
 dependency with the *physical* attribute. Everything that was bound to the column is now bound to `<c>_old`.
-godwit refuses this at plan time now (see [what the expander refuses](concepts.md#what-the-expander-refuses)), but a
+godwit refuses this at plan time now (see [what the expander refuses](../internals/admission.md#what-the-expander-refuses)), but a
 migration applied by an older version is already in this state.
 
 **Find everything that is still on the retired column**, before deciding anything:
@@ -375,7 +375,7 @@ rest still stand, and a second `godwit revert` picks up exactly what is left.
 **Production policy is roll forward.** Every vendor in this space says so, including the ones selling the
 feature: a down file is a review artifact, and the answer to a bad migration in production is usually a new
 migration or a restore from backup. `revert` is for the minutes after a bad apply and for the pull request
-that gets abandoned. Take a [restore point](operations.md#backups-and-pitr) before using it on anything
+that gets abandoned. Take a [restore point](deployment.md#backups-and-pitr) before using it on anything
 that matters.
 
 ## The ledger is behind a target

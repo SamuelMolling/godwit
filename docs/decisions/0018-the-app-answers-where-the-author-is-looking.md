@@ -97,6 +97,6 @@ The link to live output needs nothing new either: `GODWIT_PUBLIC_URL` already ex
 
 ## Not verified
 
-- **Which installation permission grants `POST /issues/comments/{id}/reactions`, and `DELETE /issues/comments/{id}`.** The App asks for `Pull requests: write` to comment; whether reactions on a pull request's comments are covered by that or by `Issues: write` was not confirmed against a live installation. If it is the latter, the manifest in [CI/CD](../ci-cd.md#registering-the-app) needs another line and reviewers should know why.
+- **Which installation permission grants `POST /issues/comments/{id}/reactions`, and `DELETE /issues/comments/{id}`.** The App asks for `Pull requests: write` to comment; whether reactions on a pull request's comments are covered by that or by `Issues: write` was not confirmed against a live installation. If it is the latter, the manifest in [CI/CD](../use/github-app.md#creating-the-app) needs another line and reviewers should know why.
 - **That `POST /issues/{n}/comments` is the right endpoint for a pull request conversation comment**, rather than the pull-request-specific review comment endpoint. It is the one the Action already uses through `gh`, so it is the same assumption already in production, not a new one.
 - **The `minimizeComment` mutation's permission and behaviour** — deferred with the strategy, and untested either way.

@@ -1,6 +1,6 @@
 # Command reference
 
-What each `godwit` command is *for*, in plain words, with an example you can paste. The exact flag list for each one is in [configuration](configuration.md#cli-reference); the mechanism behind it is in [concepts](concepts.md). This page is the middle: which command you want, and why.
+What each `godwit` command is *for*, in plain words, with an example you can paste. The exact flag list for each one is in [configuration](../run/configuration.md#cli-reference); the mechanism behind it is in [internals](../README.md#internals). This page is the middle: which command you want, and why.
 
 | Command | What it does |
 |---|---|
@@ -46,13 +46,13 @@ The same binary is the service and the client, so almost every command means one
 
 **Target.** A database godwit migrates, registered with the service under a short name (`app`, `staging`, `production`). You name it with `--target app`; the service knows the connection string, so you never type it. Without a service there are no targets — you point at a database yourself with `--dsn`.
 
-**Journal.** A bookkeeping schema called `godwit` that lives *inside* each database godwit migrates, holding a row per statement it ran. It is written in the same transaction as your DDL, which is why a migration killed halfway can be picked up and continued rather than repaired. [Concepts: the journal protocol](concepts.md#the-journal-protocol).
+**Journal.** A bookkeeping schema called `godwit` that lives *inside* each database godwit migrates, holding a row per statement it ran. It is written in the same transaction as your DDL, which is why a migration killed halfway can be picked up and continued rather than repaired. [the journal protocol](../internals/journal.md#the-journal-protocol).
 
-**Run.** One attempt to apply (or undo) a set of migrations on one target. It has an id, a state (`queued`, `running`, `succeeded`, `failed`, `awaiting_contract`, `needs_attention`, `reverted`) and a list of what it applied. [Concepts: runs and states](concepts.md#runs-and-states).
+**Run.** One attempt to apply (or undo) a set of migrations on one target. It has an id, a state (`queued`, `running`, `succeeded`, `failed`, `awaiting_contract`, `needs_attention`, `reverted`) and a list of what it applied. [runs and states](../internals/runs.md#runs-and-states).
 
-**Plan.** The list of statements godwit worked out it would run, stored on the service together with a snapshot of what the target looked like at the time. A plan is what you review in a pull request; when the run finally happens it binds to that plan and refuses if the database has moved since. [Concepts: plans](concepts.md#plans).
+**Plan.** The list of statements godwit worked out it would run, stored on the service together with a snapshot of what the target looked like at the time. A plan is what you review in a pull request; when the run finally happens it binds to that plan and refuses if the database has moved since. [plans](../internals/admission.md#plans).
 
-**Scratch.** A throwaway database the service creates, replays your migrations on, and drops — so a migration that would fail is refused before it touches anything real. You never name it; you configure where it lives with `serve --scratch-dsn`. [Security: the scratch database](security.md#the-scratch-database).
+**Scratch.** A throwaway database the service creates, replays your migrations on, and drops — so a migration that would fail is refused before it touches anything real. You never name it; you configure where it lives with `serve --scratch-dsn`. [Security: the scratch database](../run/security.md#the-scratch-database).
 
 ## How the commands are told where to go
 
@@ -66,9 +66,9 @@ Every command that reaches the service takes `--server` and `--token` (or `GODWI
 export GODWIT_SERVER=http://localhost:8474 GODWIT_TOKEN=s3cret-admin
 ```
 
-To stop repeating `--target` and `--dir`, put them in a `godwit.yaml` next to your migrations; every command reads the nearest one up to the repo root, or the file you pass to `--config`. The keys are in [configuration](configuration.md#godwityaml).
+To stop repeating `--target` and `--dir`, put them in a `godwit.yaml` next to your migrations; every command reads the nearest one up to the repo root, or the file you pass to `--config`. The keys are in [configuration](../run/configuration.md#godwityaml).
 
-Exit codes are the same everywhere: `0` succeeded, `1` anything went wrong — a refusal, a failed run, an unreachable server. `lint` also exits `1` when it found something blocking, and `migrate` exits `3` when the service refuses the run because the reviewed plan no longer matches the database.
+Exit codes are the same everywhere: `0` succeeded, `1` anything went wrong — a refusal, a failed run, an unreachable server. `lint` also exits `1` when it found something blocking, and `migrate` exits `3` when the service refuses the run because the reviewed plan no longer matches the database. `migrate`, `revert` and `run confirm` stream the run and exit with it: `0` on `succeeded` **or** `awaiting_contract`, `1` on `failed` or `needs_attention` with `run <id> <state>: <error>` on stderr. A held expand phase is a success, not a failure — the second half is a separate command.
 
 ### When `--dir` holds nothing
 
@@ -109,7 +109,7 @@ wrote db/migrations/20260908161500_add_status.down.sql
 
 Both files hold one placeholder comment. That is deliberate: a migration with no statements is `E002` at [`lint`](#godwit-lint) and an error at [`plan`](#godwit-plan), so a scaffold you forgot to fill in blocks CI instead of shipping as a silent no-op. A name that is not `[a-z0-9_]+` is refused before anything is written, and a version already taken in the directory is stepped over rather than overwritten.
 
-`--repeatable` writes `R__<name>.up.sql` / `.down.sql` instead — no version, re-run whenever the body changes. A repeatable's name is its identity rather than an ordering token, so a name already in the directory is refused instead of stepped over. [Concepts: repeatable migrations](concepts.md#repeatable-migrations).
+`--repeatable` writes `R__<name>.up.sql` / `.down.sql` instead — no version, re-run whenever the body changes. A repeatable's name is its identity rather than an ordering token, so a name already in the directory is refused instead of stepped over. [repeatable migrations](../internals/journal.md#repeatable-migrations).
 
 ### `godwit diff`
 
@@ -138,7 +138,7 @@ wrote db/migrations/20260908131937_add_order_status.up.sql
 wrote db/migrations/20260908131937_add_order_status.down.sql
 ```
 
-`--dir` is not only where the files land: godwit reads the repeatable migrations in it, so objects your `R__` files declare (here the `order_stats` view) are part of the desired schema and never come back as a proposed drop. If you have declared a `schema_source` in `godwit.yaml`, you can leave the source flag off entirely. [Concepts: generating migrations from a schema](concepts.md#generating-migrations-from-a-schema).
+`--dir` is not only where the files land: godwit reads the repeatable migrations in it, so objects your `R__` files declare (here the `order_stats` view) are part of the desired schema and never come back as a proposed drop. If you have declared a `schema_source` in `godwit.yaml`, you can leave the source flag off entirely. [generating migrations from a schema](../internals/drift.md#generating-migrations-from-a-schema).
 
 ### `godwit lint`
 
@@ -162,11 +162,11 @@ $ godwit lint --dir hz
 godwit: 1 blocking finding(s)
 ```
 
-The indented lines are the *recipe*: the same change written safely. `--format markdown` produces the same thing as a table with the recipes in `<details>` blocks, which is what the GitHub Action posts on the pull request. A finding you have decided to live with is acknowledged with `--ack H001`, and the run has to carry the same acknowledgement. Codes: `H001`–`H010` for hazards, `E001`–`E005` for errors, `W001`–`W002` for warnings — all listed in [configuration](configuration.md#local-no-service). [Concepts: hazards](concepts.md#hazards).
+The indented lines are the *recipe*: the same change written safely. `--format markdown` produces the same thing as a table with the recipes in `<details>` blocks, which is what the GitHub Action posts on the pull request. A finding you have decided to live with is acknowledged with `--ack H001`, and the run has to carry the same acknowledgement. Codes: `H001`–`H010` for hazards, `E001`–`E005` for errors, `W001`–`W002` for warnings — all listed in [configuration](../run/configuration.md#local-no-service). [hazards](../internals/admission.md#hazards).
 
 ### `godwit plan`
 
-**Shows you what would happen to the database.** One block per object the migrations create, change or destroy, in terraform's shape: `+` creates, `-` destroys, `~` changes, at the object and at the attribute, and a hazard is written on the attribute line that causes it. `--plan-format statements` gives the other view — every statement in order, with the transaction mode and the recipes — which is what to reach for when auditing the SQL or reading a failed run. `plan.format` in `godwit.yaml` sets the default for a repository ([configuration](configuration.md#plan)).
+**Shows you what would happen to the database.** One block per object the migrations create, change or destroy, in terraform's shape: `+` creates, `-` destroys, `~` changes, at the object and at the attribute, and a hazard is written on the attribute line that causes it. `--plan-format statements` gives the other view — every statement in order, with the transaction mode and the recipes — which is what to reach for when auditing the SQL or reading a failed run. `plan.format` in `godwit.yaml` sets the default for a repository ([configuration](../run/configuration.md#plan)).
 
 It has three forms, in order of what they touch. `--help` lists them in the same order:
 
@@ -201,7 +201,7 @@ Offline plan. Both sides of every migration in the directory, as written; no dat
       CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);
 ...
 
-1 hazard must be acknowledged before this runs; use --ack H002.
+1 hazard on what this run would execute: take the recipe printed with it, or accept the risk with --ack H002 (godwit apply --ack H002 on a pull request).
 Plan: 2 to apply, 2 to revert, 1 hazard(s) to acknowledge
 ```
 
@@ -265,7 +265,7 @@ A migration whose effect a schema snapshot cannot see — a seed, a `GRANT`, a p
 
 **`how this will run`** is the last block before the footer, and it is about execution rather than schema: how many statements there are and that each commits with its own journal row, which of them PostgreSQL refuses to run inside a transaction and what godwit does about that, which walk the table in batches, which are assertions, which hold a lock the application queues behind, whether the run stops between the two halves of an expand/contract rollout, and what a failure part way through leaves behind. The plan's id is not in it: it is machine identity, and in `--format markdown` it rides in a `<!-- godwit-plan-id: ... -->` comment, which is what the GitHub Action reads to bind a later `apply`.
 
-Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [Concepts: plans](concepts.md#plans).
+Reach for the offline form to eyeball a migration you just wrote; for `--target` when you want to know whether it applies against the real thing; for `--target --save` on a pull request, so the plan a reviewer reads is the plan the deploy is bound to. Do not use any of them to check *whether anything is pending* — that is [`godwit target status`](#godwit-target-status), which is much cheaper because it replays nothing. [plans](../internals/admission.md#plans).
 
 Note what `--target` costs even without `--save`: the scratch replay executes your DDL on the scratch server with the service's credentials, so it is a live operation, not a read of a file. `--save` is what adds the durable artifact and the `plan.create` audit row.
 
@@ -299,7 +299,7 @@ CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id);
 ALTER SEQUENCE "public"."orders_id_seq" OWNED BY "public"."orders"."id";
 ```
 
-[Concepts: checkpoints](concepts.md#checkpoints), and the operational side in [operations](operations.md#checkpoints).
+[checkpoints](../internals/journal.md#checkpoints), and the operational side in [deployment](../run/deployment.md#checkpoints).
 
 ---
 
@@ -307,7 +307,7 @@ ALTER SEQUENCE "public"."orders_id_seq" OWNED BY "public"."orders"."id";
 
 ### `godwit migrate`
 
-**The one that actually changes a production database.** It sends the migration directory to the service, which checks it, queues a run, and executes it on the named target; your terminal streams the run's state and exits when it settles.
+**The one that actually changes a production database.** It loads and validates the directory locally first, sends it to the service, which checks it, queues a run, and executes it on the named target; your terminal streams the run's state and exits when it settles.
 
 Reach for it from CI, or from your shell for a database the service manages. Do not reach for it for your own laptop database — that is [`godwit up`](#godwit-up), which needs no service.
 
@@ -318,7 +318,7 @@ run 7071c5ac-93e5-43de-9322-960a47d47f00: queued
 run 7071c5ac-93e5-43de-9322-960a47d47f00: succeeded (attempt 1)
 ```
 
-The first line tells you which reviewed plan this run is bound to. When no plan was stored for these files it says `no stored plan for this set: implicit plan` and plans on the spot; when the same CI job runs twice it says `re-attached to run <id>` and follows the existing run instead of queueing a second one.
+The first line tells you which reviewed plan this run is bound to. When no plan was stored for these files it says `no stored plan for this set: implicit plan` and plans on the spot; when the same CI job runs twice it says `re-attached to run <id>` and follows the existing run instead of queueing a second one. A run waiting out a transient failure shows `(retry in Ns)` on its line rather than going quiet.
 
 `--dry-run` does everything except queue the run — including the scratch replay — and prints what would happen:
 
@@ -361,7 +361,7 @@ godwit: run 9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed: sql: statement 0 of 202
 
 Nothing is left half-applied: the statements that succeeded are journalled as done, and [`godwit run resume`](#godwit-run-resume) continues from there once you have fixed the cause.
 
-Three flags change the shape of the run rather than a detail of it: `--rollout expand-contract` splits it in two ([below](#godwit-run-confirm)), `--to <version>` stops it at a version and reports the rest as *withheld* ([concepts](concepts.md#version-targets)), and `--plan <id>` binds a specific reviewed plan, which is how the GitHub Action applies exactly what the reviewer saw ([CI/CD](ci-cd.md)).
+Three flags change the shape of the run rather than a detail of it: `--rollout expand-contract` splits it in two ([below](#godwit-run-confirm)), `--to <version>` stops it at a version and reports the rest as *withheld* ([version targets](../internals/runs.md#version-targets)), and `--plan <id>` binds a specific reviewed plan, which is how the GitHub Action applies exactly what the reviewer saw ([the GitHub Action](github-actions.md)).
 
 ### `godwit run confirm`
 
@@ -379,7 +379,7 @@ run dc21ac88-b8d9-4d42-b63b-5bdab184bb19: queued
 run dc21ac88-b8d9-4d42-b63b-5bdab184bb19: succeeded (attempt 1)
 ```
 
-Reach for it once the application version that no longer needs the old column is deployed everywhere. Do not reach for it right after the expand phase to "finish the job" — the wait is the entire point. With a run id it confirms that run; with `--latest --target app` it finds the one waiting, which is what a deploy pipeline uses (add `--allow-none` so a pipeline with nothing to confirm exits 0). [Concepts: rollout policies](concepts.md#rollout-policies).
+Reach for it once the application version that no longer needs the old column is deployed everywhere. Do not reach for it right after the expand phase to "finish the job" — the wait is the entire point. With a run id it confirms that run; with `--latest --target app` it finds the one waiting, which is what a deploy pipeline uses (add `--allow-none` so a pipeline with nothing to confirm exits 0). [rollout policies](../internals/runs.md#rollout-policies).
 
 ### `godwit revert`
 
@@ -395,15 +395,19 @@ godwit: unacknowledged hazards (pass acknowledge_hazards to accept):
 H002: DROP TABLE is destructive
 
 $ godwit revert --target app --ack H002
-revert of run 9c60b73c-ac42-42ec-9194-498a2c66cbc3 on app: 1 migration(s), reverse order of application
-  20260908150000_create_notes (down): 1 statement(s)
-    statement 0, runs inside a transaction
+1 migration will be reverted on app, newest first, undoing run 9c60b73c-ac42-42ec-9194-498a2c66cbc3.
+
+- 20260908150000_create_notes (down)  1 statement
+  statement 0, runs inside a transaction
       DROP TABLE notes
+      hazard H002: DROP TABLE is destructive
+
+Plan: 0 to apply, 1 to revert, 1 hazard(s) to acknowledge
 run 635b0cda-d61f-4beb-9550-1adb6da14e3b: queued
 run 635b0cda-d61f-4beb-9550-1adb6da14e3b: succeeded (attempt 1)
 ```
 
-With no run id it takes the newest un-reverted run on `--target`; an older one needs `--force`. `--dry-run` prints the plan and queues nothing. [Concepts: revert](concepts.md#revert), [runbook: reverting a run](runbook.md#reverting-a-run).
+With no run id it takes the newest un-reverted run on `--target`; an older one needs `--force`. `--dry-run` prints the plan and queues nothing. [revert](../internals/runs.md#revert), [runbook: reverting a run](../run/runbook.md#reverting-a-run).
 
 ### `godwit run resume`
 
@@ -421,7 +425,7 @@ run 9c60b73c-ac42-42ec-9194-498a2c66cbc3: running (attempt 1)
 run 9c60b73c-ac42-42ec-9194-498a2c66cbc3: succeeded (attempt 1)
 ```
 
-`resume` returns as soon as the run is queued; the service picks it up on its next tick, which is why the example follows it with [`run watch`](#godwit-run-watch). [Runbook: run in `needs_attention`](runbook.md#run-in-needs_attention).
+`resume` returns as soon as the run is queued; the service picks it up on its next tick, which is why the example follows it with [`run watch`](#godwit-run-watch). [Runbook: run in `needs_attention`](../run/runbook.md#run-in-needs_attention).
 
 ### `godwit up`
 
@@ -486,7 +490,7 @@ ready plans: 0
 drift baseline: taken 2026-09-08T13:19:11Z by run 7071c5ac-93e5-43de-9322-960a47d47f00
 ```
 
-Before that first run it would have listed three under `pending (3):` instead. `none` for a timeout means nothing is registered, not that there is no limit — see [configuration](configuration.md#target-settings). [Concepts: target status](concepts.md#target-status).
+Before that first run it would have listed three under `pending (3):` instead. `none` for a timeout means nothing is registered, not that there is no limit — see [configuration](../run/configuration.md#target-settings). [target status](../internals/drift.md#target-status).
 
 A target whose credential does not resolve — a `vault` one pointed at no credential store, a mounted secret that is not there — still prints, with `its own journal was not read: <why>` in place of the applied list. That is the state you are in while fixing the registration, and it is exactly when you want to see the rest of it; `godwit target show` is the other half of the picture.
 
@@ -496,11 +500,13 @@ A target whose credential does not resolve — a `vault` one pointed at no crede
 
 ```console
 $ godwit targets
-NAME    PROVIDER  STORE       APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  LAST RUN
-app     static    none        5        0            0          clean  none         none  none       false         9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed
-orders  vault     production  2        0            0          clean  none         none  none       false         3984dd6f-fce0-4a32-9af2-60c746dc92cd succeeded
-legacy  static    none        2        0            0          clean  none         none  none       false         c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380 succeeded
+NAME    PROVIDER  STORE       APPLIED  READY PLANS  NEEDS YOU  DRIFT  SEARCH PATH  LOCK  STATEMENT  REQUIRE PLAN  GITHUB              LAST RUN
+app     static    none        5        0            0          clean  none         none  none       false         none                9c60b73c-ac42-42ec-9194-498a2c66cbc3 failed
+orders  vault     production  2        0            0          clean  none         none  none       false         acme/orders         3984dd6f-fce0-4a32-9af2-60c746dc92cd succeeded
+legacy  static    none        2        0            0          clean  none         none  none       false         none                c6f96172-c7d5-4d19-9f5e-cd9f2e1bf380 succeeded
 ```
+
+`GITHUB` is the repositories a [GitHub App](github-app.md#binding-the-repository-to-a-target) delivery may reach the target from, and `none` means no pull request can: the App answers such a repository with a refusal rather than a plan.
 
 `STORE` is what answers "why can it not reach that database": it names the Vault the target's credentials are read from, and `none` is right for `static` and `kubernetes`, which read no Vault at all. `godwit credential-stores` turns the name into an address.
 
@@ -526,7 +532,7 @@ target orders
   github repositories    acme/orders:db/migrations
 ```
 
-The password is not here and cannot be: a `static` target prints `dsn registered  true` and nothing else, because godwit will not hand back a credential — not the ciphertext, and not a decrypted-then-redacted copy of it. Nothing needs it back either, since `target add` keeps the DSN while you change another setting. It needs the `operator` scope rather than `read`: what it prints points at where the secret lives. [Security: credential providers](security.md#credential-providers).
+The password is not here and cannot be: a `static` target prints `dsn registered  true` and nothing else, because godwit will not hand back a credential — not the ciphertext, and not a decrypted-then-redacted copy of it. Nothing needs it back either, since `target add` keeps the DSN while you change another setting. It needs the `operator` scope rather than `read`: what it prints points at where the secret lives. [Security: credential providers](../run/security.md#credential-providers).
 
 ### `godwit migrations`
 
@@ -557,7 +563,7 @@ MIGRATION                           CHECKSUM  APP         DEV  LEGACY
 20260908140000_drop_orders_total    1b39142c  2026-09-08  -    -
 ```
 
-[Concepts: the fleet view](concepts.md#the-fleet-view).
+[the fleet view](../internals/drift.md#the-fleet-view).
 
 ### `godwit runs`
 
@@ -606,7 +612,7 @@ the target's history, what they changed in it, how many statements ran and how l
 `expand-contract` run left for `godwit confirm`, and — when it stopped — the statement it stopped at, that
 statement's SQL, the database's error, and what the failure leaves behind.
 
-This is what the GitHub Action posts as the `## godwit apply` comment ([CI/CD](ci-cd.md#pull-request-apply)).
+This is what the GitHub Action posts as the `## godwit apply` comment ([the GitHub Action](github-actions.md#the-default-mode-apply-on-the-pull-request)).
 Run it by hand for any past run.
 
 ```console
@@ -622,7 +628,7 @@ which defaults to the run's own kind. `--plan-format statements` prints the SQL 
 the same knob [`plan`](#godwit-plan) takes.
 
 **The links come from `GODWIT_PUBLIC_URL`** — the same setting the Slack "Open run" button uses
-([configuration](configuration.md#environment)). It is the base of the UI as a reader reaches it, so it belongs
+([configuration](../run/configuration.md#environment)). It is the base of the UI as a reader reaches it, so it belongs
 in the environment of whatever renders the report: the deployment for notifications, and the workflow for the
 Action. Unset, the report names the run and the plan and links neither. A run whose `source` is
 `<host>/<owner>/<repo>@<sha>` also gets a link to that commit; anything else, and the commit is left out.
@@ -695,7 +701,7 @@ AT                    ACTOR  ACTION           TARGET  RUN                       
 2026-09-08T13:19:08Z  admin  target.register  app                                           provider=static lock_timeout= statement_timeout= require_plan=false search_path=
 ```
 
-`--target` and `--run` narrow it. [Concepts: actors and provenance](concepts.md#actors-and-provenance), [security: audit](security.md#audit).
+`--target` and `--run` narrow it. [actors and provenance](../internals/runs.md#actors-and-provenance), [security: audit](../run/security.md#audit).
 
 ---
 
@@ -718,7 +724,7 @@ target app: registered
 
 To *remove* a setting, pass it empty: `--search-path=""` puts the target back on its role's own path, `--github-repo=""` leaves no repository able to reach it. `--provider` is needed only for a target that is not registered yet; changing it drops the previous provider's credential, and a flag the target's provider does not read — `--dsn` on a `vault` target — is refused rather than stored. `godwit target show` prints what a target currently is.
 
-Per-target settings live on this command too — `--lock-timeout`, `--statement-timeout`, `--search-path`, `--require-plan` — and are listed in [configuration](configuration.md#target-settings). Use `GODWIT_TARGET_DSN` rather than `--dsn` to keep the password out of the process list. [Deployment: registering a target](deployment.md#registering-a-target), [security: credential providers](security.md#credential-providers).
+Per-target settings live on this command too — `--lock-timeout`, `--statement-timeout`, `--search-path`, `--require-plan` — and are listed in [configuration](../run/configuration.md#target-settings). Use `GODWIT_TARGET_DSN` rather than `--dsn` to keep the password out of the process list. [Deployment: registering a target](../run/deployment.md#registering-a-target), [security: credential providers](../run/security.md#credential-providers).
 
 ### `godwit credential-store add`
 
@@ -732,7 +738,7 @@ credential store production: registered (https://vault.production.internal)
 
 `--vault-k8s-role` logs in at that Vault with the ServiceAccount token the deployment mints for the audience `godwit`, which is the form to use in Kubernetes: that Vault needs a Kubernetes auth mount trusting this cluster and a role bound to godwit's ServiceAccount **carrying `audience=godwit`**. The audience is a constant, not a flag and not a chart value; a deployment is one identity, and setting `audience="godwit"` on the Vault role is the only thing an operator configures. Outside Kubernetes, `--vault-token-env VAULT_TOKEN` names an environment variable of the *service* holding a token instead — the value never travels through this command and is never stored.
 
-Registering a store is a full replace, unlike `target add`: re-running it with a new address moves every target that names it. [Security: credential stores](security.md#credential-stores).
+Registering a store is a full replace, unlike `target add`: re-running it with a new address moves every target that names it. [Security: credential stores](../run/security.md#credential-stores).
 
 ### `godwit credential-stores`
 
@@ -770,7 +776,7 @@ target dev: adopted 2 migration(s) from its journal (run 3984dd6f-fce0-4a32-9af2
 
 The two failure modes are not symmetric, which is the reason to prefer `--from-journal` when you can have it. Getting `--version` wrong hurts in either direction: too low and godwit will try to re-run migrations the database already has, too high and it will silently skip ones it does not. `--from-journal` has no version for you to get wrong, and it refuses on a named disagreement between the journal and the directory rather than guessing.
 
-Reach for `--from-journal` after using [`godwit up`](#godwit-up) on a database you later want the service to manage, or when the service's ledger was lost and the databases were not — `migrate` and `plan --target` refuse such a target by name until you have. [Deployment: adopting an existing database](deployment.md#adopting-an-existing-database), [runbook: the ledger is behind a target](runbook.md#the-ledger-is-behind-a-target).
+Reach for `--from-journal` after using [`godwit up`](#godwit-up) on a database you later want the service to manage, or when the service's ledger was lost and the databases were not — `migrate` and `plan --target` refuse such a target by name until you have. [Deployment: adopting an existing database](../run/deployment.md#adopting-an-existing-database), [runbook: the ledger is behind a target](../run/runbook.md#the-ledger-is-behind-a-target).
 
 ### `godwit drift check`
 
@@ -789,7 +795,7 @@ $ godwit drift check app
 target app: no drift
 ```
 
-It reports, it does not fix: the diff tells you what is there, and it is up to you to write a migration for it or [accept it](#godwit-drift-accept). [Concepts: drift](concepts.md#drift), [runbook: drift detected](runbook.md#drift-detected).
+It reports, it does not fix: the diff tells you what is there, and it is up to you to write a migration for it or [accept it](#godwit-drift-accept). [drift](../internals/drift.md#drift), [runbook: drift detected](../run/runbook.md#drift-detected).
 
 ### `godwit drift accept`
 
@@ -825,7 +831,7 @@ time=2026-09-08T10:14:06.796-03:00 level=WARN msg="validation and diff execute s
 time=2026-09-08T10:14:06.797-03:00 level=INFO msg=listening replica=host/b2111bb933db47e3 build=dev addr=[::]:8474 validation=true
 ```
 
-That warning is worth acting on: without `--scratch-dsn`, the throwaway databases used to validate submitted SQL are built on the store server with the store's own credentials, which means submitted DDL runs there. Point it at a PostgreSQL that holds nothing. `--ui` adds an operator web UI at `/ui`. Every flag and environment variable is in [configuration](configuration.md#godwit-serve); running it for real is [deployment](deployment.md) and [operations](operations.md).
+That warning is worth acting on: without `--scratch-dsn`, the throwaway databases used to validate submitted SQL are built on the store server with the store's own credentials, which means submitted DDL runs there. Point it at a PostgreSQL that holds nothing. `--ui` adds an operator web UI at `/ui`. Every flag and environment variable is in [configuration](../run/configuration.md#godwit-serve); running it for real is [deployment](../run/deployment.md).
 
 ### `godwit version`
 
@@ -844,8 +850,8 @@ dev (none)
 
 ## Where to go next
 
-- The exact flags, environment variables and required token scope for each command: [configuration](configuration.md#cli-reference).
-- What the commands do underneath — the journal, hazards, directives, plans, drift: [concepts](concepts.md).
-- The same commands wired into a pull request: [CI/CD](ci-cd.md).
-- The same operations as HTTP calls: [API](api.md).
-- Something is wrong right now: [runbook](runbook.md).
+- The exact flags, environment variables and required token scope for each command: [configuration](../run/configuration.md#cli-reference).
+- What the commands do underneath: [the journal](../internals/journal.md), [runs](../internals/runs.md), [admission](../internals/admission.md) and [drift](../internals/drift.md).
+- The same commands wired into a pull request: [the GitHub Action](github-actions.md), or [the GitHub App](github-app.md).
+- The same operations as HTTP calls: [API](../internals/api.md).
+- Something is wrong right now: [runbook](../run/runbook.md).

@@ -23,7 +23,7 @@ existingSecret:
 serve:
   # --listen: the API, /metrics, /healthz and /readyz share this port.
   port: 8474
-  # Where the key that seals `static` target DSNs lives: env, gcpkms or vault-transit (docs/security.md).
+  # Where the key that seals `static` target DSNs lives: env, gcpkms or vault-transit (docs/run/security.md).
   keyProvider:
     name: env
     key: ""
