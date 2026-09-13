@@ -1,6 +1,6 @@
 # 0025 — A revert from a comment is held to the same people as the apply, and may not remove a gate
 
-Shipped in #PR.
+Shipped in #160.
 
 ## The question
 

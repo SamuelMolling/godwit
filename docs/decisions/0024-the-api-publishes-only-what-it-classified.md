@@ -1,6 +1,6 @@
 # 0024 — The API publishes only the errors it classified; everything else is redacted
 
-Shipped in #PR.
+Shipped in #160.
 
 ## The question
 
