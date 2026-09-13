@@ -152,7 +152,7 @@ func Run(ctx context.Context, cfg Config) error {
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
-	notifier, closeNotifier := newNotifier(cfg, store, log, m.Notified)
+	notifier, closeNotifier := newNotifier(cfg, store, log, m.Notified, m.NotifierConfigured)
 	defer closeNotifier()
 
 	cfg.Scheduler.Holder = cfg.Holder
@@ -270,16 +270,18 @@ func awaitRuns(ctx context.Context, stopClaiming func(), drained <-chan struct{}
 	}
 }
 
-func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func(provider, result string)) (notify.Notifier, func()) {
+func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func(provider, result string), configured func(provider string, ok bool)) (notify.Notifier, func()) {
 	var all notify.Multi
 	var async []*notify.Async
 	if cfg.Notifier != nil {
 		all = append(all, cfg.Notifier)
 	}
+	configured("webhook", cfg.WebhookURL != "")
 	if cfg.WebhookURL != "" {
 		a := notify.NewAsync("webhook", notify.Webhook{URL: cfg.WebhookURL}, log, record)
 		all, async = append(all, a), append(async, a)
 	}
+	configured("slack", cfg.SlackToken != "")
 	if cfg.SlackToken != "" {
 		slack := notify.Slack{
 			Token: cfg.SlackToken, Channel: cfg.SlackChannel, Mode: cfg.SlackMode,
@@ -288,6 +290,9 @@ func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func
 		a := notify.NewAsync("slack", slack, log, record)
 		all, async = append(all, a), append(async, a)
 		log.Info("slack notifications enabled", "channel", cfg.SlackChannel, "mode", cfg.SlackMode)
+	}
+	if cfg.WebhookURL == "" && cfg.SlackToken == "" && cfg.Notifier == nil {
+		log.Warn("no notification destination configured; run and drift events, including schema drift, will be recorded but nobody will be told")
 	}
 
 	return all, func() {
