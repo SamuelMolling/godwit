@@ -1,7 +1,6 @@
 package githubapp
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -62,5 +61,11 @@ func (c command) detail() string {
 }
 
 type runner interface {
-	enqueue(ctx context.Context, tx txn, cmd command) error
+	reserve() (slot, error)
+}
+
+// slot is a place in the worker queue taken before the delivery is recorded, so that the send after the commit cannot fail.
+type slot interface {
+	send(cmd command)
+	release()
 }

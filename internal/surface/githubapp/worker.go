@@ -61,7 +61,7 @@ type WorkerConfig struct {
 // Worker runs the commands the receiver accepted, off the delivery's own request.
 type Worker struct {
 	cfg    WorkerConfig
-	jobs   chan command
+	jobs   chan seat
 	drain  chan struct{}
 	teller chan struct{}
 	wg     sync.WaitGroup
@@ -87,7 +87,7 @@ func NewWorker(cfg WorkerConfig) *Worker {
 	cfg.Limits = cfg.Limits.WithDefaults()
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &Worker{
-		cfg: cfg, jobs: make(chan command, cfg.Queue),
+		cfg: cfg, jobs: make(chan seat, cfg.Queue),
 		drain: make(chan struct{}), teller: make(chan struct{}), cancel: cancel,
 	}
 	for range cfg.Workers {
@@ -121,35 +121,37 @@ func (w *Worker) Stop(ctx context.Context) {
 
 func (w *Worker) serve(ctx context.Context) {
 	defer w.wg.Done()
-	for cmd := range w.jobs {
-		w.carry(ctx, cmd)
+	for held := range w.jobs {
+		if cmd, ok := <-held.ch; ok {
+			w.carry(ctx, cmd)
+		}
 	}
 }
 
 var (
-	// errQueueFull rolls the transaction back with the delivery unrecorded, so GitHub's redelivery is a fresh attempt rather than a duplicate godwit drops.
+	// errQueueFull is answered before the delivery is recorded, so GitHub's redelivery is a fresh attempt rather than a duplicate godwit drops.
 	errQueueFull = errors.New("the github app has more commands queued than it can hold; retry the delivery")
 	errStopping  = errors.New("the github app is shutting down")
 )
 
-func (w *Worker) enqueue(ctx context.Context, tx txn, cmd command) error {
-	if err := tx.Audit(ctx, controlplane.AuditEntry{
-		Actor:  cmd.principal.Name,
-		Action: controlplane.AuditWebhookCommand,
-		Detail: cmd.detail(),
-	}); err != nil {
-		return err
-	}
+type seat struct{ ch chan command }
+
+func (s seat) send(cmd command) { s.ch <- cmd }
+
+func (s seat) release() { close(s.ch) }
+
+func (w *Worker) reserve() (slot, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if w.closed {
-		return errStopping
+		return nil, errStopping
 	}
+	held := seat{ch: make(chan command, 1)}
 	select {
-	case w.jobs <- cmd:
-		return nil
+	case w.jobs <- held:
+		return held, nil
 	default:
-		return errQueueFull
+		return nil, errQueueFull
 	}
 }
 

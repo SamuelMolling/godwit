@@ -573,34 +573,14 @@ func TestACommandWithNoCheckOfItsOwnStillReports(t *testing.T) {
 	}
 }
 
-func TestAnAcceptedCommandIsAuditedAndQueued(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, planningRepo(), WorkerConfig{})
-	store := newStore(nil)
-	if err := h.worker.enqueue(context.Background(), store, planCommand()); err != nil {
+func (h *harness) queue(t *testing.T, cmd command) {
+	t.Helper()
+	held, err := h.worker.reserve()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store.audits) != 1 || store.audits[0].Action != controlplane.AuditWebhookCommand {
-		t.Fatalf("audits = %+v", store.audits)
-	}
-	if store.audits[0].Actor != "github:"+testRepo {
-		t.Fatalf("actor = %q", store.audits[0].Actor)
-	}
-}
-
-func TestACommandTheAuditCouldNotRecordIsNotQueued(t *testing.T) {
-	t.Parallel()
-
-	h := newHarness(t, planningRepo(), WorkerConfig{})
-	store := newStore(nil)
-	store.auditErr = errBroken
-	if err := h.worker.enqueue(context.Background(), store, planCommand()); !errors.Is(err, errBroken) {
-		t.Fatalf("err = %v", err)
-	}
-	if len(h.worker.jobs) != 0 {
-		t.Fatal("queued a command the audit refused")
-	}
+	held.send(cmd)
+	held.release()
 }
 
 func TestAFullQueueFailsTheDeliveryRatherThanDroppingIt(t *testing.T) {
@@ -609,14 +589,16 @@ func TestAFullQueueFailsTheDeliveryRatherThanDroppingIt(t *testing.T) {
 	h := newHarness(t, planningRepo(), WorkerConfig{Queue: 1, Workers: 1})
 	h.svc.hold = make(chan struct{})
 	t.Cleanup(func() { close(h.svc.hold) })
-	store := newStore(nil)
 	var full error
 	for range 8 {
-		if err := h.worker.enqueue(context.Background(), store, planCommand()); err != nil {
+		held, err := h.worker.reserve()
+		if err != nil {
 			full = err
 
 			break
 		}
+		held.send(planCommand())
+		held.release()
 	}
 	if !errors.Is(full, errQueueFull) {
 		t.Fatalf("err = %v", full)
@@ -629,8 +611,23 @@ func TestACommandArrivingAsTheAppStopsIsRefused(t *testing.T) {
 	h := newHarness(t, planningRepo(), WorkerConfig{})
 	h.worker.Stop(context.Background())
 	h.worker.Stop(context.Background())
-	if err := h.worker.enqueue(context.Background(), newStore(nil), planCommand()); !errors.Is(err, errStopping) {
+	if _, err := h.worker.reserve(); !errors.Is(err, errStopping) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAQueueSlotGivenBackCarriesNothing(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, planningRepo(), WorkerConfig{Workers: 1})
+	held, err := h.worker.reserve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	held.release()
+	h.worker.Stop(context.Background())
+	if len(h.svc.requests()) != 0 {
+		t.Fatal("a slot reserved for a command that was never sent ran one anyway")
 	}
 }
 
@@ -638,12 +635,31 @@ func TestStopCarriesOutWhatItAlreadyAccepted(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t, planningRepo(), WorkerConfig{Workers: 1})
-	if err := h.worker.enqueue(context.Background(), newStore(nil), planCommand()); err != nil {
-		t.Fatal(err)
-	}
+	h.queue(t, planCommand())
 	h.worker.Stop(context.Background())
 	if len(h.svc.requests()) != 1 {
 		t.Fatalf("plans = %d: a command godwit accepted was dropped", len(h.svc.requests()))
+	}
+}
+
+func TestStopCarriesOutACommandReservedBeforeItWasSent(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, planningRepo(), WorkerConfig{Workers: 1})
+	held, err := h.worker.reserve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		h.worker.Stop(context.Background())
+	}()
+	held.send(planCommand())
+	held.release()
+	<-stopped
+	if len(h.svc.requests()) != 1 {
+		t.Fatalf("plans = %d: a command whose slot was already taken was dropped by Stop", len(h.svc.requests()))
 	}
 }
 
@@ -652,9 +668,7 @@ func TestStopGivesUpWhenItsDeadlineDoes(t *testing.T) {
 
 	h := newHarness(t, planningRepo(), WorkerConfig{Workers: 1})
 	h.svc.hold = make(chan struct{})
-	if err := h.worker.enqueue(context.Background(), newStore(nil), planCommand()); err != nil {
-		t.Fatal(err)
-	}
+	h.queue(t, planCommand())
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	h.worker.Stop(ctx)
