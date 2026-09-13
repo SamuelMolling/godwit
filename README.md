@@ -108,17 +108,10 @@ The manual is [docs/](docs/README.md), grouped by what you are doing.
 
 | | |
 |---|---|
-| [Getting started](docs/start/getting-started.md) | dev loop, service, first run, CI |
-| [Comparison](docs/start/comparison.md) | versus Flyway, Liquibase and Atlas, including the cut list |
-| [Command reference](docs/use/cli.md) | what every command is for, in plain language, with a real example each |
-| [GitHub Action](docs/use/github-actions.md) | the workflow, the merge gate, who may command an apply, inputs and exit codes |
-| [GitHub App](docs/use/github-app.md) | the App route: no workflow and no token in the repository, just a binding |
-| [Deployment](docs/run/deployment.md) | registering a target, the credential providers and Vault end to end, Helm and ArgoCD, a staging checklist, then HA, the store, backups, retention, upgrades, metrics, notifications and logging |
-| [Configuration](docs/run/configuration.md) | every `godwit.yaml` key, `serve` flag, environment variable, the token spec and the per-command flag list |
-| [Security](docs/run/security.md) | tokens, key providers and rotation, credential providers, the scratch database, what is logged |
-| [Runbook](docs/run/runbook.md) | per symptom: the SQL to look at and the command to run |
-| [Internals](docs/README.md#internals) | the journal protocol, run states and leases, the admission gate, directives, plans, drift |
-| [API](docs/internals/api.md) | every RPC with its scope, request, response and curl |
+| [Start](docs/start/getting-started.md) | evaluating: a first run, [the approaches](docs/start/approaches.md) and what each costs, [how godwit compares](docs/start/comparison.md) |
+| [Use](docs/use/github-app.md) | opening pull requests: the [App](docs/use/github-app.md), the [Action](docs/use/github-actions.md), [neither](docs/use/standalone.md), and [every command](docs/use/cli.md) |
+| [Run](docs/run/deployment.md) | operating the service: [deployment](docs/run/deployment.md), [configuration](docs/run/configuration.md), [security](docs/run/security.md), [runbook](docs/run/runbook.md) |
+| [Internals](docs/README.md#internals) | the journal protocol, run states and leases, admission, drift, and [the API](docs/internals/api.md) |
 | [Decisions](docs/decisions/README.md) | why godwit is shaped this way, and what was refused |
 
 Also: [examples](examples/README.md) (copy-ready pipelines), [examples/deploy](examples/deploy/README.md) (the service on ingress-nginx, ECS, Docker Compose and a plain VM), [deploy/helm/godwit](deploy/helm/godwit/README.md), [deploy/argocd](deploy/argocd/README.md), the two-replica crash [demo](demo/README.md), and [AGENTS.md](AGENTS.md) for contributors.
