@@ -278,9 +278,37 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	for _, want := range []string{
 		`godwit_notifications_total{provider="slack",result="delivered"}`,
 		`godwit_notifications_total{provider="webhook",result="delivered"}`,
+		`godwit_notifications_configured{provider="slack"} 1`,
+		`godwit_notifications_configured{provider="webhook"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics missing %q", want)
 		}
+	}
+}
+
+func TestNoNotifierConfigured(t *testing.T) {
+	t.Parallel()
+	sink := &lockedBuffer{}
+	log, err := NewLogger(sink, "json", "info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseURL := startServiceCfg(t, Config{
+		Listen: "127.0.0.1:0", StoreDSN: newDatabase(t, "st"), Keys: testKeys, Holder: "r1",
+		Scheduler: controlplane.Config{Interval: 50 * time.Millisecond}, Log: log,
+	})
+
+	body := scrapeMetrics(t, baseURL)
+	for _, want := range []string{
+		`godwit_notifications_configured{provider="slack"} 0`,
+		`godwit_notifications_configured{provider="webhook"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(sink.String(), "no notification destination configured") {
+		t.Fatalf("expected start-up warning, got:\n%s", sink.String())
 	}
 }

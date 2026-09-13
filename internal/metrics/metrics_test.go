@@ -54,6 +54,8 @@ func TestEvents(t *testing.T) {
 	m.ValidationFailed("app")
 	m.DriftChecked("app", DriftDrifted)
 	m.Notified("slack", "delivered")
+	m.NotifierConfigured("slack", true)
+	m.NotifierConfigured("webhook", false)
 
 	expect(t, scrape(t, m),
 		`godwit_build_info{commit="none",version="dev"} 1`,
@@ -72,6 +74,8 @@ func TestEvents(t *testing.T) {
 		`godwit_validation_failures_total{target="app"} 1`,
 		`godwit_drift_checks_total{result="drifted",target="app"} 1`,
 		`godwit_notifications_total{provider="slack",result="delivered"} 1`,
+		`godwit_notifications_configured{provider="slack"} 1`,
+		`godwit_notifications_configured{provider="webhook"} 0`,
 	)
 }
 

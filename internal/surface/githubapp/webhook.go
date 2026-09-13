@@ -39,6 +39,7 @@ const (
 	resultIgnored   = "ignored"
 	resultStale     = "stale"
 	resultRefused   = "refused"
+	resultUnbound   = "unbound"
 	resultUnsigned  = "unsigned"
 	resultOversize  = "oversize"
 	resultMalformed = "malformed"
@@ -205,8 +206,13 @@ func (r *Receiver) handle(ctx context.Context, event, delivery string, body []by
 }
 
 func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd command) (int, string, string) {
+	held, err := r.cfg.Runner.reserve()
+	if err != nil {
+		return r.unanswered(delivery, event, err)
+	}
+	defer held.release()
 	duplicate := false
-	err := r.cfg.Store.transact(ctx, func(tx txn) error {
+	err = r.cfg.Store.transact(ctx, func(tx txn) error {
 		first, err := tx.RecordDelivery(ctx, delivery, event, cmd.repository)
 		if err != nil {
 			return err
@@ -217,28 +223,32 @@ func (r *Receiver) enqueue(ctx context.Context, delivery, event string, cmd comm
 			return nil
 		}
 
-		return r.cfg.Runner.enqueue(ctx, tx, cmd)
+		return tx.Audit(ctx, controlplane.AuditEntry{
+			Actor: cmd.principal.Name, Action: controlplane.AuditWebhookCommand, Detail: cmd.detail(),
+		})
 	})
 	switch {
 	case err != nil:
-		r.cfg.Log.Error("webhook enqueue failed", "delivery", delivery, "event", event, "error", err)
-
-		return http.StatusInternalServerError, resultError, "godwit could not answer this delivery"
+		return r.unanswered(delivery, event, err)
 	case duplicate:
 		return http.StatusAccepted, resultDuplicate, "delivery " + delivery + " was already handled"
 	}
+	held.send(cmd)
 
 	return http.StatusAccepted, resultAccepted,
 		fmt.Sprintf("godwit %s accepted at %s for %s", cmd.name, short(cmd.head), cmd.projectNames())
 }
 
+func (r *Receiver) unanswered(delivery, event string, err error) (int, string, string) {
+	r.cfg.Log.Error("webhook enqueue failed", "delivery", delivery, "event", event, "error", err)
+
+	return http.StatusInternalServerError, resultError, "godwit could not answer this delivery"
+}
+
 func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payload) (*command, *outcome, *request, error) {
 	req, out := parse(event, p)
-	if out != nil {
-		return nil, out, req, nil
-	}
-	if out := r.fresh(req); out != nil {
-		return nil, out, req, nil
+	if req == nil {
+		return nil, out, nil, nil
 	}
 	stored, err := r.cfg.Store.GitHubBindings(ctx)
 	if err != nil {
@@ -246,9 +256,13 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	}
 	bound := bind(stored, req.repository)
 	if len(bound) == 0 {
-		return nil, refused("repository %s is bound to no godwit target, so it gets nothing here — not an apply "+
-			"and not a plan; ask a godwit operator to bind it (godwit target add <target> --github-repo %s)",
-			req.repository, req.repository), req, nil
+		return nil, unbound(req), req, nil
+	}
+	if out != nil {
+		return nil, out, req, nil
+	}
+	if out := r.fresh(req); out != nil {
+		return nil, out, req, nil
 	}
 	at, out, err := r.resolve(ctx, req, p)
 	if out != nil || err != nil {
@@ -256,13 +270,13 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	}
 	res, err := resolve(ctx, at.repo, bound, req, at.head, at.files)
 	if errors.Is(err, errTruncated) {
-		return nil, tooLarge(req, err), req, nil
+		return nil, checked(at.head, tooLarge(req, err)), req, nil
 	}
 	if err != nil {
 		return nil, nil, req, err
 	}
 	if len(res.planned) == 0 {
-		return nil, nothingToDo(req, res), req, nil
+		return nil, checked(at.head, nothingToDo(req, res)), req, nil
 	}
 	head := at.head
 
@@ -313,25 +327,21 @@ func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outc
 }
 
 func (r *Receiver) mark(ctx context.Context, repo repoView, req *request, out *outcome) {
-	name, ok := checks[req.name]
-	if !ok {
+	if !out.check {
 		return
 	}
-	head := req.headSHA
-	if !validSHA(head) {
-		pr, err := repo.pullRequest(ctx, req.number)
-		if err != nil || !validSHA(pr.Head) {
-			r.cfg.Log.Warn("could not set the refusal check", "repository", req.repository,
-				"pull_request", req.number, "check", name, "error", err)
-
-			return
-		}
-		head = pr.Head
-	}
-	if err := repo.check(ctx, name, head, "godwit "+req.name+" refused", out.message); err != nil {
+	name := checks[req.name]
+	if err := repo.check(ctx, name, out.head, "godwit "+req.name+" refused", out.message); err != nil {
 		r.cfg.Log.Warn("could not set the refusal check", "repository", req.repository,
 			"pull_request", req.number, "check", name, "error", err)
 	}
+}
+
+func unbound(req *request) *outcome {
+	return &outcome{result: resultUnbound, message: fmt.Sprintf(
+		"repository %s is bound to no godwit target, so it gets nothing here — not an apply and not a plan; "+
+			"ask a godwit operator to bind it (godwit target add <target> --github-repo %s)",
+		req.repository, req.repository)}
 }
 
 func refusal(req *request, out *outcome) string {

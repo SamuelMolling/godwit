@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +34,7 @@ type fakeStore struct {
 	bindings  map[string]string
 	bindErr   error
 	txErr     error
+	commitErr error
 	seen      map[string]bool
 	recordErr error
 	audits    []controlplane.AuditEntry
@@ -47,11 +50,18 @@ func (s *fakeStore) GitHubBindings(context.Context) (map[string]string, error) {
 	return s.bindings, s.bindErr
 }
 
-func (s *fakeStore) transact(ctx context.Context, fn func(txn) error) error {
+func (s *fakeStore) transact(_ context.Context, fn func(txn) error) error {
 	if s.txErr != nil {
 		return s.txErr
 	}
-	if err := fn(s); err != nil {
+	seen, audits := maps.Clone(s.seen), slices.Clone(s.audits)
+	err := fn(s)
+	if err == nil && s.commitErr != nil {
+		err = s.commitErr
+	}
+	if err != nil {
+		s.seen, s.audits = seen, audits
+
 		return err
 	}
 	s.commits++
@@ -245,18 +255,24 @@ type fixture struct {
 }
 
 type fakeRunner struct {
-	got []command
-	err error
+	got      []command
+	released int
+	err      error
 }
 
-func (r *fakeRunner) enqueue(_ context.Context, _ txn, cmd command) error {
+func (r *fakeRunner) reserve() (slot, error) {
 	if r.err != nil {
-		return r.err
+		return nil, r.err
 	}
-	r.got = append(r.got, cmd)
 
-	return nil
+	return &fakeSlot{runner: r}, nil
 }
+
+type fakeSlot struct{ runner *fakeRunner }
+
+func (s *fakeSlot) send(cmd command) { s.runner.got = append(s.runner.got, cmd) }
+
+func (s *fakeSlot) release() { s.runner.released++ }
 
 func newFixture(t *testing.T, bindings map[string]string, repo *fakeRepo) *fixture {
 	t.Helper()

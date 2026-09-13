@@ -66,6 +66,13 @@ deliveries come to the App's own URL.
 The check is named `godwit/plan` for a plan and `godwit/applied` for `apply`, `confirm` and `revert`. When one
 pull request plans against more than one target, the target is appended: `godwit/applied (payments)`.
 
+**A refusal comments freely and checks sparingly.** A check run is last-writer-wins on its `(name, head_sha)`,
+so a red `godwit/plan` replaces the green one a reviewer is looking at, and where that check is required it
+holds the merge. godwit therefore sets a refusal check only once the delivery has got past authorization — the
+commander is allowed to command this repository, or it is godwit's own autoplan the fork and event rules let
+through. A refusal decided before that (a command that does not parse, a commander without write, a missing
+approval, a fork, a delivery too old to act on) is a comment and nothing more, on the head godwit resolved.
+
 ## Events
 
 Subscribe to exactly three. godwit ignores every other delivery with `godwit does not act on <event> deliveries`.
@@ -116,10 +123,16 @@ passed. The `:dir` form binds one subdirectory of a monorepo: `--github-repo myo
 means godwit reads `services/billing/godwit.yaml` and only considers files under `services/billing/`. A
 repository bound with no `:dir` may use any directory in it.
 
-An unbound repository gets nothing — not an apply and not a plan:
+An unbound repository gets nothing — not an apply, not a plan, and **not an answer**. godwit does not open the
+repository, mint a token, comment or set a check; the delivery is answered `202 unbound` and the reason stands
+in the service log alone:
 
 > repository myorg/api is bound to no godwit target, so it gets nothing here — not an apply and not a plan;
 > ask a godwit operator to bind it (`godwit target add <target> --github-repo myorg/api`)
+
+So the first `godwit plan` on a repository nobody has bound looks like silence. That is deliberate: the App is
+installed on repositories godwit serves nothing, and anyone who can comment on a pull request in one of them
+could otherwise make godwit work through its installation's whole API budget.
 
 A repository bound to target `app` whose `godwit.yaml` names target `billing` is refused the same way a
 repository bound to nothing is, and with the same message: telling the two apart would hand a repository the
@@ -230,12 +243,14 @@ says nothing more.
 | `405` | the signature verified, but the request is not a `POST` |
 | `400` | no `X-GitHub-Delivery`, or a body that is not the GitHub JSON payload |
 | `202 accepted` | verified, authorised, recorded — the command itself runs behind the answer |
-| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing, a pull request no bound project plans), refused (unbound, unauthorised, stale, a fork, a listing godwit could not read the whole of), or a duplicate delivery id |
-| `500` | the store or GitHub could not be reached, or the worker queue had no room. Nothing was recorded, so GitHub's redelivery is a fresh attempt |
+| `202` with a reason | ignored (an event or action godwit does not act on, a comment that names nothing, a pull request no bound project plans), unbound (the repository is bound to no target, and godwit answers nowhere else), refused (unauthorised, stale, a fork, a listing godwit could not read the whole of), or a duplicate delivery id |
+| `500` | the store or GitHub could not be reached, or the worker queue had no room. Nothing was recorded and nothing was queued, so GitHub's redelivery is a fresh attempt |
 
 **The command runs after the delivery is answered.** GitHub wants a webhook answered in seconds and a plan
 builds scratch databases, so the delivery is recorded, answered `202`, and carried out by `--github-workers`
-workers (2 by default) behind it. The queue is in memory: a replica that dies between the `202` and the plan
-loses that command, the check stays open, and the way out is to comment `godwit plan` again — nothing ran.
+workers (2 by default) behind it. The queue place is taken **before** the delivery is recorded and the command
+is handed to it only **after** that transaction commits, so a commit that fails leaves nothing queued and
+nothing recorded. The queue is in memory: a replica that dies between the commit and the plan loses that
+command, the check stays open, and the way out is to comment `godwit plan` again — nothing ran.
 
 Every delivery increments `godwit_webhook_deliveries_total{event,result}`.
