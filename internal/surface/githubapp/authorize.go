@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/SamuelMolling/godwit/internal/authz"
+	"github.com/SamuelMolling/godwit/internal/comment"
 )
 
 type policyView struct{ repoView }
@@ -61,10 +62,22 @@ func commandOf(req *request) authz.Command {
 		Association: req.association, Number: req.number, ReviewSHA: req.reviewSHA,
 	}
 	if req.cmd != nil {
-		c.CommentSHA = req.cmd.Sha
+		c.CommentSHA, c.Overrides = req.cmd.Sha, overrides(req.cmd)
 	}
 
 	return c
+}
+
+func overrides(c *comment.Command) []string {
+	var out []string
+	if c.AllowDataLoss {
+		out = append(out, "--allow-data-loss")
+	}
+	if c.Force {
+		out = append(out, "--force")
+	}
+
+	return out
 }
 
 func outcomeOf(ref string) *outcome {

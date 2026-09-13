@@ -515,12 +515,25 @@ func TestPullRequestStateGuards(t *testing.T) {
 	}
 }
 
-func TestRevertNeedsNoApproval(t *testing.T) {
+func TestRevertNeedsAnApproval(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit revert", "MEMBER", "alice", now)),
+		http.StatusAccepted, "no approving review standing on it")
+
+	g := newFixture(t, bound, approvedBy(t, "bob"))
+	check(t, g.post(t, eventIssueComment, "d1", commentBody("godwit revert", "MEMBER", "alice", now)),
 		http.StatusAccepted, "godwit revert accepted")
+}
+
+func TestARevertFromACommentMayNotRemoveTheDataLossGate(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, approvedBy(t, "bob"))
+	check(t, f.post(t, eventIssueComment, "d1",
+		commentBody("godwit revert --allow-data-loss --force", "MEMBER", "alice", now)),
+		http.StatusAccepted, "a comment may not remove a gate on what a revert drops (--allow-data-loss --force)")
 }
 
 func TestAssociationNarrows(t *testing.T) {

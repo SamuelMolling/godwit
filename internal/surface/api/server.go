@@ -143,7 +143,8 @@ func rpcErr(err error) *connect.Error {
 		errors.Is(err, controlplane.ErrNotRevertable), errors.Is(err, controlplane.ErrBaselineRun),
 		errors.Is(err, engine.ErrAlreadyMigrated), errors.Is(err, controlplane.ErrAppliedContent),
 		errors.Is(err, engine.ErrHistoryConflict), errors.Is(err, controlplane.ErrDiverged),
-		errors.Is(err, controlplane.ErrJournalOnSearchPath), errors.Is(err, controlplane.ErrBaselineFormat):
+		errors.Is(err, controlplane.ErrJournalOnSearchPath), errors.Is(err, controlplane.ErrBaselineFormat),
+		errors.Is(err, creds.ErrCredentialConfig):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	default:
 		return connect.NewError(connect.CodeInternal, safe(err))

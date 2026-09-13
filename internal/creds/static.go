@@ -15,7 +15,7 @@ type Static struct {
 func (p Static) DSN(ctx context.Context, config map[string]string) (string, error) {
 	enc, ok := config[DSNKey]
 	if !ok {
-		return "", errors.New(`static target config missing "dsn"`)
+		return "", Misconfigured(errors.New(`static target config missing "dsn"`))
 	}
 	dsn, err := p.Keys.Open(ctx, enc)
 	if err != nil {
