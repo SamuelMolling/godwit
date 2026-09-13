@@ -865,6 +865,7 @@ Set in [configuration](configuration.md#admission-limits); this is when to move 
 | `godwit_api_requests_total` | counter | `method`, `code` | connect code per RPC |
 | `godwit_api_request_duration_seconds` | histogram | `method` | |
 | `godwit_notifications_total` | counter | `provider`, `result` | `delivered`, `failed`, `dropped` |
+| `godwit_notifications_configured` | gauge | `provider` | 1 if `webhook` or `slack` has a destination, set once at start-up regardless of whether either has ever fired |
 | `godwit_webhook_deliveries_total` | counter | `event`, `result` | GitHub App deliveries, including the ones refused before they were parsed |
 
 Alert rules to start from:
@@ -906,6 +907,11 @@ groups:
   - alert: GodwitNotificationsDropped
     expr: increase(godwit_notifications_total{result=~"dropped|failed"}[10m]) > 0
     labels: {severity: ticket}
+  - alert: GodwitNotificationsUnconfigured
+    expr: max(godwit_notifications_configured) == 0
+    for: 10m
+    labels: {severity: ticket}
+    annotations: {summary: "no webhook or Slack destination is configured; drift and run events are recorded but nobody is told"}
   - alert: GodwitApiErrors
     expr: sum(rate(godwit_api_requests_total{code=~"internal|unavailable"}[5m])) > 0
     labels: {severity: ticket}
@@ -950,6 +956,8 @@ Configured by environment only ([configuration](configuration.md#environment)). 
 **Slack** (`GODWIT_SLACK_TOKEN` + `GODWIT_SLACK_CHANNEL`): Block Kit messages. `GODWIT_SLACK_MODE=thread` (default) posts one root per run (`created`) and replies in its thread as it progresses, updating the root's state line; drift gets a fresh root per detection under key `drift:<target>`, with `resolved`/`accepted` as replies. `edit` mode keeps a single message per key and rewrites it (`chat.update`). Delivery retries three times on 429 (honouring `Retry-After`), 5xx and network errors with 1s/2s/4s backoff; `detail` is cut at 500 characters. With `GODWIT_PUBLIC_URL` set, every run message has an "Open run" button to `<url>/ui/runs/<id>`; the same setting, read from the CLI's own environment, is what links the run and its plan from [`godwit run report`](../use/cli.md#godwit-run-report). The bot needs `chat:write` in the channel.
 
 Delivery is asynchronous: one worker per provider with a queue of 256 events; a full queue drops the event with `notification dropped` in the log and `result="dropped"` in the metric. Shutdown drains the queues.
+
+Drift monitoring runs whether or not either destination is set — a deployment with neither configured still detects and records drift, it just has nobody to tell. `godwit_notifications_configured` is set once at start-up from `GODWIT_WEBHOOK_URL` and `GODWIT_SLACK_TOKEN`/`GODWIT_SLACK_CHANNEL` alone, so it reads `0` before any event has ever needed a destination; a `no notification destination configured` warning is logged at start-up for the same reason. This is separate from `godwit_notifications_total{result="failed"}`, which only appears once a configured destination has actually rejected a delivery — the two together tell apart "notifications are off" from "notifications are on and broken".
 
 ## Logging
 
