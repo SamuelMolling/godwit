@@ -9,6 +9,14 @@ import (
 	"github.com/SamuelMolling/godwit/internal/comment"
 )
 
+// The parentheses put these outside the character set of a github login, so neither can ever collide with a person.
+const (
+	autoplanActor = "(autoplan)"
+	reportActor   = "(report)"
+)
+
+func forgeActor(repository, who string) string { return "github:" + repository + ":" + who }
+
 // scopes hold nothing above pipeline, so no webhook can reach the RPC that binds a repository to a target.
 var scopes = map[string]authz.Scope{
 	"plan":    authz.ScopeRead,
@@ -25,7 +33,6 @@ type command struct {
 	installation int64
 	number       int
 	head         string
-	login        string
 	principal    authz.Principal
 	bound        bindings
 	name         string
@@ -53,9 +60,6 @@ func (c command) detail() string {
 		"delivery=" + c.delivery,
 		"bound=" + strings.Join(c.bound.targets(), "|"),
 		"projects=" + c.projectNames(),
-	}
-	if c.login != "" {
-		parts = append(parts, "login="+c.login)
 	}
 
 	return strings.Join(parts, " ")

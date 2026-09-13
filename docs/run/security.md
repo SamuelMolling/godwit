@@ -174,6 +174,8 @@ Notifications carry the same fields as the log plus the error text; a webhook UR
 
 `cp_audit` records every admitted mutation with actor, action, run id, target and detail (`run.create` detail is `rollout=<policy> migrations=<n> acked=<codes> source=<source>`; `target.baseline` is `version=<v> migrations=<n>`; `run.park` carries the reason). `ListAudit` needs `read`. Failed writes are logged as `audit write failed` at error level and do not fail the request; alert on that line if the trail matters.
 
+The actor is a token's name, `ui:<name>` from the UI, or `github:<owner>/<repo>:<login>` for anything the GitHub App carried ([actors and provenance](../internals/runs.md#actors-and-provenance)). That last one puts a GitHub login into `cp_audit`, `cp_runs.created_by`, the service log and every notification sink — the same login that is already visible on the pull request the command was posted on, and the point of recording it, but a notification webhook is an audience for it.
+
 ## Web UI
 
 Why the UI has no account model of its own: [decision 0004](../decisions/0004-ui-is-a-scoped-client.md).

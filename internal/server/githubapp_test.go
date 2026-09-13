@@ -169,10 +169,10 @@ func TestWebhookIsItsOwnListener(t *testing.T) {
 		t.Fatalf("audit = %+v, want exactly one webhook entry after a delivery and its replay", webhookEntries)
 	}
 	e := webhookEntries[0]
-	if e.Actor != "github:"+webhookRepo {
-		t.Fatalf("actor = %q, want the installation, not the person", e.Actor)
+	if e.Actor != "github:"+webhookRepo+":alice" {
+		t.Fatalf("actor = %q, want the repository and the login that commanded it", e.Actor)
 	}
-	for _, want := range []string{"login=alice", "delivery=d1", "command=apply"} {
+	for _, want := range []string{"delivery=d1", "command=apply"} {
 		if !strings.Contains(e.Detail, want) {
 			t.Fatalf("detail = %q, want it to carry %q", e.Detail, want)
 		}

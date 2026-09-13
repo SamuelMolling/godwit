@@ -1,6 +1,7 @@
 package githubapp
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -265,12 +266,13 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 		return nil, nothingToDo(req, res), req, nil
 	}
 	head := at.head
+	who := cmp.Or(req.commander, autoplanActor)
 
 	return &command{
 		delivery: delivery, event: event, repository: req.repository,
 		repositoryID: p.Repository.ID, installation: p.Installation.ID,
-		number: req.number, head: head, login: req.commander,
-		principal: authz.Principal{Name: "github:" + req.repository, Scope: scopes[req.name]},
+		number: req.number, head: head,
+		principal: authz.Principal{Name: forgeActor(req.repository, who), Scope: scopes[req.name]},
 		bound:     bound, name: req.name, cmd: req.cmd, projects: res.planned,
 		source: "github.com/" + req.repository + "@" + head,
 	}, nil, req, nil

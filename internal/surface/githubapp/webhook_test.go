@@ -72,13 +72,13 @@ func TestVerifiedRequestIsAccepted(t *testing.T) {
 		t.Fatalf("runner saw %d commands, want 1", len(f.runner.got))
 	}
 	cmd := f.runner.got[0]
-	if cmd.name != "apply" || cmd.login != "alice" || cmd.head != testHead || cmd.delivery != "d1" {
+	if cmd.name != "apply" || cmd.head != testHead || cmd.delivery != "d1" {
 		t.Fatalf("command = %+v", cmd)
 	}
 	if cmd.source != "github.com/"+testRepo+"@"+testHead {
 		t.Fatalf("source = %q", cmd.source)
 	}
-	if cmd.principal.Name != "github:"+testRepo || cmd.principal.Scope != "pipeline" {
+	if cmd.principal.Name != forgeActor(testRepo, "alice") || cmd.principal.Scope != "pipeline" {
 		t.Fatalf("principal = %+v", cmd.principal)
 	}
 }
@@ -403,7 +403,7 @@ func TestPullRequestPlansTheProjectItTouched(t *testing.T) {
 	check(t, f.post(t, eventPullRequest, "d1", pullBodyJSON("synchronize", testRepo, testHead)),
 		http.StatusAccepted, "godwit plan accepted at 1111111 for orders")
 	cmd := f.runner.got[0]
-	if cmd.login != "" || cmd.principal.Scope != "read" || cmd.cmd != nil {
+	if cmd.principal.Name != forgeActor(testRepo, autoplanActor) || cmd.principal.Scope != "read" || cmd.cmd != nil {
 		t.Fatalf("command = %+v", cmd)
 	}
 	if len(cmd.projects) != 1 || cmd.projects[0].target != "orders" || cmd.projects[0].dir != "db/migrations" {

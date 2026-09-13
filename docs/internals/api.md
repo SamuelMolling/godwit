@@ -31,7 +31,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 ## Authentication and scopes
 
-`Authorization: Bearer <secret>` where the secret matches an entry of `GODWIT_TOKENS` ([token spec](../run/configuration.md#token-spec)). Without any configured token every caller is `anonymous` with scope `admin`. The token's name is the run's `createdBy` and the audit `actor`.
+`Authorization: Bearer <secret>` where the secret matches an entry of `GODWIT_TOKENS` ([token spec](../run/configuration.md#token-spec)). Without any configured token every caller is `anonymous` with scope `admin`. The token's name is the run's `createdBy` and the audit `actor`. The GitHub App calls in process with no token and carries `github:<owner>/<repo>:<login>` instead ([actors and provenance](runs.md#actors-and-provenance)).
 
 | Scope | RPCs |
 |---|---|

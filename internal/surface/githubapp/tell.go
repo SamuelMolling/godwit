@@ -75,7 +75,7 @@ func (w *Worker) outcome(ctx context.Context, g controlplane.GitHubRun) {
 
 func (w *Worker) rendered(ctx context.Context, g controlplane.GitHubRun) (body, conclusion, url string, err error) {
 	// The reporter reads; it never reaches a procedure a command's own scope had to be checked against.
-	ctx = authz.WithPrincipal(ctx, authz.Principal{Name: "github:" + g.Repository, Scope: authz.ScopeRead})
+	ctx = authz.WithPrincipal(ctx, authz.Principal{Name: forgeActor(g.Repository, reportActor), Scope: authz.ScopeRead})
 	got, err := w.cfg.Service.GetRun(ctx, connect.NewRequest(&godwitv1.GetRunRequest{RunId: g.RunID}))
 	if err != nil {
 		return "", "", "", err
