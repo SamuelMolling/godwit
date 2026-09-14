@@ -62,10 +62,10 @@ var errNoStore = errors.New("this target names no credential store, and godwit r
 func (p vaults) DSN(ctx context.Context, config map[string]string) (string, error) {
 	name := config[StoreConfigKey]
 	if name == "" {
-		return "", errNoStore
+		return "", Misconfigured(errNoStore)
 	}
 	if p.lookup == nil {
-		return "", fmt.Errorf("credential store %q: this service resolves no stores", name)
+		return "", Misconfigured(fmt.Errorf("credential store %q: this service resolves no stores", name))
 	}
 	store, err := p.lookup(ctx, name)
 	if err != nil {
@@ -77,8 +77,8 @@ func (p vaults) DSN(ctx context.Context, config map[string]string) (string, erro
 	}
 	if store.TokenEnv != "" {
 		if v.Token = os.Getenv(store.TokenEnv); v.Token == "" {
-			return "", fmt.Errorf("credential store %q reads its token from %s, and this process has no such value",
-				name, store.TokenEnv)
+			return "", Misconfigured(fmt.Errorf("credential store %q reads its token from %s, and this process has no such value",
+				name, store.TokenEnv))
 		}
 	}
 
@@ -89,10 +89,10 @@ func (p vaults) DSN(ctx context.Context, config map[string]string) (string, erro
 func (p Vault) DSN(ctx context.Context, config map[string]string) (string, error) {
 	path, ok := config[PathKey]
 	if !ok {
-		return "", errors.New(`vault target config missing "path"`)
+		return "", Misconfigured(errors.New(`vault target config missing "path"`))
 	}
 	if p.Address == "" {
-		return "", errors.New("this vault has no address")
+		return "", Misconfigured(errors.New("this vault has no address"))
 	}
 	token, err := p.token(ctx)
 	if err != nil {

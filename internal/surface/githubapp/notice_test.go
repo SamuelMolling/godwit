@@ -153,35 +153,50 @@ func TestANoticeThatCannotOpenTheRepositoryIsLoggedAndDropped(t *testing.T) {
 		http.StatusInternalServerError, "could not answer")
 }
 
-func TestARefusalWithNoCheckOfItsOwn(t *testing.T) {
+func TestARefusalGodwitNeverGotPastAuthorizationIsTheCommentAlone(t *testing.T) {
 	t.Parallel()
 
-	repo := repoWith(t, []string{"src/app.js"}, map[string]string{"godwit.yaml": ordersYAML})
-	f := newFixture(t, bound, repo)
-	old := now.Add(-2 * time.Hour)
-	body := strings.Replace(commentBody("godwit apply", "MEMBER", "alice", old), `"body":"godwit apply"`,
-		`"id":77,"body":"godwit apply"`, 1)
-	f.post(t, eventIssueComment, "d1", body)
-	if len(repo.notices) != 1 {
-		t.Fatalf("notices = %v", repo.notices)
-	}
-	if len(repo.checks) != 1 || !strings.HasPrefix(repo.checks[0], "godwit/applied@"+testHead) {
-		t.Fatalf("checks = %v", repo.checks)
+	for _, tc := range []struct {
+		name, want string
+		at         time.Time
+		mutate     func(repo *fakeRepo)
+	}{
+		{"a delivery too old to act on", "past the 1h0m0s", now.Add(-2 * time.Hour), func(*fakeRepo) {}},
+		{
+			"a commander godwit would not let command it", "not write or admin", now,
+			func(repo *fakeRepo) { repo.perm = map[string]string{} },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"},
+				map[string]string{"godwit.yaml": ordersYAML})
+			tc.mutate(repo)
+			f := newFixture(t, bound, repo)
+			check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", tc.at)),
+				http.StatusAccepted, tc.want)
+			if len(repo.notices) != 1 {
+				t.Fatalf("notices = %v, want the commander still told why", repo.notices)
+			}
+			if len(repo.checks) != 0 {
+				t.Fatalf("checks = %v, want none: a check a commander is not allowed to ask for is one they could "+
+					"turn red on a head godwit already passed", repo.checks)
+			}
+		})
 	}
 }
 
-func TestARefusalOnAHeadGodwitCannotReadIsTheCommentAlone(t *testing.T) {
+func TestARefusalPastAuthorizationMarksTheHeadGodwitJudged(t *testing.T) {
 	t.Parallel()
 
 	repo := repoWith(t, []string{"src/app.js"}, map[string]string{"godwit.yaml": ordersYAML})
-	repo.pullErr = errBroken
+	repo.pr.Head = testOther
 	f := newFixture(t, bound, repo)
-	f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now.Add(-2*time.Hour)))
-	if len(repo.notices) != 1 {
-		t.Fatalf("notices = %v, want the comment still posted", repo.notices)
-	}
-	if len(repo.checks) != 0 {
-		t.Fatalf("checks = %v, want none on a head godwit could not read", repo.checks)
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+		http.StatusAccepted, "changes nothing any bound project")
+	if len(repo.checks) != 1 || !strings.HasPrefix(repo.checks[0], "godwit/applied@"+testOther) {
+		t.Fatalf("checks = %v, want one on the head authorization resolved", repo.checks)
 	}
 }
 
@@ -195,17 +210,14 @@ func TestARefusedCheckThatFailsNeverFailsTheDelivery(t *testing.T) {
 		http.StatusAccepted, "does not parse")
 }
 
-func TestAnUnboundRepositoryIsToldOnEveryEventItCanBeToldOn(t *testing.T) {
+func TestAnUnboundRepositoryIsAnsweredOnNoEventAtAll(t *testing.T) {
 	t.Parallel()
 
 	repo := repoWith(t, nil, nil)
 	f := newFixture(t, map[string]string{"payments": "someone/else"}, repo)
 	f.post(t, eventPullRequest, "d1", pullBodyJSON("opened", testRepo, testHead))
-	if len(repo.notices) != 1 || !strings.Contains(repo.notices[0], "bound to no godwit target") {
-		t.Fatalf("notices = %v", repo.notices)
-	}
-	if len(repo.checks) != 1 || !strings.HasPrefix(repo.checks[0], "godwit/plan@"+testHead) {
-		t.Fatalf("checks = %v", repo.checks)
+	if len(repo.notices) != 0 || len(repo.checks) != 0 {
+		t.Fatalf("notices = %v, checks = %v, want silence", repo.notices, repo.checks)
 	}
 }
 
@@ -227,8 +239,8 @@ func TestAMalformedCommandIsAnsweredWithoutACheckItNeverNamed(t *testing.T) {
 func TestARefusalGodwitCannotEvenOpenTheRepositoryToSay(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, map[string]string{"payments": "someone/else"}, repoWith(t, nil, nil))
+	f := newFixture(t, bound, repoWith(t, nil, nil))
 	f.api.err = errBroken
-	check(t, f.post(t, eventPullRequest, "d1", pullBodyJSON("opened", testRepo, testHead)),
-		http.StatusAccepted, "bound to no godwit target")
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply --unknown", "MEMBER", "alice", now)),
+		http.StatusAccepted, "does not understand '--unknown'")
 }

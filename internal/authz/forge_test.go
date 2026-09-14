@@ -81,6 +81,30 @@ func TestForgeAuthorizeAdmitsAnApplyAnApproverWithWriteStandsBehind(t *testing.T
 	}
 }
 
+func TestForgeAuthorizeAdmitsARevertAnApproverStandsBehind(t *testing.T) {
+	t.Parallel()
+
+	repo, c := newRepo(), command()
+	c.Name = "revert"
+	repo.reviews = []Review{{Login: "bob", State: "APPROVED"}}
+	if _, ref, err := newForge(t).Authorize(context.Background(), opens(repo), c); ref != "" || err != nil {
+		t.Fatalf("authorize = %+v %v", ref, err)
+	}
+}
+
+// A revert is the recovery path for a pull request that was applied and then closed unmerged, so it is the one command not held to an open pull request.
+func TestForgeAuthorizeAdmitsARevertOnAClosedPullRequest(t *testing.T) {
+	t.Parallel()
+
+	repo, c := newRepo(), command()
+	c.Name = "revert"
+	repo.pr.State = "closed"
+	repo.reviews = []Review{{Login: "bob", State: "APPROVED"}}
+	if _, ref, err := newForge(t).Authorize(context.Background(), opens(repo), c); ref != "" || err != nil {
+		t.Fatalf("authorize = %+v %v", ref, err)
+	}
+}
+
 func TestForgeAuthorizeRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -126,6 +150,14 @@ func TestForgeAuthorizeRefuses(t *testing.T) {
 				c.Name, r.reviews = "apply", []Review{{Login: "carol", State: "APPROVED"}}
 			},
 			"approver carol has permission",
+		},
+		{"a revert with no approval", func(_ *fakeRepo, c *Command) { c.Name = "revert" }, "no approving review standing"},
+		{
+			"a revert a comment asked to force",
+			func(r *fakeRepo, c *Command) {
+				c.Name, c.Overrides, r.reviews = "revert", []string{"--allow-data-loss", "--force"}, approved
+			},
+			"a comment may not remove a gate on what a revert drops (--allow-data-loss --force)",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

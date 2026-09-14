@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/authz"
+	"github.com/SamuelMolling/godwit/internal/controlplane"
 )
 
 var bound = map[string]string{"orders": testRepo, "billing": "other/repo"}
@@ -179,14 +180,15 @@ func TestUnboundRepositoryGetsNothing(t *testing.T) {
 			if f.store.commits != 0 || len(f.runner.got) != 0 {
 				t.Fatal("an unbound repository was acted on")
 			}
-			if len(repo.notices) != 1 || !strings.Contains(repo.notices[0], "bound to no godwit target") {
-				t.Fatalf("notices = %v, want the refusal said once on the pull request", repo.notices)
+			if len(f.api.scoped) != 0 {
+				t.Fatalf("scoped = %v, want no installation token minted for a repository godwit serves nothing",
+					f.api.scoped)
 			}
-			if len(repo.read) != 0 || len(repo.reacted) != 0 {
-				t.Fatal("an unbound repository was read as well as told")
+			if len(repo.notices) != 0 || len(repo.checks) != 0 {
+				t.Fatalf("notices = %v, checks = %v, want silence", repo.notices, repo.checks)
 			}
-			if got := f.result(t); got != resultRefused {
-				t.Fatalf("result = %s, want %s", got, resultRefused)
+			if got := f.result(t); got != resultUnbound {
+				t.Fatalf("result = %s, want %s", got, resultUnbound)
 			}
 		})
 	}
@@ -454,7 +456,7 @@ func TestFailuresBelowTheReceiverFailClosed(t *testing.T) {
 		{"the reviews cannot be read", func(f *fixture) { f.api.repo.reviewsErr = errBroken }},
 		{"the transaction cannot open", func(f *fixture) { f.store.txErr = errBroken }},
 		{"the delivery cannot be recorded", func(f *fixture) { f.store.recordErr = errBroken }},
-		{"the runner refuses", func(f *fixture) { f.runner.err = errBroken }},
+		{"the queue has no room", func(f *fixture) { f.runner.err = errBroken }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -515,12 +517,25 @@ func TestPullRequestStateGuards(t *testing.T) {
 	}
 }
 
-func TestRevertNeedsNoApproval(t *testing.T) {
+func TestRevertNeedsAnApproval(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, bound, writer(t))
 	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit revert", "MEMBER", "alice", now)),
+		http.StatusAccepted, "no approving review standing on it")
+
+	g := newFixture(t, bound, approvedBy(t, "bob"))
+	check(t, g.post(t, eventIssueComment, "d1", commentBody("godwit revert", "MEMBER", "alice", now)),
 		http.StatusAccepted, "godwit revert accepted")
+}
+
+func TestARevertFromACommentMayNotRemoveTheDataLossGate(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, approvedBy(t, "bob"))
+	check(t, f.post(t, eventIssueComment, "d1",
+		commentBody("godwit revert --allow-data-loss --force", "MEMBER", "alice", now)),
+		http.StatusAccepted, "a comment may not remove a gate on what a revert drops (--allow-data-loss --force)")
 }
 
 func TestAssociationNarrows(t *testing.T) {
@@ -594,4 +609,62 @@ func TestTheReviewThatCommandedIsStillCheckedAgainstTheHead(t *testing.T) {
 	f := newFixture(t, bound, approvedBy(t, "bob"))
 	check(t, f.post(t, eventReview, "d1", reviewBodyJSON(testOther, now)),
 		http.StatusAccepted, "the head moved after the review")
+}
+
+func TestAnUnboundRepositoryCannotMakeGodwitSpeakByMistypingACommand(t *testing.T) {
+	t.Parallel()
+
+	repo := writer(t)
+	f := newFixture(t, map[string]string{"payments": "someone/else"}, repo)
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply --unknown", "MEMBER", "alice", now)),
+		http.StatusAccepted, "bound to no godwit target")
+	if len(f.api.scoped) != 0 || len(repo.notices) != 0 {
+		t.Fatalf("scoped = %v, notices = %v, want silence", f.api.scoped, repo.notices)
+	}
+}
+
+func TestACommitThatFailsQueuesNothingAndLetsTheRedeliveryRunItOnce(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, approvedBy(t, "bob"))
+	f.store.commitErr = errBroken
+	body := commentBody("godwit apply", "MEMBER", "alice", now)
+	check(t, f.post(t, eventIssueComment, "d1", body), http.StatusInternalServerError, "could not answer this delivery")
+	if len(f.runner.got) != 0 {
+		t.Fatal("a command whose delivery was never recorded is queued and will run")
+	}
+	if f.runner.released != 1 {
+		t.Fatalf("released = %d, want the queue slot given back", f.runner.released)
+	}
+	f.store.commitErr = nil
+	check(t, f.post(t, eventIssueComment, "d1", body), http.StatusAccepted, "godwit apply accepted")
+	if len(f.runner.got) != 1 {
+		t.Fatalf("runner saw %d commands, want the redelivery to run it exactly once", len(f.runner.got))
+	}
+}
+
+func TestAnAcceptedCommandIsAuditedInTheTransactionThatRecordsIt(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, approvedBy(t, "bob"))
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+		http.StatusAccepted, "accepted")
+	if len(f.store.audits) != 1 || f.store.audits[0].Action != controlplane.AuditWebhookCommand {
+		t.Fatalf("audits = %+v", f.store.audits)
+	}
+	if f.store.audits[0].Actor != forgeActor(testRepo, "alice") {
+		t.Fatalf("actor = %q, want the repository and the login that commanded it", f.store.audits[0].Actor)
+	}
+}
+
+func TestACommandTheAuditRefusedIsNotQueued(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, approvedBy(t, "bob"))
+	f.store.auditErr = errBroken
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit apply", "MEMBER", "alice", now)),
+		http.StatusInternalServerError, "could not answer this delivery")
+	if len(f.runner.got) != 0 || f.store.commits != 0 {
+		t.Fatal("a command the audit refused was queued")
+	}
 }

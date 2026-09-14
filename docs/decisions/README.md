@@ -31,6 +31,8 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0021](0021-a-target-names-the-vault-its-credentials-live-in.md) | A target names the Vault its credentials live in, and there is no other one | #136 |
 | [0022](0022-control-plane-data-is-not-chart-configuration.md) | Control-plane data is not chart configuration: targets and stores are registered, not declared | #138 |
 | [0023](0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) | The token godwit presents is minted for the Vault it goes to, and the host allowlist goes | #141, #145 |
+| [0024](0024-the-api-publishes-only-what-it-classified.md) | The API publishes only the errors it classified; everything else is redacted | #160 |
+| [0025](0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md) | A revert from a comment is held to the same people as the apply, and may not remove a gate | #160 |
 
 ## Open questions
 

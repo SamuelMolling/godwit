@@ -120,6 +120,26 @@ The DSN, whichever provider produced it, exists only in the replica's memory for
 
 Both now return `cannot reach the database for this call; the detail is in the server log`, and the access log carries the original under `detail`.
 
+## What crosses into an RPC response
+
+An error a caller reads is an error the GitHub App fences into a comment on the pull request, which on a public repository is everyone. So the rule is the inverse of a filter: **an error godwit did not classify is not published**, whatever it turns out to be ([decision 0024](../decisions/0024-the-api-publishes-only-what-it-classified.md)). The `internal` code is by construction the unrecognised case, and it returns `the call failed; the detail is in the server log`.
+
+Three things reach a caller from that code, and only three:
+
+| What | Published as |
+|---|---|
+| a `pgx` parse or dial failure | `cannot reach the database for this call; the detail is in the server log` |
+| a `pgconn.PgError` — the answer a PostgreSQL server godwit dialled gave, such as `permission denied for schema orders` | that message alone, with godwit's own wrapping around it dropped |
+| anything else | `the call failed; the detail is in the server log` |
+
+The `PgError` is the exception worth stating, because it is the one the person reading the comment can act on: it is written by the server rather than by godwit, and it names database objects the pull request is already about. A refused login is *not* one of them — it arrives as a `PgError` naming the DSN's user, inside the dial failure that carried it, and the dial redaction is decided first.
+
+Every one of these keeps the original error as its cause, so the access log carries it in full under `detail` and nothing an operator needs is lost. A Vault refusal naming the secret path, and a Cloud KMS refusal naming the `projects/…/cryptoKeys/…` resource, are in the log and not in the comment.
+
+**An error meant to be read is classified, not exempted.** A refusal an operator fixes in a registration — `this target names no credential store`, `unknown credential provider`, `vault target config missing "path"` — carries `creds.ErrCredentialConfig` and comes back as `failed_precondition` with its message whole; those name only registration values, which `godwit targets` and `godwit credential-stores` already return at `read` scope. Anything else that should be readable is made readable the same way, at the site that knows what it is. Adding a `default:`-branch exemption to the redactor is the thing this section exists to stop.
+
+**What this does not cover: a run's own error.** `cp_runs.error` holds the raw failure of a run that already started, and the App renders it into the run report on the pull request. A run that fails at claim because Vault refused the read therefore still publishes that refusal, path and all. Treat a target's credential provider as an audience for pull request comments until that is closed.
+
 ## Database privileges
 
 **Store role**: owner of the store database. Nothing else — `CREATEDB` is only needed when scratch databases stay on the store server, which is the configuration below tells you not to keep.
@@ -261,6 +281,8 @@ What this does **not** protect against, stated so nobody reads more into it:
 The webhook listener is separate from the API listener (`--github-webhook-addr`, off by default) and serves one path. That is deliberate: the main listener carries every RPC, `/ui` and an unauthenticated `/metrics` whose label values are target names, so "only the webhook is exposed" should be a property of the process rather than of a proxy's path rules.
 
 **Nothing but the byte count is learned from an unverified request.** The endpoint reads at most `--github-webhook-max-bytes`, computes an HMAC-SHA256 over the raw body and compares it in constant time with `X-Hub-Signature-256`. The SHA-1 header is ignored and is never a fallback. Before that comparison passes, no JSON is parsed, no store is touched, and the answer is `401` with an empty body.
+
+**A comment that destroys needs the same two people as one that applies.** `apply`, `confirm` and `revert` all need an approving review standing on the pull request, from a login that also holds write or admin. `revert` used to need none, so one account could comment `godwit revert --allow-data-loss --force` and drop what an apply two people had agreed to. The flags are refused from a comment outright rather than approved — they remove a gate, and repository write is not the credential the rows they drop sit behind; `--allow-data-loss` and `--force` stay on the CLI, the UI and the RPC, all of which need a token. [Decision 0025](../decisions/0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md) is why, and says what it does not cover: the **Action's** guards are unchanged, and a workflow running `command: revert` still has the single-person path.
 
 **The webhook secret is a target credential by transitivity.** Someone holding it can forge a delivery, and forging one gets them exactly this: they control the repository name, the pull request number, the comment body and `author_association`. They do not control what GitHub's API answers, and the commander's permission, the pull request's head and its reviews are all read live. So a forged `godwit apply` still needs a real writer with write permission and a real approving review standing on the current head. What it buys is **pressing early a button somebody was already entitled to press**, in a bound repository, on an already-approved pull request. Keep it where `GODWIT_MASTER_KEY` is, and rotate it per installation.
 

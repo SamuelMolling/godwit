@@ -14,7 +14,7 @@ var (
 )
 
 var (
-	needsApproval = map[string]bool{"apply": true, "confirm": true}
+	needsApproval = map[string]bool{"apply": true, "confirm": true, "revert": true}
 	wantsOpen     = map[string]bool{"plan": true, "apply": true, "confirm": true}
 )
 
@@ -56,6 +56,7 @@ type Command struct {
 	Number      int
 	ReviewSHA   string
 	CommentSHA  string
+	Overrides   []string
 }
 
 func refuse(format string, a ...any) string { return fmt.Sprintf(format, a...) }
@@ -115,6 +116,11 @@ func (f Forge) Authorize(ctx context.Context, open func(context.Context) (Reposi
 	if !f.associations[c.Association] {
 		return PullRequest{}, refuse("godwit %s by %s refused: author association %s is not allowed",
 			c.Name, c.Commander, orNone(c.Association)), nil
+	}
+	if len(c.Overrides) > 0 {
+		return PullRequest{}, refuse("godwit %s refused: a comment may not remove a gate on what a revert drops (%s); "+
+			"that decision stays on the operator surfaces, where the credential is the target's own",
+			c.Name, strings.Join(c.Overrides, " ")), nil
 	}
 	repo, err := open(ctx)
 	if err != nil {

@@ -535,7 +535,7 @@ func (s *Scheduler) target(ctx context.Context, name string) (resolvedTarget, er
 func (s *Scheduler) resolve(ctx context.Context, name, providerName string, config map[string]string) (resolvedTarget, error) {
 	provider, ok := s.providers[providerName]
 	if !ok {
-		return resolvedTarget{}, fmt.Errorf("unknown credential provider %q", providerName)
+		return resolvedTarget{}, creds.Misconfigured(fmt.Errorf("unknown credential provider %q", providerName))
 	}
 	searchPath, err := ParseSearchPath(config[ConfigSearchPath])
 	if err != nil {

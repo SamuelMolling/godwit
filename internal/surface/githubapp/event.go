@@ -79,6 +79,14 @@ type request struct {
 type outcome struct {
 	result  string
 	message string
+	check   bool
+	head    string
+}
+
+func checked(head string, out *outcome) *outcome {
+	out.check, out.head = true, head
+
+	return out
 }
 
 func ignored(format string, a ...any) *outcome {
