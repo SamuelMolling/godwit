@@ -3,12 +3,8 @@ package notify
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -18,28 +14,6 @@ func TestNone(t *testing.T) {
 
 	if err := (None{}).Notify(context.Background(), Event{}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestWebhookDelivers(t *testing.T) {
-	t.Parallel()
-
-	var got map[string]string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &got)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	err := Webhook{URL: srv.URL}.Notify(context.Background(),
-		Event{Kind: KindDrift, Type: DriftDetected, Target: "app", Detail: "+ column x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got["kind"] != "drift" || got["type"] != "detected" || got["target"] != "app" ||
-		got["text"] != "godwit drift detected on app: + column x" {
-		t.Fatalf("payload = %v", got)
 	}
 }
 
@@ -81,27 +55,5 @@ func TestMultiAndEmit(t *testing.T) {
 	}
 	if err := (Multi{}).Notify(context.Background(), Event{}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestWebhookErrors(t *testing.T) {
-	t.Parallel()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer srv.Close()
-
-	if err := (Webhook{URL: srv.URL, Client: srv.Client()}).Notify(context.Background(), Event{}); err == nil ||
-		!strings.Contains(err.Error(), "403") {
-		t.Fatalf("err = %v", err)
-	}
-	if err := (Webhook{URL: "http://127.0.0.1:1"}).Notify(context.Background(), Event{}); err == nil ||
-		!strings.Contains(err.Error(), "post webhook") {
-		t.Fatalf("err = %v", err)
-	}
-	if err := (Webhook{URL: "://bad"}).Notify(context.Background(), Event{}); err == nil ||
-		!strings.Contains(err.Error(), "build webhook request") {
-		t.Fatalf("err = %v", err)
 	}
 }

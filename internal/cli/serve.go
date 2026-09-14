@@ -38,7 +38,8 @@ func newServeCmd() *cobra.Command {
 			"GODWIT_KEY_PROVIDER (env, gcpkms or vault-transit) with GODWIT_KMS_KEY for an envelope-encryption key provider,\n" +
 			"GODWIT_TOKENS (comma-separated name:scope:secret bearer tokens, scope read|pipeline|operator|admin; a bare secret is an anonymous admin),\n" +
 			"GODWIT_STORE_DSN, GODWIT_SCRATCH_DSN and GODWIT_SCRATCH_TEMPLATE (defaults for --store-dsn, --scratch-dsn and --scratch-template),\n" +
-			"GODWIT_WEBHOOK_URL (JSON notifications), GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
+			"GODWIT_WEBHOOK_URL with GODWIT_WEBHOOK_SECRET and GODWIT_WEBHOOK_SECRET_PREVIOUS (signed JSON notifications),\n" +
+			"GODWIT_SLACK_TOKEN/GODWIT_SLACK_CHANNEL/GODWIT_SLACK_MODE (Slack notifications),\n" +
 			"GODWIT_PUBLIC_URL (link base for notifications),\n" +
 			"GODWIT_VAULT_TRANSIT_ADDR with GODWIT_VAULT_TRANSIT_TOKEN or GODWIT_VAULT_TRANSIT_K8S_ROLE (the vault-transit key provider's own Vault; no target is read through it),\n" +
 			"GODWIT_LOG_FORMAT and GODWIT_LOG_LEVEL (defaults for --log-format and --log-level), GODWIT_HOLDER (default for --holder),\n" +
@@ -100,6 +101,8 @@ func newServeCmd() *cobra.Command {
 				},
 				DriftInterval:    driftInterval,
 				WebhookURL:       os.Getenv("GODWIT_WEBHOOK_URL"),
+				WebhookSecret:    os.Getenv("GODWIT_WEBHOOK_SECRET"),
+				WebhookPrevious:  envList("GODWIT_WEBHOOK_SECRET_PREVIOUS"),
 				SlackToken:       os.Getenv("GODWIT_SLACK_TOKEN"),
 				SlackChannel:     os.Getenv("GODWIT_SLACK_CHANNEL"),
 				SlackMode:        os.Getenv("GODWIT_SLACK_MODE"),

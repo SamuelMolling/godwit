@@ -70,6 +70,7 @@ func TestRunWithoutOnReadyShutsDownCleanly(t *testing.T) {
 			Listen:         "127.0.0.1:0",
 			StoreDSN:       storeDSN,
 			WebhookURL:     "http://127.0.0.1:1/hook",
+			WebhookSecret:  testWebhookSecret,
 			SkipValidation: true,
 			Log:            testLog,
 		})

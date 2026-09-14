@@ -155,7 +155,7 @@ Registration is not adoption. A database that already has a schema still needs `
 
 ## Notifications
 
-`notifications.webhookUrl` sets `GODWIT_WEBHOOK_URL`. For Slack, add `GODWIT_SLACK_TOKEN` to the Secret and set `notifications.slack.channel`; `notifications.slack.mode` picks `thread` or `edit` and `notifications.publicUrl` is the base of the "Open run" links.
+`notifications.webhookUrl` sets `GODWIT_WEBHOOK_URL`, and needs `GODWIT_WEBHOOK_SECRET` (at least 32 bytes) in the Secret to sign every delivery with; without it the pods refuse to start. Rotating it is a second entry, `GODWIT_WEBHOOK_SECRET_PREVIOUS`, in the same Secret ([rotation](../../../docs/run/security.md#webhook-rotation)). For Slack, add `GODWIT_SLACK_TOKEN` to the Secret and set `notifications.slack.channel`; `notifications.slack.mode` picks `thread` or `edit` and `notifications.publicUrl` is the base of the "Open run" links.
 
 Anything else the process should see (proxies) goes through `extraEnv` / `extraEnvFrom`.
 

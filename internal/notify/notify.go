@@ -2,13 +2,10 @@
 package notify
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 )
 
@@ -106,38 +103,4 @@ func (m Multi) Notify(ctx context.Context, e Event) error {
 	}
 
 	return errors.Join(errs...)
-}
-
-// Webhook POSTs events as JSON to a URL.
-type Webhook struct {
-	URL    string
-	Client *http.Client
-}
-
-// Notify implements Notifier.
-func (w Webhook) Notify(ctx context.Context, e Event) error {
-	body, _ := json.Marshal(struct {
-		Event
-		Text string `json:"text"`
-	}{e, e.Text()})
-
-	client := w.Client
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.URL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build webhook request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("post webhook: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned %s", resp.Status)
-	}
-
-	return nil
 }

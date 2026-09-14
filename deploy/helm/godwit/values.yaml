@@ -106,7 +106,7 @@ serve:
   extraArgs: []
 
 notifications:
-  # GODWIT_WEBHOOK_URL: run and drift events are POSTed here as JSON.
+  # GODWIT_WEBHOOK_URL: run and drift events are POSTed here as JSON, signed with GODWIT_WEBHOOK_SECRET from the Secret.
   webhookUrl: ""
   # GODWIT_PUBLIC_URL: base of the UI links in notifications, e.g. https://godwit.example.com.
   publicUrl: ""

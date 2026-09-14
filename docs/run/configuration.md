@@ -185,6 +185,8 @@ Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` a
 | `GODWIT_SCRATCH_DSN` | no | default for `--scratch-dsn` |
 | `GODWIT_SCRATCH_TEMPLATE` | no | default for `--scratch-template` |
 | `GODWIT_WEBHOOK_URL` | no | POST every run and drift event here as JSON |
+| `GODWIT_WEBHOOK_SECRET` | with the URL | the secret every delivery is signed with ([signature](deployment.md#notifications)). `serve` refuses to start with a URL and no secret, and with a secret shorter than 32 bytes; `openssl rand -hex 32` makes one |
+| `GODWIT_WEBHOOK_SECRET_PREVIOUS` | no | comma-separated secrets in the same form, each also signing every delivery; how a [rotation](security.md#webhook-rotation) rolls without a delivery failing verification |
 | `GODWIT_SLACK_TOKEN` | no | Slack bot token; enables the Slack provider |
 | `GODWIT_SLACK_CHANNEL` | with the token | channel id or name for the root messages; `serve` refuses to start with a token and no channel |
 | `GODWIT_SLACK_MODE` | no | `thread` (default; root message plus threaded replies) or `edit` (one message rewritten) |
