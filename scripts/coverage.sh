@@ -16,9 +16,3 @@ if [[ "${total}" != "100.0%" ]]; then
   go tool cover -func="${profile}.filtered" | grep -v '100.0%' >&2
   exit 1
 fi
-
-if command -v npm >/dev/null 2>&1; then
-  "$(dirname "$0")/backstage.sh"
-else
-  echo "backstage/ NOT TESTED: npm is not on PATH; run make backstage where it is" >&2
-fi
