@@ -21,6 +21,7 @@ Plain markdown, grouped by what you are doing. Everything here describes the cod
 | [GitHub App](use/github-app.md) | The service itself answers your pull requests, and you want to know what it does and what you may ask it. |
 | [GitHub Actions](use/github-actions.md) | The plan and the apply are steps in your own workflow. |
 | [Standalone](use/standalone.md) | Your pipeline is neither — the CLI in any CI system, or an ArgoCD hook. |
+| [Backstage](use/backstage.md) | You want godwit's targets, drift and runs on a Backstage page, read-only, through the Backstage proxy. |
 | [Command reference](use/cli.md) | You want to know what a command is *for* — every `godwit` command in plain language, grouped by what you are doing, with a real example each. |
 
 ## Run

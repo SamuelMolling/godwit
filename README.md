@@ -109,7 +109,7 @@ The manual is [docs/](docs/README.md), grouped by what you are doing.
 | | |
 |---|---|
 | [Start](docs/start/getting-started.md) | evaluating: a first run, [the approaches](docs/start/approaches.md) and what each costs, [how godwit compares](docs/start/comparison.md) |
-| [Use](docs/use/github-app.md) | opening pull requests: the [App](docs/use/github-app.md), the [Action](docs/use/github-actions.md), [neither](docs/use/standalone.md), and [every command](docs/use/cli.md) |
+| [Use](docs/use/github-app.md) | opening pull requests: the [App](docs/use/github-app.md), the [Action](docs/use/github-actions.md), [neither](docs/use/standalone.md), [Backstage](docs/use/backstage.md), and [every command](docs/use/cli.md) |
 | [Run](docs/run/deployment.md) | operating the service: [deployment](docs/run/deployment.md), [configuration](docs/run/configuration.md), [security](docs/run/security.md), [runbook](docs/run/runbook.md) |
 | [Internals](docs/README.md#internals) | the journal protocol, run states and leases, admission, drift, and [the API](docs/internals/api.md) |
 | [Decisions](docs/decisions/README.md) | why godwit is shaped this way, and what was refused |

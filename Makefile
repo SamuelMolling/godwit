@@ -1,4 +1,4 @@
-.PHONY: all build test cover e2e load chaos lint proto-lint tidy helm-lint release-snapshot
+.PHONY: all build test cover e2e load chaos lint proto-lint tidy helm-lint release-snapshot backstage
 
 all: lint proto-lint cover build
 
@@ -10,6 +10,9 @@ test:
 
 cover:
 	./scripts/coverage.sh
+
+backstage:
+	./scripts/backstage.sh
 
 e2e:
 	go test -tags e2e -count=1 -timeout 15m ./test/e2e/...
