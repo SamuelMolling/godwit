@@ -38,6 +38,8 @@ type Config struct {
 	Scheduler        controlplane.Config
 	DriftInterval    time.Duration
 	WebhookURL       string
+	WebhookSecret    string
+	WebhookPrevious  []string
 	SlackToken       string
 	SlackChannel     string
 	SlackMode        string
@@ -88,6 +90,10 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.SlackToken != "" && cfg.SlackChannel == "" {
 		return errors.New("slack channel is required when a slack token is set")
+	}
+	secrets, err := webhookSecrets(cfg)
+	if err != nil {
+		return err
 	}
 	if (cfg.UIUser == "") != (cfg.UIPassword == "") {
 		return errors.New("ui user and ui password must be set together")
@@ -152,7 +158,7 @@ func Run(ctx context.Context, cfg Config) error {
 	m := metrics.New()
 	m.WatchRuns(store.RunStats)
 
-	notifier, closeNotifier := newNotifier(cfg, store, log, m.Notified, m.NotifierConfigured)
+	notifier, closeNotifier := newNotifier(cfg, secrets, store, log, m.Notified, m.NotifierConfigured)
 	defer closeNotifier()
 
 	cfg.Scheduler.Holder = cfg.Holder
@@ -270,7 +276,32 @@ func awaitRuns(ctx context.Context, stopClaiming func(), drained <-chan struct{}
 	}
 }
 
-func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func(provider, result string), configured func(provider string, ok bool)) (notify.Notifier, func()) {
+const minWebhookSecretBytes = 32
+
+func webhookSecrets(cfg Config) ([]string, error) {
+	if cfg.WebhookURL == "" {
+		return nil, nil
+	}
+	if cfg.WebhookSecret == "" {
+		return nil, errors.New("GODWIT_WEBHOOK_URL needs GODWIT_WEBHOOK_SECRET: every delivery is signed, " +
+			"and a receiver cannot tell an unsigned one from a forgery")
+	}
+	secrets := []string{cfg.WebhookSecret}
+	for _, previous := range cfg.WebhookPrevious {
+		if previous = strings.TrimSpace(previous); previous != "" {
+			secrets = append(secrets, previous)
+		}
+	}
+	for _, secret := range secrets {
+		if len(secret) < minWebhookSecretBytes {
+			return nil, fmt.Errorf("GODWIT_WEBHOOK_SECRET and every GODWIT_WEBHOOK_SECRET_PREVIOUS must be at least %d bytes", minWebhookSecretBytes)
+		}
+	}
+
+	return secrets, nil
+}
+
+func newNotifier(cfg Config, secrets []string, store notify.TSStore, log *slog.Logger, record func(provider, result string), configured func(provider string, ok bool)) (notify.Notifier, func()) {
 	var all notify.Multi
 	var async []*notify.Async
 	if cfg.Notifier != nil {
@@ -278,7 +309,7 @@ func newNotifier(cfg Config, store notify.TSStore, log *slog.Logger, record func
 	}
 	configured("webhook", cfg.WebhookURL != "")
 	if cfg.WebhookURL != "" {
-		a := notify.NewAsync("webhook", notify.Webhook{URL: cfg.WebhookURL}, log, record)
+		a := notify.NewAsync("webhook", notify.Webhook{URL: cfg.WebhookURL, Secrets: secrets}, log, record)
 		all, async = append(all, a), append(async, a)
 	}
 	configured("slack", cfg.SlackToken != "")

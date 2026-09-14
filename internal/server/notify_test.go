@@ -24,17 +24,23 @@ type recordedCall struct {
 	Payload map[string]any
 }
 
+const testWebhookSecret = "0123456789abcdef0123456789abcdef"
+
 type fakeReceiver struct {
-	t     *testing.T
-	token string
-	mu    sync.Mutex
-	calls []recordedCall
-	seq   int
+	t      *testing.T
+	token  string
+	signed bool
+	mu     sync.Mutex
+	calls  []recordedCall
+	seq    int
 }
 
 func (f *fakeReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.token != "" && r.Header.Get("Authorization") != "Bearer "+f.token {
 		f.t.Errorf("authorization header = %q", r.Header.Get("Authorization"))
+	}
+	if f.signed && !strings.HasPrefix(r.Header.Get(notify.SignatureHeader), "t=") {
+		f.t.Errorf("signature header = %q", r.Header.Get(notify.SignatureHeader))
 	}
 	var payload map[string]any
 	_ = json.NewDecoder(r.Body).Decode(&payload)
@@ -94,7 +100,7 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	slack := &fakeReceiver{t: t, token: "xoxb-test"}
 	slackSrv := httptest.NewServer(slack)
 	t.Cleanup(slackSrv.Close)
-	hook := &fakeReceiver{t: t}
+	hook := &fakeReceiver{t: t, signed: true}
 	hookSrv := httptest.NewServer(hook)
 	t.Cleanup(hookSrv.Close)
 	rec := &eventRecorder{}
@@ -103,7 +109,7 @@ func TestNotificationsEndToEnd(t *testing.T) {
 	baseURL := startServiceCfg(t, Config{
 		Listen: "127.0.0.1:0", StoreDSN: storeDSN, Keys: testKeys, Holder: "r1",
 		Scheduler:  controlplane.Config{Interval: 50 * time.Millisecond},
-		WebhookURL: hookSrv.URL, SlackToken: "xoxb-test", SlackChannel: "#ops", SlackURL: slackSrv.URL,
+		WebhookURL: hookSrv.URL, WebhookSecret: testWebhookSecret, SlackToken: "xoxb-test", SlackChannel: "#ops", SlackURL: slackSrv.URL,
 		PublicURL: "https://godwit.example.com", Notifier: rec, Log: testLog, Tokens: []string{"ci:admin:ci-secret"},
 	})
 	client := newClient(baseURL, "ci-secret")
@@ -310,5 +316,44 @@ func TestNoNotifierConfigured(t *testing.T) {
 	}
 	if !strings.Contains(sink.String(), "no notification destination configured") {
 		t.Fatalf("expected start-up warning, got:\n%s", sink.String())
+	}
+}
+
+func TestWebhookSecrets(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("s", minWebhookSecretBytes)
+	for _, c := range []struct {
+		name string
+		cfg  Config
+		want []string
+		err  string
+	}{
+		{"no webhook", Config{WebhookSecret: "short"}, nil, ""},
+		{"url without secret", Config{WebhookURL: "http://hook", WebhookPrevious: []string{long}}, nil, "GODWIT_WEBHOOK_URL needs GODWIT_WEBHOOK_SECRET"},
+		{"short secret", Config{WebhookURL: "http://hook", WebhookSecret: long[1:]}, nil, "at least 32 bytes"},
+		{"short previous", Config{WebhookURL: "http://hook", WebhookSecret: long, WebhookPrevious: []string{"old"}}, nil, "at least 32 bytes"},
+		{"rotation", Config{WebhookURL: "http://hook", WebhookSecret: long, WebhookPrevious: []string{" " + long + "x ", ""}}, []string{long, long + "x"}, ""},
+	} {
+		got, err := webhookSecrets(c.cfg)
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%s: err = %v", c.name, err)
+			}
+
+			continue
+		}
+		if err != nil || strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("%s: got %q, %v", c.name, got, err)
+		}
+	}
+}
+
+func TestRunRefusesUnsignedWebhook(t *testing.T) {
+	t.Parallel()
+
+	err := Run(context.Background(), Config{Listen: "127.0.0.1:0", StoreDSN: "postgres://unused", WebhookURL: "http://hook", Log: testLog})
+	if err == nil || !strings.Contains(err.Error(), "GODWIT_WEBHOOK_URL needs GODWIT_WEBHOOK_SECRET") {
+		t.Fatalf("Run() = %v", err)
 	}
 }
