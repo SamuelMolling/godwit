@@ -9,8 +9,8 @@ It has no button that changes anything: no apply, no revert, no drift accept. A 
 godwit can attribute, and a Backstage proxy has one token for every viewer. Changes stay with the
 [GitHub App](github-app.md), the [Action](github-actions.md) and the [CLI](cli.md).
 
-The package lives in [`backstage/`](../../backstage) and supports the legacy frontend system
-(`createApp` from `@backstage/app-defaults`), from Backstage 1.38.
+The package lives in [SamuelMolling/backstage-plugin-godwit](https://github.com/SamuelMolling/backstage-plugin-godwit) and
+supports the legacy frontend system (`createApp` from `@backstage/app-defaults`), from Backstage 1.38.
 
 ## What must exist first
 
@@ -57,6 +57,8 @@ godwit:
 ```
 
 ## Install
+
+The package is [`backstage-plugin-godwit`](https://github.com/SamuelMolling/backstage-plugin-godwit#install):
 
 ```bash
 yarn --cwd packages/app add backstage-plugin-godwit
@@ -150,13 +152,5 @@ Drift has four states, and the view keeps them apart:
 
 ## Developing the package
 
-```bash
-make backstage   # npm ci when the lockfile changed, then tsc, lint and the tests at 100% coverage
-```
-
-`scripts/coverage.sh`, which `make cover` and CI run, calls the same script when `npm` is on `PATH` and says
-`backstage/ NOT TESTED` when it is not. The lockfile resolves the `@backstage/*` packages Backstage 1.38
-shipped, so the tests run against the oldest release the package supports.
-
-Publishing is `npm publish` from `backstage/` after `npm run build`; `prepack` rewrites `main` and `types` to
-the build output.
+The source, its tests and its CI are in
+[SamuelMolling/backstage-plugin-godwit](https://github.com/SamuelMolling/backstage-plugin-godwit#development).
