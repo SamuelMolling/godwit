@@ -33,6 +33,16 @@ func boundRun(runID, state string) controlplane.GitHubRun {
 	}
 }
 
+func TestTheRunNamesTheCommanderAndNotTheRepositoryAlone(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, planningRepo(), WorkerConfig{})
+	h.worker.carry(context.Background(), commandNamed("apply", nil))
+	if len(h.svc.actors) != 1 || h.svc.actors[0] != forgeActor(testRepo, "alice") {
+		t.Fatalf("actors = %v, want the run created by the login that commanded it", h.svc.actors)
+	}
+}
+
 func TestApplyQueuesARunAndLeavesTheCheckOpen(t *testing.T) {
 	t.Parallel()
 

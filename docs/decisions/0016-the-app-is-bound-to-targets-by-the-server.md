@@ -75,11 +75,27 @@ An installation is not a token spec and does not become one. It resolves to a pr
 
 **`operator` and `admin` are unreachable from a webhook in code, not in configuration.** The map from command name to scope holds four entries and none of them is above `pipeline`, so the RPC that grants a repository access to a target can never be reached by that repository. That is what closes the loop on the binding: the fail-closed default cannot be turned off from the outside.
 
-**The actor is the installation; the human is in the detail.** `cp_audit.actor` reads `github:acme/orders`, and the entry carries the commanding login, the delivery id, the head and the command. Making the commenter the actor would claim godwit authenticated a person. It did not: it authenticated a signature from GitHub that carried a claim about a person. `ListAudit` needs no change to tell the two paths apart — the prefix does it, exactly as `ui:` does.
+**The actor is the installation; the human is in the detail.** `cp_audit.actor` reads `github:acme/orders`, and the entry carries the commanding login, the delivery id, the head and the command. Making the commenter the actor would claim godwit authenticated a person. It did not: it authenticated a signature from GitHub that carried a claim about a person. `ListAudit` needs no change to tell the two paths apart — the prefix does it, exactly as `ui:` does. *Withdrawn in #158: see [the amendment](#amendment--the-commander-is-part-of-the-actor). The prefix still tells the paths apart; what changed is that the login sits beside the repository rather than in the detail.*
 
 ### Where this stops
 
 The receiver ends at one internal entry point that takes a verified, de-duplicated, authorised command and writes the audit entry saying what it would have run. Nothing reads the repository's files, nothing creates a run, and nothing is posted back to the pull request. `push` and `check_run` are not routed, because they are events that ask for work rather than events that carry a command. The half that fetches `<dir>` from the head sha by blob, checks the admission limits against the listing before downloading anything, calls `bindings.grant` with the name `godwit.yaml` asked for, and reports through Check Runs is a separate change, and is the one that makes the App do anything.
+
+## Amendment — the commander is part of the actor
+
+Amended in #158.
+
+*The actor is the installation; the human is in the detail* is withdrawn. `cp_audit.actor` and `cp_runs.created_by` read `github:<owner>/<repo>:<login>`, and `login=` is gone from the webhook entry's detail, where it was the same fact in a worse place.
+
+**The detail could not answer the question, because it is on a row that names no run.** The `github.command` entry is written when the delivery is accepted, before any run exists, so it carries no run id. Everything downstream — `godwit audit --run <id>`, the `Actor` on every notification about that run, `godwit run show`, the UI's *Created by* — read `github:acme/orders` with nothing to join them back to a person. The one question godwit exists to gate, *who applied this to production*, was answerable only by finding the delivery by hand and matching it on repository, head and time. That is not an audit trail, and it cannot be reconstructed after the fact.
+
+**The honesty objection stands, and the spelling is what answers it.** Making the commenter the whole actor would claim godwit authenticated a person, and it still does not. So the login does not replace the repository; it is appended to it, under the `github:` prefix that names the authority which made the claim. The field then reads as exactly what happened: GitHub asserted this login, the binding admitted this repository, and the login's write access was checked against that repository before anything ran. Both facts authorised the command, both are recorded, and repository-first keeps `grep github:acme/orders` finding everything one repository did.
+
+**Nobody commanded an autoplan, and the field says so rather than going quiet.** A `pull_request` delivery is `github:<owner>/<repo>:(autoplan)`. The head being in the bound repository is that path's entire authorisation — the fork rule above is the whole of it — so there is no person to name, and an empty or absent third field would read as a record godwit lost rather than one it never had. Parentheses are outside the character set of a GitHub login, so a marker can never collide with a user. `(report)` is the same device for the ticker that reads a run to post its outcome: it authenticates no command and lands in no record, and it exists so that a `github:` principal is always three fields.
+
+**Bearer tokens and the UI stay as they are.** Each already names the most specific identity its surface can prove — the token's name, `ui:<name>` — and neither was discarding a second one. The App was the only surface holding an identity it did not record.
+
+The deferred row on GitHub App *user* access tokens is untouched by this. It is the difference between godwit **attributing** a command to a person and **authenticating** that person, and this amendment is only the first of the two.
 
 ## What it costs
 

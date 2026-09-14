@@ -25,6 +25,7 @@ type fakeService struct {
 	err        error
 	hold       chan struct{}
 	created    []*godwitv1.CreateRunRequest
+	actors     []string
 	createRes  *godwitv1.CreateRunResponse
 	createErr  error
 	confirmed  []string
@@ -39,9 +40,10 @@ type fakeService struct {
 	planErr    error
 }
 
-func (s *fakeService) CreateRun(_ context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
+func (s *fakeService) CreateRun(ctx context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
 	s.mu.Lock()
 	s.created = append(s.created, req.Msg)
+	s.actors = append(s.actors, authz.Actor(ctx))
 	s.mu.Unlock()
 	if s.createErr != nil {
 		return nil, s.createErr
@@ -187,9 +189,9 @@ func planningRepo() *fakeRepo {
 func planCommand() command {
 	return command{
 		delivery: "d1", event: eventIssueComment, repository: testRepo, repositoryID: 42, installation: 7,
-		number: 3, head: testHead, login: "alice", name: "plan",
+		number: 3, head: testHead, name: "plan",
 		cmd:       &comment.Command{Name: "plan"},
-		principal: authz.Principal{Name: "github:" + testRepo, Scope: scopes["plan"]},
+		principal: authz.Principal{Name: forgeActor(testRepo, "alice"), Scope: scopes["plan"]},
 		bound:     bindings{{target: "orders"}},
 		projects:  []project{{dir: "db/migrations", target: "orders", format: config.PlanFormatSchema}},
 		source:    "github.com/" + testRepo + "@" + testHead,
