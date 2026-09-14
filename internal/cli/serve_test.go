@@ -181,3 +181,24 @@ func TestServeGitHubPrivateKeyIsNeverAnArgument(t *testing.T) {
 		t.Fatalf("code = %d, usage echoed the key: %s%s", code, out, errOut)
 	}
 }
+
+func TestServeRefusesUnsignedWebhook(t *testing.T) {
+	t.Setenv("GODWIT_WEBHOOK_URL", "https://backstage.example.com/api/godwit/events")
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x")
+	if code != 1 || !strings.Contains(errOut, "GODWIT_WEBHOOK_URL needs GODWIT_WEBHOOK_SECRET") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+
+	t.Setenv("GODWIT_WEBHOOK_SECRET", "too-short")
+	code, _, errOut = runCLI("serve", "--store-dsn", "postgres://x")
+	if code != 1 || !strings.Contains(errOut, "at least 32 bytes") || strings.Contains(errOut, "too-short") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+
+	t.Setenv("GODWIT_WEBHOOK_SECRET", strings.Repeat("s", 32))
+	t.Setenv("GODWIT_WEBHOOK_SECRET_PREVIOUS", "old")
+	code, _, errOut = runCLI("serve", "--store-dsn", "postgres://x")
+	if code != 1 || !strings.Contains(errOut, "GODWIT_WEBHOOK_SECRET_PREVIOUS") || strings.Contains(errOut, "old") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}

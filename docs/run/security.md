@@ -294,6 +294,28 @@ The webhook listener is separate from the API listener (`--github-webhook-addr`,
 
 **A delivery is acted on once.** `X-GitHub-Delivery` is recorded with a unique key in the same transaction as the work it enqueues, so a redelivery — GitHub's or an attacker's replay — is a no-op rather than a second run. A comment or review older than `--github-webhook-max-age` is refused before any of it.
 
+## Outgoing webhook
+
+**A delivery proves who sent it and when.** Everything godwit POSTs to `GODWIT_WEBHOOK_URL` carries `Godwit-Signature: t=<unix seconds>,v1=<hex>`, where `v1` is HMAC-SHA256 under `GODWIT_WEBHOOK_SECRET` of the bytes `<t>.<raw body>`. A receiver that verifies it knows the body came from a holder of the secret and was not altered; one that does not will act on a forged `detected` or `succeeded` from anyone who can reach its route. There is no unsigned mode: a URL without a secret fails `serve`. The recipe a receiver can copy is in [deployment](deployment.md#notifications).
+
+**The timestamp is signed so a captured delivery expires.** Signing the body alone would let anyone who once saw a delivery — a proxy log, a request dump — replay it forever. `t` is the moment godwit sent the request, not the moment the event happened (that is `at`, and the queue can put seconds between them), so a receiver should refuse a `t` more than **300 seconds** from its own clock in either direction. That covers ordinary clock skew between NTP-synchronised hosts with a wide margin and costs nothing, since godwit never re-sends. A receiver that must refuse a replay even inside those 300 seconds remembers the `v1` values it accepted for that long.
+
+**The format is Stripe's, not GitHub's.** godwit already verifies `X-Hub-Signature-256: sha256=<hex>` on its [GitHub App](#github-app) listener, and reusing that would have been familiar. But that header signs the body alone; bolting a timestamp on as a second header makes a delivery that a GitHub verification library accepts without ever looking at the timestamp, which quietly turns replay protection off. `t=…,v1=…` keeps the timestamp inside the one value a receiver has to parse, and lets a delivery carry several signatures, which is what rotation needs.
+
+**Compare in constant time.** The receiver decodes each `v1` and compares it with its own HMAC using `crypto.timingSafeEqual`, `hmac.Equal` or the platform's equivalent — never `===` on hex strings, which leaks how many leading characters matched.
+
+**The secret must be at least 32 bytes.** Anyone who captures one delivery holds a plaintext and its MAC, and can search for the secret offline at whatever speed their hardware allows; 32 bytes of random hex is 128 bits and beyond that search, a word or a short password is not. `serve` refuses anything shorter, counting bytes rather than entropy, so generate it (`openssl rand -hex 32`) rather than choose it. It is a credential for whatever the receiver does on godwit's word: keep it in the Secret with the others.
+
+### Webhook rotation
+
+godwit signs every delivery once per secret it holds — `GODWIT_WEBHOOK_SECRET` first, then each entry of `GODWIT_WEBHOOK_SECRET_PREVIOUS` — and a receiver accepts a delivery if any `v1` matches its secret. That makes rotation three steps with no window where a delivery fails:
+
+1. Put the new secret in `GODWIT_WEBHOOK_SECRET`, move the old one into `GODWIT_WEBHOOK_SECRET_PREVIOUS`, roll the replicas. Deliveries now carry both signatures; the receiver, still on the old secret, verifies the second. A replica not yet rolled signs with the old secret alone, which the receiver also still accepts.
+2. Switch the receiver to the new secret. It verifies the first signature.
+3. Drop `GODWIT_WEBHOOK_SECRET_PREVIOUS` on the next roll.
+
+The receiver never holds two secrets. If the old one leaked, it is the receiver that stops accepting it, so take step 2 the moment step 1 has rolled out.
+
 ## Admission limits
 
 Request size, file count, page size and concurrency are bounded, and the knobs are in [configuration](configuration.md#admission-limits). What the limits are for, from a security point of view:

@@ -953,6 +953,64 @@ Configured by environment only ([configuration](configuration.md#environment)). 
 
 `text` is the one-line rendering; every other field is the event. Drift events carry `target`, `detail` (the diff or the acceptance) and no `run_id`.
 
+Every delivery is signed with `GODWIT_WEBHOOK_SECRET`, and `serve` refuses to start with a URL and no secret. The header is
+
+```
+Godwit-Signature: t=1788000000,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
+```
+
+`t` is the Unix time godwit sent the request, and each `v1` is the hex HMAC-SHA256, keyed by a secret, of the bytes `<t>.<raw body>`. There is one `v1` per secret godwit signs with: two while `GODWIT_WEBHOOK_SECRET_PREVIOUS` is set during a [rotation](security.md#webhook-rotation), one otherwise. To verify, a receiver:
+
+1. reads the body as raw bytes, before any JSON parser touches it — re-serialised JSON is not the bytes that were signed;
+2. rejects a delivery whose `t` is more than 300 seconds away from its own clock, in either direction;
+3. computes the HMAC of `<t>.<raw body>` with its secret and accepts if **any** `v1` equals it, compared in constant time.
+
+The recipe below is what godwit's own test suite runs against real deliveries, on a node that can strip TypeScript types (22.6 or later):
+
+```typescript
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const toleranceSeconds = 300;
+
+export function verifyGodwitSignature(
+  header: string | undefined,
+  rawBody: Buffer,
+  secret: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+): boolean {
+  if (!header) {
+    return false;
+  }
+  let timestamp = "";
+  const signatures: Buffer[] = [];
+  for (const part of header.split(",")) {
+    const eq = part.indexOf("=");
+    const key = part.slice(0, eq);
+    const value = part.slice(eq + 1);
+    if (key === "t") {
+      timestamp = value;
+    } else if (key === "v1" && /^[0-9a-f]{64}$/.test(value)) {
+      signatures.push(Buffer.from(value, "hex"));
+    }
+  }
+  if (!/^[0-9]+$/.test(timestamp) || Math.abs(nowSeconds - Number(timestamp)) > toleranceSeconds) {
+    return false;
+  }
+  const expected = createHmac("sha256", secret).update(`${timestamp}.`).update(rawBody).digest();
+
+  return signatures.some((signature) => timingSafeEqual(signature, expected));
+}
+```
+
+In an Express router, which is what a Backstage backend plugin mounts, that means `express.raw({ type: "application/json" })` on the route instead of `express.json()`, and parsing `req.body` only after `verifyGodwitSignature(req.header("Godwit-Signature"), req.body, secret)` returned `true`; answer anything else with `401`.
+
+What a receiver has to tolerate:
+
+- **A delivery is attempted once.** There is no retry: a non-2xx answer, a timeout (10s) or an unreachable URL is logged as `notification failed`, counted as `result="failed"`, and the event is gone. A full queue drops it the same way (`result="dropped"`), and so does a replica killed with events still queued. Treat the stream as a signal to look, not as a ledger; the run and drift APIs are the record.
+- **Order is per replica only.** Each replica delivers from one worker, in the order it emitted, but replicas emit independently: `created` and `confirmed` come from whichever replica served the RPC, `running` and the terminal state from whichever claimed the run. Order by `at`, the time the event happened; `t` is when that replica got round to sending it.
+- **The same transition can arrive twice.** A run whose replica died is claimed again and emits `running` again. A replica whose write of the outcome to the store fails still emits that outcome, and the run is claimed again once its lease expires, so a terminal state can arrive twice for one run, the second with a higher `attempt`. Nothing in the body is a unique delivery id: dedupe on `run_id`, `type` and `attempt` for runs, and on `target`, `type` and `detail` for drift: `detected` is emitted once per distinct open diff however many replicas check the target, and a schema that drifts further while still open emits another.
+- **A captured delivery stays valid for the window.** Within 300 seconds the same bytes verify again. A receiver that must refuse even that keeps the `v1` values it accepted for 300 seconds and refuses a repeat.
+
 **Slack** (`GODWIT_SLACK_TOKEN` + `GODWIT_SLACK_CHANNEL`): Block Kit messages. `GODWIT_SLACK_MODE=thread` (default) posts one root per run (`created`) and replies in its thread as it progresses, updating the root's state line; drift gets a fresh root per detection under key `drift:<target>`, with `resolved`/`accepted` as replies. `edit` mode keeps a single message per key and rewrites it (`chat.update`). Delivery retries three times on 429 (honouring `Retry-After`), 5xx and network errors with 1s/2s/4s backoff; `detail` is cut at 500 characters. With `GODWIT_PUBLIC_URL` set, every run message has an "Open run" button to `<url>/ui/runs/<id>`; the same setting, read from the CLI's own environment, is what links the run and its plan from [`godwit run report`](../use/cli.md#godwit-run-report). The bot needs `chat:write` in the channel.
 
 Delivery is asynchronous: one worker per provider with a queue of 256 events; a full queue drops the event with `notification dropped` in the log and `result="dropped"` in the metric. Shutdown drains the queues.
