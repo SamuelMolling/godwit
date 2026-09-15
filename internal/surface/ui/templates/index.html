@@ -9,14 +9,14 @@
   </div>
 
   <div class="sec">
-    <div class="sec-hd"><h2>Needs you <span class="n">{{len .Queue}}</span></h2><div class="right">Blocked until an operator acts</div></div>
+    <div class="sec-hd"><h2>Needs you <span class="n">{{len .Queue}}</span></h2></div>
     {{if .Queue}}
     <div class="queue">
       {{range .Queue}}
       <div class="q{{if eq (state .State) "awaiting_contract"}} warn{{end}}">
         <div>
           <div class="head"><a href="/ui/runs/{{.Id}}">{{short .Id}}</a> <span class="pill {{state .State}}">{{label .State}}</span> <span class="tgt">{{.Target}}</span> <span class="age">{{if eq (state .State) "awaiting_contract"}}expand done {{ago .CreatedAt}}{{else}}stopped {{ago .FinishedAt}} · attempt {{.Attempts}}{{end}}</span></div>
-          {{if eq (state .State) "awaiting_contract"}}<div class="why">Expand phase applied. Holding the contract phase until you confirm the deploy is healthy.</div>{{else if .Error}}<div class="why">{{.Error}}</div>{{end}}
+          {{with .Error}}<div class="why">{{.}}</div>{{end}}
         </div>
         <div class="act">
           {{if eq (state .State) "awaiting_contract"}}{{if $.Can.confirm}}<form method="post" action="/ui/runs/{{.Id}}/confirm"><button class="btn sm pri"><svg class="ic"><use href="#i-check"/></svg>Confirm rollout</button></form>{{end}}

@@ -166,9 +166,9 @@ func TestDiffForm(t *testing.T) {
 	rec := do(h, http.MethodGet, "/ui/diff", nil)
 	want(t, rec, http.StatusOK, "Schema diff", `name="schema"`, `value="changes"`,
 		`<option value="app">`, `<option value="billing">`, "Generate migration",
-		"godwit diff --prisma", "This page only takes DDL", "Nothing is written to disk here",
+		"godwit diff --prisma", "desired database as DDL", "Nothing is written to disk here",
 		`name="files"`, `<option value="auto" selected>`, "The run that last succeeded")
-	absent(t, rec, "No changes", "Save both files", "Repeatable migrations")
+	absent(t, rec, "No changes", `id="up-sql"`, "Repeatable migrations")
 
 	want(t, do(h, http.MethodGet, "/ui/diff?target=app&name=add_index", nil), http.StatusOK,
 		`value="app"`, `value="add_index"`)
@@ -335,7 +335,7 @@ func TestDiffNoChanges(t *testing.T) {
 	s.resp = &godwitv1.DiffResponse{Target: "app"}
 	rec := do(newUI(s, Config{}), http.MethodPost, "/ui/diff", diffForm("add_index", "CREATE TABLE t (a int);"))
 	want(t, rec, http.StatusOK, "No changes", "already matches the schema you pasted")
-	absent(t, rec, "Save both files", "Statements", "Declared by a repeatable")
+	absent(t, rec, `id="up-sql"`, "Statements", "Declared by a repeatable")
 }
 
 func TestDiffRefusalStaysOnTheForm(t *testing.T) {
