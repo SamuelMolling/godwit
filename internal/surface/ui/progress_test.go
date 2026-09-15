@@ -34,7 +34,7 @@ func TestRunPageBackfill(t *testing.T) {
 		"≈6%",
 		`<span class="chip">60 batches</span>`,
 		"20260901190000_quantity</span> statement 4 · expand",
-		"the total is the planner's estimate for the table",
+		"The total is the planner's estimate for the table",
 		"Running, attempt 1: statement 4 of 20260901190000_quantity (expand)",
 	)
 }

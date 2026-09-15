@@ -33,7 +33,7 @@
       </div>
 
       <div class="blk">
-        <h3>Pending <span class="n">{{len .Pending}}</span></h3>
+        <h3 title="Pending is what the newest ready plan still has to apply; the service holds no migration directory of its own. godwit target status {{.Target}} --dir ./migrations compares against the files on disk.">Pending <span class="n">{{len .Pending}}</span></h3>
         {{if .Pending}}
         <ul class="tl">
           {{range .Pending}}
@@ -46,7 +46,6 @@
         {{else}}
         <p class="note">Nothing pending in the target's ready plans.</p>
         {{end}}
-        <p class="note">The service holds no migration directory of its own, so this is what the newest <b>ready</b> plan still has to apply. <span class="mono">godwit target status {{.Target}} --dir ./migrations</span> compares against the files on disk.</p>
       </div>
 
       <div class="blk">

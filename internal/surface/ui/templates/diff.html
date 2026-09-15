@@ -10,8 +10,8 @@
   <form class="card blk" id="diff-form" method="post" action="/ui/diff">
     <div class="fields">
       <label>Target<input class="in" name="target" list="diff-targets" value="{{.Target}}" placeholder="orders" required></label>
-      <label>Name<input class="in" name="name" value="{{.Name}}" placeholder="add_email_index"></label>
-      <label>Repeatable files<select class="in" name="files">
+      <label title="Labels the generated files only: snake_case, and anything else falls back to changes.">Name<input class="in" name="name" value="{{.Name}}" placeholder="add_email_index"></label>
+      <label title="Used only when the target records repeatable migrations.">Repeatable files<select class="in" name="files">
         <option value="auto"{{if eq .Rep.Source "auto"}} selected{{end}}>Newest stored snapshot</option>
         <option value="plan"{{if eq .Rep.Source "plan"}} selected{{end}}>The target's newest stored plan</option>
         <option value="run"{{if eq .Rep.Source "run"}} selected{{end}}>The run that last succeeded</option>
@@ -26,8 +26,7 @@
     </div>
   </form>
   {{if not $.Can.diff}}{{template "scope-note" $}}{{end}}
-  <p class="note">Paste the <b>whole</b> desired database as DDL. A Prisma, GORM or Django schema is rendered by that project's own toolchain next to your repository, so it never reaches the service: run <span class="mono">godwit diff --prisma</span> (or <span class="mono">--gorm</span>, <span class="mono">--django</span>, <span class="mono">--exec</span>) from the CLI, which writes the pair for you. This page only takes DDL.</p>
-  <p class="note faint">The name only labels the files below; it must be snake_case, and anything else falls back to <span class="mono">changes</span>. The repeatable-file choice is used only when {{if .Target}}{{.Target}}{{else}}the target{{end}} records repeatable migrations.</p>
+  <p class="note">Paste the <b>whole</b> desired database as DDL. An ORM schema is rendered by that project's own toolchain next to your repository and never reaches the service: <span class="mono">godwit diff --prisma</span> (or <span class="mono">--gorm</span>, <span class="mono">--django</span>, <span class="mono">--exec</span>) writes the pair from the CLI.</p>
 
   {{with $.Error}}
   <div class="sec">
@@ -99,7 +98,7 @@
   </div>
 
   <div class="sec">
-    <div class="sec-hd"><h2>Migration</h2><div class="right">Save both files under your migration directory</div></div>
+    <div class="sec-hd"><h2>Migration</h2></div>
     <div class="blk">
       <div class="sql-hd"><span class="mono">{{.UpFile}}</span><button class="btn sm" type="button" data-copy="up-sql">Copy</button></div>
       <pre id="up-sql">{{.Up}}</pre>

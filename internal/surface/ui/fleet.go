@@ -101,9 +101,9 @@ func gapCell(g *godwitv1.MigrationGap) fleetCell {
 	case g.Holds:
 		return fleetCell{Tone: "drifted", Text: "differs", Note: "applied here as " + shortSum(g.OtherChecksum)}
 	case g.Behind:
-		return fleetCell{Tone: "", Text: "not yet", Note: "the target has not reached this version"}
+		return fleetCell{Tone: "", Text: "not yet"}
 	default:
-		return fleetCell{Tone: "failed", Text: "missing", Note: "the target is past this version and does not have it"}
+		return fleetCell{Tone: "failed", Text: "missing"}
 	}
 }
 
