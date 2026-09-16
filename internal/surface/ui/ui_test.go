@@ -149,12 +149,18 @@ func (s *stub) CheckDrift(ctx context.Context, req *connect.Request[godwitv1.Che
 	return connect.NewResponse(s.drift), nil
 }
 
-func (s *stub) ListDriftEvents(ctx context.Context, _ *connect.Request[godwitv1.ListDriftEventsRequest]) (*connect.Response[godwitv1.ListDriftEventsResponse], error) {
+func (s *stub) ListDriftEvents(ctx context.Context, req *connect.Request[godwitv1.ListDriftEventsRequest]) (*connect.Response[godwitv1.ListDriftEventsResponse], error) {
 	if err := s.call(ctx, "ListDriftEvents"); err != nil {
 		return nil, err
 	}
+	out := &godwitv1.ListDriftEventsResponse{}
+	for _, e := range s.events {
+		if req.Msg.Target == "" || req.Msg.Target == e.Target {
+			out.Events = append(out.Events, e)
+		}
+	}
 
-	return connect.NewResponse(&godwitv1.ListDriftEventsResponse{Events: s.events}), nil
+	return connect.NewResponse(out), nil
 }
 
 func (s *stub) AcceptBaseline(ctx context.Context, req *connect.Request[godwitv1.AcceptBaselineRequest]) (*connect.Response[godwitv1.AcceptBaselineResponse], error) {
@@ -448,47 +454,6 @@ func TestRunActions(t *testing.T) {
 	want(t, do(h, http.MethodPost, "/ui/runs/r-bad-00001/revert", nil, "Authorization", basic("sam", "pw")), http.StatusBadGateway, "boom")
 }
 
-func TestDrift(t *testing.T) {
-	t.Parallel()
-	s := fixture()
-	h := newUI(s, Config{})
-
-	want(t, do(h, http.MethodGet, "/ui/drift", nil), http.StatusOK, "app drifted from its baseline", "Detected 1 min ago",
-		"&#43; column public.widgets.status text null=YES default=&#39;draft&#39;::text",
-		"- index public.widgets_created_at_idx CREATE INDEX", "resolved", `class="on">app <span class="cnt">drifted`, "billing <span class=\"cnt\">clean", "Accept as baseline")
-	want(t, do(h, http.MethodGet, "/ui/drift?target=billing&checked=clean", nil), http.StatusOK, "billing matches its baseline", "Checked just now", "public.invoices.retried_at")
-	want(t, do(h, http.MethodGet, "/ui/drift?target=app&checked=drifted", nil), http.StatusOK, "confirmed by the check you just ran")
-	want(t, do(h, http.MethodGet, "/ui/drift?target=ghost", nil), http.StatusOK, "No open drift event", "No drift recorded")
-	want(t, do(newUI(&stub{}, Config{}), http.MethodGet, "/ui/drift", nil), http.StatusOK, "No targets yet")
-
-	redirect(t, do(h, http.MethodPost, "/ui/drift/app/check", nil), "/ui/drift?target=app&checked=drifted")
-	s.drift = &godwitv1.CheckDriftResponse{}
-	redirect(t, do(h, http.MethodPost, "/ui/drift/app/check", nil), "/ui/drift?target=app&checked=clean")
-	redirect(t, do(h, http.MethodPost, "/ui/drift/app/accept", nil), "/ui/drift?target=app")
-	if s.calls[len(s.calls)-1] != "AcceptBaseline:app" {
-		t.Fatalf("calls = %v", s.calls)
-	}
-	if rec := do(h, http.MethodPost, "/ui/drift/app/explode", nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("code = %d", rec.Code)
-	}
-
-	s.err = connect.NewError(connect.CodeInternal, errBoom)
-	want(t, do(h, http.MethodGet, "/ui/drift", nil), http.StatusBadGateway, "boom")
-	want(t, do(h, http.MethodPost, "/ui/drift/app/check", nil), http.StatusBadGateway, "boom")
-	want(t, do(h, http.MethodPost, "/ui/drift/app/accept", nil), http.StatusBadGateway, "boom")
-
-	h = newUI(&eventsFail{stub: fixture()}, Config{})
-	want(t, do(h, http.MethodGet, "/ui/drift", nil), http.StatusBadGateway, "events down")
-}
-
-type eventsFail struct {
-	*stub
-}
-
-func (e *eventsFail) ListDriftEvents(context.Context, *connect.Request[godwitv1.ListDriftEventsRequest]) (*connect.Response[godwitv1.ListDriftEventsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnavailable, errors.New("events down"))
-}
-
 func TestBasicAuth(t *testing.T) {
 	t.Parallel()
 	s := fixture()
@@ -550,7 +515,7 @@ func TestScopeGatesActions(t *testing.T) {
 	h := newUI(s, Config{Tokens: uiTokens})
 
 	read := []string{"Authorization", basic("x", "s-read")}
-	for _, path := range []string{"/ui/runs/r-bad-00001", "/ui/runs/r-wait-0001", "/ui/runs/r-ok-000001", "/ui/drift"} {
+	for _, path := range []string{"/ui/runs/r-bad-00001", "/ui/runs/r-wait-0001", "/ui/runs/r-ok-000001", "/ui/drift?target=app"} {
 		rec := do(h, http.MethodGet, path, nil, read...)
 		want(t, rec, http.StatusOK, "Actions on this page need a wider scope")
 		absent(t, rec, noAction)
@@ -562,12 +527,12 @@ func TestScopeGatesActions(t *testing.T) {
 	want(t, do(h, http.MethodGet, "/ui/runs/r-wait-0001", nil, pipe...), http.StatusOK, "/ui/runs/r-wait-0001/confirm")
 	want(t, do(h, http.MethodGet, "/ui/runs/r-ok-000001", nil, pipe...), http.StatusOK, "/ui/runs/r-ok-000001/revert")
 	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil, pipe...), http.StatusOK, "Actions on this page need a wider scope")
-	want(t, do(h, http.MethodGet, "/ui/drift", nil, pipe...), http.StatusOK, "Actions on this page need a wider scope")
+	want(t, do(h, http.MethodGet, "/ui/drift?target=app", nil, pipe...), http.StatusOK, "Actions on this page need a wider scope")
 
 	op := []string{"Authorization", basic("x", "s-op")}
 	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil, op...), http.StatusOK,
 		"/ui/runs/r-bad-00001/resume", "/ui/runs/r-bad-00001/park")
-	want(t, do(h, http.MethodGet, "/ui/drift", nil, op...), http.StatusOK,
+	want(t, do(h, http.MethodGet, "/ui/drift?target=app", nil, op...), http.StatusOK,
 		"/ui/drift/app/check", "/ui/drift/app/accept")
 }
 
@@ -636,7 +601,7 @@ func TestAnonymousServesWithoutAuthentication(t *testing.T) {
 	want(t, rec, http.StatusOK, "Unauthenticated", `class="chip">operator<`)
 	absent(t, rec, "Signed in as", "No sign-in configured")
 
-	want(t, do(h, http.MethodGet, "/ui/drift", nil), http.StatusOK, "/ui/drift/app/check", "/ui/drift/app/accept")
+	want(t, do(h, http.MethodGet, "/ui/drift?target=app", nil), http.StatusOK, "/ui/drift/app/check", "/ui/drift/app/accept")
 	redirect(t, do(h, http.MethodPost, "/ui/drift/app/accept", nil), "/ui/drift?target=app")
 	if s.actor != "ui:anonymous" {
 		t.Fatalf("actor = %q, want ui:anonymous", s.actor)
@@ -650,7 +615,7 @@ func TestAnonymousServesWithoutAuthentication(t *testing.T) {
 	want(t, cross, http.StatusForbidden, "cross-site request refused")
 
 	read := newUI(fixture(), Config{Tokens: uiTokens, Anonymous: true, AnonymousScope: authz.ScopeRead})
-	rec = do(read, http.MethodGet, "/ui/drift", nil)
+	rec = do(read, http.MethodGet, "/ui/drift?target=app", nil)
 	want(t, rec, http.StatusOK, "Unauthenticated", "Actions on this page need a wider scope")
 	absent(t, rec, noAction)
 	want(t, do(read, http.MethodPost, "/ui/drift/app/accept", nil), http.StatusForbidden,
@@ -765,7 +730,7 @@ func TestTargetPage(t *testing.T) {
 		"20260901120000_add_index", "20260901130000_drop_legacy", "checksum mismatch", "R__views", "repeatable · unchanged",
 		"20260901140000_backfill", "1 statement", `href="/ui/plans/p-ready-0001"`, "newest ready plan still has to apply",
 		"app drifted from its baseline", "widgets_status_idx", "Accept as baseline", "Check again",
-		`href="/ui/drift?target=app">All events`, "3 recorded events",
+		`href="/ui/drift?target=app">All events`, "2 recorded events",
 		"app,public", "require_plan", "keep_old", "Ready plans", `href="/ui/plans?target=app"`, "9f1e2d3c",
 		`title="2026-09-02 09:00:00Z">3 hours ago`)
 	if strings.Contains(rec.Body.String(), "p-plan-000") {

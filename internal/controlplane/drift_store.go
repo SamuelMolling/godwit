@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -166,12 +167,15 @@ func (s *Store) History(ctx context.Context, target string) ([]HistoryRun, error
 	return out, nil
 }
 
+// DriftHistoryLimit is how many events one ListDriftEvents call returns; a caller holding that many is looking at a window, not at the history.
+const DriftHistoryLimit = 100
+
 // ListDriftEvents returns recent drift events, optionally filtered by target.
 func (s *Store) ListDriftEvents(ctx context.Context, target string) ([]DriftEvent, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, target, diff, detected_at, resolved_at FROM cp_drift_events
 		WHERE $1 = '' OR target = $1
-		ORDER BY detected_at DESC, id DESC LIMIT 100`, target)
+		ORDER BY detected_at DESC, id DESC LIMIT `+strconv.Itoa(DriftHistoryLimit), target)
 	if err != nil {
 		return nil, fmt.Errorf("list drift events: %w", err)
 	}
