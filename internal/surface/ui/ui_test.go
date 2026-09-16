@@ -293,7 +293,8 @@ func TestIndex(t *testing.T) {
 	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusOK,
 		"<title>Godwit</title>", "godwit-0", "Needs you", "r-bad-00", "needs attention", "awaiting contract", "lock timeout",
 		"oldest 2 days ago", "since 5 min ago", "Confirm rollout", "Resume", "revert of r-ok-000", "by ci", "1m30s", "300ms", "3.0s", "24h0m", "1h0m",
-		"No sign-in configured", `class="cnt">2<`, `class="dot bad"`)
+		"No sign-in configured", `class="cnt">2<`, `class="dot bad"`, `title="2026-09-02 10:00:00Z">2 hours ago`)
+	absent(t, do(h, http.MethodGet, "/ui/", nil), "#i-chev")
 	if s.actor != "ui:anonymous" {
 		t.Fatalf("actor = %q", s.actor)
 	}
@@ -327,7 +328,7 @@ func TestRunPage(t *testing.T) {
 
 	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil), http.StatusOK, "Resume run", "Park", "lock timeout",
 		"Resumed", "by <b>ci</b>", "Parked", "waiting on dba", "Contract confirmed", "The journal on",
-		"Re-attached by a repeated request", "state=queued plan=p-plan-0001")
+		"Re-attached by a repeated request", "state=queued plan=p-plan-0001", `href="/ui/">Runs<`, "#i-chev")
 	want(t, do(h, http.MethodGet, "/ui/runs/r-fail-0001", nil), http.StatusOK, "Resume run", "Park", "not_there", "Failed", "p-gone-0", "pruned")
 	want(t, do(h, http.MethodGet, "/ui/runs/r-wait-0001", nil), http.StatusOK, "Confirm rollout", "expand-contract · expand", "waiting for contract confirmation")
 	plan := do(h, http.MethodGet, "/ui/runs/r-ok-000001", nil)
@@ -724,7 +725,8 @@ func TestTargetPage(t *testing.T) {
 		"20260901120000_add_index", "20260901130000_drop_legacy", "checksum mismatch", "R__views", "repeatable · unchanged",
 		"20260901140000_backfill", "1 statement", `href="/ui/plans/p-ready-0001"`, "newest ready plan still has to apply",
 		"app drifted from its baseline", "column extra added", "Accept as baseline", "Check drift now",
-		"app,public", "require_plan", "keep_old", "Ready plans", `href="/ui/plans?target=app"`, "9f1e2d3c")
+		"app,public", "require_plan", "keep_old", "Ready plans", `href="/ui/plans?target=app"`, "9f1e2d3c",
+		`title="2026-09-02 09:00:00Z">3 hours ago`)
 	if strings.Contains(rec.Body.String(), "p-plan-000") {
 		t.Fatalf("only ready plans belong on the page:\n%s", rec.Body.String())
 	}

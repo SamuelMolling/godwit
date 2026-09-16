@@ -18,7 +18,7 @@
             {{range .Applied}}
             <tr>
               <td class="id"><span class="mono">{{.ID}}</span></td>
-              <td class="ago num">{{ago .At}}<small>{{stamp .At}}</small></td>
+              <td class="ago num" title="{{stamp .At}}">{{ago .At}}</td>
               <td class="mono faint">{{short .Checksum}}</td>
               <td>{{if .Mismatch}}<span class="pill drifted">checksum mismatch</span>{{else if .Repeatable}}<span class="chip">repeatable · unchanged</span>{{else}}<span class="pill succeeded">recorded</span>{{end}}</td>
             </tr>

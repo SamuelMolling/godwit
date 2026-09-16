@@ -131,9 +131,8 @@ td.hot{color:var(--warn);font-weight:500}
 .in::placeholder{color:var(--fg-3)}
 .in:hover{border-color:var(--fg-3)}
 .in:focus-visible{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.two{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:32px;align-items:start}
+.two{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:32px;align-items:start}
 .two table{min-width:0}
-.two td.ago small{display:block;margin-left:0}
 .stack{display:flex;flex-direction:column;gap:40px}
 .blk{display:flex;flex-direction:column;gap:12px}
 .blk h3{font-size:13px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-3);margin:0}
@@ -221,6 +220,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   .nav a,.targets a{flex-direction:row;font-size:13px;padding:6px 10px}
   .nav .cnt{position:static;transform:none}
   .brand{padding:0 8px 0 0}
+  .brand div{display:block}
   .ph,.body{padding-left:20px;padding-right:20px}
   .strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 0}
   .strip>div:nth-child(2n){border-right:0}
@@ -253,9 +253,9 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
 </svg>
 <div class="app">
 <aside class="rail">
-  <div class="brand">
+  <div class="brand" title="replica {{.Replica}} · version {{.Version}}">
     <img src="/ui/mark.svg" alt="">
-    <div><b>godwit</b><small title="replica {{.Replica}} · version {{.Version}}">{{.Replica}} · {{.Version}}</small></div>
+    <div><b>godwit</b><small>{{.Replica}} · {{.Version}}</small></div>
   </div>
   <nav class="nav" aria-label="Sections">
     <a href="/ui/" {{if eq .Nav "runs"}}class="on"{{end}}><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span>{{if .Attention}}<span class="cnt">{{.Attention}}</span>{{end}}</a>
@@ -289,7 +289,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
 
 {{define "error.html"}}{{template "head" .}}
 <header class="ph">
-  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Error</span></div><h1>Something went wrong</h1></div>
+  <div class="ttl"><h1>Something went wrong</h1></div>
 </header>
 <div class="body">
   <div class="banner drifted">

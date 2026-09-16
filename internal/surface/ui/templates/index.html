@@ -44,7 +44,7 @@
           <td><span class="pill {{state .State}}">{{label .State}}</span>{{with backfill .}}<span class="sub">{{if .Total}}≈{{.Percent}}% · {{end}}{{.Done}}{{if .Total}}/~{{.Total}}{{end}} rows · {{.Batches}}</span>{{end}}</td>
           <td class="ago">{{.Rollout}}{{with .Phase}} <small>{{.}}</small>{{end}}</td>
           <td class="r num{{if gt .Attempts 1}} hot{{end}}">{{.Attempts}}{{if .Retries}} <small class="faint">+{{.Retries}} retried</small>{{end}}</td>
-          <td class="ago num">{{ago .CreatedAt}}<small>{{clock .CreatedAt}}</small></td>
+          <td class="ago num" title="{{stamp .CreatedAt}}">{{ago .CreatedAt}}</td>
           <td class="r num">{{took .}}</td>
         </tr>
         {{end}}
@@ -59,7 +59,7 @@
 
 {{define "index.html"}}{{if .Partial}}{{template "runs-body" .}}{{else}}{{template "head" .}}
 <header class="ph">
-  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Runs</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Runs</h1></div>
+  <div class="ttl"><h1>Runs</h1></div>
   <div class="acts"><a class="btn ghost" href="/ui/{{if .Target}}?target={{.Target}}{{end}}"><svg class="ic"><use href="#i-refresh"/></svg>Refresh</a></div>
 </header>
 {{template "runs-body" .}}

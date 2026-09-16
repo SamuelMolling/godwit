@@ -88,7 +88,8 @@ func TestPlansList(t *testing.T) {
 		"/ui/plans/p-ready-001", "/ui/plans/p-plan-0001", "/ui/plans/p-super-001",
 		"key k-ready-", "by sam", "by ci", "github", "expand-contract", "not validated",
 		"/ui/runs/r-ok-000001", "not bound", "1 pending",
-		`>all <span class="cnt">3<`, `>ready <span class="cnt">1<`, `>bound <span class="cnt">1<`, `>superseded <span class="cnt">1<`)
+		`>all <span class="cnt">3<`, `>ready <span class="cnt">1<`, `>bound <span class="cnt">1<`, `>superseded <span class="cnt">1<`,
+		`title="2026-09-02 10:00:00Z">2 hours ago`)
 	body := rec.Body.String()
 	if i, j := strings.Index(body, "p-ready-001"), strings.Index(body, "p-plan-0001"); i > j {
 		t.Fatalf("newest first: ready at %d, bound at %d", i, j)
