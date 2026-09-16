@@ -229,7 +229,7 @@ Rules, enforced at start-up: exactly one or three colon-separated fields; name a
 
 | Scope | Allows |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetTargetStatus`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `GetPlan`, `ListPlans`, `Diff`, `Checkpoint`, `ListCredentialStores` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetTargetStatus`, `GetMigrationJournal`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `GetPlan`, `ListPlans`, `Diff`, `Checkpoint`, `ListCredentialStores` |
 | `pipeline` | read + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | pipeline + `GetTarget`, `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget`, `ReconcileTarget` |
 | `admin` | operator + `RegisterTarget`, `RegisterCredentialStore` |

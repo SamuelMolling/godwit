@@ -656,6 +656,70 @@ message GetTargetStatusResponse {
   string unreachable = 11;
 }
 
+message GetMigrationJournalRequest {
+  string target = 1;
+  // Migration id: <version>_<name>, or R__<name>.
+  string migration = 2;
+}
+
+message JournalStatement {
+  int32 index = 1;
+  // The statement as the run executed it, from the file bodies that run stored, matched by hash.
+  // Empty when those bodies are gone or no longer produce this statement.
+  string sql = 2;
+  string sql_hash = 3;
+  // "done", "failed", "in flight" (an intent with no done) or "not reached".
+  string outcome = 4;
+  // When the intent was journalled; unset for a transactional statement, which journals only its done.
+  google.protobuf.Timestamp intent_at = 5;
+  // When the statement was journalled done; unset when it never was.
+  google.protobuf.Timestamp done_at = 6;
+  // Runs outside a transaction, so the intent above is what the verifier settles after a crash.
+  bool no_tx = 7;
+  // "create_index_concurrently", "drop_index_concurrently", "rerun" or "batch"; empty for a transactional statement.
+  string verifier = 8;
+  int64 rows_done = 9;
+  int64 rows_total = 10;
+  // Where a batched backfill had reached, as the journal carries it.
+  string cursor = 11;
+}
+
+message MigrationJournalRun {
+  // godwit.runs.id in the target's own journal; not a control-plane run id.
+  string id = 1;
+  // "up" or "down".
+  string direction = 2;
+  // "running", "succeeded" or "failed", as the target recorded it.
+  string state = 3;
+  // What stopped the attempt, as the executor wrote it.
+  string error = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp finished_at = 6;
+  // Statements the plan had when the attempt opened.
+  int32 statement_count = 7;
+  repeated JournalStatement statements = 8;
+}
+
+message GetMigrationJournalResponse {
+  string target = 1;
+  string migration = 2;
+  // Newest attempt first; empty when the target journalled none.
+  repeated MigrationJournalRun runs = 3;
+  // Control-plane run the statement text was read from: the one that applied the migration, or the
+  // newest that carried its file when none did.
+  string run_id = 4;
+  google.protobuf.Timestamp applied_at = 5;
+  // The run found the migration already recorded on the target instead of applying it, so nothing was journalled.
+  bool adopted = 6;
+  // The run recorded the migration without executing it: a checkpoint collapsed it, or its effect was already there.
+  bool recorded_only = 7;
+  // Why the target's journal could not be read, when its credential does not resolve: what the control
+  // plane holds is still answered, and runs is empty rather than absent.
+  string unreachable = 8;
+  // No stored file body could be found for the migration, so the statements carry their hash and no text.
+  bool bodies_swept = 9;
+}
+
 message ListAuditRequest {
   string target = 1;
   string run_id = 2;
@@ -808,6 +872,9 @@ service GodwitService {
   // Repairs the ledger from the target's own journal, without writing to the target.
   rpc ReconcileTarget(ReconcileTargetRequest) returns (ReconcileTargetResponse);
   rpc GetTargetStatus(GetTargetStatusRequest) returns (GetTargetStatusResponse);
+  // Reads one migration's statement journal out of the target's own database, with the statement text
+  // taken from the file bodies the applying run stored.
+  rpc GetMigrationJournal(GetMigrationJournalRequest) returns (GetMigrationJournalResponse);
   // Returns one target's registration, without its credential.
   rpc GetTarget(GetTargetRequest) returns (GetTargetResponse);
   // Summarises every registered target from the control plane alone, without opening a connection to any of them.

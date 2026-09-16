@@ -19,6 +19,7 @@ import (
 
 type stubInspector struct {
 	status   controlplane.TargetStatus
+	journal  controlplane.MigrationJournal
 	obs      controlplane.Observation
 	losses   []engine.Loss
 	lossErr  error
@@ -28,6 +29,10 @@ type stubInspector struct {
 
 func (i stubInspector) Status(context.Context, string) (controlplane.TargetStatus, error) {
 	return i.status, i.err
+}
+
+func (i stubInspector) Journal(context.Context, string, string) (controlplane.MigrationJournal, error) {
+	return i.journal, i.err
 }
 
 func (i stubInspector) Observe(context.Context, string) (controlplane.Observation, error) {

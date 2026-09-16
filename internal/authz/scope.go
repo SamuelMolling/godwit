@@ -49,6 +49,7 @@ var procedureScopes = map[string]Scope{
 	service + "WatchRun":                ScopeRead,
 	service + "PlanRun":                 ScopeRead,
 	service + "GetTargetStatus":         ScopeRead,
+	service + "GetMigrationJournal":     ScopeRead,
 	service + "ListTargets":             ScopeRead,
 	service + "ListMigrations":          ScopeRead,
 	service + "ListDriftEvents":         ScopeRead,

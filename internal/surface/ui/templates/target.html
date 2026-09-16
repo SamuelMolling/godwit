@@ -16,7 +16,7 @@
           <tbody>
             {{range .Applied}}
             <tr>
-              <td class="id"><span class="mono">{{.ID}}</span></td>
+              <td class="id"><a class="mono" href="/ui/targets/{{$.Target}}/migrations/{{.ID}}">{{.ID}}</a></td>
               <td class="ago num" title="{{stamp .At}}">{{ago .At}}</td>
               <td class="mono faint">{{short .Checksum}}</td>
               <td>{{if .Mismatch}}<span class="pill drifted">checksum mismatch</span>{{else if .Repeatable}}<span class="chip">repeatable · unchanged</span>{{else}}<span class="pill succeeded">recorded</span>{{end}}</td>

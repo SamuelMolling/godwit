@@ -29,6 +29,7 @@ type Engine interface {
 	MarkApplied(ctx context.Context, dsn string, migs []engine.Migration) ([]engine.Migration, error)
 	Snapshot(ctx context.Context, dsn string, scope engine.SnapshotScope) (engine.Schema, error)
 	Applied(ctx context.Context, dsn string) ([]engine.Applied, []engine.Repeatable, error)
+	Journal(ctx context.Context, dsn string, version int64, repeatable string) ([]engine.JournalRun, error)
 	Observe(ctx context.Context, dsn string, scope engine.SnapshotScope) (Observation, error)
 	DataLoss(ctx context.Context, dsn string, drops []engine.Drop) ([]engine.Loss, error)
 }
@@ -133,6 +134,17 @@ func (PGEngine) Applied(ctx context.Context, dsn string) ([]engine.Applied, []en
 	defer func() { _ = conn.Close(context.Background()) }()
 
 	return listApplied(ctx, conn)
+}
+
+// Journal implements Engine.
+func (PGEngine) Journal(ctx context.Context, dsn string, version int64, repeatable string) ([]engine.JournalRun, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connect target: %w", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+
+	return engine.ListJournal(ctx, conn, version, repeatable)
 }
 
 func listApplied(ctx context.Context, db engine.DB) ([]engine.Applied, []engine.Repeatable, error) {

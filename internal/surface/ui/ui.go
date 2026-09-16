@@ -84,6 +84,7 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	h.mux.HandleFunc("GET /ui/fleet", h.fleet)
 	h.mux.HandleFunc("GET /ui/targets", h.targets)
 	h.mux.HandleFunc("GET /ui/targets/{name}", h.target)
+	h.mux.HandleFunc("GET /ui/targets/{name}/migrations/{migration}", h.migration)
 
 	return h
 }
@@ -401,6 +402,7 @@ type page struct {
 	Ready     []*godwitv1.Plan
 	Applied   []migRow
 	Pending   []migRow
+	Journal   *journalData
 	Error     string
 	Partial   bool
 	Anonymous bool
