@@ -352,17 +352,3 @@ func TestRunReportText(t *testing.T) {
 		t.Fatalf("the terminal names what is held:\n%s", b.String())
 	}
 }
-
-func TestCommitOfIgnoresProvenanceItCannotRead(t *testing.T) {
-	t.Parallel()
-
-	for _, source := range []string{"", "db/migrations", "github.com/acme/app@notasha", "acme/app@0419cdd1c2f"} {
-		if short, href := commitOf(source); short != "" || href != "" {
-			t.Fatalf("commitOf(%q) = %q, %q, want nothing", source, short, href)
-		}
-	}
-	short, href := commitOf("ghe.acme.com/team/app@0419cdd1c2f")
-	if short != "0419cdd" || href != "https://ghe.acme.com/team/app/commit/0419cdd1c2f" {
-		t.Fatalf("commitOf on an enterprise host = %q, %q", short, href)
-	}
-}

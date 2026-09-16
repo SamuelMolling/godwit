@@ -142,7 +142,7 @@ func diffFixture() *diffStub {
 		},
 	}}
 	s.status.Applied = records("t_totals")
-	s.planList = []*godwitv1.Plan{{Id: "p-plan-0001", Target: "app", State: "ready", CreatedAt: at(time.Hour)}}
+	s.planList = []*godwitv1.Plan{{Id: "6513270e-269e-4d37-b2a7-4de452e6b438", Target: "app", State: "ready", CreatedAt: at(time.Hour)}}
 	s.planFiles = append(pair("t_totals", viewSQL),
 		&godwitv1.MigrationFile{Name: "20260901120000_add_index.up.sql", Body: "CREATE INDEX i1 ON t (a);"})
 	s.runFiles = pair("t_totals", viewSQL)
@@ -197,7 +197,7 @@ func TestDiffRun(t *testing.T) {
 		"search_path", "public", "abcdef12", "2026-09-02 11:59:00Z",
 		"CREATE TABLE t (a int);",
 		"Repeatable migrations", "1 recorded on app",
-		"Supplied from plan p-plan-0 (ready), stored 2026-09-02 11:00:00Z",
+		"Supplied from plan 6513270e (ready), stored 2026-09-02 11:00:00Z",
 		"not necessarily what your repository holds now",
 		"matches the snapshot, byte for byte",
 		"Declared by a repeatable", "public.t_totals")
@@ -280,7 +280,7 @@ func TestDiffPlanSweptByRetention(t *testing.T) {
 	form.Set("files", "plan")
 	s.fail = connect.NewError(connect.CodeFailedPrecondition, errors.New("no migration files"))
 	want(t, do(newUI(s, Config{}), http.MethodPost, "/ui/diff", form), http.StatusPreconditionFailed,
-		"plan p-plan-0 was swept by retention before it could be read")
+		"plan 6513270e was swept by retention before it could be read")
 }
 
 func TestDiffReportsASnapshotOutOfStepWithTheTarget(t *testing.T) {

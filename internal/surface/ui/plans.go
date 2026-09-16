@@ -8,6 +8,7 @@ import (
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
+	"github.com/SamuelMolling/godwit/internal/link"
 )
 
 type plansData struct {
@@ -15,6 +16,8 @@ type plansData struct {
 	Pruned  bool
 	Tone    string
 	State   string
+	Legend  string
+	From    planSource
 	Filters []planFilter
 	Rows    []planRow
 	Detail  []planMigration
@@ -23,8 +26,16 @@ type plansData struct {
 type planRow struct {
 	*godwitv1.Plan
 	Tone    string
+	From    planSource
 	Pending int
 	Total   int
+}
+
+type planSource struct {
+	Raw  string
+	Text string
+	Href string
+	Dir  string
 }
 
 type planFilter struct {
@@ -57,6 +68,20 @@ type planMigration struct {
 
 var planStates = []string{"ready", "bound", "superseded"}
 
+const planLegend = "ready is stored and validated with no run bound to it: nothing applies a plan on its own, " +
+	"so it waits for a godwit migrate or a godwit apply comment, and past --plan-ttl it can no longer be bound " +
+	"and has to be re-planned. bound is the plan a run took, and that run says what it applied. superseded is " +
+	"one that a re-plan of the same set replaced. Retention sweeps bound and superseded plans; ready ones stay."
+
+func sourceOf(source string) planSource {
+	c := link.CommitOf(source)
+	if c.Href == "" {
+		return planSource{Raw: source, Text: source}
+	}
+
+	return planSource{Raw: source, Text: strings.TrimPrefix(c.Repo, "github.com/") + "@" + c.Short, Href: c.Href, Dir: c.Dir}
+}
+
 func planTone(state string) string {
 	switch state {
 	case "bound":
@@ -69,7 +94,7 @@ func planTone(state string) string {
 }
 
 func rowOf(p *godwitv1.Plan) planRow {
-	row := planRow{Plan: p, Tone: planTone(p.State), Total: len(p.Migrations)}
+	row := planRow{Plan: p, Tone: planTone(p.State), From: sourceOf(p.Source), Total: len(p.Migrations)}
 	for _, m := range p.Migrations {
 		if !m.Applied {
 			row.Pending++
@@ -179,7 +204,7 @@ func (h *Handler) plans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Target = r.URL.Query().Get("target")
-	d := &plansData{State: r.URL.Query().Get("state")}
+	d := &plansData{State: r.URL.Query().Get("state"), Legend: planLegend}
 	counts := map[string]int{}
 	for _, name := range planTargets(p) {
 		resp, err := call(ctx, godwitv1connect.GodwitServiceListPlansProcedure,
@@ -218,10 +243,10 @@ func (h *Handler) planPage(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	d := &plansData{ID: id, Pruned: plan == nil}
+	d := &plansData{ID: id, Pruned: plan == nil, Legend: planLegend}
 	if plan != nil {
 		p.Plan, p.Target = plan, plan.Target
-		d.Tone, d.Detail = planTone(plan.State), planMigrations(plan)
+		d.Tone, d.Detail, d.From = planTone(plan.State), planMigrations(plan), sourceOf(plan.Source)
 	}
 	p.Plans = d
 	h.render(w, http.StatusOK, "plan.html", p)

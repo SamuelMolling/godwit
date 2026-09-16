@@ -25,7 +25,7 @@
 <header class="ph">
   <div class="ttl">
     <div class="crumbs"><a href="/ui/plans">Plans</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Plans.ID}}</span></div>
-    <h1><span class="mono" style="font-weight:500;font-size:22px">{{short .Plans.ID}}</span> {{with .Plan}}<span class="pill {{$.Plans.Tone}} lg">{{.State}}</span>{{else}}<span class="pill lg">pruned</span>{{end}}</h1>
+    <h1><span class="mono" style="font-weight:500;font-size:22px">{{short .Plans.ID}}</span> {{with .Plan}}<span class="pill {{$.Plans.Tone}} lg">{{.State}}</span>{{template "hint" $.Plans.Legend}}{{else}}<span class="pill lg">pruned</span>{{end}}</h1>
   </div>
   {{with .Plan}}{{with .RunId}}<div class="acts"><a class="btn" href="/ui/runs/{{.}}">Open run {{short .}}</a></div>{{end}}{{end}}
 </header>
@@ -47,12 +47,13 @@
         <h3>Facts</h3>
         <dl class="facts">
           <dt>Target</dt><dd><span class="chip">{{.Plan.Target}}</span></dd>
-          <dt>Key</dt><dd class="mono">{{short .Plan.Key}}</dd>
+          <dt>Key</dt><dd class="mono">{{.Plan.Key}}</dd>
           <dt>Rollout</dt><dd class="mono">{{.Plan.Rollout}}</dd>
           <dt>Validated</dt><dd>{{if .Plan.Validated}}replayed on a scratch database{{else}}not validated{{end}}</dd>
           {{if .Plan.AllowOutOfOrder}}<dt>Order</dt><dd>out-of-order allowed</dd>{{end}}
           {{with .Plan.AcknowledgedHazards}}<dt>Acknowledged</dt><dd>{{range .}}<span class="chip">{{.}}</span> {{end}}</dd>{{end}}
-          <dt>Created by</dt><dd>{{or .Plan.CreatedBy "—"}}{{with .Plan.Source}} <span class="faint">via {{.}}</span>{{end}}</dd>
+          <dt>Created by</dt><dd>{{or .Plan.CreatedBy "—"}}</dd>
+          <dt>Source</dt><dd>{{if .Plans.From.Href}}<a href="{{.Plans.From.Href}}">{{.Plans.From.Text}}</a>{{with .Plans.From.Dir}} <span class="faint">{{.}}</span>{{end}}{{else}}{{or .Plans.From.Text "—"}}{{end}}</dd>
           <dt>Created</dt><dd class="mono num">{{stamp .Plan.CreatedAt}}</dd>
           <dt>Run</dt><dd>{{with .Plan.RunId}}<a class="mono" href="/ui/runs/{{.}}">{{short .}}</a>{{else}}<span class="faint">not bound</span>{{end}}</dd>
           {{with .Plan.SupersededBy}}<dt>Superseded by</dt><dd><a class="mono" href="/ui/plans/{{.}}">{{short .}}</a></dd>{{end}}
