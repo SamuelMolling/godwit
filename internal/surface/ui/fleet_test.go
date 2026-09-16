@@ -79,41 +79,56 @@ func TestFleetPage(t *testing.T) {
 	s := fleetFixture()
 	h := newUI(s, Config{Replica: "godwit-0"})
 
-	rec := do(h, http.MethodGet, "/ui/migrations", nil)
+	rec := do(h, http.MethodGet, "/ui/fleet", nil)
 	want(t, rec, http.StatusOK, "Every migration", "20260901120000_users", "aabbccdd", "unknown",
 		"recorded by 20260904000000_squash, not run", "not yet", "differs", "applied here as 55556666", "missing",
 		"stands under more than one checksum", "repeatable, keyed by content", "checkpoint",
 		"4 not on every target · 1 under more than one checksum",
-		`href="/ui/migrations?gaps=1"`, "Only what is not everywhere")
+		`href="/ui/fleet?gaps=1"`, "Only what is not everywhere")
 	if s.calls[1] != "ListMigrations:" {
 		t.Fatalf("calls = %v", s.calls)
 	}
 
-	rec = do(h, http.MethodGet, "/ui/migrations?target=app&gaps=1", nil)
-	want(t, rec, http.StatusOK, "Standing on app", `href="/ui/migrations?target=app&amp;gaps=0"`, "Show every migration")
+	rec = do(h, http.MethodGet, "/ui/fleet?target=app&gaps=1", nil)
+	want(t, rec, http.StatusOK, "Standing on app", `href="/ui/fleet?target=app&amp;gaps=0"`, "Show every migration")
 	absent(t, rec, "20260901120000_users")
+}
+
+func TestFleetKeepsTheOldPathWorking(t *testing.T) {
+	t.Parallel()
+	h := newUI(fleetFixture(), Config{})
+
+	for path, dest := range map[string]string{
+		"/ui/migrations":                   "/ui/fleet",
+		"/ui/migrations?target=app&gaps=1": "/ui/fleet?target=app&gaps=1",
+	} {
+		rec := do(h, http.MethodGet, path, nil)
+		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != dest {
+			t.Fatalf("%s: code = %d location = %q", path, rec.Code, rec.Header().Get("Location"))
+		}
+	}
 }
 
 func TestFleetPageEmptyAndErrors(t *testing.T) {
 	t.Parallel()
 
-	rec := do(newUI(&stub{}, Config{}), http.MethodGet, "/ui/migrations", nil)
+	rec := do(newUI(&stub{}, Config{}), http.MethodGet, "/ui/fleet", nil)
 	want(t, rec, http.StatusOK, "Nothing to compare", "godwit migrations")
 
 	s := fleetFixture()
 	s.err = connect.NewError(connect.CodeUnavailable, errBoom)
-	want(t, do(newUI(s, Config{}), http.MethodGet, "/ui/migrations", nil), http.StatusBadGateway, "boom")
+	want(t, do(newUI(s, Config{}), http.MethodGet, "/ui/fleet", nil), http.StatusBadGateway, "boom")
 
 	s = fleetFixture()
 	s.fleetErr = connect.NewError(connect.CodeUnavailable, errBoom)
-	want(t, do(newUI(s, Config{}), http.MethodGet, "/ui/migrations", nil), http.StatusBadGateway, "boom")
+	want(t, do(newUI(s, Config{}), http.MethodGet, "/ui/fleet", nil), http.StatusBadGateway, "boom")
 }
 
 func TestFleetPageScope(t *testing.T) {
 	t.Parallel()
 	h := newUI(fleetFixture(), Config{AnonymousScope: authz.ScopeRead})
 
-	want(t, do(h, http.MethodGet, "/ui/migrations", nil), http.StatusOK, "Every migration")
+	want(t, do(h, http.MethodGet, "/ui/fleet", nil), http.StatusOK, "Every migration")
 }
 
 func TestFleetAllOnEveryTarget(t *testing.T) {
@@ -127,5 +142,5 @@ func TestFleetAllOnEveryTarget(t *testing.T) {
 		}},
 	}
 
-	want(t, do(newUI(s, Config{}), http.MethodGet, "/ui/migrations", nil), http.StatusOK, "All on every target")
+	want(t, do(newUI(s, Config{}), http.MethodGet, "/ui/fleet", nil), http.StatusOK, "All on every target")
 }

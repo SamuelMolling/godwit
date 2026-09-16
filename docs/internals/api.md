@@ -353,7 +353,7 @@ it, which skipped it; `newestVersion` is that target's newest standing version.
 Filters, all optional and combined with AND: `targets` (only these, an unregistered name is `not_found`),
 `fromVersion` / `toVersion` (inclusive, and either one leaves the versionless repeatables out), `notEverywhere`
 (only what at least one target lacks), `inTarget` and `notInTarget`. The CLI renders it as `godwit migrations`
-and the UI as `/ui/migrations`.
+and the UI as `/ui/fleet`.
 
 ### GetPlan — read
 

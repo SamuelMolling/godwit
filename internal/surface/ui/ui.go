@@ -81,11 +81,22 @@ func New(svc godwitv1connect.GodwitServiceHandler, cfg Config) *Handler {
 	h.mux.HandleFunc("POST /ui/drift/{target}/{action}", h.driftAction)
 	h.mux.HandleFunc("GET /ui/diff", h.diffForm)
 	h.mux.HandleFunc("POST /ui/diff", h.diffRun)
-	h.mux.HandleFunc("GET /ui/migrations", h.migrations)
+	h.mux.HandleFunc("GET /ui/fleet", h.fleet)
+	h.mux.HandleFunc("GET /ui/migrations", moved("/ui/fleet"))
 	h.mux.HandleFunc("GET /ui/targets", h.targets)
 	h.mux.HandleFunc("GET /ui/targets/{name}", h.target)
 
 	return h
+}
+
+func moved(to string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dest := to
+		if r.URL.RawQuery != "" {
+			dest += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, dest, http.StatusMovedPermanently)
+	}
 }
 
 func (h *Handler) shared() bool {
@@ -213,6 +224,7 @@ func state(s godwitv1.RunState) string {
 func (h *Handler) funcs() template.FuncMap {
 	return template.FuncMap{
 		"state":    state,
+		"known":    known,
 		"plural":   plural,
 		"backfill": backfillOf,
 		"label":    func(s godwitv1.RunState) string { return strings.ReplaceAll(state(s), "_", " ") },

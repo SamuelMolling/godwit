@@ -4,7 +4,6 @@
     <div class="crumbs"><a href="/ui/targets">Targets</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Target}}</span></div>
     <h1>{{.Target}} <span class="chip">{{.Summary.Provider}}</span>{{if .Summary.UnresolvedDrift}} <span class="pill drifted lg">drifted</span>{{end}}</h1>
   </div>
-  <div class="acts">{{if .Can.check}}<form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn pri"><svg class="ic"><use href="#i-refresh"/></svg>Check drift now</button></form>{{end}}</div>
 </header>
 <div class="body">
   <div class="two">
@@ -66,20 +65,8 @@
 
       <div class="blk">
         <h3>Drift</h3>
-        {{if .Open}}
-        <div class="banner drifted">
-          <div class="icw"><svg class="ic"><use href="#i-ne"/></svg></div>
-          <div><b>{{.Target}} drifted from its baseline</b><span>Detected {{ago .Open.DetectedAt}}</span></div>
-          <div class="acts">{{if .Can.accept}}<form method="post" action="/ui/drift/{{.Target}}/accept"><button class="btn dng">Accept as baseline</button></form>{{end}}<a class="btn" href="/ui/drift?target={{.Target}}">All events</a></div>
-        </div>
-        <pre>{{.Open.Diff}}</pre>
-        {{else}}
-        <div class="banner clean">
-          <div class="icw"><svg class="ic"><use href="#i-check"/></svg></div>
-          <div><b>{{.Target}} matches its baseline</b><span>{{len .Events}} recorded event(s), none open</span></div>
-          <div class="acts"><a class="btn" href="/ui/drift?target={{.Target}}">All events</a></div>
-        </div>
-        {{end}}
+        {{template "drift-card" .}}
+        {{with .Open}}<pre>{{.Diff}}</pre>{{end}}
         {{if .Locked}}{{template "scope-note" .}}{{end}}
       </div>
     </div>

@@ -724,7 +724,8 @@ func TestTargetPage(t *testing.T) {
 	want(t, rec, http.StatusOK,
 		"20260901120000_add_index", "20260901130000_drop_legacy", "checksum mismatch", "R__views", "repeatable · unchanged",
 		"20260901140000_backfill", "1 statement", `href="/ui/plans/p-ready-0001"`, "newest ready plan still has to apply",
-		"app drifted from its baseline", "column extra added", "Accept as baseline", "Check drift now",
+		"app drifted from its baseline", "column extra added", "Accept as baseline", "Check again",
+		`href="/ui/drift?target=app">All events`, "3 recorded events",
 		"app,public", "require_plan", "keep_old", "Ready plans", `href="/ui/plans?target=app"`, "9f1e2d3c",
 		`title="2026-09-02 09:00:00Z">3 hours ago`)
 	if strings.Contains(rec.Body.String(), "p-plan-000") {

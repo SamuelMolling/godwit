@@ -1,4 +1,4 @@
-{{define "migrations.html"}}{{template "head" .}}
+{{define "fleet.html"}}{{template "head" .}}
 <header class="ph">
   <div class="ttl"><h1>Fleet</h1></div>
   <div class="acts"><a class="btn ghost" href="{{.Fleet.GapsHref}}"><svg class="ic"><use href="#i-ne"/></svg>{{if .Fleet.OnlyGaps}}Show every migration{{else}}Only what is not everywhere{{end}}</a></div>
@@ -10,7 +10,7 @@
       <div class="right">{{if .Fleet.Everybody}}All on every target{{else if .Fleet.Gaps}}{{.Fleet.Gaps}} not on every target{{if .Fleet.Diverged}} · {{.Fleet.Diverged}} under more than one checksum{{end}}{{end}}</div>
     </div>
     {{if .Fleet.Rows}}
-    <div class="tbl"><table>
+    <div class="tbl"><table class="fleet">
       <thead><tr><th>Migration</th><th>Checksum</th>{{range .Fleet.Columns}}<th>{{.}}</th>{{end}}</tr></thead>
       <tbody>
         {{range .Fleet.Rows}}

@@ -146,7 +146,7 @@ func TestListMigrationsEndToEnd(t *testing.T) {
 		t.Fatalf("unregistered target = %v", err)
 	}
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/ui/migrations", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/ui/fleet", nil)
 	req.SetBasicAuth("whoever", "s-read")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

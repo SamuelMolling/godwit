@@ -165,13 +165,16 @@ func TestDiffForm(t *testing.T) {
 
 	rec := do(h, http.MethodGet, "/ui/diff", nil)
 	want(t, rec, http.StatusOK, "Schema diff", `name="schema"`, `value="changes"`,
-		`<option value="app">`, `<option value="billing">`, "Generate migration",
+		`<option value="" selected>Pick a target`, `<option value="app">`, `<option value="billing">`, "Generate migration",
 		"godwit diff --prisma", "desired database as DDL", "Nothing is written to disk here",
 		`name="files"`, `<option value="auto" selected>`, "The run that last succeeded")
 	absent(t, rec, "No changes", `id="up-sql"`, "Repeatable migrations")
 
-	want(t, do(h, http.MethodGet, "/ui/diff?target=app&name=add_index", nil), http.StatusOK,
-		`value="app"`, `value="add_index"`)
+	rec = do(h, http.MethodGet, "/ui/diff?target=app&name=add_index", nil)
+	want(t, rec, http.StatusOK, `<option value="app" selected>`, `value="add_index"`)
+	absent(t, rec, `<option value="" selected>`)
+
+	want(t, do(h, http.MethodGet, "/ui/diff?target=ghost", nil), http.StatusOK, `<option value="" selected>`)
 	want(t, do(h, http.MethodGet, "/ui/diff?name=Add%20Index", nil), http.StatusOK, `value="changes"`)
 }
 
