@@ -9,20 +9,20 @@
   </div>
 
   <div class="sec" style="margin-top:24px">
-    <div class="sec-hd"><h2>{{if .Target}}Plans on {{.Target}}{{else}}All plans{{end}} <span class="n">{{len .Plans.Rows}}</span></h2><div class="right">Newest first</div></div>
+    <div class="sec-hd"><h2>{{if .Target}}Plans on {{.Target}}{{else}}All plans{{end}} <span class="n">{{len .Plans.Rows}}</span>{{template "hint" .Plans.Legend}}</h2><div class="right">Newest first</div></div>
     {{if .Plans.Rows}}
-    <div class="tbl"><table>
-      <thead><tr><th>Plan</th><th>Target</th><th>State</th><th>Rollout</th><th class="r">Migrations</th><th>Run</th><th>Created</th></tr></thead>
+    <div class="tbl"><table class="plans">
+      <thead><tr><th>Plan{{template "hint" "Under the id is the commit the files came from: a plan records the repository and the commit, never the pull request that carried them. The key is sha256 of the target, the rollout and the pending set, so the same files over the same history key the same anywhere; it is shown short here and whole on the plan's own page."}}</th><th>Key</th><th>Target</th><th>State</th><th>Rollout</th><th class="r">Migrations</th><th>Created</th></tr></thead>
       <tbody>
         {{range .Plans.Rows}}
         <tr>
-          <td class="id"><a href="/ui/plans/{{.Id}}">{{short .Id}}</a><span class="sub">key {{short .Key}}{{with .CreatedBy}} · by {{.}}{{end}}{{with .Source}} · {{.}}{{end}}</span></td>
+          <td class="id"><a href="/ui/plans/{{.Id}}">{{short .Id}}</a><span class="sub" title="{{.From.Raw}}">{{if .From.Href}}<a href="{{.From.Href}}">{{.From.Text}}</a>{{else}}{{or .From.Text "no source recorded"}}{{end}}</span></td>
+          <td><span class="mono" title="{{.Key}}">{{short .Key}}</span></td>
           <td><span class="chip">{{.Target}}</span></td>
-          <td><span class="pill {{.Tone}}">{{.State}}</span>{{with .SupersededBy}}<span class="sub">by <a href="/ui/plans/{{.}}">{{short .}}</a></span>{{end}}</td>
+          <td><span class="pill {{.Tone}}">{{.State}}</span><span class="sub">{{if .RunId}}run <a href="/ui/runs/{{.RunId}}">{{short .RunId}}</a>{{else if .SupersededBy}}replaced by <a href="/ui/plans/{{.SupersededBy}}">{{short .SupersededBy}}</a>{{else if eq .State "ready"}}waiting for an apply{{end}}</span></td>
           <td class="ago">{{.Rollout}}{{if not .Validated}} <small>not validated</small>{{end}}</td>
           <td class="r num">{{.Total}}{{if .Pending}} <small class="faint">{{.Pending}} pending</small>{{end}}</td>
-          <td class="id">{{with .RunId}}<a href="/ui/runs/{{.}}">{{short .}}</a>{{else}}<span class="faint">not bound</span>{{end}}</td>
-          <td class="ago num" title="{{stamp .CreatedAt}}">{{ago .CreatedAt}}</td>
+          <td class="ago num"><span title="{{stamp .CreatedAt}}">{{ago .CreatedAt}}</span>{{with .CreatedBy}}<span class="sub" title="{{.}}">by {{.}}</span>{{end}}</td>
         </tr>
         {{end}}
       </tbody>

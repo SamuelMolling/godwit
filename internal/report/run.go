@@ -181,8 +181,8 @@ func (r Run) links(m markup) string {
 	if id := r.run.GetPlanId(); id != "" {
 		parts = append(parts, "plan "+linked(m, id, link.Plan(r.public, id)))
 	}
-	if short, href := commitOf(r.run.GetSource()); short != "" {
-		parts = append(parts, "commit "+linked(m, short, href))
+	if c := link.CommitOf(r.run.GetSource()); c.Short != "" {
+		parts = append(parts, "commit "+linked(m, c.Short, c.Href))
 	}
 	if at := Stamp(r.run.GetFinishedAt()); at != "" {
 		parts = append(parts, "finished "+m.code(at))
@@ -193,18 +193,6 @@ func (r Run) links(m markup) string {
 
 func linked(m markup, text, href string) string {
 	return m.href(m.code(text), href)
-}
-
-// commitOf reads the run's provenance, which the Action writes as <host>/<owner>/<repo>@<sha>[:<dir>].
-var commitRe = regexp.MustCompile(`^([a-zA-Z0-9.-]+/[^/@\s]+/[^/@\s]+)@([0-9a-fA-F]{7,40})(?::|$)`)
-
-func commitOf(source string) (short, href string) {
-	match := commitRe.FindStringSubmatch(source)
-	if match == nil {
-		return "", ""
-	}
-
-	return match[2][:7], "https://" + match[1] + "/commit/" + match[2]
 }
 
 func (r Run) outcomeList() string {

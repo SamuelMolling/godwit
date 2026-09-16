@@ -238,7 +238,7 @@ func fixture() *stub {
 			{Id: "r-run-00001", Target: "app", State: godwitv1.RunState_RUN_STATE_RUNNING, Attempts: 1, CreatedAt: at(10 * time.Second)},
 			{Id: "r-queue-001", Target: "app", State: godwitv1.RunState_RUN_STATE_QUEUED, CreatedAt: at(time.Second)},
 			{Id: "r-retry-001", Target: "app", State: godwitv1.RunState_RUN_STATE_QUEUED, Attempts: 1, Retries: 2, NotBefore: at(-20 * time.Second), CreatedAt: at(time.Minute)},
-			{Id: "r-ok-000001", Target: "app", Kind: "migrate", CreatedBy: "ci", Source: "github", PlanId: "p-plan-0001", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1, Rollout: "direct", CreatedAt: at(2 * time.Hour), FinishedAt: at(2*time.Hour - 90*time.Second)},
+			{Id: "r-ok-000001", Target: "app", Kind: "migrate", CreatedBy: "ci", Source: "github", PlanId: "6513270e-269e-4d37-b2a7-4de452e6b438", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1, Rollout: "direct", CreatedAt: at(2 * time.Hour), FinishedAt: at(2*time.Hour - 90*time.Second)},
 			{
 				Id: "r-bad-00001", Target: "billing", State: godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION, Attempts: 3,
 				Error: "sql: statement 2 of 20260901120000_add_index (up): exec: ERROR: canceling statement due to lock timeout (SQLSTATE 55P03)", CreatedAt: at(3 * 24 * time.Hour), FinishedAt: at(2 * 24 * time.Hour),
@@ -246,21 +246,21 @@ func fixture() *stub {
 			{Id: "r-wait-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, Rollout: "expand-contract", Phase: "expand", CreatedAt: at(5 * time.Minute)},
 			{Id: "r-rev-00001", Target: "app", State: godwitv1.RunState_RUN_STATE_REVERTED, Reverts: "r-ok-000001", CreatedAt: at(time.Hour), FinishedAt: at(time.Hour - 300*time.Millisecond)},
 			{
-				Id: "r-fail-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_FAILED, Attempts: 1, PlanId: "p-gone-0001",
+				Id: "r-fail-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_FAILED, Attempts: 1, PlanId: "36f675cc-81e7-4ef5-a8e2-5d940ed90475",
 				Error: "sql: statement 1 of 20260901160000_add_fk (up): exec: ERROR: relation \"not_there\" does not exist (SQLSTATE 42P01)", CreatedAt: at(30 * time.Hour), FinishedAt: at(30*time.Hour - 3*time.Second),
 			},
 			{Id: "r-old-00001", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, CreatedAt: at(48 * time.Hour), FinishedAt: at(47 * time.Hour)},
 		},
 		audit: []*godwitv1.AuditEntry{
 			{Action: controlplane.AuditRunConfirm, Actor: "ui:sam", At: at(time.Minute)},
-			{Action: controlplane.AuditRunReattach, Actor: "ci", Detail: "state=queued plan=p-plan-0001 resumed=false", At: at(90 * time.Second)},
+			{Action: controlplane.AuditRunReattach, Actor: "ci", Detail: "state=queued plan=6513270e-269e-4d37-b2a7-4de452e6b438 resumed=false", At: at(90 * time.Second)},
 			{Action: controlplane.AuditRunPark, Actor: "ui:sam", Detail: "waiting on dba", At: at(2 * time.Minute)},
 			{Action: controlplane.AuditRunResume, Actor: "ci", At: at(3 * time.Minute)},
 			{Action: controlplane.AuditRunCreate, Actor: "ci", At: at(4 * time.Minute)},
 		},
 		plans: map[string]*godwitv1.Plan{
-			"p-plan-0001": {
-				Id: "p-plan-0001", Target: "app", State: "bound", Validated: true, AcknowledgedHazards: []string{"H002"},
+			"6513270e-269e-4d37-b2a7-4de452e6b438": {
+				Id: "6513270e-269e-4d37-b2a7-4de452e6b438", Target: "app", State: "bound", Validated: true, AcknowledgedHazards: []string{"H002"},
 				Migrations: []*godwitv1.PlannedMigration{
 					{
 						Version: 20260901120000, Name: "add_index", Phase: "expand",
@@ -373,12 +373,12 @@ func TestRunPage(t *testing.T) {
 
 	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil), http.StatusOK, "Resume run", "Park", "SQLSTATE 55P03",
 		"Resumed", "by <b>ci</b>", "Parked", "waiting on dba", "Contract confirmed", "The journal on",
-		"Re-attached by a repeated request", "state=queued plan=p-plan-0001", `href="/ui/">Runs<`, "#i-chev")
-	want(t, do(h, http.MethodGet, "/ui/runs/r-fail-0001", nil), http.StatusOK, "Resume run", "Park", "not_there", "Failed", "p-gone-0", "pruned")
+		"Re-attached by a repeated request", "state=queued plan=6513270e-269e-4d37-b2a7-4de452e6b438", `href="/ui/">Runs<`, "#i-chev")
+	want(t, do(h, http.MethodGet, "/ui/runs/r-fail-0001", nil), http.StatusOK, "Resume run", "Park", "not_there", "Failed", "36f675cc", "pruned")
 	want(t, do(h, http.MethodGet, "/ui/runs/r-wait-0001", nil), http.StatusOK, "Confirm rollout", "expand-contract · expand", "waiting for contract confirmation")
 	plan := do(h, http.MethodGet, "/ui/runs/r-ok-000001", nil)
 	want(t, plan, http.StatusOK, "Revert", "Succeeded", "source github", "via github",
-		"p-plan-0", "bound", "replayed on a scratch database", "H002 acknowledged",
+		"6513270e", "bound", "replayed on a scratch database", "H002 acknowledged",
 		"CREATE INDEX without CONCURRENTLY", "CREATE INDEX CONCURRENTLY i1", "2 statements",
 		"already applied by hand", "recorded without executing, 1 statement skipped", "- column public.widgets.legacy_code",
 		"in history", engine.OpaqueDML)
