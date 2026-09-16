@@ -346,3 +346,107 @@ func DiffSchemas(expected, live string) []string {
 
 	return append(missing, unexpected...)
 }
+
+// JournalStatement is what the target recorded for one statement of an attempt.
+type JournalStatement struct {
+	Index     int
+	Hash      string
+	IntentAt  *time.Time
+	DoneAt    *time.Time
+	Cursor    string
+	RowsDone  int64
+	RowsTotal int64
+}
+
+// JournalRun is one row of the target's godwit.runs table with the journal it wrote.
+type JournalRun struct {
+	ID         string
+	Direction  string
+	State      string
+	Error      string
+	StmtCount  int
+	StartedAt  time.Time
+	FinishedAt *time.Time
+	Statements []JournalStatement
+}
+
+// ListJournal reads every attempt the target journalled for one migration, newest first, without creating godwit's tables.
+func ListJournal(ctx context.Context, db DB, version int64, repeatable string) ([]JournalRun, error) {
+	present, err := hasTable(ctx, db, "godwit.journal")
+	if err != nil || !present {
+		return nil, err
+	}
+	runs, err := readJournalRuns(ctx, db, version, repeatable)
+	if err != nil {
+		return nil, err
+	}
+	for i := range runs {
+		if runs[i].Statements, err = readJournalStatements(ctx, db, runs[i].ID); err != nil {
+			return nil, err
+		}
+	}
+
+	return runs, nil
+}
+
+func readJournalRuns(ctx context.Context, db DB, version int64, repeatable string) ([]JournalRun, error) {
+	var key any = version
+	column := "version"
+	if repeatable != "" {
+		key, column = repeatable, "repeatable"
+	}
+	rows, err := db.Query(ctx, `SELECT id::text, direction, state, coalesce(error, ''), stmt_count, started_at, finished_at
+		FROM godwit.runs WHERE `+column+` = $1 ORDER BY started_at DESC, id`, key)
+	if err != nil {
+		return nil, fmt.Errorf("list journalled runs: %w", err)
+	}
+	var out []JournalRun
+	var r JournalRun
+	fields := []any{&r.ID, &r.Direction, &r.State, &r.Error, &r.StmtCount, &r.StartedAt, &r.FinishedAt}
+	if _, err := pgx.ForEachRow(rows, fields, func() error {
+		out = append(out, r)
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read journalled runs: %w", err)
+	}
+
+	return out, nil
+}
+
+func readJournalStatements(ctx context.Context, db DB, runID string) ([]JournalStatement, error) {
+	rows, err := db.Query(ctx, `SELECT stmt_idx, state, sql_hash, recorded_at, coalesce(cursor, ''), rows_done, coalesce(rows_total, 0)
+		FROM godwit.journal WHERE run_id = $1 ORDER BY stmt_idx, state`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list journal: %w", err)
+	}
+	byIndex := map[int]*JournalStatement{}
+	var order []int
+	var idx int
+	var state, hash, cursor string
+	var at time.Time
+	var rowsDone, rowsTotal int64
+	if _, err := pgx.ForEachRow(rows, []any{&idx, &state, &hash, &at, &cursor, &rowsDone, &rowsTotal}, func() error {
+		st, ok := byIndex[idx]
+		if !ok {
+			st = &JournalStatement{Index: idx, Hash: hash}
+			byIndex[idx], order = st, append(order, idx)
+		}
+		stamp := at
+		if state == "done" {
+			st.DoneAt = &stamp
+		} else {
+			st.IntentAt, st.Cursor, st.RowsDone, st.RowsTotal = &stamp, cursor, rowsDone, rowsTotal
+		}
+
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("read journal: %w", err)
+	}
+	out := make([]JournalStatement, 0, len(order))
+	for _, i := range order {
+		out = append(out, *byIndex[i])
+	}
+
+	return out, nil
+}

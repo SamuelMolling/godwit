@@ -35,7 +35,7 @@ The server speaks HTTP/2 cleartext (h2c) and HTTP/1.1; curl over `http://` works
 
 | Scope | RPCs |
 |---|---|
-| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
+| `read` | `GetRun`, `ListRuns`, `WatchRun`, `PlanRun`, `GetPlan`, `ListPlans`, `GetTargetStatus`, `GetMigrationJournal`, `ListTargets`, `ListMigrations`, `ListDriftEvents`, `ListAudit`, `Diff`, `Checkpoint` |
 | `pipeline` | + `CreateRun`, `RevertRun`, `ConfirmRollout` |
 | `operator` | + `ResumeRun`, `ParkRun`, `CheckDrift`, `AcceptBaseline`, `BaselineTarget`, `ReconcileTarget`, `GetTarget` |
 | `admin` | + `RegisterTarget` |
@@ -304,6 +304,27 @@ call GetTargetStatus '{"target":"app","files":[...]}'
 `files` is optional; with it, `pending` lists versions in the files not yet applied and `applied[].checksumMismatch` marks versions whose file changed. `readyPlans` counts the stored plans still bindable (`ready` and younger than `--plan-ttl`).
 
 A target whose credential does not resolve — a `vault` one naming no credential store, a mounted secret that is not there — is still answered: everything the control plane holds is returned, `applied` and `pending` are empty, and `unreachable` carries why its journal was not read, saying what to do about it. That is the state an operator is in while fixing the registration, and it is the one where a refusal helps least. A credential that resolves onto a database godwit cannot reach is still `internal`.
+
+### GetMigrationJournal — read
+
+```bash
+call GetMigrationJournal '{"target":"app","migration":"20260901120000_create_orders"}'
+```
+
+```json
+{"target":"app","migration":"20260901120000_create_orders","runId":"7f1c...","appliedAt":"...",
+ "runs":[{"id":"b2c3...","direction":"up","state":"failed","statementCount":3,
+   "error":"sql: statement 1 of 20260901120000_create_orders (up): exec: ERROR: ...",
+   "statements":[
+     {"index":0,"sql":"CREATE TABLE ...","sqlHash":"9f...","outcome":"done","doneAt":"..."},
+     {"index":1,"sql":"CREATE INDEX CONCURRENTLY ...","sqlHash":"1a...","outcome":"failed","noTx":true,
+      "verifier":"create_index_concurrently","intentAt":"..."},
+     {"index":2,"sql":"...","sqlHash":"ab...","outcome":"not reached"}]}]}
+```
+
+One migration's statement journal, read off the target's own `godwit.runs` and `godwit.journal`, newest attempt first. `godwit.journal` holds a hash per statement and not its SQL, so `sql` comes from the file bodies the applying run stored (`cp_run_files`), matched to the journal by that hash, with the frozen expansion applied: once retention sweeps those bodies `bodiesSwept` is set and the statements carry only `sqlHash`. `outcome` is derived the way the executor's own resume is — everything at or below the highest `done` is `done`, the one above it is `failed` on a failed attempt and `in flight` on a running one, the rest are `not reached` — so a failed attempt names the statement that stopped it and `error` is what the executor wrote.
+
+A migration in the target's history with no journal is answered rather than refused: `adopted` when the run found it already recorded, `recordedOnly` when it was recorded without executing (a checkpoint collapsed it, its effect was already in the schema, or retention swept the journal). An unresolved credential sets `unreachable` as `GetTargetStatus` does.
 
 ### ListTargets — read
 

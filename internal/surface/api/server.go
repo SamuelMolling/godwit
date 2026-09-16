@@ -47,6 +47,7 @@ type reconciler interface {
 
 type inspector interface {
 	Status(ctx context.Context, target string) (controlplane.TargetStatus, error)
+	Journal(ctx context.Context, target, migration string) (controlplane.MigrationJournal, error)
 	Observe(ctx context.Context, target string) (controlplane.Observation, error)
 	DataLoss(ctx context.Context, target string, drops []engine.Drop) ([]engine.Loss, error)
 }

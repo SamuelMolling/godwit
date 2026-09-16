@@ -1,0 +1,55 @@
+{{define "migration.html"}}{{template "head" .}}
+<header class="ph">
+  <div class="ttl">
+    <div class="crumbs"><a href="/ui/targets">Targets</a><svg class="ic"><use href="#i-chev"/></svg><a href="/ui/targets/{{.Target}}">{{.Target}}</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Journal.Migration}}</span></div>
+    <h1><span class="mono" style="font-weight:500;font-size:22px">{{.Journal.Migration}}</span>{{with .Journal.Newest}} <span class="pill {{.Tone}} lg">{{.State}}</span>{{end}}</h1>
+  </div>
+  {{with .Journal.RunID}}<div class="acts"><a class="btn" href="/ui/runs/{{.}}">Open run {{short .}}</a></div>{{end}}
+</header>
+<div class="body">
+  <div class="two">
+    <div class="stack">
+      {{if .Journal.Unreachable}}
+      <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Not read</b><p>{{.Journal.Unreachable}}</p></div>
+      {{else if .Journal.Adopted}}
+      <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Nothing ran here</b><p>Run <a class="mono" href="/ui/runs/{{.Journal.RunID}}">{{short .Journal.RunID}}</a> found <span class="mono">{{.Journal.Migration}}</span> already recorded on {{.Target}} and adopted it, so {{.Target}} journalled no statement for it.</p></div>
+      {{else if .Journal.RecordedOnly}}
+      <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>Recorded without executing</b><p><span class="mono">{{.Journal.Migration}}</span> stands in {{.Target}}'s history with no statement journal: a checkpoint collapsed it, its effect was already in the schema, or retention swept <span class="mono">godwit.journal</span>.</p></div>
+      {{else if not .Journal.Attempts}}
+      <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>No journal</b><p>{{.Target}} holds no <span class="mono">godwit.runs</span> row for <span class="mono">{{.Journal.Migration}}</span>.</p></div>
+      {{else}}
+      {{range .Journal.Attempts}}
+      <div class="blk">
+        <h3>{{.Direction}} <span class="mono">{{short .ID}}</span> <span class="pill {{.Tone}}">{{.State}}</span> {{template "hint" "The id is the attempt's row in godwit.runs on the target, not a control-plane run id. A resume reopens that row and continues from the last statement journalled done."}}</h3>
+        <p class="note">{{.Done}} of {{plural .Count "statement"}} journalled done · started <span class="num" title="{{stamp .StartedAt}}">{{ago .StartedAt}}</span>{{with .FinishedAt}} · finished <span class="num" title="{{stamp .}}">{{ago .}}</span>{{end}} {{template "hint" "A transactional statement journals only its done, in the same transaction as the DDL, so the duration beside it is the gap to the statement before and carries that one's commit. A non-transactional statement journals an intent first, so its duration is its own."}}</p>
+        {{if not .Placed}}{{with .Error}}<pre>{{.}}</pre>{{end}}{{end}}
+        <ul class="tl">
+          {{range $s := .Stmts}}
+          <li><i class="{{$s.Tone}}"></i><div>
+            {{if $s.SQL}}<pre>{{$s.SQL}}</pre>{{else}}<p class="note">No text: the file bodies of the run that applied this migration are gone. The journal holds the hash <span class="mono">{{short $s.Hash}}</span>.</p>{{end}}
+            <div class="t">statement <span class="mono">{{$s.Index}}</span> · {{$s.Kind}}{{if $s.NoTx}} · verifier {{$s.Verifier}}{{end}} · {{$s.Outcome}}{{with $s.Took}} · {{.}}{{end}}{{with $s.Rows}} · {{.}}{{end}}{{with $s.Cursor}} · cursor <span class="mono">{{.}}</span>{{end}}</div>
+            {{if or $s.IntentAt $s.DoneAt}}<div class="t">{{with $s.IntentAt}}intent <span class="num" title="{{ago .}}">{{stamp .}}</span>{{end}}{{if and $s.IntentAt $s.DoneAt}} · {{end}}{{with $s.DoneAt}}done <span class="num" title="{{ago .}}">{{stamp .}}</span>{{end}}</div>{{end}}
+            {{with $s.Error}}<pre>{{.}}</pre>{{end}}
+          </div></li>
+          {{end}}
+        </ul>
+      </div>
+      {{end}}
+      {{end}}
+    </div>
+
+    <aside class="aside">
+      <div class="blk">
+        <h3>Facts</h3>
+        <dl class="facts">
+          <dt>Target</dt><dd><a href="/ui/targets/{{.Target}}">{{.Target}}</a></dd>
+          <dt>Run</dt><dd>{{with .Journal.RunID}}<a class="mono" href="/ui/runs/{{.}}">{{short .}}</a>{{else}}<span class="faint">not in the ledger</span>{{end}}</dd>
+          <dt>Applied</dt><dd class="mono num">{{with .Journal.AppliedAt}}{{stamp .}}{{else}}—{{end}}</dd>
+          <dt>Attempts</dt><dd class="num">{{len .Journal.Attempts}}</dd>
+          <dt>Statements</dt><dd>{{if .Journal.BodiesSwept}}hash only{{else}}from the run's files{{end}} {{template "hint" "godwit.journal keeps each statement's hash, not its SQL. The text on this page is the file bodies the applying run stored, matched to the journal by hash; once retention sweeps those bodies the statement can only be shown as its hash."}}</dd>
+        </dl>
+      </div>
+    </aside>
+  </div>
+</div>
+{{template "foot" .}}{{end}}

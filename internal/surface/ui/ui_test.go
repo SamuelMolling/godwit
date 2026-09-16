@@ -34,6 +34,7 @@ type stub struct {
 	audit    []*godwitv1.AuditEntry
 	plans    map[string]*godwitv1.Plan
 	status   *godwitv1.GetTargetStatusResponse
+	journal  *godwitv1.GetMigrationJournalResponse
 	sums     []*godwitv1.TargetSummary
 	fleet    *godwitv1.ListMigrationsResponse
 	fleetErr error
@@ -47,6 +48,18 @@ func (s *stub) call(ctx context.Context, name string) error {
 	s.calls = append(s.calls, name)
 
 	return s.err
+}
+
+func (s *stub) GetMigrationJournal(ctx context.Context, req *connect.Request[godwitv1.GetMigrationJournalRequest]) (*connect.Response[godwitv1.GetMigrationJournalResponse], error) {
+	if err := s.call(ctx, "GetMigrationJournal"); err != nil {
+		return nil, err
+	}
+	out := s.journal
+	if out == nil {
+		out = &godwitv1.GetMigrationJournalResponse{Migration: req.Msg.Migration}
+	}
+
+	return connect.NewResponse(out), nil
 }
 
 func (s *stub) ListRuns(ctx context.Context, _ *connect.Request[godwitv1.ListRunsRequest]) (*connect.Response[godwitv1.ListRunsResponse], error) {

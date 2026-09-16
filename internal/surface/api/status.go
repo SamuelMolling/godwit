@@ -114,3 +114,63 @@ func statusToProto(st controlplane.TargetStatus, migs []engine.Migration) *godwi
 
 	return out
 }
+
+// GetMigrationJournal reports what the target's own journal holds for one migration, with the SQL the applying run stored.
+func (s *Server) GetMigrationJournal(ctx context.Context, req *connect.Request[godwitv1.GetMigrationJournalRequest]) (*connect.Response[godwitv1.GetMigrationJournalResponse], error) {
+	if s.Inspector == nil {
+		return nil, errStatusDisabled
+	}
+	m := req.Msg
+	if m.Target == "" {
+		return nil, invalid("target is required")
+	}
+	if m.Migration == "" {
+		return nil, invalid("migration is required")
+	}
+	j, err := s.Inspector.Journal(ctx, m.Target, m.Migration)
+	if err != nil {
+		return nil, rpcErr(err)
+	}
+
+	return connect.NewResponse(journalToProto(j)), nil
+}
+
+func journalToProto(j controlplane.MigrationJournal) *godwitv1.GetMigrationJournalResponse {
+	out := &godwitv1.GetMigrationJournalResponse{
+		Target: j.Target, Migration: j.Migration, RunId: j.RunID, Adopted: j.Adopted,
+		RecordedOnly: j.RecordedOnly, Unreachable: j.Unreachable, BodiesSwept: j.BodiesSwept,
+	}
+	if !j.AppliedAt.IsZero() {
+		out.AppliedAt = timestamppb.New(j.AppliedAt)
+	}
+	for _, a := range j.Attempts {
+		run := &godwitv1.MigrationJournalRun{
+			Id: a.ID, Direction: a.Direction, State: a.State, Error: a.Error,
+			StartedAt: timestamppb.New(a.StartedAt), StatementCount: int32(a.StmtCount),
+		}
+		if a.FinishedAt != nil {
+			run.FinishedAt = timestamppb.New(*a.FinishedAt)
+		}
+		for _, st := range a.Statements {
+			run.Statements = append(run.Statements, statementToProto(st))
+		}
+		out.Runs = append(out.Runs, run)
+	}
+
+	return out
+}
+
+func statementToProto(st controlplane.MigrationStatement) *godwitv1.JournalStatement {
+	pb := &godwitv1.JournalStatement{
+		Index: int32(st.Index), Sql: st.SQL, SqlHash: st.Hash, Outcome: st.Outcome,
+		NoTx: st.NoTx, Verifier: st.Verifier, RowsDone: st.RowsDone, RowsTotal: st.RowsTotal, Cursor: st.Cursor,
+	}
+	if st.IntentAt != nil {
+		pb.IntentAt = timestamppb.New(*st.IntentAt)
+	}
+	if st.DoneAt != nil {
+		pb.DoneAt = timestamppb.New(*st.DoneAt)
+	}
+
+	return pb
+}
