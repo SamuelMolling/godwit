@@ -1,21 +1,21 @@
 {{define "drift.html"}}{{template "head" .}}
+{{if .Target}}
 <header class="ph">
-  <div class="ttl"><h1>Drift</h1></div>
+  <div class="ttl">
+    <div class="crumbs"><a href="/ui/drift">Drift</a><svg class="ic"><use href="#i-chev"/></svg><span class="cur">{{.Target}}</span></div>
+    <h1>{{.Target}}</h1>
+  </div>
+  <div class="acts"><a class="btn ghost" href="/ui/targets/{{.Target}}">Open target</a></div>
 </header>
 <div class="body">
-{{if .Tabs}}
-  <div class="tabs">
-    {{range .Tabs}}<a href="/ui/drift?target={{.Name}}" {{if eq .Name $.Target}}class="on"{{end}}>{{.Name}} <span class="cnt">{{if .Bad}}drifted{{else}}clean{{end}}</span></a>{{end}}
-  </div>
-
-  <div class="sec" style="margin-top:24px">
+  <div class="sec" style="margin-top:0">
     {{template "drift-card" .}}
     {{if and .Open .Can.accept}}<p class="note"><b>Accept as baseline</b> records the current schema as the new reference for {{.Target}}. It does not change the database; future checks compare against it.</p>{{end}}
     {{if .Locked}}{{template "scope-note" .}}{{end}}
   </div>
 
   <div class="sec">
-    <div class="sec-hd"><h2>Events <span class="n">{{len .Events}}</span></h2><div class="right">Newest first</div></div>
+    <div class="sec-hd"><h2>Events <span class="n">{{len .Events}}</span></h2><div class="right">Newest first{{if atCap .Events}} · older events are not in this window{{end}}</div></div>
     {{if .Events}}
     <div>
       {{range .Events}}
@@ -32,8 +32,58 @@
     <div class="empty"><svg class="ic"><use href="#i-inbox"/></svg><b>No drift recorded</b><p>{{.Target}} has never diverged from its baseline since it was first fingerprinted.</p></div>
     {{end}}
   </div>
+</div>
+{{else}}
+<header class="ph">
+  <div class="ttl"><h1>Drift</h1></div>
+  <div class="acts"><a class="btn ghost" href="/ui/drift"><svg class="ic"><use href="#i-refresh"/></svg>Refresh</a></div>
+</header>
+<div class="body">
+{{if .Drift.Total}}
+  <div class="tabs">
+    {{range .Drift.Chips}}<a href="{{.Href}}" {{if .On}}class="on"{{end}}>{{.Name}} <span class="cnt">{{.Count}}</span></a>{{end}}
+  </div>
+
+  <div class="sec" style="margin-top:24px">
+    <div class="sec-hd">
+      <h2>{{if .Drift.OnlyBad}}Drifted <span class="n">{{.Drift.Drifted}} of {{.Drift.Total}} targets</span>{{else}}All targets <span class="n">{{.Drift.Drifted}} of {{.Drift.Total}} drifted</span>{{end}}</h2>
+      <div class="right">
+        <form class="find" method="get" action="/ui/drift">
+          {{if not .Drift.OnlyBad}}<input type="hidden" name="scope" value="all">{{end}}
+          <input class="in" type="search" name="q" value="{{.Drift.Query}}" placeholder="Filter by name" aria-label="Filter targets by name">
+          <button class="btn">Filter</button>
+          {{if .Drift.Query}}<a class="btn ghost" href="{{.Drift.Clear}}">Clear</a>{{end}}
+        </form>
+      </div>
+    </div>
+    {{if .Drift.Rows}}
+    <div class="tbl"><table>
+      <thead><tr><th>Target</th><th>Drift</th><th>Last run</th></tr></thead>
+      <tbody>
+        {{range .Drift.Rows}}
+        <tr>
+          <td class="id"><a href="/ui/drift?target={{.Name}}">{{.Name}}</a>{{if .Waiting}}<span class="sub">{{.Waiting}} waiting for you</span>{{end}}</td>
+          <td>{{if .Drifted}}<span class="pill drifted">drifted</span>{{else}}<span class="pill succeeded">clean</span>{{end}}</td>
+          <td>{{with .Run}}<a href="/ui/runs/{{.Id}}" class="mono">{{short .Id}}</a> <span class="pill {{state .State}}">{{label .State}}</span>{{else}}<span class="faint">never migrated</span>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table></div>
+    <div class="pager">
+      <span>{{.Drift.From}}–{{.Drift.To}} of {{.Drift.Matched}}{{if .Drift.OnlyBad}} drifted{{end}}{{if .Drift.Query}} matching “{{.Drift.Query}}”{{end}} · {{.Drift.Total}} targets registered</span>
+      {{if .Drift.Prev}}<a class="btn sm" href="{{.Drift.Prev}}">Previous</a>{{end}}
+      {{if .Drift.Next}}<a class="btn sm" href="{{.Drift.Next}}">Next</a>{{end}}
+      <span>Page {{.Drift.Page}} of {{.Drift.Pages}}</span>
+    </div>
+    {{else if .Drift.Query}}
+    <div class="empty"><svg class="ic"><use href="#i-db"/></svg><b>No {{if .Drift.OnlyBad}}drifted {{end}}target matches “{{.Drift.Query}}”</b><p>{{.Drift.Total}} targets are registered. <a href="{{.Drift.Clear}}">Drop the filter</a>{{if .Drift.OnlyBad}} or <a href="{{(index .Drift.Chips 1).Href}}">search every target</a>{{end}}.</p></div>
+    {{else}}
+    <div class="empty"><svg class="ic"><use href="#i-check"/></svg><b>Nothing has drifted</b><p>All {{.Drift.Total}} targets match the baseline their last check compared against. <a href="{{(index .Drift.Chips 1).Href}}">List every target</a>.</p></div>
+    {{end}}
+  </div>
 {{else}}
   <div class="empty"><svg class="ic"><use href="#i-db"/></svg><b>No targets yet</b><p>Drift is tracked per target once it has a run.</p></div>
 {{end}}
 </div>
+{{end}}
 {{template "foot" .}}{{end}}

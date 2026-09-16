@@ -194,7 +194,7 @@ func TestUIServedWithoutAuthentication(t *testing.T) {
 		return resp.StatusCode, string(body)
 	}
 
-	if code, body := call(http.MethodGet, "/ui/drift", "same-origin"); code != http.StatusOK ||
+	if code, body := call(http.MethodGet, "/ui/drift?target=app", "same-origin"); code != http.StatusOK ||
 		!strings.Contains(body, "Unauthenticated") || !strings.Contains(body, "/ui/drift/app/check") {
 		t.Fatalf("anonymous page: code = %d body = %s", code, body)
 	}

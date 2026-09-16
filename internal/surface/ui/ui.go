@@ -10,6 +10,8 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -215,6 +217,8 @@ func (h *Handler) funcs() template.FuncMap {
 	return template.FuncMap{
 		"state":    state,
 		"known":    known,
+		"recorded": recorded,
+		"atCap":    atCap,
 		"plural":   plural,
 		"backfill": backfillOf,
 		"label":    func(s godwitv1.RunState) string { return strings.ReplaceAll(state(s), "_", " ") },
@@ -379,6 +383,8 @@ type page struct {
 	Can       map[string]bool
 	Locked    bool
 	Targets   []target
+	Rail      []target
+	RailMore  int
 	Attention int
 	Target    string
 	Runs      []*godwitv1.Run
@@ -390,7 +396,7 @@ type page struct {
 	Plan      *godwitv1.Plan
 	Planned   []planned
 	Plans     *plansData
-	Tabs      []target
+	Drift     *driftList
 	Events    []*godwitv1.DriftEvent
 	Open      *godwitv1.DriftEvent
 	Checked   string
@@ -425,6 +431,29 @@ func (h *Handler) bare(r *http.Request, nav string) page {
 	return p
 }
 
+const railTargets = 12
+
+func railRank(t target, current string) int {
+	switch {
+	case t.Name == current:
+		return 0
+	case t.Bad:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func railOf(all []target, current string) ([]target, int) {
+	if len(all) <= railTargets {
+		return all, 0
+	}
+	ranked := slices.Clone(all)
+	sort.SliceStable(ranked, func(i, j int) bool { return railRank(ranked[i], current) < railRank(ranked[j], current) })
+
+	return ranked[:railTargets], len(all) - railTargets
+}
+
 func (h *Handler) frame(ctx context.Context, r *http.Request, nav string) (page, error) {
 	p := h.bare(r, nav)
 	resp, err := call(ctx, godwitv1connect.GodwitServiceListTargetsProcedure, &godwitv1.ListTargetsRequest{}, h.svc.ListTargets)
@@ -441,6 +470,7 @@ func (h *Handler) frame(ctx context.Context, r *http.Request, nav string) (page,
 }
 
 func (h *Handler) render(w http.ResponseWriter, status int, name string, data page) {
+	data.Rail, data.RailMore = railOf(data.Targets, data.Target)
 	var buf bytes.Buffer
 	if err := h.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -710,72 +740,4 @@ func (h *Handler) runAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/ui/runs/"+id, http.StatusSeeOther)
-}
-
-func (h *Handler) drift(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	p, err := h.frame(ctx, r, "drift")
-	if err != nil {
-		h.fail(w, p, err)
-
-		return
-	}
-	events, err := call(ctx, godwitv1connect.GodwitServiceListDriftEventsProcedure,
-		&godwitv1.ListDriftEventsRequest{}, h.svc.ListDriftEvents)
-	if err != nil {
-		h.fail(w, p, err)
-
-		return
-	}
-	open := map[string]*godwitv1.DriftEvent{}
-	for _, e := range events.Events {
-		if e.ResolvedAt == nil && open[e.Target] == nil {
-			open[e.Target] = e
-		}
-	}
-	for _, t := range p.Targets {
-		p.Tabs = append(p.Tabs, target{Name: t.Name, Bad: open[t.Name] != nil})
-	}
-	p.Target, p.Checked = r.URL.Query().Get("target"), r.URL.Query().Get("checked")
-	if p.Target == "" && len(p.Tabs) > 0 {
-		p.Target = p.Tabs[0].Name
-	}
-	p.Open, p.Locked = open[p.Target], !p.Can["check"]
-	for _, e := range events.Events {
-		if e.Target == p.Target {
-			p.Events = append(p.Events, e)
-		}
-	}
-	h.render(w, http.StatusOK, "drift.html", p)
-}
-
-func (h *Handler) driftAction(w http.ResponseWriter, r *http.Request) {
-	tgt, ctx, p := r.PathValue("target"), r.Context(), h.bare(r, "drift")
-	dest := "/ui/drift?target=" + tgt
-	switch r.PathValue("action") {
-	case "check":
-		resp, err := call(ctx, godwitv1connect.GodwitServiceCheckDriftProcedure,
-			&godwitv1.CheckDriftRequest{Target: tgt}, h.svc.CheckDrift)
-		if err != nil {
-			h.fail(w, p, err)
-
-			return
-		}
-		dest += "&checked=clean"
-		if resp.Drifted {
-			dest = "/ui/drift?target=" + tgt + "&checked=drifted"
-		}
-	case "accept":
-		if _, err := call(ctx, godwitv1connect.GodwitServiceAcceptBaselineProcedure,
-			&godwitv1.AcceptBaselineRequest{Target: tgt}, h.svc.AcceptBaseline); err != nil {
-			h.fail(w, p, err)
-
-			return
-		}
-	default:
-		http.NotFound(w, r)
-
-		return
-	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
 }

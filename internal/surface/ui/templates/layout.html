@@ -182,6 +182,9 @@ pre{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:
 .tabs a:hover{text-decoration:none;color:var(--fg)}
 .tabs a .cnt{font-family:var(--mono);font-size:12px;color:var(--fg-3)}
 .tabs a.on .cnt{color:var(--accent)}
+.find{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.find .in{width:auto;min-width:180px}
+.pager{display:flex;align-items:center;gap:14px;flex-wrap:wrap;color:var(--fg-3);font-size:13px}
 .ev{display:grid;grid-template-columns:160px minmax(0,1fr);gap:24px;padding:20px 0;border-bottom:1px solid var(--line)}
 .ev:first-child{border-top:1px solid var(--line)}
 .ev .when{font-family:var(--mono);font-size:13px;color:var(--fg-2);font-variant-numeric:tabular-nums}
@@ -276,9 +279,10 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   <div>
     <h4>Targets</h4>
     <div class="targets">
-      <a href="{{if eq .Nav "plans"}}/ui/plans{{else if eq .Nav "targets"}}/ui/targets{{else if eq .Nav "fleet"}}/ui/fleet{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (or (eq .Nav "plans") (or (eq .Nav "targets") (eq .Nav "fleet")))) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
-      {{range .Targets}}<a href="{{if eq $.Nav "targets"}}/ui/targets/{{.Name}}{{else if eq $.Nav "fleet"}}/ui/fleet?target={{.Name}}{{else if eq $.Nav "drift"}}/ui/drift?target={{.Name}}{{else if eq $.Nav "plans"}}/ui/plans?target={{.Name}}{{else}}/ui/?target={{.Name}}{{end}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
+      <a href="{{if eq .Nav "plans"}}/ui/plans{{else if eq .Nav "targets"}}/ui/targets{{else if eq .Nav "fleet"}}/ui/fleet{{else if eq .Nav "drift"}}/ui/drift{{else}}/ui/{{end}}" {{if and (or (eq .Nav "runs") (eq .Nav "plans") (eq .Nav "targets") (eq .Nav "fleet") (eq .Nav "drift")) (not .Target)}}class="on"{{end}}><svg class="ic"><use href="#i-db"/></svg><span class="lbl">All</span></a>
+      {{range .Rail}}<a href="{{if eq $.Nav "targets"}}/ui/targets/{{.Name}}{{else if eq $.Nav "fleet"}}/ui/fleet?target={{.Name}}{{else if eq $.Nav "drift"}}/ui/drift?target={{.Name}}{{else if eq $.Nav "plans"}}/ui/plans?target={{.Name}}{{else}}/ui/?target={{.Name}}{{end}}" {{if eq .Name $.Target}}class="on"{{end}}><span class="dot{{if .Bad}} bad{{end}}"></span><span class="lbl">{{.Name}}</span></a>
       {{end}}
+      {{if .RailMore}}<a href="/ui/targets" title="{{len .Targets}} targets registered"><svg class="ic"><use href="#i-chev"/></svg><span class="lbl faint">{{.RailMore}} more</span></a>{{end}}
     </div>
   </div>
   <div class="foot">
@@ -294,13 +298,13 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
 {{define "drift-card"}}{{if .Open}}
 <div class="banner drifted">
   <div class="icw"><svg class="ic"><use href="#i-ne"/></svg></div>
-  <div><b>{{.Target}} drifted from its baseline</b><span>Detected {{ago .Open.DetectedAt}}{{if eq .Checked "drifted"}} · confirmed by the check you just ran{{end}} · {{plural (len .Events) "recorded event"}}</span></div>
+  <div><b>{{.Target}} drifted from its baseline</b><span>Detected {{ago .Open.DetectedAt}}{{if eq .Checked "drifted"}} · confirmed by the check you just ran{{end}} · {{recorded .Events}}</span></div>
   <div class="acts">{{if .Can.check}}<form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form>{{end}}{{if .Can.accept}}<form method="post" action="/ui/drift/{{.Target}}/accept"><button class="btn dng">Accept as baseline</button></form>{{end}}{{if ne .Nav "drift"}}<a class="btn" href="/ui/drift?target={{.Target}}">All events</a>{{end}}</div>
 </div>
 {{else}}
 <div class="banner clean">
   <div class="icw"><svg class="ic"><use href="#i-check"/></svg></div>
-  <div><b>{{.Target}} matches its baseline</b><span>{{if eq .Checked "clean"}}Checked just now{{else}}No open drift event{{end}} · {{plural (len .Events) "recorded event"}}{{template "hint" "The monitor fingerprints every target on its own interval and after every successful run, so this card is what the last check saw. Check again runs one now."}}</span></div>
+  <div><b>{{.Target}} matches its baseline</b><span>{{if eq .Checked "clean"}}Checked just now{{else}}No open drift event{{end}} · {{recorded .Events}}{{template "hint" "The monitor fingerprints every target on its own interval and after every successful run, so this card is what the last check saw. Check again runs one now."}}</span></div>
   <div class="acts">{{if .Can.check}}<form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn"><svg class="ic"><use href="#i-refresh"/></svg>Check again</button></form>{{end}}{{if ne .Nav "drift"}}<a class="btn" href="/ui/drift?target={{.Target}}">All events</a>{{end}}</div>
 </div>
 {{end}}{{end}}

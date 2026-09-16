@@ -262,7 +262,7 @@ Fingerprints the target now, records a drift event when it differs from the snap
 
 ### ListDriftEvents — read
 
-`{"target":"app"}` or `{}`. Returns `events[]` with `id`, `target`, `diff`, `detectedAt`, `resolvedAt`.
+`{"target":"app"}` or `{}`. Returns `events[]` with `id`, `target`, `diff`, `detectedAt`, `resolvedAt`, newest first and never more than 100 — over a whole fleet those 100 come from whichever targets drifted most recently, so the response answers *what changed lately*, not *which targets are drifting*. `ListTargets.unresolved_drift` is the per-target answer.
 
 ### AcceptBaseline — operator
 
