@@ -76,6 +76,10 @@ func diffSource(s string) string {
 	return fromNewest
 }
 
+func known(targets []target, name string) bool {
+	return slices.ContainsFunc(targets, func(t target) bool { return t.Name == name })
+}
+
 func (h *Handler) diffForm(w http.ResponseWriter, r *http.Request) {
 	p, err := h.frame(r.Context(), r, "diff")
 	if err != nil {

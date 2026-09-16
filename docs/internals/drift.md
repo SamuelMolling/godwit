@@ -134,7 +134,7 @@ What the diff covers is what pg-schema-diff covers: schemas, extensions, enums, 
 ## The fleet view
 
 `GetTargetStatus` answers *what does this database have*, one database at a time. `ListMigrations` — `godwit migrations`,
-`/ui/migrations` — answers the question that spans them: **which of my targets has this migration**. It reads the
+`/ui/fleet` — answers the question that spans them: **which of my targets has this migration**. It reads the
 control plane's ledger and opens no connection to any target, so it answers while one is unreachable.
 
 The key is the migration **and its content**: the id (`<version>_<name>` or `R__<name>`) with the sha256 of the up file

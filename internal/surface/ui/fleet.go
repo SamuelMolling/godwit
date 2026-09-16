@@ -34,7 +34,7 @@ type fleetData struct {
 	Everybody bool
 }
 
-func (h *Handler) migrations(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) fleet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p, err := h.frame(ctx, r, "fleet")
 	if err != nil {
@@ -52,7 +52,7 @@ func (h *Handler) migrations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Fleet = fleetOf(resp, p.Target, req.NotEverywhere)
-	h.render(w, http.StatusOK, "migrations.html", p)
+	h.render(w, http.StatusOK, "fleet.html", p)
 }
 
 func fleetOf(resp *godwitv1.ListMigrationsResponse, target string, onlyGaps bool) *fleetData {
@@ -116,7 +116,7 @@ func shortSum(sum string) string {
 }
 
 func gapsHref(target string, on bool) string {
-	href := "/ui/migrations?"
+	href := "/ui/fleet?"
 	if target != "" {
 		href += "target=" + target + "&"
 	}

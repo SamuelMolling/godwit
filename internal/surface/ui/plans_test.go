@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
+	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
 func (s *stub) ListPlans(ctx context.Context, req *connect.Request[godwitv1.ListPlansRequest]) (*connect.Response[godwitv1.ListPlansResponse], error) {
@@ -134,8 +135,8 @@ func TestPlanDetail(t *testing.T) {
 		"20260901120000", "add_index", "2 statements",
 		"CREATE INDEX i1 ON t (a);", "CREATE INDEX i2 ON t (b);",
 		"CREATE INDEX CONCURRENTLY i1 ON t (a);",
-		"already applied by hand", "records it without executing", "- column legacy",
-		"in history", "DML is not inspectable",
+		"already applied by hand", "records it without executing", "- column public.widgets.legacy_code",
+		"in history", engine.OpaqueDML,
 		"H002", "replayed on a scratch database", "k-bound-",
 		"Observation", "h1234567", "f1234567", "app, public", "newest 20260901110000",
 		"Changes outside migrations", "- index t_a_idx")
