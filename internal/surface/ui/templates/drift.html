@@ -35,7 +35,7 @@
       <div class="ev">
         <div class="when">{{clock .DetectedAt}}<small>{{if .ResolvedAt}}resolved {{clock .ResolvedAt}}{{else}}open{{end}}</small></div>
         <div>
-          <div class="st">{{if .ResolvedAt}}<span class="pill succeeded">resolved</span> <span class="hint">schema matched the baseline again, or the baseline was accepted</span>{{else}}<span class="pill drifted">drifted</span> <span class="hint">detected {{stamp .DetectedAt}}</span>{{end}}</div>
+          <div class="st">{{if .ResolvedAt}}<span class="pill succeeded">resolved</span>{{else}}<span class="pill drifted">drifted</span>{{end}}</div>
           <pre>{{.Diff}}</pre>
         </div>
       </div>

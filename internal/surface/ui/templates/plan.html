@@ -1,9 +1,8 @@
 {{define "plan-migration"}}
 <div class="blk">
   <h3>{{if .Repeatable}}<span class="mono">R__</span> {{.Name}}{{else}}<span class="mono">{{.Version}}</span> {{.Name}}{{end}}</h3>
-  <p class="note">{{plural .Statements "statement"}}{{if .Applied}} · <span class="chip">{{if .Repeatable}}unchanged{{else}}in history{{end}}</span>{{end}}{{if .AlreadyApplied}} · <span class="chip">already applied by hand</span>{{end}}{{if .Expanded}} · <span class="chip">expanded from a directive</span>{{end}}</p>
+  <p class="note">{{plural .Statements "statement"}}{{if .Applied}} · <span class="chip">{{if .Repeatable}}unchanged{{else}}in history{{end}}</span>{{end}}{{if .AlreadyApplied}} · <span class="chip" title="Applying the plan records it without executing; its effect is already in the schema.">already applied by hand</span>{{end}}{{if .Expanded}} · <span class="chip">expanded from a directive</span>{{end}}</p>
   {{range .Directives}}<pre>{{.}}</pre>{{end}}
-  {{if .AlreadyApplied}}<p class="note">Applying the plan records it without executing; its effect is already in the schema.</p>{{end}}
   {{with .Effect}}<pre>{{.}}</pre>{{end}}
   {{with .Note}}<p class="note">{{.}}</p>{{end}}
   {{range .Notes}}<p class="note">note: {{.}}</p>{{end}}

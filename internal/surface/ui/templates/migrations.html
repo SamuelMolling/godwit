@@ -17,7 +17,7 @@
         <tr>
           <td class="id"><span class="mono">{{.ID}}</span>{{if .Divergent}}<span class="sub">stands under more than one checksum</span>{{else if .Checkpoint}}<span class="sub">checkpoint</span>{{else if .Repeatable}}<span class="sub">repeatable, keyed by content</span>{{end}}</td>
           <td class="mono">{{.Checksum}}</td>
-          {{range .Cells}}<td>{{if .Text}}<span class="pill {{.Tone}}" title="{{.Note}}">{{.Text}}</span>{{if .Note}}<span class="sub">{{.Note}}</span>{{end}}{{end}}</td>{{end}}
+          {{range .Cells}}<td>{{if .Text}}<span class="pill {{.Tone}}">{{.Text}}</span>{{if .Note}}<span class="sub">{{.Note}}</span>{{end}}{{end}}</td>{{end}}
         </tr>
         {{end}}
       </tbody>
