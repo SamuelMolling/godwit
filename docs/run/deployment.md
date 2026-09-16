@@ -815,7 +815,6 @@ Target-side `godwit` schema changes are bootstrapped with `CREATE ... IF NOT EXI
 | `/ui/targets` | every registered target with its provider, `search_path`, timeouts, `require_plan`, applied count, ready plans, runs waiting for a human and open drift |
 | `/ui/targets/{name}` | one target: what its journal has applied (checksum mismatches flagged) and its repeatables, what the newest ready plan still has to apply, the ready plans themselves, the open drift with check and accept, and the registered settings |
 | `/ui/fleet` | which target has which migration, one row per migration **and** content: a version standing under two checksums is two rows and the target holding the other one reads *differs*. `?target=` narrows to what stands on one target, `?gaps=1` to what is not everywhere |
-| `/ui/migrations` | the fleet page's former path; redirects to `/ui/fleet` |
 | `/ui/plans` | every stored plan newest first, filtered by target (`?target=`) and state (`?state=ready\|bound\|superseded`), with the key prefix, rollout, author, migration count and the run each one is bound to |
 | `/ui/plans/{id}` | one plan in full: statements per migration grouped by phase, every hazard with its recipe, `already applied by hand` with the effect it recorded, the directives a migration carried and the expansion they produced, the observation the plan was taken against, and the drift the target had at that moment |
 | `/ui/drift` | drift events per target, with check and accept-baseline |

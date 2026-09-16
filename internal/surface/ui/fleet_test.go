@@ -94,21 +94,6 @@ func TestFleetPage(t *testing.T) {
 	absent(t, rec, "20260901120000_users")
 }
 
-func TestFleetKeepsTheOldPathWorking(t *testing.T) {
-	t.Parallel()
-	h := newUI(fleetFixture(), Config{})
-
-	for path, dest := range map[string]string{
-		"/ui/migrations":                   "/ui/fleet",
-		"/ui/migrations?target=app&gaps=1": "/ui/fleet?target=app&gaps=1",
-	} {
-		rec := do(h, http.MethodGet, path, nil)
-		if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != dest {
-			t.Fatalf("%s: code = %d location = %q", path, rec.Code, rec.Header().Get("Location"))
-		}
-	}
-}
-
 func TestFleetPageEmptyAndErrors(t *testing.T) {
 	t.Parallel()
 
