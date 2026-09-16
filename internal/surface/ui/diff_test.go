@@ -124,10 +124,14 @@ func diffFixture() *diffStub {
 		Target:  "app",
 		UpSql:   "CREATE INDEX i1 ON t (a);",
 		DownSql: "DROP INDEX i1;",
-		Drift:   "+ column extra text",
+		Drift: "- index public.t_totals_idx CREATE INDEX t_totals_idx ON public.t USING btree (total)\n" +
+			"+ column public.t.total numeric(12,2) null=YES default=0",
 		Statements: []*godwitv1.PlannedStatement{
 			{Sql: "CREATE INDEX i1 ON t (a);", Hazards: []*godwitv1.PlannedHazard{
-				{Code: "H001", Detail: "CREATE INDEX without CONCURRENTLY blocks writes on t", Recipe: "CREATE INDEX CONCURRENTLY i1 ON t (a);"},
+				{
+					Code: "H001", Detail: "CREATE INDEX without CONCURRENTLY blocks writes on t",
+					Recipe: "-- or let godwit run it: -- godwit: add-index t (a) name=i1\nCREATE INDEX CONCURRENTLY i1 ON t (a);",
+				},
 			}},
 			{Sql: "VACUUM t;", NoTx: true},
 		},
@@ -188,7 +192,7 @@ func TestDiffRun(t *testing.T) {
 		"CREATE INDEX i1 ON t (a);", "DROP INDEX i1;",
 		"20260902120000_add_index.up.sql", "20260902120000_add_index.down.sql",
 		"<b>H001</b>", "CREATE INDEX without CONCURRENTLY", "CREATE INDEX CONCURRENTLY i1 ON t (a);",
-		"&#43; column extra text", "live schema, not its history",
+		"&#43; column public.t.total numeric(12,2) null=YES default=0", "live schema, not its history",
 		`class="chip">no-tx<`, `class="chip">tx<`, "Statements <span class=\"n\">2<",
 		"search_path", "public", "abcdef12", "2026-09-02 11:59:00Z",
 		"CREATE TABLE t (a int);",

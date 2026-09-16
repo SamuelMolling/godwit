@@ -201,7 +201,7 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
 .hint{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:6px;border-radius:50%;border:1px solid var(--line-2);background:var(--panel);color:var(--fg-3);font:500 11px/1 var(--sans);letter-spacing:0;text-transform:none;cursor:help;flex:none;vertical-align:1px}
 .hint:hover{color:var(--fg);border-color:var(--fg-3)}
 @media (max-width:1340px){
-  .two{grid-template-columns:1fr}
+  .two{grid-template-columns:minmax(0,1fr)}
   .aside{position:static;padding-left:0;border-left:0;padding-top:24px;border-top:1px solid var(--line)}
 }
 @media (max-width:1200px){
@@ -231,8 +231,8 @@ textarea.in{resize:vertical;font-family:var(--mono);font-size:13.5px;line-height
   .ph,.body{padding-left:20px;padding-right:20px}
   .strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 0}
   .strip>div:nth-child(2n){border-right:0}
-  .q{grid-template-columns:1fr}
-  .ev{grid-template-columns:1fr;gap:8px}
+  .q{grid-template-columns:minmax(0,1fr)}
+  .ev{grid-template-columns:minmax(0,1fr);gap:8px}
   .banner{grid-template-columns:auto minmax(0,1fr)}
   .banner .acts{grid-column:1/-1}
 }

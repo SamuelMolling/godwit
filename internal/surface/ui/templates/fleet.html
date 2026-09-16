@@ -6,7 +6,7 @@
 <div class="body">
   <div class="sec" style="margin-top:0">
     <div class="sec-hd">
-      <h2>{{if .Target}}Standing on {{.Target}}{{else}}Every migration{{end}} <span class="n">{{len .Fleet.Rows}}</span></h2>
+      <h2>{{if .Target}}Standing on {{.Target}}{{else}}Every migration{{end}} <span class="n">{{len .Fleet.Rows}}</span>{{template "hint" "One row per migration and content: the same version applied from two different files is two rows, and the target holding the other one reads differs. not yet is a target below the migration; missing is one already past it. This page reads the control plane's ledger and connects to no target."}}</h2>
       <div class="right">{{if .Fleet.Everybody}}All on every target{{else if .Fleet.Gaps}}{{.Fleet.Gaps}} not on every target{{if .Fleet.Diverged}} · {{.Fleet.Diverged}} under more than one checksum{{end}}{{end}}</div>
     </div>
     {{if .Fleet.Rows}}
@@ -22,7 +22,6 @@
         {{end}}
       </tbody>
     </table></div>
-    <p class="note">One row per migration <b>and content</b>: the same version applied from two different files is two rows, and the target holding the other one reads <b>differs</b>. <b>not yet</b> is a target below the migration; <b>missing</b> is one already past it. This page reads the control plane's ledger and connects to no target.</p>
     {{else}}
     <div class="empty"><svg class="ic"><use href="#i-db"/></svg><b>Nothing to compare{{if .Target}} on {{.Target}}{{end}}</b><p>Migrations appear here as soon as a run applies one; <span class="mono">godwit migrations</span> is the same view in the terminal.</p></div>
     {{end}}

@@ -18,6 +18,7 @@ import (
 	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/authz"
 	"github.com/SamuelMolling/godwit/internal/controlplane"
+	"github.com/SamuelMolling/godwit/internal/engine"
 )
 
 var (
@@ -219,10 +220,16 @@ func fixture() *stub {
 			{Id: "r-queue-001", Target: "app", State: godwitv1.RunState_RUN_STATE_QUEUED, CreatedAt: at(time.Second)},
 			{Id: "r-retry-001", Target: "app", State: godwitv1.RunState_RUN_STATE_QUEUED, Attempts: 1, Retries: 2, NotBefore: at(-20 * time.Second), CreatedAt: at(time.Minute)},
 			{Id: "r-ok-000001", Target: "app", Kind: "migrate", CreatedBy: "ci", Source: "github", PlanId: "p-plan-0001", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, Attempts: 1, Rollout: "direct", CreatedAt: at(2 * time.Hour), FinishedAt: at(2*time.Hour - 90*time.Second)},
-			{Id: "r-bad-00001", Target: "billing", State: godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION, Attempts: 3, Error: "lock timeout", CreatedAt: at(3 * 24 * time.Hour), FinishedAt: at(2 * 24 * time.Hour)},
+			{
+				Id: "r-bad-00001", Target: "billing", State: godwitv1.RunState_RUN_STATE_NEEDS_ATTENTION, Attempts: 3,
+				Error: "sql: statement 2 of 20260901120000_add_index (up): exec: ERROR: canceling statement due to lock timeout (SQLSTATE 55P03)", CreatedAt: at(3 * 24 * time.Hour), FinishedAt: at(2 * 24 * time.Hour),
+			},
 			{Id: "r-wait-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_AWAITING_CONTRACT, Rollout: "expand-contract", Phase: "expand", CreatedAt: at(5 * time.Minute)},
 			{Id: "r-rev-00001", Target: "app", State: godwitv1.RunState_RUN_STATE_REVERTED, Reverts: "r-ok-000001", CreatedAt: at(time.Hour), FinishedAt: at(time.Hour - 300*time.Millisecond)},
-			{Id: "r-fail-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_FAILED, Attempts: 1, PlanId: "p-gone-0001", Error: "relation not_there does not exist", CreatedAt: at(30 * time.Hour), FinishedAt: at(30*time.Hour - 3*time.Second)},
+			{
+				Id: "r-fail-0001", Target: "app", State: godwitv1.RunState_RUN_STATE_FAILED, Attempts: 1, PlanId: "p-gone-0001",
+				Error: "sql: statement 1 of 20260901160000_add_fk (up): exec: ERROR: relation \"not_there\" does not exist (SQLSTATE 42P01)", CreatedAt: at(30 * time.Hour), FinishedAt: at(30*time.Hour - 3*time.Second),
+			},
 			{Id: "r-old-00001", Target: "app", State: godwitv1.RunState_RUN_STATE_SUCCEEDED, CreatedAt: at(48 * time.Hour), FinishedAt: at(47 * time.Hour)},
 		},
 		audit: []*godwitv1.AuditEntry{
@@ -240,7 +247,10 @@ func fixture() *stub {
 						Version: 20260901120000, Name: "add_index", Phase: "expand",
 						Statements: []*godwitv1.PlannedStatement{
 							{Sql: "CREATE INDEX i1 ON t (a);", Hazards: []*godwitv1.PlannedHazard{
-								{Code: "H001", Detail: "CREATE INDEX without CONCURRENTLY blocks writes on t", Recipe: "CREATE INDEX CONCURRENTLY i1 ON t (a);"},
+								{
+									Code: "H001", Detail: "CREATE INDEX without CONCURRENTLY blocks writes on t",
+									Recipe: "-- or let godwit run it: -- godwit: add-index t (a) name=i1\nCREATE INDEX CONCURRENTLY i1 ON t (a);",
+								},
 							}},
 							{Sql: "CREATE INDEX i2 ON t (b);", Hazards: []*godwitv1.PlannedHazard{
 								{Code: "H001", Detail: "CREATE INDEX without CONCURRENTLY blocks writes on t"},
@@ -248,11 +258,12 @@ func fixture() *stub {
 						},
 					},
 					{
-						Version: 20260901130000, Name: "drop_legacy", AlreadyApplied: true, Effect: "- column legacy",
+						Version: 20260901130000, Name: "drop_legacy", AlreadyApplied: true,
+						Effect:     "- column public.widgets.legacy_code character varying(20) null=YES default=<none>",
 						Statements: []*godwitv1.PlannedStatement{{Sql: "ALTER TABLE t DROP COLUMN legacy;"}},
 					},
 					{
-						Version: 20260901140000, Name: "backfill", Applied: true, Note: "DML is not inspectable",
+						Version: 20260901140000, Name: "backfill", Applied: true, Note: engine.OpaqueDML,
 						Statements: []*godwitv1.PlannedStatement{{Sql: "UPDATE t SET a = 1;"}},
 					},
 				},
@@ -277,11 +288,26 @@ func fixture() *stub {
 			ReadyPlans:    1,
 		},
 		events: []*godwitv1.DriftEvent{
-			{Id: 8, Target: "app", Diff: "column extra added", DetectedAt: at(time.Minute)},
-			{Id: 7, Target: "app", Diff: "index gone", DetectedAt: at(time.Hour), ResolvedAt: at(30 * time.Minute)},
-			{Id: 6, Target: "billing", Diff: "old", DetectedAt: at(24 * time.Hour), ResolvedAt: at(23 * time.Hour)},
+			{
+				Id: 8, Target: "app", DetectedAt: at(time.Minute),
+				Diff: "- constraint public.widgets.widgets_name_key UNIQUE (name)\n" +
+					"- index public.widgets_name_idx CREATE UNIQUE INDEX widgets_name_idx ON public.widgets USING btree (lower((name)::text))\n" +
+					"+ column public.widgets.status text null=YES default='draft'::text\n" +
+					"+ index public.widgets_status_idx CREATE INDEX widgets_status_idx ON public.widgets USING btree (status) WHERE (deleted_at IS NULL)",
+			},
+			{
+				Id: 7, Target: "app", DetectedAt: at(time.Hour), ResolvedAt: at(30 * time.Minute),
+				Diff: "- index public.widgets_created_at_idx CREATE INDEX widgets_created_at_idx ON public.widgets USING btree (created_at DESC)",
+			},
+			{
+				Id: 6, Target: "billing", DetectedAt: at(24 * time.Hour), ResolvedAt: at(23 * time.Hour),
+				Diff: "+ column public.invoices.retried_at timestamp with time zone null=YES default=<none>",
+			},
 		},
-		drift: &godwitv1.CheckDriftResponse{Drifted: true, Diff: "column extra added"},
+		drift: &godwitv1.CheckDriftResponse{
+			Drifted: true,
+			Diff:    "+ column public.widgets.status text null=YES default='draft'::text",
+		},
 	}
 }
 
@@ -291,7 +317,7 @@ func TestIndex(t *testing.T) {
 	h := newUI(s, Config{Replica: "godwit-0"})
 
 	want(t, do(h, http.MethodGet, "/ui/", nil), http.StatusOK,
-		"<title>Godwit</title>", "godwit-0", "Needs you", "r-bad-00", "needs attention", "awaiting contract", "lock timeout",
+		"<title>Godwit</title>", "godwit-0", "Needs you", "r-bad-00", "needs attention", "awaiting contract", "canceling statement due to lock timeout",
 		"oldest 2 days ago", "since 5 min ago", "Confirm rollout", "Resume", "revert of r-ok-000", "by ci", "1m30s", "300ms", "3.0s", "24h0m", "1h0m",
 		"No sign-in configured", `class="cnt">2<`, `class="dot bad"`, `title="2026-09-02 10:00:00Z">2 hours ago`)
 	absent(t, do(h, http.MethodGet, "/ui/", nil), "#i-chev")
@@ -326,7 +352,7 @@ func TestRunPage(t *testing.T) {
 	s := fixture()
 	h := newUI(s, Config{})
 
-	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil), http.StatusOK, "Resume run", "Park", "lock timeout",
+	want(t, do(h, http.MethodGet, "/ui/runs/r-bad-00001", nil), http.StatusOK, "Resume run", "Park", "SQLSTATE 55P03",
 		"Resumed", "by <b>ci</b>", "Parked", "waiting on dba", "Contract confirmed", "The journal on",
 		"Re-attached by a repeated request", "state=queued plan=p-plan-0001", `href="/ui/">Runs<`, "#i-chev")
 	want(t, do(h, http.MethodGet, "/ui/runs/r-fail-0001", nil), http.StatusOK, "Resume run", "Park", "not_there", "Failed", "p-gone-0", "pruned")
@@ -335,8 +361,8 @@ func TestRunPage(t *testing.T) {
 	want(t, plan, http.StatusOK, "Revert", "Succeeded", "source github", "via github",
 		"p-plan-0", "bound", "replayed on a scratch database", "H002 acknowledged",
 		"CREATE INDEX without CONCURRENTLY", "CREATE INDEX CONCURRENTLY i1", "2 statements",
-		"already applied by hand", "recorded without executing, 1 statement skipped", "- column legacy",
-		"in history", "DML is not inspectable")
+		"already applied by hand", "recorded without executing, 1 statement skipped", "- column public.widgets.legacy_code",
+		"in history", engine.OpaqueDML)
 	if n := strings.Count(plan.Body.String(), "<b>H001</b>"); n != 1 {
 		t.Fatalf("hazard H001 listed %d times", n)
 	}
@@ -415,8 +441,9 @@ func TestDrift(t *testing.T) {
 	h := newUI(s, Config{})
 
 	want(t, do(h, http.MethodGet, "/ui/drift", nil), http.StatusOK, "app drifted from its baseline", "Detected 1 min ago",
-		"column extra added", "index gone", "resolved", `class="on">app <span class="cnt">drifted`, "billing <span class=\"cnt\">clean", "Accept as baseline")
-	want(t, do(h, http.MethodGet, "/ui/drift?target=billing&checked=clean", nil), http.StatusOK, "billing matches its baseline", "Checked just now", "old")
+		"&#43; column public.widgets.status text null=YES default=&#39;draft&#39;::text",
+		"- index public.widgets_created_at_idx CREATE INDEX", "resolved", `class="on">app <span class="cnt">drifted`, "billing <span class=\"cnt\">clean", "Accept as baseline")
+	want(t, do(h, http.MethodGet, "/ui/drift?target=billing&checked=clean", nil), http.StatusOK, "billing matches its baseline", "Checked just now", "public.invoices.retried_at")
 	want(t, do(h, http.MethodGet, "/ui/drift?target=app&checked=drifted", nil), http.StatusOK, "confirmed by the check you just ran")
 	want(t, do(h, http.MethodGet, "/ui/drift?target=ghost", nil), http.StatusOK, "No open drift event", "No drift recorded")
 	want(t, do(newUI(&stub{}, Config{}), http.MethodGet, "/ui/drift", nil), http.StatusOK, "No targets yet")
@@ -724,7 +751,7 @@ func TestTargetPage(t *testing.T) {
 	want(t, rec, http.StatusOK,
 		"20260901120000_add_index", "20260901130000_drop_legacy", "checksum mismatch", "R__views", "repeatable · unchanged",
 		"20260901140000_backfill", "1 statement", `href="/ui/plans/p-ready-0001"`, "newest ready plan still has to apply",
-		"app drifted from its baseline", "column extra added", "Accept as baseline", "Check again",
+		"app drifted from its baseline", "widgets_status_idx", "Accept as baseline", "Check again",
 		`href="/ui/drift?target=app">All events`, "3 recorded events",
 		"app,public", "require_plan", "keep_old", "Ready plans", `href="/ui/plans?target=app"`, "9f1e2d3c",
 		`title="2026-09-02 09:00:00Z">3 hours ago`)
