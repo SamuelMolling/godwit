@@ -1,6 +1,6 @@
 {{define "drift.html"}}{{template "head" .}}
 <header class="ph">
-  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Drift</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Drift</h1></div>
+  <div class="ttl"><h1>Drift</h1></div>
   {{if and .Target .Can.check}}<div class="acts"><form method="post" action="/ui/drift/{{.Target}}/check"><button class="btn pri"><svg class="ic"><use href="#i-refresh"/></svg>Check {{.Target}} now</button></form></div>{{end}}
 </header>
 <div class="body">

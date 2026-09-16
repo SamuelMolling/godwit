@@ -1,6 +1,6 @@
 {{define "plans.html"}}{{template "head" .}}
 <header class="ph">
-  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Plans</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>{{.Target}}</span>{{end}}</div><h1>Plans</h1></div>
+  <div class="ttl"><h1>Plans</h1></div>
   <div class="acts"><a class="btn ghost" href="/ui/plans{{if .Target}}?target={{.Target}}{{end}}"><svg class="ic"><use href="#i-refresh"/></svg>Refresh</a></div>
 </header>
 <div class="body">
@@ -22,7 +22,7 @@
           <td class="ago">{{.Rollout}}{{if not .Validated}} <small>not validated</small>{{end}}</td>
           <td class="r num">{{.Total}}{{if .Pending}} <small class="faint">{{.Pending}} pending</small>{{end}}</td>
           <td class="id">{{with .RunId}}<a href="/ui/runs/{{.}}">{{short .}}</a>{{else}}<span class="faint">not bound</span>{{end}}</td>
-          <td class="ago num">{{ago .CreatedAt}}<small>{{clock .CreatedAt}}</small></td>
+          <td class="ago num" title="{{stamp .CreatedAt}}">{{ago .CreatedAt}}</td>
         </tr>
         {{end}}
       </tbody>

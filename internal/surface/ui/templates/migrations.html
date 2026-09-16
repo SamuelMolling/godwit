@@ -1,6 +1,6 @@
 {{define "migrations.html"}}{{template "head" .}}
 <header class="ph">
-  <div class="ttl"><div class="crumbs"><span>{{.Replica}}</span><svg class="ic"><use href="#i-chev"/></svg><span>Fleet</span>{{if .Target}}<svg class="ic"><use href="#i-chev"/></svg><span>on {{.Target}}</span>{{end}}</div><h1>Fleet</h1></div>
+  <div class="ttl"><h1>Fleet</h1></div>
   <div class="acts"><a class="btn ghost" href="{{.Fleet.GapsHref}}"><svg class="ic"><use href="#i-ne"/></svg>{{if .Fleet.OnlyGaps}}Show every migration{{else}}Only what is not everywhere{{end}}</a></div>
 </header>
 <div class="body">
