@@ -157,3 +157,47 @@ func TestOneUnreadableBodyStopsTheWholeSet(t *testing.T) {
 		t.Fatalf("fetched every one of %d files after the first failed", len(all))
 	}
 }
+
+func sized(n, size int, body string) *fakeRepo {
+	r := &fakeRepo{blobs: map[string]string{}}
+	var listed contents
+	for i := range n {
+		name := fmt.Sprintf("%014d_m.up.sql", i)
+		listed.entries = append(listed.entries, content{name: name, size: size, file: true})
+		r.blobs[testDir+"/"+name] = body
+	}
+	r.listing = map[string]contents{testDir: listed}
+
+	return r
+}
+
+func TestADirectoryOverTheAggregateBoundIsRefusedBeforeAnyBodyIsFetched(t *testing.T) {
+	t.Parallel()
+
+	lim := limits.Limits{RequestBytes: 8 << 20, FileBytes: 1 << 20}
+	repo := sized(100, 1<<20, strings.Repeat("x", 1<<20))
+	_, err := migrations(context.Background(), repo, testDir, testHead, lim)
+	if err == nil || !strings.Contains(err.Error(), "over the 8388608 bytes a request may hold in total") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(repo.fetched) != 0 {
+		t.Fatalf("fetched %d bodies of a set the listing already put over the bound", len(repo.fetched))
+	}
+}
+
+func TestAListingThatUnderstatesItsSizesIsRefusedPartWayThroughTheFetch(t *testing.T) {
+	t.Parallel()
+
+	const body = 1 << 20
+	lim := limits.Limits{RequestBytes: 8 << 20, FileBytes: 1 << 20}
+	repo := sized(100, 0, strings.Repeat("x", body))
+	_, err := migrations(context.Background(), repo, testDir, testHead, lim)
+	if err == nil || !strings.Contains(err.Error(), "over the 8388608 bytes a request may hold in total") ||
+		!strings.Contains(err.Error(), testDir+"/") {
+		t.Fatalf("err = %v", err)
+	}
+	held := len(repo.fetched) * body
+	if ceiling := lim.RequestBytes + (blobWorkers+1)*lim.FileBytes; held > ceiling {
+		t.Fatalf("held %d bytes before refusing, over the %d the bound and the fetches in flight allow", held, ceiling)
+	}
+}

@@ -229,6 +229,13 @@ when it truncates either. godwit refuses rather than guesses:
 - A pull request carrying more reviews than godwit reads is refused for `apply` and `confirm`: GitHub lists the
   oldest first, so the reviews that *withdraw* an approval are exactly the ones a short read would miss.
 
+The service's own [admission limits](../run/configuration.md#admission-limits) apply to a directory read from
+a repository exactly as they apply to one submitted over the API — the file count, each file's size and the
+32 MiB a submitted set may total. The total is charged as the bodies are fetched, so a directory over it is
+refused on the pull request part-way through rather than read into memory first. A command also waits for a
+`--max-concurrent-diffs` slot alongside the API's callers, and is refused with *"too many concurrent
+validation requests"* if none frees in 30 seconds.
+
 ## What a delivery is answered with
 
 This is what the App's page shows in *Recent Deliveries*, in the order godwit decides it — the signature is

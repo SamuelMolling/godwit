@@ -23,6 +23,11 @@ type checkpointGenerator interface {
 
 // Checkpoint collapses a prefix of the submitted directory into the schema those migrations produce, verified by replaying it on another scratch database.
 func (s *Server) Checkpoint(ctx context.Context, req *connect.Request[godwitv1.CheckpointRequest]) (*connect.Response[godwitv1.CheckpointResponse], error) {
+	leave, err := s.enterScratch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
 	m := req.Msg
 	if len(m.Files) == 0 {
 		return nil, invalid("files is required")

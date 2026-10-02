@@ -4,6 +4,7 @@ package limits
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,13 +60,13 @@ type Listed struct {
 	Size int
 }
 
-// CheckListing applies the file, size and migration bounds to names and sizes alone, before any body is fetched.
+// CheckListing applies the file, size, aggregate and migration bounds to names and sizes alone, before any body is fetched.
 func (l Limits) CheckListing(in []Listed) error {
 	l = l.WithDefaults()
 	if len(in) > l.Files {
 		return fmt.Errorf("too many migration files: %d, limit %d", len(in), l.Files)
 	}
-	migrations := 0
+	migrations, budget := 0, l.Budget()
 	for _, f := range in {
 		if len(f.Name) > maxNameBytes {
 			return fmt.Errorf("migration file name is %d bytes, limit %d", len(f.Name), maxNameBytes)
@@ -73,12 +74,40 @@ func (l Limits) CheckListing(in []Listed) error {
 		if f.Size > l.FileBytes {
 			return fmt.Errorf("migration file %s is %d bytes, limit %d", f.Name, f.Size, l.FileBytes)
 		}
+		if err := budget.Charge(f.Size); err != nil {
+			return err
+		}
 		if strings.HasSuffix(f.Name, upSuffix) {
 			migrations++
 		}
 	}
 	if migrations > l.Migrations {
 		return fmt.Errorf("too many migrations: %d, limit %d", migrations, l.Migrations)
+	}
+
+	return nil
+}
+
+// Budget is the aggregate byte bound of one submitted set, charged as its bodies arrive so an oversized set is refused before it is all held.
+type Budget struct {
+	mu    sync.Mutex
+	limit int
+	used  int
+}
+
+// Budget returns a fresh aggregate-byte budget for one submitted set.
+func (l Limits) Budget() *Budget {
+	return &Budget{limit: l.WithDefaults().RequestBytes}
+}
+
+// Charge adds n bytes to what the set has taken and refuses as soon as the total is over the bound.
+func (b *Budget) Charge(n int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.used += n
+	if b.used > b.limit {
+		return fmt.Errorf("migration files are over the %d bytes a request may hold in total; "+
+			"split the directory across pull requests or raise --max-request-bytes", b.limit)
 	}
 
 	return nil

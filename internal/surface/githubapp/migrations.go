@@ -38,7 +38,7 @@ func migrations(ctx context.Context, repo repoView, dir, head string, lim limits
 		return nil, nil
 	}
 
-	return bodies(ctx, repo, dir, head, want, lim.FileBytes)
+	return bodies(ctx, repo, dir, head, want, lim)
 }
 
 func wanted(listed contents) []limits.Listed {
@@ -54,20 +54,26 @@ func wanted(listed contents) []limits.Listed {
 	return out
 }
 
-func bodies(ctx context.Context, repo repoView, dir, head string, want []limits.Listed, limit int) ([]*godwitv1.MigrationFile, error) {
+// bodies charges each body against the aggregate bound as it lands, so a listing that understated its sizes is refused part-way rather than held whole.
+func bodies(ctx context.Context, repo repoView, dir, head string, want []limits.Listed, lim limits.Limits) ([]*godwitv1.MigrationFile, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := make([]*godwitv1.MigrationFile, len(want))
 	next, errs := make(chan int), make(chan error, blobWorkers)
+	budget := lim.Budget()
 	var wg sync.WaitGroup
 	for range min(blobWorkers, len(want)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				body, err := repo.blob(ctx, path.Join(dir, want[i].Name), head, limit)
+				name := path.Join(dir, want[i].Name)
+				body, err := repo.blob(ctx, name, head, lim.FileBytes)
+				if err == nil {
+					err = budget.Charge(len(body))
+				}
 				if err != nil {
-					errs <- fmt.Errorf("%s: %w", path.Join(dir, want[i].Name), err)
+					errs <- fmt.Errorf("%s: %w", name, err)
 					cancel()
 
 					return

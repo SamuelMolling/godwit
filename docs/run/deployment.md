@@ -840,7 +840,8 @@ Set in [configuration](configuration.md#admission-limits); this is when to move 
 | `invalid_argument: too many migration files: N, limit 5000` | `--max-files`; at two files a migration the migration limit is reached first, so this one means the directory holds files that are not migration halves |
 | `invalid_argument: schema is N bytes, limit 4194304` | `--max-file-bytes`; it bounds the desired schema `Diff` accepts as well |
 | the client reports the message as too large before the service answers | `--max-request-bytes`, above the sum of what one run sends |
-| `resource_exhausted: too many concurrent validation requests` on pull-request plans | `--max-concurrent-diffs`, and size the scratch server's `max_connections` and disk for it: each admitted call builds four to five databases there |
+| `migration files are over the 33554432 bytes a request may hold in total` on a pull request | `--max-request-bytes`; the GitHub App charges a repository's directory against it as it fetches, so this is the same knob reached from the other side |
+| `resource_exhausted: too many concurrent validation requests` on pull-request plans | `--max-concurrent-diffs`, and size the scratch server's `max_connections` and disk for it: each admitted call builds four to five databases there. The App's workers and `/ui` queue in the same budget, so raising `--github-workers` alone does not help |
 | a queued run waits while unrelated targets migrate | `--max-concurrent-runs`, and `--store-max-conns` with it |
 | a long backfill is finished as `failed` with `context deadline exceeded` | `--run-timeout`, above the backfill's real duration |
 

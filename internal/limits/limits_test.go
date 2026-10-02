@@ -35,6 +35,18 @@ func directory(n, size int) []Listed {
 	return out
 }
 
+func TestABudgetIsSpentOnceAndRefusesEveryChargePastIt(t *testing.T) {
+	t.Parallel()
+
+	b := Limits{RequestBytes: 10}.Budget()
+	if err := b.Charge(10); err != nil {
+		t.Fatalf("a set exactly at the bound must be admitted: %v", err)
+	}
+	if err := b.Charge(1); err == nil || !strings.Contains(err.Error(), "raise --max-request-bytes") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestCheckListing(t *testing.T) {
 	t.Parallel()
 
@@ -56,6 +68,7 @@ func TestCheckListing(t *testing.T) {
 		{"too many migrations", directory(l.Migrations+1, 0), "too many migrations"},
 		{"long name", []Listed{{Name: strings.Repeat("n", maxNameBytes+1)}}, "file name is"},
 		{"big body", []Listed{{Name: "a.up.sql", Size: l.FileBytes + 1}}, "bytes, limit"},
+		{"legal files over the aggregate bound", directory(200, 100<<10), "over the 33554432 bytes a request may hold in total"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

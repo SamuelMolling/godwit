@@ -17,6 +17,11 @@ var errDiffDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("sc
 
 // Diff generates the migration between the requested base and the desired DDL, in both directions.
 func (s *Server) Diff(ctx context.Context, req *connect.Request[godwitv1.DiffRequest]) (*connect.Response[godwitv1.DiffResponse], error) {
+	leave, err := s.enterScratch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
 	m := req.Msg
 	if m.Target == "" {
 		return nil, invalid("target is required")
