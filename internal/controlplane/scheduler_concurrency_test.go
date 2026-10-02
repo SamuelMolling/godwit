@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 func registerTargetDB(t *testing.T, s *Store, name string) {
@@ -98,7 +99,7 @@ func TestRunTimeoutFinishesTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.State == StateSucceeded || !strings.Contains(r.Error, "context deadline exceeded") {
+	if r.State == StateSucceeded || !strings.Contains(r.Error, redact.Deadline) {
 		t.Fatalf("run = %+v", r)
 	}
 }

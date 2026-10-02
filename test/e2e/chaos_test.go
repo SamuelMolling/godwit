@@ -695,7 +695,8 @@ func TestChaosOrphanHoldsTheAdvisoryLock(t *testing.T) {
 		waitUntil(t, 90*time.Second, "the advisory lock wait is reported", func() bool { return r.getRun(id).Error != "" })
 	})
 	stuck := r.getRun(id)
-	expectContains(t, stuck.Error, "transient:", "acquire advisory lock on "+r.appDB, `application_name "godwit"`, "SQLSTATE 57014")
+	expectContains(t, stuck.Error, "transient:", "acquire advisory lock on this target", `application_name "godwit"`, "SQLSTATE 57014")
+	expectMissing(t, stuck.Error, r.appDB)
 	release()
 
 	run, elapsed := watchRun(t, r, id)

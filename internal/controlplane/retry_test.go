@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -12,46 +13,51 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pashagolub/pgxmock/v4"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 func TestTransientAndFailureDetail(t *testing.T) {
 	t.Parallel()
-	pg := func(code string) error { return fmt.Errorf("exec: %w", &pgconn.PgError{Code: code, Message: "m"}) }
+	pg := func(code string) error {
+		return fmt.Errorf("exec: %w", &pgconn.PgError{Severity: "ERROR", Code: code, Message: "m"})
+	}
 	cases := []struct {
 		name      string
 		err       error
 		transient bool
 		code      string
 		prefix    string
+		want      string
 	}{
-		{"serialization", pg("40001"), true, "40001", "transient: "},
-		{"deadlock", pg("40P01"), true, "40P01", "transient: "},
-		{"lock timeout", pg("55P03"), true, "55P03", "transient: "},
-		{"statement cancelled", pg("57014"), true, "57014", "transient: "},
-		{"too many connections", pg("53300"), true, "53300", "transient: "},
-		{"insufficient resources", pg("53000"), true, "53000", "transient: "},
-		{"disk full", pg("53100"), true, "53100", "transient: "},
-		{"out of memory", pg("53200"), true, "53200", "transient: "},
-		{"configuration limit", pg("53400"), true, "53400", "transient: "},
-		{"operator intervention", pg("57000"), true, "57000", "transient: "},
-		{"admin shutdown", pg("57P01"), true, "57P01", "transient: "},
-		{"crash shutdown", pg("57P02"), true, "57P02", "transient: "},
-		{"cannot connect now", pg("57P03"), true, "57P03", "transient: "},
-		{"idle session timeout", pg("57P05"), true, "57P05", "transient: "},
-		{"database dropped", pg("57P04"), false, "57P04", "sql: "},
-		{"system error", pg("58000"), true, "58000", "transient: "},
-		{"io error", pg("58030"), true, "58030", "transient: "},
-		{"undefined file", pg("58P01"), false, "58P01", "sql: "},
-		{"duplicate file", pg("58P02"), false, "58P02", "sql: "},
-		{"connection class", pg("08006"), true, "08006", "transient: "},
-		{"division by zero", pg("22012"), false, "22012", "sql: "},
-		{"undefined table", pg("42P01"), false, "42P01", "sql: "},
-		{"net error", fmt.Errorf("dial: %w", &net.OpError{Op: "dial", Err: errors.New("refused")}), true, ReasonNetwork, "transient: "},
-		{"eof", fmt.Errorf("read: %w", io.EOF), true, ReasonNetwork, "transient: "},
-		{"unexpected eof", io.ErrUnexpectedEOF, true, ReasonNetwork, "transient: "},
-		{"conn closed", fmt.Errorf("exec: %w", pgconn.ErrConnClosed), true, ReasonNetwork, "transient: "},
-		{"deadline", fmt.Errorf("apply: %w", context.DeadlineExceeded), true, ReasonTimeout, "transient: "},
-		{"control plane", errors.New("unknown rollout"), false, "", ""},
+		{"serialization", pg("40001"), true, "40001", "transient: ", ""},
+		{"deadlock", pg("40P01"), true, "40P01", "transient: ", ""},
+		{"lock timeout", pg("55P03"), true, "55P03", "transient: ", ""},
+		{"statement cancelled", pg("57014"), true, "57014", "transient: ", ""},
+		{"too many connections", pg("53300"), true, "53300", "transient: ", ""},
+		{"insufficient resources", pg("53000"), true, "53000", "transient: ", ""},
+		{"disk full", pg("53100"), true, "53100", "transient: ", ""},
+		{"out of memory", pg("53200"), true, "53200", "transient: ", ""},
+		{"configuration limit", pg("53400"), true, "53400", "transient: ", ""},
+		{"operator intervention", pg("57000"), true, "57000", "transient: ", ""},
+		{"admin shutdown", pg("57P01"), true, "57P01", "transient: ", ""},
+		{"crash shutdown", pg("57P02"), true, "57P02", "transient: ", ""},
+		{"cannot connect now", pg("57P03"), true, "57P03", "transient: ", ""},
+		{"idle session timeout", pg("57P05"), true, "57P05", "transient: ", ""},
+		{"database dropped", pg("57P04"), false, "57P04", "sql: ", ""},
+		{"system error", pg("58000"), true, "58000", "transient: ", ""},
+		{"io error", pg("58030"), true, "58030", "transient: ", ""},
+		{"undefined file", pg("58P01"), false, "58P01", "sql: ", ""},
+		{"duplicate file", pg("58P02"), false, "58P02", "sql: ", ""},
+		{"connection class", pg("08006"), true, "08006", "transient: ", ""},
+		{"division by zero", pg("22012"), false, "22012", "sql: ", ""},
+		{"undefined table", pg("42P01"), false, "42P01", "sql: ", ""},
+		{"net error", fmt.Errorf("dial: %w", &net.OpError{Op: "dial", Err: errors.New("refused")}), true, ReasonNetwork, "transient: ", redact.CallFailed},
+		{"eof", fmt.Errorf("read: %w", io.EOF), true, ReasonNetwork, "transient: ", redact.CallFailed},
+		{"unexpected eof", io.ErrUnexpectedEOF, true, ReasonNetwork, "transient: ", redact.CallFailed},
+		{"conn closed", fmt.Errorf("exec: %w", pgconn.ErrConnClosed), true, ReasonNetwork, "transient: ", redact.CallFailed},
+		{"deadline", fmt.Errorf("apply: %w", context.DeadlineExceeded), true, ReasonTimeout, "transient: ", redact.Deadline},
+		{"control plane", errors.New("unknown rollout"), false, "", "", redact.CallFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,8 +66,9 @@ func TestTransientAndFailureDetail(t *testing.T) {
 			if ok != tc.transient || code != tc.code || transient(tc.err) != tc.transient {
 				t.Fatalf("classify = %q, %v", code, ok)
 			}
-			if got := failureDetail(tc.err); got != tc.prefix+tc.err.Error() {
-				t.Fatalf("detail = %q", got)
+			want := cmp.Or(tc.want, "ERROR: m (SQLSTATE "+tc.code+")")
+			if got := failureDetail(tc.err); got != tc.prefix+want {
+				t.Fatalf("detail = %q, want %q", got, tc.prefix+want)
 			}
 		})
 	}
@@ -90,7 +97,7 @@ func TestBackoff(t *testing.T) {
 	if d := backoff(time.Second, 1, defaultJitter); d < 800*time.Millisecond || d > 1200*time.Millisecond {
 		t.Fatalf("default jitter = %s", d)
 	}
-	if got := retryDetail(errors.New("x"), 1500*time.Millisecond); got != "x (retry in 1.5s)" {
+	if got := retryDetail(redact.Public(errors.New("x")), 1500*time.Millisecond); got != "x (retry in 1.5s)" {
 		t.Fatalf("retryDetail = %q", got)
 	}
 }

@@ -67,5 +67,8 @@ the same way — by being classified, at the site that knows what it is.
 `controlplane.failureDetail` from the raw error and rendered into the pull request report by the App's
 reporter, so a run that fails at claim because Vault refused the read publishes that refusal. It is the
 same leak on a second path, and it is a different decision — that column is also the record an operator
-reads with `godwit run show`, so redacting it at write time and redacting it at read time are not the same
+reads with `godwit run get`, so redacting it at write time and redacting it at read time are not the same
 choice. Left open deliberately rather than half-fixed.
+
+Closed by [0027](0027-the-run-column-holds-the-message-not-the-failure.md), which made the column hold the
+published message and moved the classifier to `internal/redact` so both surfaces share one list.

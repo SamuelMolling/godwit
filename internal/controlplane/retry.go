@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // Failure classes reported in notifications and metrics.
@@ -69,15 +71,16 @@ func classify(err error) (string, bool) {
 }
 
 func failureDetail(err error) string {
+	msg := redact.Message(err)
 	if transient(err) {
-		return "transient: " + err.Error()
+		return "transient: " + msg
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		return "sql: " + err.Error()
+		return "sql: " + msg
 	}
 
-	return err.Error()
+	return msg
 }
 
 func backoff(base time.Duration, attempts int, jitter func() float64) time.Duration {

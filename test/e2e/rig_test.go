@@ -551,3 +551,12 @@ func expectContains(t *testing.T, text string, wants ...string) {
 		}
 	}
 }
+
+func expectMissing(t *testing.T, text string, unwanted ...string) {
+	t.Helper()
+	for _, bad := range unwanted {
+		if strings.Contains(text, bad) {
+			t.Fatalf("%q reached a published field:\n%s", bad, text)
+		}
+	}
+}

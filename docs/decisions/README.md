@@ -34,6 +34,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0024](0024-the-api-publishes-only-what-it-classified.md) | The API publishes only the errors it classified; everything else is redacted | #160 |
 | [0025](0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md) | A revert from a comment is held to the same people as the apply, and may not remove a gate | #160 |
 | [0026](0026-a-bound-belongs-where-the-bytes-arrive-not-on-one-transport.md) | A bound belongs where the bytes arrive, and the scratch budget belongs to the service | #170 |
+| [0027](0027-the-run-column-holds-the-message-not-the-failure.md) | `cp_runs.error` holds the message godwit publishes, not the failure | #171 |
 
 ## Open questions
 

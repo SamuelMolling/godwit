@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	pgquery "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // DirectiveAssert states a data condition the run has to meet; it is the only directive that reads.
@@ -220,17 +222,17 @@ func (e *Executor) checkAssert(st Statement, res assertResult) error {
 	}
 	query := assertQuery(st.SQL)
 	if res.rows != 1 {
-		return fmt.Errorf("%w: %s returned %d rows, want exactly one", ErrAssertFailed, query, res.rows)
+		return redact.Public(fmt.Errorf("%w: %s returned %d rows, want exactly one", ErrAssertFailed, query, res.rows))
 	}
 	if res.num == nil && res.flag == nil {
-		return fmt.Errorf("%w: %s returned NULL, want %s", ErrAssertFailed, query, st.Assert)
+		return redact.Public(fmt.Errorf("%w: %s returned NULL, want %s", ErrAssertFailed, query, st.Assert))
 	}
 	ok, err := st.Assert.holds(res)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("%w: %s returned %s, want %s", ErrAssertFailed, query, res, st.Assert)
+		return redact.Public(fmt.Errorf("%w: %s returned %s, want %s", ErrAssertFailed, query, res, st.Assert))
 	}
 
 	return nil

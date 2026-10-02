@@ -10,6 +10,7 @@ import (
 	"github.com/pashagolub/pgxmock/v4"
 
 	"github.com/SamuelMolling/godwit/internal/engine"
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 func columnPlans(t *testing.T) []engine.Plan {
@@ -302,7 +303,7 @@ func TestSchedulerMarkOnlyFromPlan(t *testing.T) {
 	markRun(t, s, "eeeeeeee-0000-0000-0000-000000000006", plan.ID)
 	sched.engine = observeFails{sched.engine}
 	sched.Tick(ctx)
-	if r := waitState(t, s, "eeeeeeee-0000-0000-0000-000000000006", StateFailed); r.Error != errBoom.Error() {
+	if r := waitState(t, s, "eeeeeeee-0000-0000-0000-000000000006", StateFailed); r.Error != redact.CallFailed {
 		t.Fatalf("error = %q", r.Error)
 	}
 }

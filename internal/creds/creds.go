@@ -42,3 +42,18 @@ func (c configErr) Unwrap() error { return c.err }
 
 // Misconfigured marks err as ErrCredentialConfig without adding to its message.
 func Misconfigured(err error) error { return configErr{err} }
+
+// ErrCredentialUnreadable marks a store refusing or failing a credential read; the message names the path or key read, so only the server log carries it.
+var ErrCredentialUnreadable = errors.New("credential unreadable")
+
+type unreadableErr struct{ err error }
+
+func (u unreadableErr) Error() string { return u.err.Error() }
+
+// Is matches the sentinel, which carries no text of its own so the wrapped message stays intact for the log.
+func (u unreadableErr) Is(target error) bool { return target == ErrCredentialUnreadable }
+
+func (u unreadableErr) Unwrap() error { return u.err }
+
+// Unreadable marks err as ErrCredentialUnreadable without adding to its message.
+func Unreadable(err error) error { return unreadableErr{err} }

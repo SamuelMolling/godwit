@@ -138,7 +138,18 @@ Every one of these keeps the original error as its cause, so the access log carr
 
 **An error meant to be read is classified, not exempted.** A refusal an operator fixes in a registration — `this target names no credential store`, `unknown credential provider`, `vault target config missing "path"` — carries `creds.ErrCredentialConfig` and comes back as `failed_precondition` with its message whole; those name only registration values, which `godwit targets` and `godwit credential-stores` already return at `read` scope. Anything else that should be readable is made readable the same way, at the site that knows what it is. Adding a `default:`-branch exemption to the redactor is the thing this section exists to stop.
 
-**What this does not cover: a run's own error.** `cp_runs.error` holds the raw failure of a run that already started, and the App renders it into the run report on the pull request. A run that fails at claim because Vault refused the read therefore still publishes that refusal, path and all. Treat a target's credential provider as an audience for pull request comments until that is closed.
+**The same rule governs a run's own error.** `cp_runs.error` is read by the App's run report, by Slack, by the webhook payload, by the UI, by `ListRuns` and by `godwit run get`, so it holds the published message and not the failure ([decision 0027](../decisions/0027-the-run-column-holds-the-message-not-the-failure.md)). A run that fails resolving credentials writes `the credentials for this target could not be read; ask an operator to check its credential store; the detail is in the server log`; the Vault path and the `projects/…/cryptoKeys/…` resource are in the `run failed` log line, keyed by run id, and nowhere else.
+
+What the column keeps, because the site that produced it said the text is the author's own:
+
+| What | Written as |
+|---|---|
+| a statement failing on the target | `sql: statement 2 of 20260901120000_orders (up): ERROR: permission denied for schema orders (SQLSTATE 42501)` |
+| an assertion that did not hold, a checkpoint gap, an INVALID index, a migration directory godwit could not load, an unknown rollout policy, a stale bound plan | its own message |
+| a dial failure, a run past its deadline, a credential that could not be read | the stand-in for its class |
+| anything else | `the call failed; the detail is in the server log` |
+
+A target's `godwit.runs.error` still holds the engine's unredacted error, because that journal lives on the target database and a credential failure never reaches it.
 
 ## Database privileges
 
