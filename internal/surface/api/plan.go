@@ -20,6 +20,11 @@ var errPlanDisabled = connect.NewError(connect.CodeUnimplemented, errors.New("st
 
 // PlanRun returns what CreateRun would do without queueing it; with persist it stores the plan so a later CreateRun binds to it.
 func (s *Server) PlanRun(ctx context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
+	leave, err := s.enterScratch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
 	m := req.Msg
 	set, err := s.upSet(m.Target, m.Rollout, m.Files)
 	if err != nil {

@@ -124,11 +124,11 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--run-timeout` | `24h` | wall clock one run may take; past it the run is cancelled and finished as `failed` |
 | `--shutdown-timeout` | `20s` | budget for the whole shutdown after `SIGINT` or `SIGTERM`: draining the listener, then the runs this replica already claimed. A run that does not finish inside it is cut and left to its lease. Keep it under the platform's kill delay |
 | `--store-max-conns` | `20` | size of the pool against the store; wins over `pool_max_conns` in `--store-dsn` |
-| `--max-request-bytes` | `33554432` (32 MiB) | largest request body the API decodes; over it the transport refuses before any handler runs |
+| `--max-request-bytes` | `33554432` (32 MiB) | largest request body the API decodes, and the largest a submitted directory may total however it reached godwit; over it the transport refuses before the request is decoded, and the GitHub App refuses before it has fetched the bodies |
 | `--max-migrations` | `2000` | migrations one `CreateRun`, `PlanRun`, `RevertRun`, `Diff` or `Checkpoint` may carry; the `.up.sql` half is what names one |
 | `--max-files` | `5000` | files one such request may carry, migration halves and everything else alike |
 | `--max-file-bytes` | `4194304` (4 MiB) | largest single migration body, and the largest desired schema `Diff` accepts |
-| `--max-concurrent-diffs` | `4` | `Diff`, `PlanRun`, `CreateRun`, `RevertRun` and `Checkpoint` calls admitted at once; each builds scratch databases on `--scratch-dsn`, or on the store server when it is unset |
+| `--max-concurrent-diffs` | `4` | `Diff`, `PlanRun`, `CreateRun`, `RevertRun` and `Checkpoint` calls admitted at once, whoever made them — over the API, from the GitHub App's workers, from `/ui`; each builds scratch databases on `--scratch-dsn`, or on the store server when it is unset |
 | `--skip-validation` | `false` | disable the scratch-database validation at admission (also disables `validated` in `PlanRun`) |
 | `--require-plan` | `false` | refuse every `CreateRun` that does not bind to a stored plan, on every target (targets registered with `--require-plan` refuse on their own) |
 | `--plan-ttl` | `720h` | stored plans older than this are ignored at `CreateRun` (treated as no plan) |
@@ -145,7 +145,7 @@ Every service command also accepts `--json` (print the raw protojson response in
 | `--github-webhook-max-age` | `1h` | how old a comment's `created_at` or a review's `submitted_at` may be before its delivery is refused. A `pull_request` payload carries no timestamp of its own and is not aged |
 | `--github-webhook-max-bytes` | `1048576` (1 MiB) | largest delivery body read before the signature is verified; over it the answer is `413` with no body |
 | `--github-emoji-reaction` | `eyes` | emoji added to a pull request comment godwit read as a command, so a command never looks unread; `none` adds none (or `GODWIT_GITHUB_EMOJI_REACTION`) |
-| `--github-workers` | `2` | commands the App carries out at once. Each may build scratch databases, so it spends the scratch server's budget *alongside* `--max-concurrent-diffs` rather than within it: size for the sum |
+| `--github-workers` | `2` | commands the App carries out at once. Each may build scratch databases, and spends `--max-concurrent-diffs` to do it: raising this without raising that only lengthens the queue |
 | `--github-allowed-associations` | `OWNER,MEMBER,COLLABORATOR` | author associations that may command godwit from a comment or review body. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `MANNEQUIN` and `NONE` fail `serve` at start-up: anyone who opened a pull request carries one |
 | `--ui-origin` | `GODWIT_UI_ORIGIN` (comma-separated) | repeatable `scheme://host[:port]` origins a browser reaches `/ui` at, e.g. `https://godwit.example.com`; the allowlist of origins a form post may come from and of hosts the UI answers on. Empty compares the browser's `Origin` with the request's `Host`, which needs the proxy in front to preserve it |
 
@@ -157,11 +157,13 @@ A bad log format or level, an unknown `--ui-scope` or `--ui-anonymous-scope`, a 
 
 Everything above the `--max-*` line is refused with `invalid_argument` naming the limit, except a body over `--max-request-bytes`, which the connect transport refuses before the request is decoded.
 
+`--max-request-bytes` is a bound on the submitted set, not only on a wire message: a directory the GitHub App reads out of a repository is charged against it as the bodies arrive, and a set over it is refused on the pull request — `migration files are over the 33554432 bytes a request may hold in total` — part-way through the fetch rather than after it.
+
 A directory is counted in migrations, not in files, because a migration is two files and the count that matters is the one that costs a replay step. The three defaults stop at the same directory rather than one stopping short of the others: 2000 migrations is 4000 files, inside `--max-files` with room for checkpoints and strays, and 32 MiB at the 8 KiB-a-file shape `--max-request-bytes` was sized for. The load rig's 1000-migration target and its checkpoint fit the defaults with the same margin again.
 
 Raise `--max-file-bytes` for a generated schema dump. Raise `--max-migrations` and `--max-request-bytes` together for a directory past two thousand migrations — the byte cap is the one that bites first on bodies larger than 8 KiB, and `--max-files` only needs to move if the directory holds files that are not migration halves.
 
-`--max-concurrent-diffs` is a queue, not a hard refusal: a call waits 30 seconds for a free slot and is then refused with `resource_exhausted`. Each admitted call creates four to five databases on whatever `--scratch-dsn` points at — the store server itself when it is unset — so this is the number to size that server's `max_connections` and disk against. The pool that creates and drops them is sized from this flag (`max(4, 2 × --max-concurrent-diffs)`) and needs no knob of its own. `Checkpoint` is in the queue too: it needs only `read` and builds two databases per call. The UI calls the service in process and does not pass through the queue.
+`--max-concurrent-diffs` is a queue, not a hard refusal: a call waits 30 seconds for a free slot and is then refused with `resource_exhausted`. Each admitted call creates four to five databases on whatever `--scratch-dsn` points at — the store server itself when it is unset — so this is the number to size that server's `max_connections` and disk against. The pool that creates and drops them is sized from this flag (`max(4, 2 × --max-concurrent-diffs)`) and needs no knob of its own. `Checkpoint` is in the queue too: it needs only `read` and builds two databases per call. The queue is the service's rather than the listener's, so the GitHub App's workers and `/ui` wait in it alongside the API's callers.
 
 `--max-concurrent-runs` and `--run-timeout` are the scheduler's side: the replica claims up to `--max-concurrent-runs` runs and executes each on its own goroutine, so a backfill with `batch=1 pause=1h` occupies one slot instead of the whole replica; `--run-timeout` is the wall clock past which such a run is cancelled and recorded as `failed`. Raise it above the longest backfill you expect to run in one go.
 

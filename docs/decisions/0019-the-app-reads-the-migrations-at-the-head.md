@@ -48,6 +48,8 @@ The scope decision is not skipped, it is made explicitly: every call goes throug
 
 **What this gives up**, and it is worth knowing: the calls bypass the interceptor chain, so an App-driven plan does not appear in the access log, and it does not queue behind `--max-concurrent-diffs`. The second one matters — both build scratch databases on the same server. `--github-workers` (default 2) is the App's own bound, and it is *added to* the API's rather than shared with it, so a scratch server sized for `--max-concurrent-diffs` needs sizing for the sum.
 
+> The second paragraph above is no longer the code. The scratch gate and the aggregate byte bound were moved off the interceptor chain in [0026](0026-a-bound-belongs-where-the-bytes-arrive-not-on-one-transport.md), so the App now queues in the same budget as the API and `--github-workers` is not additive with it. The access log is still bypassed.
+
 ### The head is read again before the command runs
 
 Between the delivery being accepted and the worker picking it up, the pull request may have moved. godwit re-reads the head and abandons a command whose head is no longer the pull request's, silently: the push that moved it arrived as its own delivery and is being planned under that one. Reporting a plan for a commit nobody is looking at is worse than reporting nothing, and saying "the head moved" on a pull request that is already being re-planned is noise.

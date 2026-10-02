@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -71,6 +72,8 @@ type Server struct {
 	Limits       limits.Limits
 
 	store         *controlplane.Store
+	scratch       *scratchGate
+	scratchOnce   sync.Once
 	drift         driftOps
 	validator     Validator
 	keys          creds.Keyring
@@ -127,7 +130,7 @@ func Handler(s *Server, tokens []authz.Token) http.Handler {
 	l := s.limits()
 	path, h := godwitv1connect.NewGodwitServiceHandler(s,
 		connect.WithReadMaxBytes(l.RequestBytes),
-		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log, actor: a.actor}, a, newGate(l)))
+		connect.WithInterceptors(s.Metrics.Interceptor(), accessLog{log: s.Log, actor: a.actor}, a))
 	mux.Handle(path, h)
 	mux.Handle("/metrics", s.Metrics.Handler())
 	mux.HandleFunc("GET /healthz", healthz)
@@ -187,6 +190,11 @@ func timeouts(lock, statement string) (controlplane.Timeouts, error) {
 
 // CreateRun validates and queues a run.
 func (s *Server) CreateRun(ctx context.Context, req *connect.Request[godwitv1.CreateRunRequest]) (*connect.Response[godwitv1.CreateRunResponse], error) {
+	leave, err := s.enterScratch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
 	m := req.Msg
 	if m.PlanId != "" && m.ToVersion > 0 {
 		return nil, invalid("to_version cannot be combined with plan_id: the stored plan already fixes the set it covers")
@@ -319,6 +327,11 @@ var errDataLoss = errors.New("revert would destroy data")
 
 // RevertRun plans, and unless dry_run queues, the down side of what an earlier run applied; with no run_id, of the newest un-reverted run of target.
 func (s *Server) RevertRun(ctx context.Context, req *connect.Request[godwitv1.RevertRunRequest]) (*connect.Response[godwitv1.RevertRunResponse], error) {
+	leave, err := s.enterScratch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer leave()
 	m := req.Msg
 	t, err := timeouts(m.LockTimeout, m.StatementTimeout)
 	if err != nil {

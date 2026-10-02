@@ -10,7 +10,6 @@ import (
 	"connectrpc.com/connect"
 
 	godwitv1 "github.com/SamuelMolling/godwit/gen/godwit/v1"
-	"github.com/SamuelMolling/godwit/gen/godwit/v1/godwitv1connect"
 	"github.com/SamuelMolling/godwit/internal/limits"
 )
 
@@ -41,75 +40,80 @@ func TestCheckFilesMeasuresBodiesAndRefusesAsInvalidArgument(t *testing.T) {
 	}
 }
 
-func TestGateAdmitsAndRefuses(t *testing.T) {
+func TestCheckFilesRefusesABodySetOverTheAggregateBound(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{Limits: limits.Limits{RequestBytes: 4 << 20}}
+	err := s.checkFiles(directory(4, strings.Repeat("x", 1<<20)))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument ||
+		!strings.Contains(err.Error(), "over the 4194304 bytes a request may hold in total") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestTheScratchGateAdmitsAndRefuses(t *testing.T) {
 	t.Parallel()
 
 	g := newGate(limits.Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
-	leave, err := g.enter(context.Background(), godwitv1connect.GodwitServiceListRunsProcedure)
+	held, err := g.enter(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	leave()
-
-	held, err := g.enter(context.Background(), godwitv1connect.GodwitServiceDiffProcedure)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := g.enter(context.Background(), godwitv1connect.GodwitServiceDiffProcedure); connect.CodeOf(err) != connect.CodeResourceExhausted {
+	if _, err := g.enter(context.Background()); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Fatalf("a full gate must refuse: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := g.enter(ctx, godwitv1connect.GodwitServicePlanRunProcedure); connect.CodeOf(err) != connect.CodeCanceled {
+	if _, err := g.enter(ctx); connect.CodeOf(err) != connect.CodeCanceled {
 		t.Fatalf("a cancelled caller must not wait out the gate: %v", err)
 	}
-	if _, err := g.enter(context.Background(), godwitv1connect.GodwitServiceCheckpointProcedure); connect.CodeOf(err) != connect.CodeResourceExhausted {
-		t.Fatalf("Checkpoint must queue with the other scratch-database calls: %v", err)
-	}
 	held()
-	if _, err := g.enter(context.Background(), godwitv1connect.GodwitServiceDiffProcedure); err != nil {
+	leave, err := g.enter(context.Background())
+	if err != nil {
 		t.Fatalf("the slot must be free again: %v", err)
 	}
+	leave()
 }
 
-func TestGateInterceptor(t *testing.T) {
+func TestOneGateCountsEveryCallerOfAScratchProcedureInProcess(t *testing.T) {
 	t.Parallel()
 
-	g := newGate(limits.Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}.WithDefaults())
-	blocked := make(chan struct{})
-	release := make(chan struct{})
-	unary := g.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
-		close(blocked)
-		<-release
-
-		return connect.NewResponse(&struct{}{}), nil
-	})
-	done := make(chan error, 1)
-	go func() {
-		_, err := unary(context.Background(), specRequest{procedure: godwitv1connect.GodwitServiceDiffProcedure})
-		done <- err
-	}()
-	<-blocked
-	_, err := g.WrapUnary(func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
-		t.Error("the handler must not run while the gate is full")
-
-		return nil, nil
-	})(context.Background(), specRequest{procedure: godwitv1connect.GodwitServiceDiffProcedure})
-	if connect.CodeOf(err) != connect.CodeResourceExhausted {
-		t.Fatalf("err = %v", err)
-	}
-	close(release)
-	if err := <-done; err != nil {
+	s := &Server{Limits: limits.Limits{HeavyCalls: 1, HeavyWait: 20 * time.Millisecond}}
+	held, err := s.enterScratch(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := context.Background()
+	for name, call := range map[string]func() error{
+		"PlanRun": func() error {
+			_, err := s.PlanRun(ctx, connect.NewRequest(&godwitv1.PlanRunRequest{}))
 
-	called := false
-	g.WrapStreamingClient(func(context.Context, connect.Spec) connect.StreamingClientConn { return nil })(context.Background(), connect.Spec{})
-	if err := g.WrapStreamingHandler(func(context.Context, connect.StreamingHandlerConn) error {
-		called = true
+			return err
+		},
+		"CreateRun": func() error {
+			_, err := s.CreateRun(ctx, connect.NewRequest(&godwitv1.CreateRunRequest{}))
 
-		return nil
-	})(context.Background(), streamConn{}); err != nil || !called {
-		t.Fatalf("streaming must pass through: called=%v err=%v", called, err)
+			return err
+		},
+		"RevertRun": func() error {
+			_, err := s.RevertRun(ctx, connect.NewRequest(&godwitv1.RevertRunRequest{}))
+
+			return err
+		},
+		"Diff": func() error {
+			_, err := s.Diff(ctx, connect.NewRequest(&godwitv1.DiffRequest{}))
+
+			return err
+		},
+		"Checkpoint": func() error {
+			_, err := s.Checkpoint(ctx, connect.NewRequest(&godwitv1.CheckpointRequest{}))
+
+			return err
+		},
+	} {
+		if err := call(); connect.CodeOf(err) != connect.CodeResourceExhausted {
+			t.Errorf("%s ran past a full gate: %v", name, err)
+		}
 	}
+	held()
 }

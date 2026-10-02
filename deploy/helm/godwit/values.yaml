@@ -70,7 +70,7 @@ serve:
     maxConcurrentRuns: 4
     # --run-timeout: wall clock one run may take before it is cancelled and finished as failed.
     runTimeout: 24h
-    # --max-request-bytes: largest request body the API decodes (32 MiB).
+    # --max-request-bytes: largest submitted directory, over the wire or read from a repository (32 MiB).
     maxRequestBytes: 33554432
     # --max-migrations: migrations one request may carry; every one of them is two files.
     maxMigrations: 2000
