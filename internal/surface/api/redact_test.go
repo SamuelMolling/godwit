@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 
 	"github.com/SamuelMolling/godwit/internal/creds"
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // published is what the GitHub App fences into a pull request comment: the connect error's message, and nothing under it.
@@ -56,7 +57,7 @@ func TestSafeHidesConnectionDetail(t *testing.T) {
 	for _, err := range []error{parseErr, connErr} {
 		wrapped := fmt.Errorf("connect target: %w", err)
 		out := rpcErr(wrapped)
-		if connect.CodeOf(out) != connect.CodeInternal || published(t, out) != connectionFailed {
+		if connect.CodeOf(out) != connect.CodeInternal || published(t, out) != redact.ConnectionFailed {
 			t.Fatalf("rpcErr = %v", out)
 		}
 		for _, leak := range []string{"app", "db.internal", "orders", "127.0.0.1"} {
@@ -78,7 +79,7 @@ func TestSafeRedactsAnUnclassifiedError(t *testing.T) {
 
 	plain := errors.New("plain failure")
 	out := rpcErr(plain)
-	if connect.CodeOf(out) != connect.CodeInternal || published(t, out) != callFailed {
+	if connect.CodeOf(out) != connect.CodeInternal || published(t, out) != redact.CallFailed {
 		t.Fatalf("rpcErr = %v", out)
 	}
 	if detail(out) != "plain failure" || !errors.Is(out, plain) {
@@ -115,7 +116,7 @@ func TestSafeHidesTheUserARefusedLoginNames(t *testing.T) {
 		t.Fatalf("want a PgError inside the connect error: %v", err)
 	}
 	out := rpcErr(err)
-	if published(t, out) != connectionFailed {
+	if published(t, out) != redact.ConnectionFailed {
 		t.Fatalf("a dial failure carrying a PgError has to be redacted as a dial failure: %q", published(t, out))
 	}
 	if strings.Contains(out.Error(), "orders_migrator") {
@@ -160,7 +161,7 @@ func TestSafeHidesAVaultSecretPath(t *testing.T) {
 		t.Fatal("want the vault read to fail")
 	}
 	out := rpcErr(err)
-	if published(t, out) != callFailed {
+	if published(t, out) != redact.CallFailed {
 		t.Fatalf("the vault path reached the comment: %q", published(t, out))
 	}
 	for _, leak := range []string{"secret/data/production/orders/migrator", "permission denied", srv.URL} {
@@ -188,7 +189,7 @@ func TestSafeHidesAKMSResourceName(t *testing.T) {
 		t.Fatal("want the kms call to fail")
 	}
 	out := rpcErr(err)
-	if published(t, out) != callFailed {
+	if published(t, out) != redact.CallFailed {
 		t.Fatalf("the kms resource name reached the comment: %q", published(t, out))
 	}
 	for _, leak := range []string{key, "fireflies-prod", "keyRings", srv.URL} {

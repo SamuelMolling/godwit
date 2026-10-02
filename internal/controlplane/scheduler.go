@@ -14,6 +14,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
 	"github.com/SamuelMolling/godwit/internal/notify"
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // Config tunes a Scheduler.
@@ -210,20 +211,22 @@ func (s *Scheduler) execute(ctx context.Context, run Run) {
 }
 
 func (s *Scheduler) fail(ctx context.Context, run Run, err error, finish func(state, errText string)) {
+	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
 	code, transient := classify(err)
 	if !transient {
+		log.Error("run failed", "error", err)
 		finish(StateFailed, failureDetail(err))
 
 		return
 	}
 	if run.Attempts >= s.cfg.MaxAttempts {
-		finish(StateNeedsAttention, fmt.Sprintf("transient: gave up after %d attempts: %v", run.Attempts, err))
+		log.Error("run failed; no attempts left", "error", err)
+		finish(StateNeedsAttention, fmt.Sprintf("transient: gave up after %d attempts: %s", run.Attempts, redact.Message(err)))
 
 		return
 	}
 	wait := backoff(s.cfg.Interval, run.Attempts, s.cfg.Jitter)
 	detail := retryDetail(err, wait)
-	log := s.log.With("run", run.ID, "target", run.Target, "attempt", run.Attempts)
 	if err := s.store.Retry(ctx, run.ID, failureDetail(err), wait); err != nil {
 		log.Error("retry not recorded; lease expiry will requeue the run", "error", err)
 
@@ -293,7 +296,7 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 	if run.Reverts == "" && run.Phase != PhaseContract {
 		policy, ok := s.policies[run.Rollout]
 		if !ok {
-			return heldWork{}, fmt.Errorf("unknown rollout policy %q", run.Rollout)
+			return heldWork{}, redact.Public(fmt.Errorf("unknown rollout policy %q", run.Rollout))
 		}
 		var contract []engine.Plan
 		plans, contract = policy.Split(plans)
@@ -302,7 +305,7 @@ func (s *Scheduler) applyRun(ctx context.Context, run Run) (heldWork, error) {
 
 	opts, err := run.Timeouts.Over(tg.timeouts).Options()
 	if err != nil {
-		return heldWork{}, err
+		return heldWork{}, redact.Public(err)
 	}
 	if run.Reverts == "" && run.PlanID != "" {
 		if plans, err = s.markOnly(ctx, run.PlanID, plans, tg); err != nil {
@@ -335,10 +338,14 @@ func (s *Scheduler) plans(ctx context.Context, run Run) ([]engine.Plan, error) {
 	}
 	plans, err := PlansFromFiles(files, engine.DirectionUp)
 	if err != nil {
-		return nil, err
+		return nil, redact.Public(err)
+	}
+	plans, err = ExpandUp(plans, run.Expansions)
+	if err != nil {
+		return nil, redact.Public(err)
 	}
 
-	return ExpandUp(plans, run.Expansions)
+	return plans, nil
 }
 
 func (s *Scheduler) record(run Run, plans []engine.Plan, applied AppliedSet) Recorder {
@@ -469,7 +476,7 @@ func (s *Scheduler) shapeCheckpoint(ctx context.Context, plans []engine.Plan, ds
 func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.Plan, tg resolvedTarget) ([]engine.Plan, error) {
 	plan, err := s.store.Plan(ctx, planID)
 	if err != nil {
-		return nil, fmt.Errorf("bound plan %s: %w", planID, err)
+		return nil, redact.Wrap(err, "bound plan %s", planID)
 	}
 	marked := map[string]bool{}
 	for _, m := range plan.Migrations {
@@ -493,7 +500,7 @@ func (s *Scheduler) markOnly(ctx context.Context, planID string, plans []engine.
 		pending = pending || !recordedOn(obs, plans[i].Migration)
 	}
 	if pending && obs.Fingerprint != plan.SchemaFingerprint {
-		return nil, fmt.Errorf("target schema changed since plan %s was taken; re-plan before recording %d migration(s) as already applied", planID, len(marked))
+		return nil, redact.Public(fmt.Errorf("target schema changed since plan %s was taken; re-plan before recording %d migration(s) as already applied", planID, len(marked)))
 	}
 
 	return plans, nil
@@ -543,7 +550,7 @@ func (s *Scheduler) resolve(ctx context.Context, name, providerName string, conf
 	}
 	dsn, err := provider.DSN(ctx, config)
 	if err != nil {
-		return resolvedTarget{}, fmt.Errorf("target %s: %w", name, err)
+		return resolvedTarget{}, creds.Unreadable(fmt.Errorf("target %s: %w", name, err))
 	}
 
 	return resolvedTarget{

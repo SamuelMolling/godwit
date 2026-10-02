@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 var bootstrapDDL = []string{
@@ -163,11 +165,11 @@ func loadProgress(ctx context.Context, db DB, p Plan, runID string) (runProgress
 	var rowsTotal *int64
 	_, err = pgx.ForEachRow(rows, []any{&idx, &state, &hash, &cursor, &rowsDone, &rowsTotal}, func() error {
 		if idx >= len(p.Statements) {
-			return fmt.Errorf("run %s journalled statement %d and the plan now has %d; refusing to resume",
-				runID, idx, len(p.Statements))
+			return redact.Public(fmt.Errorf("run %s journalled statement %d and the plan now has %d; refusing to resume",
+				runID, idx, len(p.Statements)))
 		}
 		if hash != p.Statements[idx].Hash {
-			return fmt.Errorf("statement %d changed since run %s started; refusing to resume", idx, runID)
+			return redact.Public(fmt.Errorf("statement %d changed since run %s started; refusing to resume", idx, runID))
 		}
 		if state == "done" {
 			if idx > prog.lastDone {

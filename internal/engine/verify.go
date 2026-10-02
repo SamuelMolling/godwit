@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	pgquery "github.com/pganalyze/pg_query_go/v6"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // reconcile reports whether a crashed statement took effect, repairing partial effects otherwise.
@@ -45,9 +47,9 @@ func reconcileCreateIndex(ctx context.Context, db DB, st Statement) (bool, error
 		return false, err
 	}
 	if !onTable || got != want {
-		return false, fmt.Errorf(
+		return false, redact.Public(fmt.Errorf(
 			"index %s already exists as %q, which is not what this statement builds (%q); godwit adopts only the index it was asked for: drop or rename the existing one, then resume",
-			ref, def, st.SQL)
+			ref, def, st.SQL))
 	}
 	if valid {
 		return true, nil

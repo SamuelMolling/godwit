@@ -17,6 +17,7 @@ import (
 	"github.com/SamuelMolling/godwit/internal/creds"
 	"github.com/SamuelMolling/godwit/internal/engine"
 	"github.com/SamuelMolling/godwit/internal/metrics"
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 var testLog = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -274,14 +275,14 @@ func TestSchedulerErrorBranches(t *testing.T) {
 			files:   goodFiles(),
 			target:  map[string]string{},
 			provs:   map[string]creds.Provider{"plain": plainProvider{}},
-			wantErr: "missing dsn",
+			wantErr: redact.CredentialUnreadable,
 		},
 		{
 			name:    "target unreachable",
 			files:   goodFiles(),
 			target:  map[string]string{"dsn": "postgres://bad:bad@127.0.0.1:1/x"},
 			provs:   map[string]creds.Provider{"plain": plainProvider{}},
-			wantErr: "transient: gave up after 1 attempts: connect target",
+			wantErr: "transient: gave up after 1 attempts: " + redact.ConnectionFailed,
 			parked:  true,
 		},
 	}

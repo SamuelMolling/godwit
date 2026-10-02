@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // Options tunes execution.
@@ -202,7 +204,7 @@ func (e *Executor) apply(ctx context.Context, p Plan) (Result, error) {
 			continue
 		}
 		if err := e.execStatement(ctx, prog, res.Migration, i, p.Statements[i]); err != nil {
-			err = fmt.Errorf("statement %d of %s (%s): %w", i, res.Migration, p.Direction, err)
+			err = redact.Wrap(err, "statement %d of %s (%s)", i, res.Migration, p.Direction)
 			markFailed(ctx, e.db, prog.runID, err)
 
 			return res, err
@@ -237,7 +239,7 @@ func (e *Executor) applyAtomic(ctx context.Context, p Plan, held string) (int, e
 	applied := 0
 	for i := range p.Statements {
 		if err := e.execIn(ctx, tx, p.Migration.ID(), i, p.Statements[i]); err != nil {
-			return applied, fmt.Errorf("statement %d of %s (%s): %w", i, p.Migration.ID(), p.Direction, err)
+			return applied, redact.Wrap(err, "statement %d of %s (%s)", i, p.Migration.ID(), p.Direction)
 		}
 		applied++
 	}
@@ -282,7 +284,7 @@ func (e *Executor) mark(ctx context.Context, p Plan) error {
 		return err
 	}
 	if len(invalid) > 0 {
-		return fmt.Errorf("index %s exists but is INVALID; drop it and let the migration build it", invalid[0])
+		return redact.Public(fmt.Errorf("index %s exists but is INVALID; drop it and let the migration build it", invalid[0]))
 	}
 	runID := e.newID()
 	k := keyOf(p.Migration)

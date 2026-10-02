@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"time"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 const appName = "godwit"
@@ -31,7 +33,7 @@ func acquireLock(ctx context.Context, db DB, wait time.Duration) (release func()
 	_, _ = db.Exec(ctx, sessionSetup)
 	key := lockKey(dbname)
 	if err := waitForLock(ctx, db, key, wait); err != nil {
-		return nil, fmt.Errorf("acquire advisory lock on %s%s: %w", dbname, lockHolder(ctx, db, key), err)
+		return nil, redact.Wrap(err, "acquire advisory lock on this target%s", lockHolder(ctx, db, key))
 	}
 
 	return func() {

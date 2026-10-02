@@ -39,7 +39,7 @@ Resume is safe: the next attempt reopens the same `godwit.runs` row, skips every
 
 ## Run `failed`
 
-**Meaning.** A statement returned a genuine SQL error (`error` starts with `sql:`). Transient errors never land here: they retry on their own with backoff (`retrying` notification, `godwit_run_retries_total`) and only park as `needs_attention` when `--max-attempts` is exhausted. The error is in `cp_runs.error` and in `godwit.runs.error`. Everything before the failing statement is committed (`tx` statements commit one by one).
+**Meaning.** A statement returned a genuine SQL error (`error` starts with `sql:`). Transient errors never land here: they retry on their own with backoff (`retrying` notification, `godwit_run_retries_total`) and only park as `needs_attention` when `--max-attempts` is exhausted. The error is in `cp_runs.error` and in `godwit.runs.error`. `cp_runs.error` holds the message godwit publishes; when it is a stand-in (`the call failed`, `the credentials for this target could not be read`), the failure itself is in the `run failed` log line for that run id. Everything before the failing statement is committed (`tx` statements commit one by one).
 
 ```sql
 SELECT error FROM cp_runs WHERE id = :'run';

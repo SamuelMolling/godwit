@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/SamuelMolling/godwit/internal/redact"
 )
 
 // ErrCheckpointGap marks a database parked below a checkpoint whose collapsed migrations are no longer in the directory.
@@ -28,10 +30,10 @@ func ShapeCheckpoint(plans []Plan, newest int64) ([]Plan, error) {
 	if newest < cp.Through && !slices.ContainsFunc(out, func(p Plan) bool {
 		return !p.Migration.Repeatable && p.Migration.Version == cp.Through
 	}) {
-		return nil, fmt.Errorf(
+		return nil, redact.Public(fmt.Errorf(
 			"%w: %s collapses history through %014d, the newest applied version is %014d and %014d is not in the "+
 				"migration directory; restore the migrations below the checkpoint, or baseline at it",
-			ErrCheckpointGap, cp.ID(), cp.Through, newest, cp.Through)
+			ErrCheckpointGap, cp.ID(), cp.Through, newest, cp.Through))
 	}
 	for i := range out {
 		if out[i].Migration.Checkpoint && out[i].Migration.Version <= cp.Version {

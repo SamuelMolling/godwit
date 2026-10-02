@@ -127,7 +127,7 @@ func TestUpErrorPaths(t *testing.T) {
 				mock.ExpectBegin().WillReturnError(errBoom)
 				mock.ExpectQuery("FROM pg_locks").WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnError(errBoom)
 			},
-			wantErr: "acquire advisory lock on db: boom",
+			wantErr: "acquire advisory lock on this target: boom",
 		},
 		{
 			name: "advisory lock times out and the holder is named",
@@ -140,7 +140,7 @@ func TestUpErrorPaths(t *testing.T) {
 					WillReturnRows(pgxmock.NewRows([]string{"pid", "application_name", "state", "since"}).
 						AddRow(int32(42), appName, "idle", 900.0))
 			},
-			wantErr: `acquire advisory lock on db (held by pid 42, application_name "godwit", idle for 900s)`,
+			wantErr: `acquire advisory lock on this target (held by pid 42, application_name "godwit", idle for 900s)`,
 		},
 		{
 			name: "bootstrap fails",
