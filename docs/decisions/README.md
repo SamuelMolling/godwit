@@ -33,7 +33,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0023](0023-the-token-godwit-presents-is-minted-for-the-vault-it-goes-to.md) | The token godwit presents is minted for the Vault it goes to, and the host allowlist goes | #141, #145 |
 | [0024](0024-the-api-publishes-only-what-it-classified.md) | The API publishes only the errors it classified; everything else is redacted | #160 |
 | [0025](0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md) | A revert from a comment is held to the same people as the apply, and may not remove a gate | #160 |
-| [0026](0026-a-bound-belongs-where-the-bytes-arrive-not-on-one-transport.md) | A bound belongs where the bytes arrive, and the scratch budget belongs to the service | #PRNUM |
+| [0026](0026-a-bound-belongs-where-the-bytes-arrive-not-on-one-transport.md) | A bound belongs where the bytes arrive, and the scratch budget belongs to the service | #170 |
 
 ## Open questions
 

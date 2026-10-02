@@ -1,6 +1,6 @@
 # 0026 — A bound belongs where the bytes arrive, and the scratch budget belongs to the service
 
-Shipped in #PRNUM.
+Shipped in #170.
 
 ## The question
 
