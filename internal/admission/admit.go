@@ -144,17 +144,28 @@ func (g Gate) checkHazards(plans []engine.Plan, applied controlplane.AppliedSet,
 			for _, h := range st.Hazards {
 				g.Metrics.Hazard(h.Code, ackSet[h.Code])
 				if !ackSet[h.Code] {
-					pending = append(pending, fmt.Sprintf("%s: %s", h.Code, h.Detail))
+					pending = append(pending, hazardDetail(h))
 				}
 			}
 		}
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("unacknowledged hazards (pass acknowledge_hazards to accept):\n%s",
-			strings.Join(pending, "\n"))
+		return fmt.Errorf("unacknowledged hazards:\n%s\n\nRewrite the migration, or acknowledge the code to run it as written",
+			strings.Join(pending, "\n\n"))
 	}
 
 	return nil
+}
+
+func hazardDetail(h engine.Hazard) string {
+	line := h.Code + ": " + h.Detail
+	if h.Recipe == "" {
+		return line
+	}
+
+	recipe := strings.ReplaceAll(strings.TrimSpace(h.Recipe), "\n", "\n    ")
+
+	return line + "\n  safe rewrite:\n    " + recipe
 }
 
 func (g Gate) checkOrder(target string, plans []engine.Plan, applied []int64, allow bool) error {
