@@ -46,6 +46,38 @@ func TestCheckHazards(t *testing.T) {
 	}
 }
 
+func TestCheckHazardsCarriesRecipe(t *testing.T) {
+	t.Parallel()
+	g, _ := newGate(t)
+
+	m := engine.Migration{Version: 1, Name: "i", UpSQL: "CREATE INDEX idx_e_kind ON e (kind);", DownSQL: "SELECT 1;"}
+	p, err := engine.BuildPlan(m, engine.DirectionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = g.checkHazards([]engine.Plan{p}, controlplane.AppliedSet{}, nil)
+	if err == nil {
+		t.Fatal("raw CREATE INDEX admitted")
+	}
+	for _, want := range []string{"H001", "safe rewrite:", "CONCURRENTLY", "acknowledge the code"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal missing %q:\n%s", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "acknowledge_hazards") {
+		t.Fatalf("refusal names an API field a reader cannot type:\n%s", err)
+	}
+}
+
+func TestHazardDetailWithoutRecipe(t *testing.T) {
+	t.Parallel()
+
+	got := hazardDetail(engine.Hazard{Code: "H404", Detail: "no recipe for this one"})
+	if got != "H404: no recipe for this one" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestCheckOrder(t *testing.T) {
 	t.Parallel()
 	g, _ := newGate(t)
