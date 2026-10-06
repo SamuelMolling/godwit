@@ -545,7 +545,7 @@ func TestSpeakDeletesTheOneItPostedBeforeSoTheNewestStands(t *testing.T) {
 			_, _ = io.WriteString(w, `[{"id":9,"body":"<!-- m -->\nold"},{"id":4,"body":"chat"},{"id":11,"body":"<!-- m -->\nolder"}]`)
 		case http.MethodDelete:
 			deleted = append(deleted, req.URL.Path)
-			_, _ = io.WriteString(w, `{}`)
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			posted = true
 			_, _ = io.WriteString(w, `{}`)
@@ -580,7 +580,7 @@ func TestFivePushesLeaveOneReportStanding(t *testing.T) {
 		case http.MethodDelete:
 			id, _ := strconv.ParseInt(strings.TrimPrefix(req.URL.Path, "/repos/"+testRepo+"/issues/comments/"), 10, 64)
 			delete(standing, id)
-			_, _ = io.WriteString(w, `{}`)
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			var posted struct{ Body string }
 			_ = json.NewDecoder(req.Body).Decode(&posted)
