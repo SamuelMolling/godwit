@@ -481,6 +481,10 @@ func (c *Client) call(ctx context.Context, method, url, token string, body []byt
 	if err != nil {
 		return "", err
 	}
+	// 204 carries no body, and decoding one reads as a failed call: the comment godwit deleted never got replaced.
+	if resp.StatusCode == http.StatusNoContent {
+		return nextPage(resp.Header.Get("Link")), nil
+	}
 	if err := json.Unmarshal(payload, out); err != nil {
 		return "", fmt.Errorf("%s %s: %w", method, url, err)
 	}
