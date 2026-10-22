@@ -83,7 +83,7 @@ func resolvePush(ctx context.Context, repo repoView, bound bindings, req *reques
 		if req.all {
 			under = []string{config.FileName}
 		}
-		p, why := load(ctx, repo, bound, req.repository, root, req.headSHA, under, false, req.branch, "", false)
+		p, why := load(ctx, repo, bound, req.repository, root, req.headSHA, under, false, req.branch, req.defaultBranch, true)
 		switch {
 		case why != "":
 			out.skipped = append(out.skipped, why)

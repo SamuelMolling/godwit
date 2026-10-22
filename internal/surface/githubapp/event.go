@@ -83,22 +83,23 @@ type payload struct {
 }
 
 type request struct {
-	event       string
-	repository  string
-	number      int
-	name        string
-	cmd         *comment.Command
-	commander   string
-	association string
-	at          time.Time
-	reviewSHA   string
-	headSHA     string
-	headRepo    string
-	branch      string
-	files       int
-	comment     int64
-	paths       []string
-	all         bool
+	event         string
+	repository    string
+	number        int
+	name          string
+	cmd           *comment.Command
+	commander     string
+	association   string
+	at            time.Time
+	reviewSHA     string
+	headSHA       string
+	headRepo      string
+	branch        string
+	defaultBranch string
+	files         int
+	comment       int64
+	paths         []string
+	all           bool
 }
 
 type outcome struct {
@@ -151,14 +152,15 @@ func pushRequest(req *request, p *payload) (*request, *outcome) {
 	if p.Repository.DefaultBranch == "" {
 		return req, refused("the push payload names no default branch")
 	}
-	want := "refs/heads/" + p.Repository.DefaultBranch
-	if p.Ref != want {
-		return nil, ignored("push to %s ignored; godwit verifies %s", orNone(p.Ref), want)
+	branch, ok := strings.CutPrefix(p.Ref, "refs/heads/")
+	if !ok || branch == "" {
+		return nil, ignored("push to %s ignored; godwit verifies branch pushes", orNone(p.Ref))
 	}
 	if !validSHA(p.After) {
 		return req, refused("the push payload carries no head commit")
 	}
 	req.name, req.headSHA = "verify", p.After
+	req.branch, req.defaultBranch = branch, p.Repository.DefaultBranch
 	req.all = p.Created || p.Forced || len(p.Commits) == 0 || len(p.Commits) >= pushCommitCap
 	seen := map[string]bool{}
 	for _, commit := range p.Commits {

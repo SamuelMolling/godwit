@@ -166,6 +166,7 @@ func (c *Config) decode(raw []byte) error {
 // branchTargets maps a destination branch to a target name. Its unmarshaler sees a duplicate key, which a plain map would keep as the last value.
 type branchTargets map[string]string
 
+// UnmarshalYAML rejects a duplicate branch and a value that is not a target name.
 func (t *branchTargets) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
 		return errors.New("targets must be a map of branch to target")
