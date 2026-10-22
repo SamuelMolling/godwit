@@ -134,7 +134,7 @@ func (r *Receiver) Handler() http.Handler {
 	return mux
 }
 
-var knownEvents = []string{eventIssueComment, eventReview, eventPullRequest}
+var knownEvents = []string{eventIssueComment, eventReview, eventPullRequest, eventPush}
 
 func eventLabel(event string) string {
 	if slices.Contains(knownEvents, event) {
@@ -269,7 +269,12 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	if out != nil || err != nil {
 		return nil, out, req, err
 	}
-	res, err := resolve(ctx, at.repo, bound, req, at.head, at.files)
+	var res resolution
+	if event == eventPush {
+		res = resolvePush(ctx, at.repo, bound, req)
+	} else {
+		res, err = resolve(ctx, at.repo, bound, req, at.head, at.files)
+	}
 	if errors.Is(err, errTruncated) {
 		return nil, checked(at.head, tooLarge(req, err)), req, nil
 	}
@@ -281,6 +286,9 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	}
 	head := at.head
 	who := cmp.Or(req.commander, autoplanActor)
+	if event == eventPush {
+		who = verifyActor
+	}
 
 	return &command{
 		delivery: delivery, event: event, repository: req.repository,
@@ -308,10 +316,11 @@ func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payloa
 // checks is the mapping scripts/action-refuse.sh uses for the commit status the Action sets.
 var checks = map[string]string{
 	"plan": "godwit/plan", "apply": "godwit/applied", "confirm": "godwit/applied", "revert": "godwit/applied",
+	"verify": "godwit/verify",
 }
 
 func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outcome) {
-	if req == nil || req.number <= 0 {
+	if req == nil {
 		return
 	}
 	repo, err := r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
@@ -321,9 +330,11 @@ func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outc
 
 		return
 	}
-	if err := repo.speak(ctx, req.number, refusedMarker, refusal(req, out)); err != nil {
-		r.cfg.Log.Warn("could not post the refusal on the pull request", "repository", req.repository,
-			"pull_request", req.number, "error", err)
+	if req.number > 0 {
+		if err := repo.speak(ctx, req.number, refusedMarker, refusal(req, out)); err != nil {
+			r.cfg.Log.Warn("could not post the refusal on the pull request", "repository", req.repository,
+				"pull_request", req.number, "error", err)
+		}
 	}
 	r.mark(ctx, repo, req, out)
 }
@@ -377,6 +388,11 @@ type at struct {
 func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *outcome, error) {
 	open := func(ctx context.Context) (repoView, error) {
 		return r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
+	}
+	if req.event == eventPush {
+		repo, err := open(ctx)
+
+		return at{head: req.headSHA, repo: repo}, nil, err
 	}
 	if req.commander != "" {
 		return authorizer{

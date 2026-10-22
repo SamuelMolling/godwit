@@ -166,9 +166,11 @@ func (w *Worker) carry(ctx context.Context, cmd command) {
 
 		return
 	}
-	moved, err := w.moved(ctx, repo, cmd, log)
-	if err != nil || moved {
-		return
+	if cmd.event != eventPush {
+		moved, err := w.moved(ctx, repo, cmd, log)
+		if err != nil || moved {
+			return
+		}
 	}
 	all := w.act(ctx, repo, cmd, log)
 	unsaid := w.say(ctx, repo, cmd, all, log)
@@ -246,8 +248,52 @@ func (w *Worker) one(ctx context.Context, repo repoView, cmd command, p project)
 	if cmd.name == "apply" {
 		return w.apply(ctx, cmd, p, files)
 	}
+	if cmd.name == "verify" {
+		return w.verify(ctx, cmd, p, files)
+	}
 
 	return w.plan(ctx, cmd, p, files)
+}
+
+func (w *Worker) verify(ctx context.Context, cmd command, p project, files []*godwitv1.MigrationFile) done {
+	if err := authz.Authorize(godwitv1connect.GodwitServicePlanRunProcedure, cmd.principal); err != nil {
+		return refusedBy(cmd, p, err)
+	}
+	res, err := w.cfg.Service.PlanRun(authz.WithPrincipal(ctx, cmd.principal), connect.NewRequest(&godwitv1.PlanRunRequest{
+		Target: p.target, Files: files, Rollout: cmd.rollout(p), AllowOutOfOrder: p.outOfOrder,
+		Source: cmd.sourceOf(p),
+	}))
+	if err != nil {
+		return refusedBy(cmd, p, err)
+	}
+	var pending []*godwitv1.PlannedMigration
+	for _, migration := range res.Msg.GetMigrations() {
+		if !migration.GetApplied() {
+			pending = append(pending, migration)
+		}
+	}
+	if len(pending) == 0 {
+		return done{
+			project: p, conclusion: conclusionSuccess, title: "all migrations applied",
+			body: fmt.Sprintf("## godwit verify\n\ntarget `%s`: %d migrations, all applied\n",
+				p.target, len(res.Msg.GetMigrations())),
+		}
+	}
+	noun, verb := "migrations", "are"
+	if len(pending) == 1 {
+		noun, verb = "migration", "is"
+	}
+	var body strings.Builder
+	fmt.Fprintf(&body, "## godwit verify\n\ntarget `%s`: **%d of %d migrations are not applied**:\n\n",
+		p.target, len(pending), len(res.Msg.GetMigrations()))
+	for _, migration := range pending {
+		fmt.Fprintf(&body, "- `%d_%s`\n", migration.GetVersion(), migration.GetName())
+	}
+
+	return done{
+		project: p, conclusion: conclusionFailure,
+		title: fmt.Sprintf("%d %s %s not applied", len(pending), noun, verb), body: body.String(),
+	}
 }
 
 func (w *Worker) plan(ctx context.Context, cmd command, p project, files []*godwitv1.MigrationFile) done {
@@ -338,17 +384,53 @@ func (w *Worker) bind(ctx context.Context, cmd command, d done, log *slog.Logger
 var reportMarker = map[string]string{
 	"plan": "<!-- godwit:plan -->", "apply": "<!-- godwit:migrate -->",
 	"confirm": "<!-- godwit:migrate -->", "revert": "<!-- godwit:migrate -->",
+	"verify": "<!-- godwit:verify -->",
 }
 
 func (w *Worker) say(ctx context.Context, repo repoView, cmd command, all []done, log *slog.Logger) map[string]error {
 	if _, ok := reportMarker[cmd.name]; !ok || len(all) == 0 {
 		return nil
 	}
+	if cmd.name == "verify" {
+		failed := make([]done, 0, len(all))
+		for _, d := range all {
+			if d.conclusion != conclusionSuccess {
+				failed = append(failed, d)
+			}
+		}
+		if len(failed) == 0 {
+			return nil
+		}
+		numbers, err := repo.pullsForCommit(ctx, cmd.head)
+		if err != nil {
+			log.Warn("could not find the pull requests for the pushed commit", "error", err)
+			unsaid := make(map[string]error, len(failed))
+			for _, d := range failed {
+				unsaid[cmd.markerFor(d.project)] = err
+			}
+
+			return unsaid
+		}
+		return w.speak(ctx, repo, cmd, failed, numbers, log)
+	}
+	return w.speak(ctx, repo, cmd, all, []int{cmd.number}, log)
+}
+
+func (w *Worker) speak(
+	ctx context.Context,
+	repo repoView,
+	cmd command,
+	all []done,
+	numbers []int,
+	log *slog.Logger,
+) map[string]error {
 	unsaid := map[string]error{}
 	for _, group := range grouped(cmd, all) {
-		if err := repo.speak(ctx, cmd.number, group.marker, strings.Join(group.bodies, "\n---\n")); err != nil {
-			log.Warn("could not post the report on the pull request", "error", err)
-			unsaid[group.marker] = err
+		for _, number := range numbers {
+			if err := repo.speak(ctx, number, group.marker, strings.Join(group.bodies, "\n---\n")); err != nil {
+				log.Warn("could not post the report on the pull request", "pull_request", number, "error", err)
+				unsaid[group.marker] = err
+			}
 		}
 	}
 

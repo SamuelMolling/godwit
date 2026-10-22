@@ -105,6 +105,7 @@ func (s *fakeService) GetPlan(_ context.Context, _ *connect.Request[godwitv1.Get
 func (s *fakeService) PlanRun(ctx context.Context, req *connect.Request[godwitv1.PlanRunRequest]) (*connect.Response[godwitv1.PlanRunResponse], error) {
 	s.mu.Lock()
 	s.got = append(s.got, req.Msg)
+	s.actors = append(s.actors, authz.Actor(ctx))
 	s.mu.Unlock()
 	if s.hold != nil {
 		select {
@@ -195,6 +196,154 @@ func planCommand() command {
 		bound:     bindings{{target: "orders"}},
 		projects:  []project{{dir: "db/migrations", target: "orders", format: config.PlanFormatSchema}},
 		source:    "github.com/" + testRepo + "@" + testHead,
+	}
+}
+
+func verifyCommand() command {
+	cmd := planCommand()
+	cmd.event, cmd.name, cmd.number, cmd.cmd = eventPush, "verify", 0, nil
+	cmd.principal = authz.Principal{Name: forgeActor(testRepo, verifyActor), Scope: scopes["verify"]}
+
+	return cmd
+}
+
+func TestPushVerifyUsesANonPersistedReadPlanAndACommitCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	h := newHarness(t, repo, WorkerConfig{})
+	h.svc.res = nothingPending()
+	h.worker.carry(context.Background(), verifyCommand())
+
+	if repo.pullReads != 0 {
+		t.Fatalf("read %d pull requests for a push", repo.pullReads)
+	}
+	got := h.svc.requests()
+	if len(got) != 1 || got[0].Persist {
+		t.Fatalf("requests = %+v, want one non-persisted plan", got)
+	}
+	if len(h.svc.actors) != 1 || h.svc.actors[0] != forgeActor(testRepo, verifyActor) {
+		t.Fatalf("actors = %v", h.svc.actors)
+	}
+	if len(repo.opened) != 1 || repo.opened[0].name != "godwit/verify" {
+		t.Fatalf("opened = %+v", repo.opened)
+	}
+	if len(repo.ended) != 1 || repo.ended[0].conclusion != conclusionSuccess ||
+		repo.ended[0].title != "all migrations applied" {
+		t.Fatalf("ended = %+v", repo.ended)
+	}
+	if len(repo.notices) != 0 {
+		t.Fatalf("successful verify commented: %v", repo.notices)
+	}
+}
+
+func TestPushVerifyFailureCommentsOnEveryAssociatedPullRequest(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	repo.commitPulls = []int{3, 4}
+	h := newHarness(t, repo, WorkerConfig{})
+	h.worker.carry(context.Background(), verifyCommand())
+
+	if len(repo.ended) != 1 || repo.ended[0].conclusion != conclusionFailure ||
+		repo.ended[0].title != "1 migration is not applied" {
+		t.Fatalf("ended = %+v", repo.ended)
+	}
+	if len(repo.notices) != 2 {
+		t.Fatalf("comments = %v, want one on each pull request", repo.notices)
+	}
+	for _, notice := range repo.notices {
+		for _, want := range []string{"<!-- godwit:verify -->", "## godwit verify", "20260101000000_add_orders"} {
+			if !strings.Contains(notice, want) {
+				t.Fatalf("comment missing %q:\n%s", want, notice)
+			}
+		}
+	}
+}
+
+func TestPushVerifyFailureWithoutAPullRequestStillFailsTheCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	h := newHarness(t, repo, WorkerConfig{})
+	h.worker.carry(context.Background(), verifyCommand())
+
+	if len(repo.notices) != 0 {
+		t.Fatalf("comments = %v", repo.notices)
+	}
+	if len(repo.ended) != 1 || repo.ended[0].conclusion != conclusionFailure {
+		t.Fatalf("ended = %+v", repo.ended)
+	}
+}
+
+func TestPushVerifyAdmissionFailureUsesTheServiceMessage(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	repo.commitPulls = []int{3}
+	h := newHarness(t, repo, WorkerConfig{})
+	h.svc.err = errors.New("version 7 is out of order")
+	h.worker.carry(context.Background(), verifyCommand())
+
+	if len(repo.notices) != 1 || !strings.Contains(repo.notices[0], "version 7 is out of order") {
+		t.Fatalf("comments = %v", repo.notices)
+	}
+	if len(repo.ended) != 1 || repo.ended[0].conclusion != conclusionFailure {
+		t.Fatalf("ended = %+v", repo.ended)
+	}
+}
+
+func TestPushVerifyCannotExceedItsReadScope(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	h := newHarness(t, repo, WorkerConfig{})
+	cmd := verifyCommand()
+	cmd.principal.Scope = ""
+	h.worker.carry(context.Background(), cmd)
+
+	if len(h.svc.requests()) != 0 {
+		t.Fatal("an unauthorised verify reached the service")
+	}
+	if len(repo.ended) != 1 || repo.ended[0].conclusion != conclusionFailure {
+		t.Fatalf("ended = %+v", repo.ended)
+	}
+}
+
+func TestSelectingFailedPushReportsDoesNotChangeCheckResults(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	repo.commitPulls = []int{3}
+	h := newHarness(t, repo, WorkerConfig{})
+	cmd := verifyCommand()
+	all := []done{
+		{project: project{target: "orders"}, conclusion: conclusionSuccess, body: "ok"},
+		{project: project{target: "billing"}, conclusion: conclusionFailure, body: "failed"},
+	}
+	h.worker.say(context.Background(), repo, cmd, all, testLog)
+	if all[0].conclusion != conclusionSuccess || all[0].project.target != "orders" {
+		t.Fatalf("check results changed while selecting reports: %+v", all)
+	}
+}
+
+func TestCommitPullLookupFailureIsAttachedToEveryVerifyCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	repo.commitPullErr = errBroken
+	h := newHarness(t, repo, WorkerConfig{})
+	cmd := verifyCommand()
+	cmd.projects = []project{{target: "orders"}, {target: "billing"}}
+	all := []done{
+		{project: cmd.projects[0], conclusion: conclusionFailure},
+		{project: cmd.projects[1], conclusion: conclusionFailure},
+	}
+	unsaid := h.worker.say(context.Background(), repo, cmd, all, testLog)
+	for _, p := range cmd.projects {
+		if !errors.Is(unsaid[cmd.markerFor(p)], errBroken) {
+			t.Fatalf("unsaid = %v, missing %s", unsaid, cmd.markerFor(p))
+		}
 	}
 }
 
@@ -559,12 +708,12 @@ func TestACommandGodwitCannotReadThePullRequestFor(t *testing.T) {
 	}
 }
 
-func TestACommandWithNoCheckOfItsOwnStillReports(t *testing.T) {
+func TestACommandWithNoCheckOrMarkerRunsSilently(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t, planningRepo(), WorkerConfig{})
 	cmd := planCommand()
-	cmd.name = "verify"
+	cmd.name = "lint"
 	h.worker.carry(context.Background(), cmd)
 
 	if len(h.repo.opened) != 0 || len(h.repo.ended) != 0 {

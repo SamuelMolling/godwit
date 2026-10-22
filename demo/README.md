@@ -37,6 +37,18 @@ The script:
 
 While the stack is up, open <http://localhost:18475/ui> to see the same runs and drift events in the operator UI. It asks for basic auth: the password is a token secret — `demo-token`, the one entry of `GODWIT_TOKENS` — and the username is ignored. You sign in as `ui:demo` with that token's scope, so the pages offer exactly the actions the token may take and the audit log names the same identity the API calls use.
 
+## Opt-in GitHub App push verification
+
+The self-contained stack needs no GitHub account. To exercise the App route, publish one replica's separate
+webhook listener and follow [the GitHub App setup](../docs/use/github-app.md#creating-the-app), including the
+Push event. Bind the test repository to `app`, commit a `godwit.yaml` whose target is `app`, and push its
+migration directory to the repository's default branch.
+
+Pushing the files the demo already applied concludes `godwit/verify` successfully. Adding a new migration
+without applying it first concludes the check with the pending file and posts the same failure on the pull
+request GitHub associates with the commit. The webhook job uses the App installation and the target binding;
+the repository needs no `GODWIT_TOKEN`.
+
 Poke around:
 
 ```bash

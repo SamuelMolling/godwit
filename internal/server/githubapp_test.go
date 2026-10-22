@@ -179,6 +179,40 @@ func TestWebhookIsItsOwnListener(t *testing.T) {
 	}
 }
 
+func TestPushWebhookQueuesVerifyWithoutABearerToken(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storeDSN := newDatabase(t, "push_verify")
+	gh := fakeGitHub(t)
+	url := startWithWebhook(t, storeDSN, GitHubApp{
+		Addr: "127.0.0.1:0", Secret: webhookSecret, AppID: "1", PrivateKeyPEM: rsaPEM(t), APIBaseURL: gh.URL,
+	})
+	execStore(t, storeDSN, `INSERT INTO cp_targets (name, provider, config)
+		VALUES ('orders', 'static', '{"github_repositories":"`+webhookRepo+`"}')`)
+	body := fmt.Sprintf(`{"ref":"refs/heads/main","after":%q,"forced":true,
+		"repository":{"id":42,"full_name":%q,"default_branch":"main"},"installation":{"id":7}}`,
+		webhookHead, webhookRepo)
+
+	resp := deliver(t, url, "push", "push-1", body)
+	if resp.StatusCode != http.StatusAccepted {
+		out, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, out)
+	}
+	entries, err := storeAt(t, storeDSN).ListAudit(ctx, "", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Action == controlplane.AuditWebhookCommand &&
+			e.Actor == "github:"+webhookRepo+":(verify)" &&
+			strings.Contains(e.Detail, "command=verify") {
+			return
+		}
+	}
+	t.Fatalf("audit = %+v, want a read-scoped push verify command", entries)
+}
+
 func TestWebhookListenerIsOffByDefault(t *testing.T) {
 	t.Parallel()
 

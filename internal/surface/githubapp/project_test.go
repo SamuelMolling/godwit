@@ -56,6 +56,96 @@ func TestOnlyAChangeTheProjectPlansTriggersIt(t *testing.T) {
 	}
 }
 
+func TestPushVerifyUsesMigrationPathsAndIgnoresAutoplanSwitch(t *testing.T) {
+	t.Parallel()
+
+	yaml := ordersYAML + "autoplan:\n  enabled: false\n  when_modified: [\"src/**\"]\n"
+	for _, tc := range []struct {
+		name, path, want string
+		commands         int
+	}{
+		{"migration", "db/migrations/20260101000000_a.up.sql", "godwit verify accepted", 1},
+		{"project file", "godwit.yaml", "godwit verify accepted", 1},
+		{"autoplan-only path", "src/app.go", "no bound project", 0},
+		{"unrelated path", "README.md", "no bound project", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, bound, repoWith(t, nil, map[string]string{"godwit.yaml": yaml}))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, false, tc.path))
+			check(t, rec, http.StatusAccepted, tc.want)
+			if len(f.runner.got) != tc.commands {
+				t.Fatalf("runner saw %d commands, want %d", len(f.runner.got), tc.commands)
+			}
+		})
+	}
+}
+
+func TestIncompleteOrForcedPushVerifiesEveryBoundProject(t *testing.T) {
+	t.Parallel()
+
+	capped := make([]string, 2048)
+	for i := range capped {
+		capped[i] = "README.md"
+	}
+	files := map[string]string{
+		"services/orders/godwit.yaml":  ordersYAML,
+		"services/billing/godwit.yaml": "dir: db/migrations\ntarget: billing\n",
+	}
+	for _, tc := range []struct {
+		name            string
+		created, forced bool
+		paths           []string
+	}{
+		{"created", true, false, nil},
+		{"forced", false, true, nil},
+		{"commit list at the cap", false, false, capped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, monorepo, repoWith(t, nil, files))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON(
+				"refs/heads/main", testHead, tc.created, false, tc.forced, tc.paths...))
+			check(t, rec, http.StatusAccepted, "for billing (services/billing), orders (services/orders)")
+			if got := f.runner.got[0].projects; len(got) != 2 {
+				t.Fatalf("projects = %+v, want both", got)
+			}
+		})
+	}
+}
+
+func TestCompletePushReadsOnlyTheMonorepoProjectItTouches(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, nil, map[string]string{
+		"services/orders/godwit.yaml":  ordersYAML,
+		"services/billing/godwit.yaml": "dir: db/migrations\ntarget: billing\n",
+	})
+	f := newFixture(t, monorepo, repo)
+	rec := f.post(t, eventPush, "d1", pushBodyJSON(
+		"refs/heads/main", testHead, false, false, false,
+		"services/orders/db/migrations/20260101000000_a.up.sql",
+	))
+	check(t, rec, http.StatusAccepted, "for orders (services/orders)")
+	if len(repo.read) != 1 || repo.read[0] != "services/orders/godwit.yaml" {
+		t.Fatalf("read = %v", repo.read)
+	}
+}
+
+func TestPushWithAnInvalidProjectFileFailsTheCommitCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, nil, map[string]string{"godwit.yaml": "dir: [\n"})
+	f := newFixture(t, bound, repo)
+	rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, true))
+	check(t, rec, http.StatusAccepted, "does not parse")
+	if len(repo.checks) != 1 || !strings.Contains(repo.checks[0], "godwit/verify@"+testHead) {
+		t.Fatalf("checks = %v", repo.checks)
+	}
+}
+
 func TestNothingToPlanIsSilenceForAPushAndAReasonForAPerson(t *testing.T) {
 	t.Parallel()
 

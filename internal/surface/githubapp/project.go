@@ -73,6 +73,31 @@ func resolve(ctx context.Context, repo repoView, bound bindings, req *request, h
 	return out, nil
 }
 
+func resolvePush(ctx context.Context, repo repoView, bound bindings, req *request) resolution {
+	var out resolution
+	for _, root := range roots(bound) {
+		under := within(root, req.paths)
+		if !req.all && len(under) == 0 {
+			continue
+		}
+		if req.all {
+			under = []string{config.FileName}
+		}
+		p, why := load(ctx, repo, bound, req.repository, root, req.headSHA, under, false)
+		switch {
+		case why != "":
+			out.skipped = append(out.skipped, why)
+		case p != nil && (req.all || matchAny(defaultWhenModified(p.dir), under)):
+			out.planned = append(out.planned, *p)
+		}
+	}
+	slices.SortFunc(out.planned, func(a, b project) int {
+		return strings.Compare(a.String(), b.String())
+	})
+
+	return out
+}
+
 func roots(bound bindings) []string {
 	var out []string
 	for _, b := range bound {

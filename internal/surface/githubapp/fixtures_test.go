@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -95,6 +96,9 @@ type fakeRepo struct {
 	permErr       error
 	pr            authz.PullRequest
 	pullErr       error
+	pullReads     int
+	commitPulls   []int
+	commitPullErr error
 	submitted     []authz.Review
 	reviewsErr    error
 	reviewsCapped bool
@@ -135,7 +139,13 @@ func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
 }
 
 func (r *fakeRepo) pullRequest(context.Context, int) (authz.PullRequest, error) {
+	r.pullReads++
+
 	return r.pr, r.pullErr
+}
+
+func (r *fakeRepo) pullsForCommit(context.Context, string) ([]int, error) {
+	return r.commitPulls, r.commitPullErr
 }
 
 func (r *fakeRepo) reviews(context.Context, int) ([]authz.Review, bool, error) {
@@ -359,6 +369,20 @@ func pullBodyJSON(action, headRepo, head string) string {
 	return fmt.Sprintf(`{"action":%q,"repository":{"id":42,"full_name":%q},"installation":{"id":7},
 		"pull_request":{"number":3,"head":{"sha":%q,"repo":{"full_name":%q}}}}`,
 		action, testRepo, head, headRepo)
+}
+
+func pushBodyJSON(ref, after string, created, deleted, forced bool, paths ...string) string {
+	commits := make([]map[string]any, 0, len(paths))
+	for _, name := range paths {
+		commits = append(commits, map[string]any{"modified": []string{name}})
+	}
+	body, _ := json.Marshal(map[string]any{
+		"ref": ref, "after": after, "created": created, "deleted": deleted, "forced": forced, "commits": commits,
+		"repository":   map[string]any{"id": 42, "full_name": testRepo, "default_branch": "main"},
+		"installation": map[string]any{"id": 7},
+	})
+
+	return string(body)
 }
 
 func writer(t *testing.T) *fakeRepo {
