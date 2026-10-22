@@ -58,7 +58,7 @@ func resolve(ctx context.Context, repo repoView, bound bindings, req *request, h
 		if len(under) == 0 {
 			continue
 		}
-		p, why := load(ctx, repo, bound, req.repository, root, head, under, req.name == "plan")
+		p, why := load(ctx, repo, bound, req.repository, root, head, under, req.name == "plan", req.branch, "", false)
 		switch {
 		case why != "":
 			out.skipped = append(out.skipped, why)
@@ -83,7 +83,7 @@ func resolvePush(ctx context.Context, repo repoView, bound bindings, req *reques
 		if req.all {
 			under = []string{config.FileName}
 		}
-		p, why := load(ctx, repo, bound, req.repository, root, req.headSHA, under, false)
+		p, why := load(ctx, repo, bound, req.repository, root, req.headSHA, under, false, req.branch, req.defaultBranch, true)
 		switch {
 		case why != "":
 			out.skipped = append(out.skipped, why)
@@ -125,25 +125,30 @@ func within(root string, changed []string) []string {
 	return out
 }
 
-func load(ctx context.Context, repo repoView, bound bindings, repository, root, head string, under []string, auto bool) (*project, string) {
+func load(ctx context.Context, repo repoView, bound bindings, repository, root, head string, under []string, auto bool, branch, defaultBranch string, push bool) (*project, string) {
 	raw, err := repo.file(ctx, path.Join(root, config.FileName), head)
 	if errors.Is(err, errAbsent) {
-		return nil, fmt.Sprintf("%s carries no %s, so godwit does not know what it is", orRoot(root), config.FileName)
+		return pushSkip(push, branch, defaultBranch, fmt.Sprintf("%s carries no %s, so godwit does not know what it is", orRoot(root), config.FileName))
 	}
 	if err != nil {
-		return nil, fmt.Sprintf("%s: %s", path.Join(root, config.FileName), err)
+		return pushSkip(push, branch, defaultBranch, fmt.Sprintf("%s: %s", path.Join(root, config.FileName), err))
 	}
 	cfg, err := config.Decode(raw)
 	if err != nil {
-		return nil, fmt.Sprintf("%s does not parse: %s", path.Join(root, config.FileName), err)
+		return pushSkip(push, branch, defaultBranch, fmt.Sprintf("%s does not parse: %s", path.Join(root, config.FileName), err))
 	}
-	if cfg.Target == "" {
-		return nil, fmt.Sprintf("%s names no target, so godwit has nothing to plan it against", path.Join(root, config.FileName))
+	file := path.Join(root, config.FileName)
+	target, skip := targeted(cfg, branch, defaultBranch, push)
+	if target == "" && skip == "" {
+		return nil, ""
+	}
+	if skip != "" {
+		return nil, file + " " + skip
 	}
 	if err := contained(cfg.Dir); err != nil {
-		return nil, fmt.Sprintf("%s: dir %s", path.Join(root, config.FileName), err)
+		return nil, fmt.Sprintf("%s: dir %s", file, err)
 	}
-	if err := bound.grant(repository, root, cfg.Target); err != nil {
+	if err := bound.grant(repository, root, target); err != nil {
 		return nil, err.Error()
 	}
 	when, err := trigger(cfg, auto)
@@ -155,9 +160,44 @@ func load(ctx context.Context, repo repoView, bound bindings, repository, root, 
 	}
 
 	return &project{
-		root: root, dir: cfg.Dir, target: cfg.Target, rollout: cfg.Rollout,
+		root: root, dir: cfg.Dir, target: target, rollout: cfg.Rollout,
 		format: cfg.PlanFormat(), outOfOrder: cfg.AllowOutOfOrder,
 	}, ""
+}
+
+// pushSkip drops a failure on a non-default push. The file has not shown that this branch names a target, and a check there would be noise.
+func pushSkip(push bool, branch, defaultBranch, why string) (*project, string) {
+	if push && branch != defaultBranch {
+		return nil, ""
+	}
+
+	return nil, why
+}
+
+func targeted(cfg config.Config, branch, defaultBranch string, push bool) (string, string) {
+	if cfg.Target == "" && len(cfg.Targets) == 0 {
+		if push && branch != defaultBranch {
+			return "", ""
+		}
+
+		return "", "names no target, so godwit has nothing to plan it against"
+	}
+	if len(cfg.Targets) > 0 && branch == "" && !push {
+		return "", "names no base branch, so godwit cannot choose a target"
+	}
+	name, ok := cfg.TargetFor(branch)
+	if ok {
+		if push && len(cfg.Targets) == 0 && branch != defaultBranch {
+			return "", ""
+		}
+
+		return name, ""
+	}
+	if push {
+		return "", ""
+	}
+
+	return "", fmt.Sprintf("has no target for branch %s, so godwit has nothing to plan it against", branch)
 }
 
 // trigger widens the default rather than replacing it, so a project cannot configure its own migrations out of being planned.

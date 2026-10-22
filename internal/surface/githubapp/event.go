@@ -64,7 +64,10 @@ type payload struct {
 	PullRequest struct {
 		Number       int `json:"number"`
 		ChangedFiles int `json:"changed_files"`
-		Head         struct {
+		Base         struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+		Head struct {
 			SHA  string `json:"sha"`
 			Repo struct {
 				FullName string `json:"full_name"`
@@ -80,21 +83,23 @@ type payload struct {
 }
 
 type request struct {
-	event       string
-	repository  string
-	number      int
-	name        string
-	cmd         *comment.Command
-	commander   string
-	association string
-	at          time.Time
-	reviewSHA   string
-	headSHA     string
-	headRepo    string
-	files       int
-	comment     int64
-	paths       []string
-	all         bool
+	event         string
+	repository    string
+	number        int
+	name          string
+	cmd           *comment.Command
+	commander     string
+	association   string
+	at            time.Time
+	reviewSHA     string
+	headSHA       string
+	headRepo      string
+	branch        string
+	defaultBranch string
+	files         int
+	comment       int64
+	paths         []string
+	all           bool
 }
 
 type outcome struct {
@@ -147,14 +152,15 @@ func pushRequest(req *request, p *payload) (*request, *outcome) {
 	if p.Repository.DefaultBranch == "" {
 		return req, refused("the push payload names no default branch")
 	}
-	want := "refs/heads/" + p.Repository.DefaultBranch
-	if p.Ref != want {
-		return nil, ignored("push to %s ignored; godwit verifies %s", orNone(p.Ref), want)
+	branch, ok := strings.CutPrefix(p.Ref, "refs/heads/")
+	if !ok || branch == "" {
+		return nil, ignored("push to %s ignored; godwit verifies branch pushes", orNone(p.Ref))
 	}
 	if !validSHA(p.After) {
 		return req, refused("the push payload carries no head commit")
 	}
 	req.name, req.headSHA = "verify", p.After
+	req.branch, req.defaultBranch = branch, p.Repository.DefaultBranch
 	req.all = p.Created || p.Forced || len(p.Commits) == 0 || len(p.Commits) >= pushCommitCap
 	seen := map[string]bool{}
 	for _, commit := range p.Commits {
@@ -203,6 +209,7 @@ func pullRequest(req *request, p *payload) (*request, *outcome) {
 	}
 	req.number, req.name = p.PullRequest.Number, "plan"
 	req.headSHA, req.headRepo = p.PullRequest.Head.SHA, p.PullRequest.Head.Repo.FullName
+	req.branch = p.PullRequest.Base.Ref
 	req.files = p.PullRequest.ChangedFiles
 	if !validSHA(req.headSHA) {
 		return req, refused("the pull_request payload carries no head commit")

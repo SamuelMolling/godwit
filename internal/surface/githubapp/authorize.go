@@ -49,6 +49,8 @@ func (a authorizer) authorize(ctx context.Context, req *request) (at, *outcome, 
 		return at{}, outcomeOf(ref), err
 	}
 
+	req.branch = pr.Base
+
 	return at{head: pr.Head, repo: view, files: pr.Files}, nil, nil
 }
 

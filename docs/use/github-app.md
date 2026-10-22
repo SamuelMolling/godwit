@@ -82,7 +82,7 @@ Subscribe to exactly four. godwit ignores every other delivery with `godwit does
 | **Pull request** | on `opened`, `synchronize`, `reopened` and `ready_for_review`, plans by itself. Every other action is ignored |
 | **Issue comment** | on `created` only: the comment is read as a command. An edit is not — *a command is what someone posted, not what a comment now says* |
 | **Pull request review** | on `submitted`: the review body is read as a command, the same way a comment is |
-| **Push** | on the repository's default branch: verifies that every committed migration is already applied. Other branches, tags and branch deletions are ignored |
+| **Push** | verifies that every committed migration is already applied. A file with `target` verifies the default branch. A file with `targets` verifies each branch it names. A push to any other branch, a tag, or a branch deletion is ignored |
 
 ## `godwit.yaml` in the repository
 
@@ -90,7 +90,7 @@ The App reads this file at the pull request head, in the directory the repositor
 file the CLI reads, but the App only looks at these keys:
 
 ```yaml
-target: app                 # required; the target on the service this project migrates
+target: app                 # one target, used for every pull request base
 dir: db/migrations          # default: migrations. Relative to this file, and it may not leave its directory
 rollout: expand-contract    # default rollout for this project: direct or expand-contract
 allow_out_of_order: false   # accept a migration whose version sorts below one already applied
@@ -102,14 +102,23 @@ autoplan:
     - "db/seeds/**/*.sql"
 ```
 
-A file with no `target` is skipped with *"names no target, so godwit has nothing to plan it against"*. Any key
+Or one target per destination branch. The key is the pull request's base, and the branch a push updates. A pull request into a branch the map does not name is refused with *"has no target for branch <name>, so godwit has nothing to plan it against"*. A push to such a branch is ignored. `target` and `targets` together do not parse.
+
+```yaml
+targets:
+  staging: app-staging
+  main: app-production
+dir: db/migrations
+```
+
+A file with no `target` and no `targets` is skipped with *"names no target, so godwit has nothing to plan it against"*. Any key
 the CLI understands but the App does not (`server`, `lock_timeout`, `statement_timeout`, `schema_source`) is
 accepted and ignored here; unknown keys are a parse error and the project is skipped with the parser's message.
 
 **`when_modified` widens, it never replaces.** godwit always watches `<dir>/**/*.sql` and `godwit.yaml`, and
 `when_modified` adds to that list — a project cannot configure its own migrations out of being planned.
 `autoplan.enabled: false` turns off only the plan godwit starts by itself when a pull request changes;
-`godwit plan` in a comment and default-branch verification still work.
+`godwit plan` in a comment still works, as does verification of the default branch, or of each branch `targets` names.
 
 ## Verification after a push
 
@@ -150,7 +159,8 @@ could otherwise make godwit work through its installation's whole API budget.
 
 A repository bound to target `app` whose `godwit.yaml` names target `billing` is refused the same way a
 repository bound to nothing is, and with the same message: telling the two apart would hand a repository the
-list of targets it holds no token for.
+list of targets it holds no token for. A branch entry in `targets` is held to the same rule: it has to name a
+target this repository is bound to.
 
 ## The commands
 

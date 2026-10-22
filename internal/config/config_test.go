@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func clearEnv(t *testing.T) {
 func TestDefaults(t *testing.T) {
 	t.Parallel()
 
-	if got, want := Defaults(), (Config{Dir: "migrations", LockTimeout: 5 * time.Second}); got != want {
+	if got, want := Defaults(), (Config{Dir: "migrations", LockTimeout: 5 * time.Second}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Defaults() = %+v, want %+v", got, want)
 	}
 }
@@ -66,7 +67,7 @@ func TestLoadExplicitPath(t *testing.T) {
 		StatementTimeout: time.Minute,
 		AllowOutOfOrder:  true,
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("Load() = %+v, want %+v", cfg, want)
 	}
 }
@@ -135,7 +136,7 @@ func TestLoadStopsAtRepoRoot(t *testing.T) {
 	t.Chdir(nested)
 
 	cfg, err := Load("")
-	if err != nil || cfg != Defaults() {
+	if err != nil || !reflect.DeepEqual(cfg, Defaults()) {
 		t.Fatalf("Load() = %+v, %v; want defaults", cfg, err)
 	}
 }
@@ -145,7 +146,7 @@ func TestLoadNotFound(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	cfg, err := Load("")
-	if err != nil || cfg != Defaults() {
+	if err != nil || !reflect.DeepEqual(cfg, Defaults()) {
 		t.Fatalf("Load() = %+v, %v; want defaults", cfg, err)
 	}
 }
@@ -205,7 +206,7 @@ func TestLoadEnvOverrides(t *testing.T) {
 		LockTimeout:      7 * time.Second,
 		StatementTimeout: 2 * time.Minute,
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("Load() = %+v, want %+v", cfg, want)
 	}
 }
@@ -372,5 +373,79 @@ func TestDecode(t *testing.T) {
 	}
 	if _, err := Decode([]byte("plan:\n  format: yaml\n")); err == nil {
 		t.Fatal("an invalid plan format decoded")
+	}
+}
+
+func TestTargets(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Decode([]byte("dir: db/migrations\ntargets:\n  staging: orders\n  main: billing\n  \"release/1\": billing\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Target != "" {
+		t.Fatalf("Target = %q", cfg.Target)
+	}
+	for _, tc := range []struct {
+		branch, name string
+		ok           bool
+	}{
+		{"staging", "orders", true},
+		{"main", "billing", true},
+		{"release/1", "billing", true},
+		{"feature", "", false},
+		{"", "", false},
+	} {
+		name, ok := cfg.TargetFor(tc.branch)
+		if name != tc.name || ok != tc.ok {
+			t.Fatalf("TargetFor(%q) = %q, %v; want %q, %v", tc.branch, name, ok, tc.name, tc.ok)
+		}
+	}
+
+	single, err := Decode([]byte("target: orders\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, branch := range []string{"feature", ""} {
+		name, ok := single.TargetFor(branch)
+		if name != "orders" || !ok {
+			t.Fatalf("TargetFor(%q) = %q, %v", branch, name, ok)
+		}
+	}
+
+	if name, ok := (Config{}).TargetFor("feature"); name != "" || ok {
+		t.Fatalf("TargetFor with neither key = %q, %v", name, ok)
+	}
+
+	for _, tc := range []struct{ body, want string }{
+		{"target: orders\ntargets:\n  staging: orders\n", "names both target and targets"},
+		{"targets: {}\n", "targets names no branch"},
+		{"targets:\n  staging: \"\"\n", "targets.staging names no target"},
+		{"targets:\n  \" main\": orders\n", "is not a branch name"},
+		{"targets:\n  \"refs/heads/main\": orders\n", "is not a branch name"},
+		{"targets:\n  staging: not a target\n", "is not a target name"},
+		{"targets:\n  main: orders\n  main: billing\n", "names branch \"main\" twice"},
+		{"targets: orders\n", "targets must be a map"},
+		{"targets:\n  staging:\n    nested: orders\n", "targets must be a map"},
+	} {
+		_, err := Decode([]byte(tc.body))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("Decode(%q) = %v, want substring %q", tc.body, err, tc.want)
+		}
+	}
+}
+
+func TestEnvTargetDoesNotFightTheBranchMap(t *testing.T) {
+	clearEnv(t)
+	path := filepath.Join(t.TempDir(), FileName)
+	write(t, path, "targets:\n  staging: orders\n  main: billing\n")
+	t.Setenv("GODWIT_TARGET", "orders")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Target != "orders" || cfg.Targets["main"] != "billing" {
+		t.Fatalf("cfg = %+v", cfg)
 	}
 }

@@ -491,3 +491,69 @@ func TestATruncatedReviewListingRefusesTheApply(t *testing.T) {
 		t.Fatal("an apply was decided on a part of the review record")
 	}
 }
+
+const branchYAML = "dir: db/migrations\ntargets:\n  staging: orders\n  main: billing\n"
+
+func withBase(body, branch string) string {
+	const needle = `"pull_request":{"number":3,`
+	return strings.Replace(body, needle, `"pull_request":{"number":3,"base":{"ref":"`+branch+`"},`, 1)
+}
+
+func TestAPullRequestBaseSelectsItsTarget(t *testing.T) {
+	t.Parallel()
+
+	both := map[string]string{"orders": testRepo, "billing": testRepo}
+	for _, tc := range []struct{ base, want string }{
+		{"main", "for billing"},
+		{"staging", "for orders"},
+	} {
+		t.Run(tc.base, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, both, repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"},
+				map[string]string{"godwit.yaml": branchYAML}))
+			check(t, f.post(t, eventPullRequest, "d1", withBase(pullBodyJSON("synchronize", testRepo, testHead), tc.base)),
+				http.StatusAccepted, tc.want)
+		})
+	}
+}
+
+func TestACommentUsesTheFetchedBase(t *testing.T) {
+	t.Parallel()
+
+	both := map[string]string{"orders": testRepo, "billing": testRepo}
+	repo := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": branchYAML})
+	repo.pr.Base = "main"
+	f := newFixture(t, both, repo)
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit plan", "MEMBER", "alice", now)),
+		http.StatusAccepted, "for billing")
+
+	empty := repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"}, map[string]string{"godwit.yaml": branchYAML})
+	f = newFixture(t, both, empty)
+	check(t, f.post(t, eventIssueComment, "d1", commentBody("godwit plan", "MEMBER", "alice", now)),
+		http.StatusAccepted, "names no base branch")
+}
+
+func TestAnUnmappedBaseIsRefused(t *testing.T) {
+	t.Parallel()
+
+	both := map[string]string{"orders": testRepo, "billing": testRepo}
+	f := newFixture(t, both, repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"},
+		map[string]string{"godwit.yaml": branchYAML}))
+	rec := f.post(t, eventPullRequest, "d1", withBase(pullBodyJSON("synchronize", testRepo, testHead), "feature"))
+	check(t, rec, http.StatusAccepted, "has no target for branch feature")
+	if len(f.runner.got) != 0 {
+		t.Fatal("an unmapped base reached the runner")
+	}
+}
+
+func TestAnUnboundMappedTargetIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, repoWith(t, []string{"db/migrations/20260101000000_a.up.sql"},
+		map[string]string{"godwit.yaml": branchYAML}))
+	body := f.post(t, eventPullRequest, "d1", withBase(pullBodyJSON("synchronize", testRepo, testHead), "main")).Body.String()
+	if !strings.Contains(body, `not bound to a target named "billing"`) || strings.Contains(body, `named "orders"`) {
+		t.Fatalf("body = %q", body)
+	}
+}

@@ -110,8 +110,7 @@ func TestOnlyAUsableDefaultBranchPushIsVerified(t *testing.T) {
 		name, ref, after, want string
 		deleted, forced        bool
 	}{
-		{"feature branch", "refs/heads/feature", testHead, "godwit verifies refs/heads/main", false, false},
-		{"tag", "refs/tags/v1", testHead, "godwit verifies refs/heads/main", false, false},
+		{"tag", "refs/tags/v1", testHead, "godwit verifies branch pushes", false, false},
 		{"deleted default branch", "refs/heads/main", testHead, "deleted branch ignored", true, false},
 		{"missing head", "refs/heads/main", "abc", "carries no head commit", false, false},
 	} {
@@ -125,6 +124,103 @@ func TestOnlyAUsableDefaultBranchPushIsVerified(t *testing.T) {
 				t.Fatal("an unusable push reached the runner")
 			}
 		})
+	}
+}
+
+func TestAPushToAnUnmappedBranchIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		paths []string
+	}{
+		{"a migration", []string{"db/migrations/20260101000000_a.up.sql"}},
+		{"an empty commit list", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, bound, writer(t))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/feature", testHead, false, false, false, tc.paths...))
+			check(t, rec, http.StatusAccepted, "no bound project")
+			if got := f.result(t); got != resultIgnored {
+				t.Fatalf("result = %s, want %s", got, resultIgnored)
+			}
+			if len(f.runner.got) != 0 {
+				t.Fatal("a feature-branch push reached the runner")
+			}
+		})
+	}
+}
+
+func TestABrokenProjectFileOnAnUnmappedPushIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		edit func(*fakeRepo)
+	}{
+		{"does not parse", func(r *fakeRepo) { r.files = map[string]string{"godwit.yaml": "dir: [\n"} }},
+		{"names no target", func(r *fakeRepo) { r.files = map[string]string{"godwit.yaml": "dir: db/migrations\n"} }},
+		{"missing file", func(r *fakeRepo) { r.files = map[string]string{} }},
+		{"unreadable", func(r *fakeRepo) { r.fileErr = errBroken }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := writer(t)
+			tc.edit(repo)
+			f := newFixture(t, bound, repo)
+			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/feature", testHead, false, false, false, "db/migrations/20260101000000_a.up.sql"))
+			check(t, rec, http.StatusAccepted, "no bound project")
+			if got := f.result(t); got != resultIgnored {
+				t.Fatalf("result = %s, want %s (%s)", got, resultIgnored, rec.Body.String())
+			}
+			if len(f.runner.got) != 0 || len(repo.checks) != 0 {
+				t.Fatalf("runner %d, checks %v", len(f.runner.got), repo.checks)
+			}
+		})
+	}
+}
+
+func TestABrokenProjectFileOnTheDefaultBranchIsRefused(t *testing.T) {
+	t.Parallel()
+
+	repo := writer(t)
+	repo.files = map[string]string{"godwit.yaml": "dir: [\n"}
+	f := newFixture(t, bound, repo)
+	rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, false, "godwit.yaml"))
+	check(t, rec, http.StatusAccepted, "does not parse")
+	if len(repo.checks) != 1 {
+		t.Fatalf("checks = %v", repo.checks)
+	}
+}
+
+func TestAPushVerifiesTheBranchTheMapNames(t *testing.T) {
+	t.Parallel()
+
+	both := map[string]string{"orders": testRepo, "billing": testRepo}
+	push := func(ref string) string {
+		body := pushBodyJSON(ref, testHead, false, false, false, "db/migrations/20260101000000_a.up.sql")
+		return strings.Replace(body, `"default_branch":"main"`, `"default_branch":"staging"`, 1)
+	}
+	for _, tc := range []struct{ ref, want string }{
+		{"refs/heads/main", "for billing"},
+		{"refs/heads/staging", "for orders"},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			t.Parallel()
+
+			repo := repoWith(t, nil, map[string]string{"godwit.yaml": branchYAML})
+			f := newFixture(t, both, repo)
+			check(t, f.post(t, eventPush, "d1", push(tc.ref)), http.StatusAccepted, tc.want)
+		})
+	}
+	f := newFixture(t, both, repoWith(t, nil, map[string]string{"godwit.yaml": branchYAML}))
+	rec := f.post(t, eventPush, "d1", push("refs/heads/feature"))
+	check(t, rec, http.StatusAccepted, "no bound project")
+	if len(f.runner.got) != 0 {
+		t.Fatal("an unmapped push reached the runner")
 	}
 }
 

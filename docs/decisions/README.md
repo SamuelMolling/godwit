@@ -35,6 +35,7 @@ Each record names the pull requests that implemented it, so `gh pr view <n>` giv
 | [0025](0025-a-revert-from-a-comment-is-held-to-the-same-people-as-the-apply.md) | A revert from a comment is held to the same people as the apply, and may not remove a gate | #160 |
 | [0026](0026-a-bound-belongs-where-the-bytes-arrive-not-on-one-transport.md) | A bound belongs where the bytes arrive, and the scratch budget belongs to the service | #170 |
 | [0027](0027-the-run-column-holds-the-message-not-the-failure.md) | `cp_runs.error` holds the message godwit publishes, not the failure | #171 |
+| [0028](0028-a-branch-names-which-bound-target.md) | A branch names which bound target a delivery uses, and the binding still permits it | |
 
 ## Open questions
 

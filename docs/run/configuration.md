@@ -10,6 +10,7 @@ Project file for the CLI. Looked up from the working directory upward until a di
 |---|---|---|---|---|
 | `dir` | path | `migrations` | `GODWIT_DIR` | `plan`, `up`, `status`, `down`, `new`, `lint`, `migrate`, `diff`, `target adopt`, `target status` |
 | `target` | string | — | `GODWIT_TARGET` | `plans`, `lint`, `diff`, `migrate`, `revert`, `run confirm --latest` (**not** `plan`) |
+| `targets` | map of branch to target | — | — | the [GitHub App](../use/github-app.md#godwityaml-in-the-repository) only |
 | `rollout` | `direct` \| `expand-contract` | `direct` | `GODWIT_ROLLOUT` | `plan`, `migrate` |
 | `server` | URL | — | `GODWIT_SERVER` | every service command (`target`, `targets`, `plan`, `plans`, `lint`, `diff`, `migrate`, `revert`, `run`, `runs`, `drift`, `audit`) |
 | `lock_timeout` | Go duration | `5s` | `GODWIT_LOCK_TIMEOUT` | `up`, `status`, `down` only |
@@ -22,6 +23,8 @@ Project file for the CLI. Looked up from the working directory upward until a di
 Precedence: explicit flag > `GODWIT_*` env > file > default. The file carries no secrets: the token comes from `GODWIT_TOKEN` or `--token`, DSNs from `--dsn` or a credential provider. `lock_timeout` / `statement_timeout` in the file do not reach `migrate` or `revert`; the service uses the target's registered values unless the run passes `--lock-timeout` / `--statement-timeout` explicitly.
 
 `target` deliberately does **not** reach `plan`. `plan --target` is a service command that replays your DDL on a scratch database, and a flag that changes what a command connects to does not arrive from a file nobody read: a bare `godwit plan` parses the directory offline whatever `godwit.yaml` says. Spell `--target` when you mean the live form, and add `--save` when you want it stored.
+
+`targets` maps a destination branch to a target name. The CLI parses the map and does not select from it; `GODWIT_TARGET` still fills `target` and does not conflict with the map. A file that names both `target` and `targets` does not parse.
 
 ```yaml
 dir: db/migrations

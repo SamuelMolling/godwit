@@ -22,6 +22,7 @@ var (
 type PullRequest struct {
 	Head     string
 	HeadRepo string
+	Base     string
 	State    string
 	Merged   bool
 	Files    int
