@@ -84,6 +84,68 @@ func TestVerifiedRequestIsAccepted(t *testing.T) {
 	}
 }
 
+func TestDefaultBranchPushIsAcceptedForVerification(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, repoWith(t, nil, map[string]string{"godwit.yaml": ordersYAML}))
+	rec := f.post(t, eventPush, "d1", pushBodyJSON(
+		"refs/heads/main", testHead, false, false, 1, "db/migrations/20260101000000_a.up.sql"))
+	check(t, rec, http.StatusAccepted, "godwit verify accepted")
+	if len(f.runner.got) != 1 {
+		t.Fatalf("runner saw %d commands, want 1", len(f.runner.got))
+	}
+	cmd := f.runner.got[0]
+	if cmd.name != "verify" || cmd.head != testHead || cmd.number != 0 {
+		t.Fatalf("command = %+v", cmd)
+	}
+	if cmd.principal.Name != forgeActor(testRepo, verifyActor) || cmd.principal.Scope != authz.ScopeRead {
+		t.Fatalf("principal = %+v", cmd.principal)
+	}
+}
+
+func TestOnlyAUsableDefaultBranchPushIsVerified(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, ref, after, want string
+		deleted, forced        bool
+	}{
+		{"feature branch", "refs/heads/feature", testHead, "godwit verifies refs/heads/main", false, false},
+		{"tag", "refs/tags/v1", testHead, "godwit verifies refs/heads/main", false, false},
+		{"deleted default branch", "refs/heads/main", testHead, "deleted branch ignored", true, false},
+		{"missing head", "refs/heads/main", "abc", "carries no head commit", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, bound, writer(t))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON(tc.ref, tc.after, tc.deleted, tc.forced, 0))
+			check(t, rec, http.StatusAccepted, tc.want)
+			if len(f.runner.got) != 0 {
+				t.Fatal("an unusable push reached the runner")
+			}
+		})
+	}
+}
+
+func TestPushVerificationKeepsDeliveryAndBindingGuards(t *testing.T) {
+	t.Parallel()
+
+	body := pushBodyJSON("refs/heads/main", testHead, false, true, 1)
+	unbound := newFixture(t, map[string]string{"payments": "other/repo"}, writer(t))
+	check(t, unbound.post(t, eventPush, "d1", body), http.StatusAccepted, "bound to no godwit target")
+	if len(unbound.api.scoped) != 0 {
+		t.Fatal("an unbound push minted an installation token")
+	}
+
+	replayed := newFixture(t, bound, repoWith(t, nil, map[string]string{"godwit.yaml": ordersYAML}))
+	check(t, replayed.post(t, eventPush, "d1", body), http.StatusAccepted, "accepted")
+	check(t, replayed.post(t, eventPush, "d1", body), http.StatusAccepted, "already handled")
+	if len(replayed.runner.got) != 1 {
+		t.Fatalf("runner saw %d commands, want 1", len(replayed.runner.got))
+	}
+}
+
 func approvedBy(t *testing.T, login string) *fakeRepo {
 	t.Helper()
 	repo := writer(t)
@@ -311,8 +373,8 @@ func TestIgnoredDeliveries(t *testing.T) {
 			"pull request labeled ignored",
 		},
 		{
-			"an event godwit does not act on", "push", `{"repository":{"full_name":"acme/orders"},"installation":{"id":7}}`,
-			"does not act on push",
+			"an event godwit does not act on", "check_run", `{"repository":{"full_name":"acme/orders"},"installation":{"id":7}}`,
+			"does not act on check_run",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

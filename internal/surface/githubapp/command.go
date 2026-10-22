@@ -12,6 +12,7 @@ import (
 const (
 	autoplanActor = "(autoplan)"
 	reportActor   = "(report)"
+	verifyActor   = "(verify)"
 )
 
 func forgeActor(repository, who string) string { return "github:" + repository + ":" + who }
@@ -22,6 +23,7 @@ var scopes = map[string]authz.Scope{
 	"apply":   authz.ScopePipeline,
 	"confirm": authz.ScopePipeline,
 	"revert":  authz.ScopePipeline,
+	"verify":  authz.ScopeRead,
 }
 
 type command struct {

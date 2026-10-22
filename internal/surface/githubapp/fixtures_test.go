@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -359,6 +360,20 @@ func pullBodyJSON(action, headRepo, head string) string {
 	return fmt.Sprintf(`{"action":%q,"repository":{"id":42,"full_name":%q},"installation":{"id":7},
 		"pull_request":{"number":3,"head":{"sha":%q,"repo":{"full_name":%q}}}}`,
 		action, testRepo, head, headRepo)
+}
+
+func pushBodyJSON(ref, after string, deleted, forced bool, size int, paths ...string) string {
+	commits := make([]map[string]any, 0, len(paths))
+	for _, name := range paths {
+		commits = append(commits, map[string]any{"modified": []string{name}})
+	}
+	body, _ := json.Marshal(map[string]any{
+		"ref": ref, "after": after, "deleted": deleted, "forced": forced, "size": size, "commits": commits,
+		"repository":   map[string]any{"id": 42, "full_name": testRepo, "default_branch": "main"},
+		"installation": map[string]any{"id": 7},
+	})
+
+	return string(body)
 }
 
 func writer(t *testing.T) *fakeRepo {

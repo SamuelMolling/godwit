@@ -134,7 +134,7 @@ func (r *Receiver) Handler() http.Handler {
 	return mux
 }
 
-var knownEvents = []string{eventIssueComment, eventReview, eventPullRequest}
+var knownEvents = []string{eventIssueComment, eventReview, eventPullRequest, eventPush}
 
 func eventLabel(event string) string {
 	if slices.Contains(knownEvents, event) {
@@ -269,7 +269,12 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	if out != nil || err != nil {
 		return nil, out, req, err
 	}
-	res, err := resolve(ctx, at.repo, bound, req, at.head, at.files)
+	var res resolution
+	if event == eventPush {
+		res = resolvePush(ctx, at.repo, bound, req)
+	} else {
+		res, err = resolve(ctx, at.repo, bound, req, at.head, at.files)
+	}
 	if errors.Is(err, errTruncated) {
 		return nil, checked(at.head, tooLarge(req, err)), req, nil
 	}
@@ -281,6 +286,9 @@ func (r *Receiver) decide(ctx context.Context, event, delivery string, p *payloa
 	}
 	head := at.head
 	who := cmp.Or(req.commander, autoplanActor)
+	if event == eventPush {
+		who = verifyActor
+	}
 
 	return &command{
 		delivery: delivery, event: event, repository: req.repository,
@@ -377,6 +385,11 @@ type at struct {
 func (r *Receiver) resolve(ctx context.Context, req *request, p *payload) (at, *outcome, error) {
 	open := func(ctx context.Context) (repoView, error) {
 		return r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
+	}
+	if req.event == eventPush {
+		repo, err := open(ctx)
+
+		return at{head: req.headSHA, repo: repo}, nil, err
 	}
 	if req.commander != "" {
 		return authorizer{

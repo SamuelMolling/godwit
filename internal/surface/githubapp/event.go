@@ -13,6 +13,7 @@ const (
 	eventIssueComment = "issue_comment"
 	eventReview       = "pull_request_review"
 	eventPullRequest  = "pull_request"
+	eventPush         = "push"
 )
 
 var planActions = map[string]bool{"opened": true, "synchronize": true, "reopened": true, "ready_for_review": true}
@@ -24,8 +25,9 @@ type user struct {
 type payload struct {
 	Action     string `json:"action"`
 	Repository struct {
-		ID       int64  `json:"id"`
-		FullName string `json:"full_name"`
+		ID            int64  `json:"id"`
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
 	} `json:"repository"`
 	Installation struct {
 		ID int64 `json:"id"`
@@ -58,6 +60,16 @@ type payload struct {
 			} `json:"repo"`
 		} `json:"head"`
 	} `json:"pull_request"`
+	Ref     string `json:"ref"`
+	After   string `json:"after"`
+	Deleted bool   `json:"deleted"`
+	Forced  bool   `json:"forced"`
+	Size    int    `json:"size"`
+	Commits []struct {
+		Added    []string `json:"added"`
+		Modified []string `json:"modified"`
+		Removed  []string `json:"removed"`
+	} `json:"commits"`
 }
 
 type request struct {
@@ -74,6 +86,8 @@ type request struct {
 	headRepo    string
 	files       int
 	comment     int64
+	paths       []string
+	all         bool
 }
 
 type outcome struct {
@@ -112,9 +126,42 @@ func parse(event string, p *payload) (*request, *outcome) {
 		return reviewRequest(req, p)
 	case eventPullRequest:
 		return pullRequest(req, p)
+	case eventPush:
+		return pushRequest(req, p)
 	}
 
 	return nil, ignored("godwit does not act on %s deliveries", event)
+}
+
+func pushRequest(req *request, p *payload) (*request, *outcome) {
+	if p.Deleted {
+		return nil, ignored("deleted branch ignored")
+	}
+	if p.Repository.DefaultBranch == "" {
+		return req, refused("the push payload names no default branch")
+	}
+	want := "refs/heads/" + p.Repository.DefaultBranch
+	if p.Ref != want {
+		return nil, ignored("push to %s ignored; godwit verifies %s", orNone(p.Ref), want)
+	}
+	if !validSHA(p.After) {
+		return req, refused("the push payload carries no head commit")
+	}
+	req.name, req.headSHA = "verify", p.After
+	req.all = p.Forced || p.Size != len(p.Commits)
+	seen := map[string]bool{}
+	for _, commit := range p.Commits {
+		for _, names := range [][]string{commit.Added, commit.Modified, commit.Removed} {
+			for _, name := range names {
+				if !seen[name] {
+					req.paths = append(req.paths, name)
+					seen[name] = true
+				}
+			}
+		}
+	}
+
+	return req, nil
 }
 
 func commentRequest(req *request, p *payload) (*request, *outcome) {
