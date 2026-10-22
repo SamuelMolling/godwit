@@ -37,6 +37,7 @@ var sourceKinds = []string{SourceFile, SourcePrisma, SourceGorm, SourceDjango, S
 type Config struct {
 	Dir              string        `yaml:"dir"`
 	Target           string        `yaml:"target"`
+	Targets          branchTargets `yaml:"targets"`
 	Rollout          string        `yaml:"rollout"`
 	Server           string        `yaml:"server"`
 	LockTimeout      time.Duration `yaml:"lock_timeout"`
@@ -159,7 +160,78 @@ func (c *Config) decode(raw []byte) error {
 		return err
 	}
 
+	return c.validateFile()
+}
+
+// branchTargets maps a destination branch to a target name. Its unmarshaler sees a duplicate key, which a plain map would keep as the last value.
+type branchTargets map[string]string
+
+func (t *branchTargets) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("targets must be a map of branch to target")
+	}
+	if len(node.Content) == 0 {
+		return errors.New("targets names no branch")
+	}
+	out := make(branchTargets, len(node.Content)/2)
+	for i := 0; i < len(node.Content); i += 2 {
+		key, val := node.Content[i], node.Content[i+1]
+		if key.Kind != yaml.ScalarNode || val.Kind != yaml.ScalarNode {
+			return errors.New("targets must be a map of branch to target")
+		}
+		branch := key.Value
+		if !validBranch(branch) {
+			return fmt.Errorf("targets key %q is not a branch name", branch)
+		}
+		if _, ok := out[branch]; ok {
+			return fmt.Errorf("targets names branch %q twice", branch)
+		}
+		if val.Value == "" {
+			return fmt.Errorf("targets.%s names no target", branch)
+		}
+		if !validTargetName(val.Value) {
+			return fmt.Errorf("targets.%s: %q is not a target name", branch, val.Value)
+		}
+		out[branch] = val.Value
+	}
+	*t = out
+
 	return nil
+}
+
+func validBranch(name string) bool {
+	if name == "" || strings.TrimSpace(name) != name || strings.HasPrefix(name, "refs/") ||
+		strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") {
+		return false
+	}
+
+	return true
+}
+
+func validTargetName(name string) bool {
+	return name != "" && strings.Trim(name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._") == ""
+}
+
+func (c *Config) validateFile() error {
+	if c.Target != "" && len(c.Targets) > 0 {
+		return errors.New("godwit.yaml names both target and targets; name one")
+	}
+
+	return nil
+}
+
+// TargetFor reports the target a delivery against branch uses.
+func (c Config) TargetFor(branch string) (string, bool) {
+	if len(c.Targets) > 0 {
+		name, ok := c.Targets[branch]
+
+		return name, ok
+	}
+	if c.Target == "" {
+		return "", false
+	}
+
+	return c.Target, true
 }
 
 func (c *Config) readFile(path string) error {
