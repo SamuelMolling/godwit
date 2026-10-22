@@ -153,6 +153,49 @@ func TestAPushToAnUnmappedBranchIsIgnored(t *testing.T) {
 	}
 }
 
+func TestABrokenProjectFileOnAnUnmappedPushIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		edit func(*fakeRepo)
+	}{
+		{"does not parse", func(r *fakeRepo) { r.files = map[string]string{"godwit.yaml": "dir: [\n"} }},
+		{"names no target", func(r *fakeRepo) { r.files = map[string]string{"godwit.yaml": "dir: db/migrations\n"} }},
+		{"missing file", func(r *fakeRepo) { r.files = map[string]string{} }},
+		{"unreadable", func(r *fakeRepo) { r.fileErr = errBroken }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := writer(t)
+			tc.edit(repo)
+			f := newFixture(t, bound, repo)
+			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/feature", testHead, false, false, false, "db/migrations/20260101000000_a.up.sql"))
+			check(t, rec, http.StatusAccepted, "no bound project")
+			if got := f.result(t); got != resultIgnored {
+				t.Fatalf("result = %s, want %s (%s)", got, resultIgnored, rec.Body.String())
+			}
+			if len(f.runner.got) != 0 || len(repo.checks) != 0 {
+				t.Fatalf("runner %d, checks %v", len(f.runner.got), repo.checks)
+			}
+		})
+	}
+}
+
+func TestABrokenProjectFileOnTheDefaultBranchIsRefused(t *testing.T) {
+	t.Parallel()
+
+	repo := writer(t)
+	repo.files = map[string]string{"godwit.yaml": "dir: [\n"}
+	f := newFixture(t, bound, repo)
+	rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, false, "godwit.yaml"))
+	check(t, rec, http.StatusAccepted, "does not parse")
+	if len(repo.checks) != 1 {
+		t.Fatalf("checks = %v", repo.checks)
+	}
+}
+
 func TestAPushVerifiesTheBranchTheMapNames(t *testing.T) {
 	t.Parallel()
 

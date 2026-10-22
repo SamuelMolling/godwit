@@ -128,14 +128,14 @@ func within(root string, changed []string) []string {
 func load(ctx context.Context, repo repoView, bound bindings, repository, root, head string, under []string, auto bool, branch, defaultBranch string, push bool) (*project, string) {
 	raw, err := repo.file(ctx, path.Join(root, config.FileName), head)
 	if errors.Is(err, errAbsent) {
-		return nil, fmt.Sprintf("%s carries no %s, so godwit does not know what it is", orRoot(root), config.FileName)
+		return pushSkip(push, branch, defaultBranch, fmt.Sprintf("%s carries no %s, so godwit does not know what it is", orRoot(root), config.FileName))
 	}
 	if err != nil {
-		return nil, fmt.Sprintf("%s: %s", path.Join(root, config.FileName), err)
+		return pushSkip(push, branch, defaultBranch, fmt.Sprintf("%s: %s", path.Join(root, config.FileName), err))
 	}
 	cfg, err := config.Decode(raw)
 	if err != nil {
-		return nil, fmt.Sprintf("%s does not parse: %s", path.Join(root, config.FileName), err)
+		return pushSkip(push, branch, defaultBranch, fmt.Sprintf("%s does not parse: %s", path.Join(root, config.FileName), err))
 	}
 	file := path.Join(root, config.FileName)
 	target, skip := targeted(cfg, branch, defaultBranch, push)
@@ -165,8 +165,21 @@ func load(ctx context.Context, repo repoView, bound bindings, repository, root, 
 	}, ""
 }
 
+// pushSkip drops a failure on a non-default push. The file has not shown that this branch names a target, and a check there would be noise.
+func pushSkip(push bool, branch, defaultBranch, why string) (*project, string) {
+	if push && branch != defaultBranch {
+		return nil, ""
+	}
+
+	return nil, why
+}
+
 func targeted(cfg config.Config, branch, defaultBranch string, push bool) (string, string) {
 	if cfg.Target == "" && len(cfg.Targets) == 0 {
+		if push && branch != defaultBranch {
+			return "", ""
+		}
+
 		return "", "names no target, so godwit has nothing to plan it against"
 	}
 	if len(cfg.Targets) > 0 && branch == "" && !push {
