@@ -116,6 +116,9 @@ type pullBody struct {
 			FullName string `json:"full_name"`
 		} `json:"repo"`
 	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 }
 
 func (r *repoClient) pullRequest(ctx context.Context, number int) (authz.PullRequest, error) {
@@ -125,7 +128,7 @@ func (r *repoClient) pullRequest(ctx context.Context, number int) (authz.PullReq
 	}
 
 	return authz.PullRequest{
-		Head: out.Head.SHA, HeadRepo: out.Head.Repo.FullName,
+		Head: out.Head.SHA, HeadRepo: out.Head.Repo.FullName, Base: out.Base.Ref,
 		State: out.State, Merged: out.Merged, Files: out.ChangedFiles,
 	}, nil
 }

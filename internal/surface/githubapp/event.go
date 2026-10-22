@@ -64,7 +64,10 @@ type payload struct {
 	PullRequest struct {
 		Number       int `json:"number"`
 		ChangedFiles int `json:"changed_files"`
-		Head         struct {
+		Base         struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+		Head struct {
 			SHA  string `json:"sha"`
 			Repo struct {
 				FullName string `json:"full_name"`
@@ -91,6 +94,7 @@ type request struct {
 	reviewSHA   string
 	headSHA     string
 	headRepo    string
+	branch      string
 	files       int
 	comment     int64
 	paths       []string
@@ -203,6 +207,7 @@ func pullRequest(req *request, p *payload) (*request, *outcome) {
 	}
 	req.number, req.name = p.PullRequest.Number, "plan"
 	req.headSHA, req.headRepo = p.PullRequest.Head.SHA, p.PullRequest.Head.Repo.FullName
+	req.branch = p.PullRequest.Base.Ref
 	req.files = p.PullRequest.ChangedFiles
 	if !validSHA(req.headSHA) {
 		return req, refused("the pull_request payload carries no head commit")
