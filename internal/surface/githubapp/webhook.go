@@ -316,10 +316,11 @@ func (r *Receiver) accept(ctx context.Context, event, delivery string, p *payloa
 // checks is the mapping scripts/action-refuse.sh uses for the commit status the Action sets.
 var checks = map[string]string{
 	"plan": "godwit/plan", "apply": "godwit/applied", "confirm": "godwit/applied", "revert": "godwit/applied",
+	"verify": "godwit/verify",
 }
 
 func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outcome) {
-	if req == nil || req.number <= 0 {
+	if req == nil {
 		return
 	}
 	repo, err := r.cfg.API.repository(ctx, p.Installation.ID, p.Repository.ID, req.repository)
@@ -329,9 +330,11 @@ func (r *Receiver) tell(ctx context.Context, p *payload, req *request, out *outc
 
 		return
 	}
-	if err := repo.speak(ctx, req.number, refusedMarker, refusal(req, out)); err != nil {
-		r.cfg.Log.Warn("could not post the refusal on the pull request", "repository", req.repository,
-			"pull_request", req.number, "error", err)
+	if req.number > 0 {
+		if err := repo.speak(ctx, req.number, refusedMarker, refusal(req, out)); err != nil {
+			r.cfg.Log.Warn("could not post the refusal on the pull request", "repository", req.repository,
+				"pull_request", req.number, "error", err)
+		}
 	}
 	r.mark(ctx, repo, req, out)
 }

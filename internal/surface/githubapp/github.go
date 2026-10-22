@@ -39,6 +39,7 @@ type repoView interface {
 	endCheck(ctx context.Context, id int64, c checkRun) error
 	permission(ctx context.Context, login string) (string, error)
 	pullRequest(ctx context.Context, number int) (authz.PullRequest, error)
+	pullsForCommit(ctx context.Context, sha string) ([]int, error)
 	reviews(ctx context.Context, number int) ([]authz.Review, bool, error)
 	changed(ctx context.Context, number int) (listing, error)
 	file(ctx context.Context, path, ref string) ([]byte, error)
@@ -127,6 +128,26 @@ func (r *repoClient) pullRequest(ctx context.Context, number int) (authz.PullReq
 		Head: out.Head.SHA, HeadRepo: out.Head.Repo.FullName,
 		State: out.State, Merged: out.Merged, Files: out.ChangedFiles,
 	}, nil
+}
+
+func (r *repoClient) pullsForCommit(ctx context.Context, sha string) ([]int, error) {
+	url := r.url("/commits/" + sha + "/pulls?per_page=100")
+	var out []int
+	for url != "" {
+		var page []struct {
+			Number int `json:"number"`
+		}
+		next, err := r.client.call(ctx, http.MethodGet, url, r.token, nil, &page)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range page {
+			out = append(out, p.Number)
+		}
+		url = next
+	}
+
+	return out, nil
 }
 
 type reviewBody struct {

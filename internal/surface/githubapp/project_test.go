@@ -110,6 +110,18 @@ func TestIncompleteOrForcedPushVerifiesEveryBoundProject(t *testing.T) {
 	}
 }
 
+func TestPushWithAnInvalidProjectFileFailsTheCommitCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, nil, map[string]string{"godwit.yaml": "dir: [\n"})
+	f := newFixture(t, bound, repo)
+	rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, true, 0))
+	check(t, rec, http.StatusAccepted, "does not parse")
+	if len(repo.checks) != 1 || !strings.Contains(repo.checks[0], "godwit/verify@"+testHead) {
+		t.Fatalf("checks = %v", repo.checks)
+	}
+}
+
 func TestNothingToPlanIsSilenceForAPushAndAReasonForAPerson(t *testing.T) {
 	t.Parallel()
 

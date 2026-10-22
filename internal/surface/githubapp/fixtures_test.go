@@ -96,6 +96,9 @@ type fakeRepo struct {
 	permErr       error
 	pr            authz.PullRequest
 	pullErr       error
+	pullReads     int
+	commitPulls   []int
+	commitPullErr error
 	submitted     []authz.Review
 	reviewsErr    error
 	reviewsCapped bool
@@ -136,7 +139,13 @@ func (r *fakeRepo) permission(_ context.Context, login string) (string, error) {
 }
 
 func (r *fakeRepo) pullRequest(context.Context, int) (authz.PullRequest, error) {
+	r.pullReads++
+
 	return r.pr, r.pullErr
+}
+
+func (r *fakeRepo) pullsForCommit(context.Context, string) ([]int, error) {
+	return r.commitPulls, r.commitPullErr
 }
 
 func (r *fakeRepo) reviews(context.Context, int) ([]authz.Review, bool, error) {

@@ -197,6 +197,42 @@ func TestPullRequestReadFails(t *testing.T) {
 	}
 }
 
+func TestPullRequestsForACommitFollowThePages(t *testing.T) {
+	t.Parallel()
+
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/repos/"+testRepo+"/commits/"+testHead+"/pulls" {
+			t.Errorf("path = %s", req.URL.Path)
+		}
+		if req.URL.Query().Get("page") == "2" {
+			_, _ = io.WriteString(w, `[{"number":4}]`)
+
+			return
+		}
+		w.Header().Set("Link", `<`+srv.URL+req.URL.Path+`?per_page=100&page=2>; rel="next"`)
+		_, _ = io.WriteString(w, `[{"number":3}]`)
+	}))
+	t.Cleanup(srv.Close)
+	r := &repoClient{client: &Client{BaseURL: srv.URL, HTTP: srv.Client()}, token: "ghs_x", repository: testRepo}
+	got, err := r.pullsForCommit(context.Background(), testHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []int{3, 4}) {
+		t.Fatalf("pulls = %v", got)
+	}
+}
+
+func TestPullRequestsForACommitFails(t *testing.T) {
+	t.Parallel()
+
+	r := testRepoClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	if _, err := r.pullsForCommit(context.Background(), testHead); err == nil {
+		t.Fatal("no error")
+	}
+}
+
 func TestReviewsFollowThePages(t *testing.T) {
 	t.Parallel()
 
