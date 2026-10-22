@@ -1,9 +1,9 @@
 # Run migrations with the GitHub App
 
 The App route puts godwit in the pull request without putting it in your CI: GitHub posts deliveries to the
-godwit service, and the service reads the migrations, plans them, applies them and answers on the pull
-request itself. No runner, no workflow file, no token to hand a job — the credentials live in the service and
-nothing is copied into the repository.
+godwit service, and the service reads the migrations, plans them, applies them, verifies the default branch
+after a push and answers on GitHub itself. No runner, no workflow file, no token to hand a job — the
+credentials live in the service and nothing is copied into the repository.
 
 It is one App per godwit service, installed on as many repositories as you like. Each repository then only
 needs a `godwit.yaml`, and an operator to bind it to a target.
@@ -58,7 +58,7 @@ deliveries come to the App's own URL.
 |---|---|---|---|
 | **Metadata** | Read | reads the repository permission of the person who commanded (`GET /repos/{owner}/{repo}/collaborators/{login}/permission`), and of the reviewer whose approval an apply is standing on | nothing can be authorised. Every commanded delivery ends in a `500` godwit logs as `webhook delivery failed`, and GitHub shows it as a failed delivery. GitHub grants this on every App, so in practice you cannot get it wrong |
 | **Contents** | Read | reads `godwit.yaml` at the pull request head, lists the migration directory, and downloads each migration body | no plan and no apply. The pull request gets a refusal naming the file godwit could not read — and because a repository that may not be read looks the same as one that has no file, the refusal can read as *"carries no `godwit.yaml`"* when the truth is that the permission is missing |
-| **Pull requests** | Read | the head SHA, state, merged flag and file count (`GET /pulls/{n}`); which files changed, to decide which bound projects the pull request touches (`/pulls/{n}/files`); the reviews, to find the standing approval `apply` and `confirm` require (`/pulls/{n}/reviews`) | every delivery fails with `500` before anything runs, and nothing is posted on the pull request |
+| **Pull requests** | Read | the head SHA, state, merged flag and file count (`GET /pulls/{n}`); which files changed, to decide which bound projects the pull request touches (`/pulls/{n}/files`); the reviews, to find the standing approval `apply` and `confirm` require (`/pulls/{n}/reviews`); pull requests associated with a pushed commit, so a failed verify can report there (`/commits/{sha}/pulls`) | pull-request commands fail before anything runs; a push verify still concludes its check, but cannot post the failure on the associated pull request |
 | **Pull requests** *or* **Issues** | Write | posts the plan and run reports on the pull request, and deletes the report it posted last under the same marker so exactly one stands (`POST`/`GET /issues/{n}/comments`, `DELETE /issues/comments/{id}`). GitHub accepts either permission for these | the report never reaches the pull request. A command that got as far as opening a check still says so *in the check*, ending with `godwit could not post this on the pull request, so it stands only here: …`. A refusal, which is decided before any check exists, is posted nowhere at all — it survives only as a `could not post the refusal on the pull request` line in the service log |
 | **Issues** | Write | the 👀 reaction godwit puts on the comment it read as a command. A reaction on a pull request comment is an *issue comment* reaction, and GitHub accepts **no Pull requests alternative** for it — this is the one place where reacting and commenting do not draw on the same permission | the command still runs, but silently: the comment is never acknowledged and the only trace is `could not react to the commanding comment` in the service log. If you would rather not grant Issues write, run with `--github-emoji-reaction none` and godwit will not attempt the reaction |
 | **Checks** | Write | opens a check run `in_progress` on the head commit before it starts and concludes it with the report (`POST /check-runs`, `PATCH /check-runs/{id}`) | no `godwit/plan` or `godwit/applied` check appears, so branch protection has nothing to require and refusals leave no mark on the commit. The command itself still runs and still comments; godwit logs `could not open the check` |
@@ -75,13 +75,14 @@ approval, a fork, a delivery too old to act on) is a comment and nothing more, o
 
 ## Events
 
-Subscribe to exactly three. godwit ignores every other delivery with `godwit does not act on <event> deliveries`.
+Subscribe to exactly four. godwit ignores every other delivery with `godwit does not act on <event> deliveries`.
 
 | Event | What godwit does with it |
 |---|---|
 | **Pull request** | on `opened`, `synchronize`, `reopened` and `ready_for_review`, plans by itself. Every other action is ignored |
 | **Issue comment** | on `created` only: the comment is read as a command. An edit is not — *a command is what someone posted, not what a comment now says* |
 | **Pull request review** | on `submitted`: the review body is read as a command, the same way a comment is |
+| **Push** | on the repository's default branch: verifies that every committed migration is already applied. Other branches, tags and branch deletions are ignored |
 
 ## `godwit.yaml` in the repository
 
@@ -107,8 +108,21 @@ accepted and ignored here; unknown keys are a parse error and the project is ski
 
 **`when_modified` widens, it never replaces.** godwit always watches `<dir>/**/*.sql` and `godwit.yaml`, and
 `when_modified` adds to that list — a project cannot configure its own migrations out of being planned.
-`autoplan.enabled: false` turns off only the plan godwit starts by itself on a push; `godwit plan` in a comment
-still works.
+`autoplan.enabled: false` turns off only the plan godwit starts by itself when a pull request changes;
+`godwit plan` in a comment and default-branch verification still work.
+
+## Verification after a push
+
+A complete push delivery starts verification only when it adds, modifies or removes `godwit.yaml` or a
+`<dir>/**/*.sql` file. A forced push, or a delivery whose commit list is incomplete, verifies every project
+bound to the repository rather than trusting a partial file list. In a monorepo each affected project gets
+its own `godwit/verify (<target>)` check.
+
+Verification calls the same admitted dry-run as the Action's `command: verify`, with `read` scope and without
+persisting a plan. All migrations applied concludes the check `success`. An admission refusal or any pending
+migration concludes it `failure`; when GitHub associates the pushed commit with a pull request, godwit also
+posts the failure there under `<!-- godwit:verify -->`. A direct push has no pull request to comment on, so
+the failed check and service log are its report.
 
 ## Binding the repository to a target
 
@@ -210,7 +224,7 @@ pull request can reach the RPCs that register a target or a credential store.
   and the run report under `<!-- godwit:migrate -->`; posting a new one deletes the old one first, so the
   thread never fills with stale plans. With two or more projects in one pull request, the marker carries the
   target so neighbouring reports do not delete each other.
-- **A check run per command**, opened before the work starts with *"godwit is reading the migrations of
+- **A check run per command and verification**, opened before the work starts with *"godwit is reading the migrations of
   `db/migrations` at 4f2a9c1"* and concluded with the report. A plan that found hazards concludes
   `action_required` rather than `failure` — it is a thing to look at, not a thing that went wrong.
 - **The run reports itself later.** An apply returns as soon as the run is queued; a poller then posts the

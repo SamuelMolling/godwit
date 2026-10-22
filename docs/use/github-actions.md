@@ -6,7 +6,8 @@ command, posts a sticky comment and sets the commit status that gates the merge.
 do with `godwit` in any runner — the Action is the glue written once.
 
 Take this route when you do not want a webhook endpoint pointed at your service, when your review flow already
-lives in workflows, or when you need `lint`, `verify` or `diff` on a pull request, which the App does not do.
+lives in workflows, or when you need `lint`, `diff`, `mode: apply-on-merge`, or verification on a branch other
+than the repository default. The App can verify its repository's default branch from a `push` delivery.
 
 ## What must exist first
 
@@ -310,8 +311,8 @@ waiting live.
 - **A fork's pull request runs the workflow without your secrets**, so the plan step cannot reach the service
   at all. The App refuses a fork outright and says why on the pull request.
 
-In the other direction, the App is narrower: it understands only `plan`, `apply`, `confirm` and `revert`, and
-it subscribes only to pull request events. `lint`, `verify` and `diff`, anything on a push or a merge, and
+In the other direction, the App is narrower: comments understand only `plan`, `apply`, `confirm` and `revert`;
+its `push` handling only verifies the default branch. `lint`, `diff`, verification of another branch and
 `mode: apply-on-merge` exist only here.
 
 `diff` in particular will never move: deriving a desired schema from an ORM means running the repository's own

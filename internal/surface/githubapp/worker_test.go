@@ -293,6 +293,23 @@ func TestPushVerifyAdmissionFailureUsesTheServiceMessage(t *testing.T) {
 	}
 }
 
+func TestPushVerifyCannotExceedItsReadScope(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	h := newHarness(t, repo, WorkerConfig{})
+	cmd := verifyCommand()
+	cmd.principal.Scope = ""
+	h.worker.carry(context.Background(), cmd)
+
+	if len(h.svc.requests()) != 0 {
+		t.Fatal("an unauthorised verify reached the service")
+	}
+	if len(repo.ended) != 1 || repo.ended[0].conclusion != conclusionFailure {
+		t.Fatalf("ended = %+v", repo.ended)
+	}
+}
+
 func TestSelectingFailedPushReportsDoesNotChangeCheckResults(t *testing.T) {
 	t.Parallel()
 
@@ -307,6 +324,26 @@ func TestSelectingFailedPushReportsDoesNotChangeCheckResults(t *testing.T) {
 	h.worker.say(context.Background(), repo, cmd, all, testLog)
 	if all[0].conclusion != conclusionSuccess || all[0].project.target != "orders" {
 		t.Fatalf("check results changed while selecting reports: %+v", all)
+	}
+}
+
+func TestCommitPullLookupFailureIsAttachedToEveryVerifyCheck(t *testing.T) {
+	t.Parallel()
+
+	repo := planningRepo()
+	repo.commitPullErr = errBroken
+	h := newHarness(t, repo, WorkerConfig{})
+	cmd := verifyCommand()
+	cmd.projects = []project{{target: "orders"}, {target: "billing"}}
+	all := []done{
+		{project: cmd.projects[0], conclusion: conclusionFailure},
+		{project: cmd.projects[1], conclusion: conclusionFailure},
+	}
+	unsaid := h.worker.say(context.Background(), repo, cmd, all, testLog)
+	for _, p := range cmd.projects {
+		if !errors.Is(unsaid[cmd.markerFor(p)], errBroken) {
+			t.Fatalf("unsaid = %v, missing %s", unsaid, cmd.markerFor(p))
+		}
 	}
 }
 

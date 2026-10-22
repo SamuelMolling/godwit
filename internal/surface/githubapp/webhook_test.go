@@ -128,6 +128,17 @@ func TestOnlyAUsableDefaultBranchPushIsVerified(t *testing.T) {
 	}
 }
 
+func TestPushWithoutADefaultBranchIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, bound, writer(t))
+	body := strings.Replace(
+		pushBodyJSON("refs/heads/main", testHead, false, false, 0),
+		`"default_branch":"main"`, `"default_branch":""`, 1,
+	)
+	check(t, f.post(t, eventPush, "d1", body), http.StatusAccepted, "names no default branch")
+}
+
 func TestPushVerificationKeepsDeliveryAndBindingGuards(t *testing.T) {
 	t.Parallel()
 

@@ -404,8 +404,12 @@ func (w *Worker) say(ctx context.Context, repo repoView, cmd command, all []done
 		numbers, err := repo.pullsForCommit(ctx, cmd.head)
 		if err != nil {
 			log.Warn("could not find the pull requests for the pushed commit", "error", err)
+			unsaid := make(map[string]error, len(failed))
+			for _, d := range failed {
+				unsaid[cmd.markerFor(d.project)] = err
+			}
 
-			return map[string]error{reportMarker[cmd.name]: err}
+			return unsaid
 		}
 		return w.speak(ctx, repo, cmd, failed, numbers, log)
 	}

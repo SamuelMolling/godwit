@@ -110,6 +110,24 @@ func TestIncompleteOrForcedPushVerifiesEveryBoundProject(t *testing.T) {
 	}
 }
 
+func TestCompletePushReadsOnlyTheMonorepoProjectItTouches(t *testing.T) {
+	t.Parallel()
+
+	repo := repoWith(t, nil, map[string]string{
+		"services/orders/godwit.yaml":  ordersYAML,
+		"services/billing/godwit.yaml": "dir: db/migrations\ntarget: billing\n",
+	})
+	f := newFixture(t, monorepo, repo)
+	rec := f.post(t, eventPush, "d1", pushBodyJSON(
+		"refs/heads/main", testHead, false, false, 1,
+		"services/orders/db/migrations/20260101000000_a.up.sql",
+	))
+	check(t, rec, http.StatusAccepted, "for orders (services/orders)")
+	if len(repo.read) != 1 || repo.read[0] != "services/orders/godwit.yaml" {
+		t.Fatalf("read = %v", repo.read)
+	}
+}
+
 func TestPushWithAnInvalidProjectFileFailsTheCommitCheck(t *testing.T) {
 	t.Parallel()
 

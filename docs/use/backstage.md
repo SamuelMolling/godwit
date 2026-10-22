@@ -148,7 +148,8 @@ Drift has four states, and the view keeps them apart:
 
 *Created by* is the run's `created_by` ([actors and provenance](../internals/runs.md#actors-and-provenance)):
 `github:acme/orders:alice` reads `@alice`, *GitHub App on acme/orders*; `github:acme/orders:(autoplan)` reads
-`autoplan`; `ui:oncall` reads `oncall`, *godwit UI*; a token name reads as itself.
+`autoplan`; `github:acme/orders:(verify)` reads `verify`; `ui:oncall` reads `oncall`, *godwit UI*; a token
+name reads as itself.
 
 ## Developing the package
 
