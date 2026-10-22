@@ -18,8 +18,19 @@ const (
 
 var planActions = map[string]bool{"opened": true, "synchronize": true, "reopened": true, "ready_for_review": true}
 
+const (
+	pushCommitCap = 2048
+	pushFilesCap  = 3000
+)
+
 type user struct {
 	Login string `json:"login"`
+}
+
+type pushCommit struct {
+	Added    []string `json:"added"`
+	Modified []string `json:"modified"`
+	Removed  []string `json:"removed"`
 }
 
 type payload struct {
@@ -60,16 +71,12 @@ type payload struct {
 			} `json:"repo"`
 		} `json:"head"`
 	} `json:"pull_request"`
-	Ref     string `json:"ref"`
-	After   string `json:"after"`
-	Deleted bool   `json:"deleted"`
-	Forced  bool   `json:"forced"`
-	Size    int    `json:"size"`
-	Commits []struct {
-		Added    []string `json:"added"`
-		Modified []string `json:"modified"`
-		Removed  []string `json:"removed"`
-	} `json:"commits"`
+	Ref     string       `json:"ref"`
+	After   string       `json:"after"`
+	Created bool         `json:"created"`
+	Deleted bool         `json:"deleted"`
+	Forced  bool         `json:"forced"`
+	Commits []pushCommit `json:"commits"`
 }
 
 type request struct {
@@ -148,9 +155,12 @@ func pushRequest(req *request, p *payload) (*request, *outcome) {
 		return req, refused("the push payload carries no head commit")
 	}
 	req.name, req.headSHA = "verify", p.After
-	req.all = p.Forced || p.Size != len(p.Commits)
+	req.all = p.Created || p.Forced || len(p.Commits) == 0 || len(p.Commits) >= pushCommitCap
 	seen := map[string]bool{}
 	for _, commit := range p.Commits {
+		if len(commit.Added)+len(commit.Modified)+len(commit.Removed) >= pushFilesCap {
+			req.all = true
+		}
 		for _, names := range [][]string{commit.Added, commit.Modified, commit.Removed} {
 			for _, name := range names {
 				if !seen[name] {

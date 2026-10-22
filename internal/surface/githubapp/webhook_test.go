@@ -89,7 +89,7 @@ func TestDefaultBranchPushIsAcceptedForVerification(t *testing.T) {
 
 	f := newFixture(t, bound, repoWith(t, nil, map[string]string{"godwit.yaml": ordersYAML}))
 	rec := f.post(t, eventPush, "d1", pushBodyJSON(
-		"refs/heads/main", testHead, false, false, 1, "db/migrations/20260101000000_a.up.sql"))
+		"refs/heads/main", testHead, false, false, false, "db/migrations/20260101000000_a.up.sql"))
 	check(t, rec, http.StatusAccepted, "godwit verify accepted")
 	if len(f.runner.got) != 1 {
 		t.Fatalf("runner saw %d commands, want 1", len(f.runner.got))
@@ -119,7 +119,7 @@ func TestOnlyAUsableDefaultBranchPushIsVerified(t *testing.T) {
 			t.Parallel()
 
 			f := newFixture(t, bound, writer(t))
-			rec := f.post(t, eventPush, "d1", pushBodyJSON(tc.ref, tc.after, tc.deleted, tc.forced, 0))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON(tc.ref, tc.after, false, tc.deleted, tc.forced))
 			check(t, rec, http.StatusAccepted, tc.want)
 			if len(f.runner.got) != 0 {
 				t.Fatal("an unusable push reached the runner")
@@ -133,16 +133,29 @@ func TestPushWithoutADefaultBranchIsRefused(t *testing.T) {
 
 	f := newFixture(t, bound, writer(t))
 	body := strings.Replace(
-		pushBodyJSON("refs/heads/main", testHead, false, false, 0),
+		pushBodyJSON("refs/heads/main", testHead, false, false, false),
 		`"default_branch":"main"`, `"default_branch":""`, 1,
 	)
 	check(t, f.post(t, eventPush, "d1", body), http.StatusAccepted, "names no default branch")
 }
 
+func TestPushAtGitHubsPerCommitFileCapVerifiesEverything(t *testing.T) {
+	t.Parallel()
+
+	var p payload
+	p.Repository.FullName, p.Repository.DefaultBranch = testRepo, "main"
+	p.Installation.ID, p.Ref, p.After = 7, "refs/heads/main", testHead
+	p.Commits = []pushCommit{{Modified: make([]string, 3000)}}
+	req, out := parse(eventPush, &p)
+	if out != nil || req == nil || !req.all {
+		t.Fatalf("request = %+v, outcome = %+v", req, out)
+	}
+}
+
 func TestPushVerificationKeepsDeliveryAndBindingGuards(t *testing.T) {
 	t.Parallel()
 
-	body := pushBodyJSON("refs/heads/main", testHead, false, true, 1)
+	body := pushBodyJSON("refs/heads/main", testHead, false, false, true)
 	unbound := newFixture(t, map[string]string{"payments": "other/repo"}, writer(t))
 	check(t, unbound.post(t, eventPush, "d1", body), http.StatusAccepted, "bound to no godwit target")
 	if len(unbound.api.scoped) != 0 {

@@ -73,7 +73,7 @@ func TestPushVerifyUsesMigrationPathsAndIgnoresAutoplanSwitch(t *testing.T) {
 			t.Parallel()
 
 			f := newFixture(t, bound, repoWith(t, nil, map[string]string{"godwit.yaml": yaml}))
-			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, 1, tc.path))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, false, tc.path))
 			check(t, rec, http.StatusAccepted, tc.want)
 			if len(f.runner.got) != tc.commands {
 				t.Fatalf("runner saw %d commands, want %d", len(f.runner.got), tc.commands)
@@ -85,23 +85,29 @@ func TestPushVerifyUsesMigrationPathsAndIgnoresAutoplanSwitch(t *testing.T) {
 func TestIncompleteOrForcedPushVerifiesEveryBoundProject(t *testing.T) {
 	t.Parallel()
 
+	capped := make([]string, 2048)
+	for i := range capped {
+		capped[i] = "README.md"
+	}
 	files := map[string]string{
 		"services/orders/godwit.yaml":  ordersYAML,
 		"services/billing/godwit.yaml": "dir: db/migrations\ntarget: billing\n",
 	}
 	for _, tc := range []struct {
-		name   string
-		forced bool
-		size   int
+		name            string
+		created, forced bool
+		paths           []string
 	}{
-		{"incomplete", false, 2},
-		{"forced", true, 0},
+		{"created", true, false, nil},
+		{"forced", false, true, nil},
+		{"commit list at the cap", false, false, capped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			f := newFixture(t, monorepo, repoWith(t, nil, files))
-			rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, tc.forced, tc.size))
+			rec := f.post(t, eventPush, "d1", pushBodyJSON(
+				"refs/heads/main", testHead, tc.created, false, tc.forced, tc.paths...))
 			check(t, rec, http.StatusAccepted, "for billing (services/billing), orders (services/orders)")
 			if got := f.runner.got[0].projects; len(got) != 2 {
 				t.Fatalf("projects = %+v, want both", got)
@@ -119,7 +125,7 @@ func TestCompletePushReadsOnlyTheMonorepoProjectItTouches(t *testing.T) {
 	})
 	f := newFixture(t, monorepo, repo)
 	rec := f.post(t, eventPush, "d1", pushBodyJSON(
-		"refs/heads/main", testHead, false, false, 1,
+		"refs/heads/main", testHead, false, false, false,
 		"services/orders/db/migrations/20260101000000_a.up.sql",
 	))
 	check(t, rec, http.StatusAccepted, "for orders (services/orders)")
@@ -133,7 +139,7 @@ func TestPushWithAnInvalidProjectFileFailsTheCommitCheck(t *testing.T) {
 
 	repo := repoWith(t, nil, map[string]string{"godwit.yaml": "dir: [\n"})
 	f := newFixture(t, bound, repo)
-	rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, true, 0))
+	rec := f.post(t, eventPush, "d1", pushBodyJSON("refs/heads/main", testHead, false, false, true))
 	check(t, rec, http.StatusAccepted, "does not parse")
 	if len(repo.checks) != 1 || !strings.Contains(repo.checks[0], "godwit/verify@"+testHead) {
 		t.Fatalf("checks = %v", repo.checks)

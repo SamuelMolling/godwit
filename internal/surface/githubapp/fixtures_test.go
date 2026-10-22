@@ -371,13 +371,13 @@ func pullBodyJSON(action, headRepo, head string) string {
 		action, testRepo, head, headRepo)
 }
 
-func pushBodyJSON(ref, after string, deleted, forced bool, size int, paths ...string) string {
+func pushBodyJSON(ref, after string, created, deleted, forced bool, paths ...string) string {
 	commits := make([]map[string]any, 0, len(paths))
 	for _, name := range paths {
 		commits = append(commits, map[string]any{"modified": []string{name}})
 	}
 	body, _ := json.Marshal(map[string]any{
-		"ref": ref, "after": after, "deleted": deleted, "forced": forced, "size": size, "commits": commits,
+		"ref": ref, "after": after, "created": created, "deleted": deleted, "forced": forced, "commits": commits,
 		"repository":   map[string]any{"id": 42, "full_name": testRepo, "default_branch": "main"},
 		"installation": map[string]any{"id": 7},
 	})
