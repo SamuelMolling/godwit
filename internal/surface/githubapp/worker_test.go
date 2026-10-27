@@ -359,6 +359,7 @@ func TestThePlanIsPostedAsTheReportTheCLIRenders(t *testing.T) {
 	body := h.repo.notices[0]
 	for _, want := range []string{
 		"<!-- godwit:plan -->", "## godwit plan", "20260101000000_add_orders",
+		"comment `godwit apply` as the whole comment.",
 		"<!-- godwit-plan-id: plan-1 -->", "<!-- godwit-plan-verdict: 1 to apply -->",
 	} {
 		if !strings.Contains(body, want) {

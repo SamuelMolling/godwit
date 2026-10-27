@@ -230,6 +230,9 @@ pull request can reach the RPCs that register a target or a credential store.
 
 ## What you see on the pull request
 
+- **A plan with something still to apply says what to do next**, directly under the verdict: approve the pull
+  request, then comment `godwit apply` as the whole comment (`godwit apply --ack H001` when the plan names
+  hazards). Merging the pull request does not apply it, and a sentence around the command does not either.
 - **One comment per report, replaced in place.** The plan report lives under a `<!-- godwit:plan -->` marker
   and the run report under `<!-- godwit:migrate -->`; posting a new one deletes the old one first, so the
   thread never fills with stale plans. With two or more projects in one pull request, the marker carries the
