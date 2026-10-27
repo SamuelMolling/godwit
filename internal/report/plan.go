@@ -118,6 +118,23 @@ func (r Plan) verdict(m markup) string {
 	return line
 }
 
+func (r Plan) applyStep(m markup) string {
+	if r.planID == "" {
+		return ""
+	}
+	apply, _ := r.counts()
+	if apply == 0 {
+		return ""
+	}
+	cmd := "godwit apply"
+	if _, codes := r.hazardGate(); len(codes) > 0 {
+		cmd += " --ack " + strings.Join(codes, ",")
+	}
+
+	return "Before you merge, approve this pull request and comment " + m.code(cmd) +
+		" as the whole comment. godwit applies that comment, and stays quiet when anything else shares it."
+}
+
 func (r Plan) twoHalves(m markup) string {
 	out := "This runs in two halves. Now, godwit applies only what adds: new columns, indexes and constraints," +
 		" which the application it is already running does not have to know about."
@@ -636,6 +653,9 @@ func durationText(d time.Duration) string {
 
 func writePlanMarkdown(w io.Writer, r Plan) {
 	fmt.Fprintf(w, "## godwit %s\n\n%s\n", r.kind(), r.verdict(markdown))
+	if step := r.applyStep(markdown); step != "" {
+		fmt.Fprintf(w, "\n%s\n", step)
+	}
 	if l := r.withheldLine(); l != "" {
 		fmt.Fprintf(w, "\n**%s**\n", l)
 	}

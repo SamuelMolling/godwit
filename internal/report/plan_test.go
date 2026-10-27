@@ -3,6 +3,8 @@ package report
 import (
 	"strings"
 	"testing"
+
+	"github.com/SamuelMolling/godwit/internal/comment"
 )
 
 func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
@@ -32,5 +34,45 @@ func TestPlanMarkdown_WithObservationAndDrift(t *testing.T) {
 		"<!-- godwit-plan-verdict: nothing to apply -->\n<!-- godwit-plan-hazards: 0 -->\n"
 	if got := b.String(); got != want {
 		t.Fatalf("markdown = %q, want %q", got, want)
+	}
+}
+
+func TestPlanMarkdownTellsThePullRequestHowToApply(t *testing.T) {
+	t.Parallel()
+
+	pending := hazardItem("orders", false)
+	pending.Statements[0].Hazards = nil
+	var b strings.Builder
+	writePlanMarkdown(&b, Plan{
+		live: true, target: "app", rollout: "direct", validated: true, planID: "p1", items: []item{pending},
+	})
+	got := b.String()
+	want := "Before you merge, approve this pull request and comment `godwit apply` as the whole comment." +
+		" godwit applies that comment, and stays quiet when anything else shares it."
+	if !strings.Contains(got, want) {
+		t.Fatalf("markdown missing the apply step:\n%s", got)
+	}
+	if cmd, err := comment.Parse(got, "apply"); err != nil || cmd != nil {
+		t.Fatalf("the plan comment must not itself be an apply: %+v %v", cmd, err)
+	}
+
+	b.Reset()
+	writePlanMarkdown(&b, Plan{
+		live: true, target: "app", rollout: "direct", validated: true, planID: "p1",
+		items: []item{hazardItem("orders", false)},
+	})
+	if !strings.Contains(b.String(), "comment `godwit apply --ack H001` as the whole comment.") {
+		t.Fatalf("a hazard must ride on the command:\n%s", b.String())
+	}
+
+	for _, silent := range []Plan{
+		{live: true, target: "app", rollout: "direct", validated: true, planID: "p1"},
+		{live: true, target: "app", rollout: "direct", validated: true, items: []item{pending}},
+	} {
+		b.Reset()
+		writePlanMarkdown(&b, silent)
+		if strings.Contains(b.String(), "Before you merge") {
+			t.Fatalf("nothing stored and pending must not ask for an apply:\n%s", b.String())
+		}
 	}
 }
