@@ -240,11 +240,11 @@ func TestReviewsFollowThePages(t *testing.T) {
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Query().Get("page") == "" {
 			w.Header().Set("Link", `<`+srv.URL+`/next?page=2>; rel="next", <x>; rel="last"`)
-			_, _ = io.WriteString(w, `[{"state":"COMMENTED","commit_id":"a","user":{"login":"bob"}}]`)
+			_, _ = io.WriteString(w, `[{"state":"COMMENTED","commit_id":"a","user":{"login":"ff-pr-reviewer[bot]","type":"Bot"}}]`)
 
 			return
 		}
-		_, _ = io.WriteString(w, `[{"state":"APPROVED","commit_id":"`+testHead+`","user":{"login":"bob"}}]`)
+		_, _ = io.WriteString(w, `[{"state":"APPROVED","commit_id":"`+testHead+`","user":{"login":"bob","type":"User"}}]`)
 	}))
 	t.Cleanup(srv.Close)
 	r := &repoClient{
@@ -255,7 +255,8 @@ func TestReviewsFollowThePages(t *testing.T) {
 	if err != nil || !whole {
 		t.Fatalf("reviews = %t, %v", whole, err)
 	}
-	if len(reviews) != 2 || reviews[1].State != "APPROVED" || reviews[1].Login != "bob" {
+	if len(reviews) != 2 || reviews[0].Type != "Bot" || reviews[0].Login != "ff-pr-reviewer[bot]" ||
+		reviews[1].State != "APPROVED" || reviews[1].Login != "bob" || reviews[1].Type != "User" {
 		t.Fatalf("reviews = %+v", reviews)
 	}
 }

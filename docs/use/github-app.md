@@ -204,7 +204,9 @@ Three things are checked, in this order, before anything runs:
    on a comment; the permission is the thing that means something.
 3. **A standing approval**, for `apply`, `confirm` and `revert`. GitHub must report an approving review by
    someone who *also* holds write or admin. Each reviewer's latest review counts, so a later
-   `CHANGES_REQUESTED` or a dismissal supersedes that reviewer's earlier approval.
+   `CHANGES_REQUESTED` or a dismissal supersedes that reviewer's earlier approval. A bot does not count:
+   a login ending in `[bot]`, or a user whose GitHub type is `Bot`, is skipped, and a later person's
+   approval is what stands.
 
 `plan` needs no approval. `revert` does: it is the one command that destroys, and the forward path needing
 two people while the path that undoes needs one is the wrong way round. In the ordinary case the approval

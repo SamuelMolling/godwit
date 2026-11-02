@@ -157,6 +157,7 @@ type reviewBody struct {
 	State string `json:"state"`
 	User  struct {
 		Login string `json:"login"`
+		Type  string `json:"type"`
 	} `json:"user"`
 }
 
@@ -171,7 +172,7 @@ func (r *repoClient) reviews(ctx context.Context, number int) ([]authz.Review, b
 			return nil, false, err
 		}
 		for _, p := range page {
-			all = append(all, authz.Review{Login: p.User.Login, State: p.State})
+			all = append(all, authz.Review{Login: p.User.Login, State: p.State, Type: p.User.Type})
 		}
 		if len(all) >= reviewsCap {
 			return nil, false, nil
