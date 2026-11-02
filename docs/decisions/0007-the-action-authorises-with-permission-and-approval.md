@@ -61,3 +61,11 @@ Everything else in the record stands. `pull_request_target` is still refused for
 ### Cost
 
 **A repository that never configures stale dismissal can apply a commit nobody reviewed.** Stated plainly, because it is the guarantee #81 bought and this gives back. Approve at A, push B, comment `godwit apply`, and B is applied. Three things make that the right trade anyway: it is exactly what merging that pull request would do in the same repository, so the apply is no weaker than the merge it precedes; the fix is one checkbox, named in `docs/ci-cd.md` and `docs/security.md` beside `require-approval`; and the alternative blocked three approved pull requests in one day, which is how this amendment came to be written.
+
+## Amendment — a bot's review is not a standing approval
+
+`standingApproval` walks reviewers in the order GitHub lists them and returns the first whose latest review is still `APPROVED`. A GitHub App review is a review. `ff-pr-reviewer[bot]` approves first, that login is not one godwit can look up — `validLogin` rejects the `[bot]` suffix — and the walk stopped there. A later approval from a person with write was never consulted, and commenting `godwit apply` again could not change which review was first.
+
+A bot is not an approver. A review whose login ends in `[bot]`, or whose GitHub user type is `Bot`, is left out of the walk, including a later `CHANGES_REQUESTED` from that same bot. The standing approval is the earliest remaining person, and the permission check is unchanged: that person still needs write or admin. A pull request only a bot has approved has no standing approval.
+
+**A bot account that holds write still cannot be the approver.** That is the point of skipping it rather than looking up its permission. The person's approval has to exist on its own.

@@ -32,6 +32,7 @@ type PullRequest struct {
 type Review struct {
 	Login string
 	State string
+	Type  string
 }
 
 // Repository is what forge policy reads; the App's client supplies it.
@@ -197,11 +198,14 @@ func approved(ctx context.Context, repo Repository, c Command) (string, error) {
 	return permitted(ctx, repo, approver, "approver")
 }
 
-// standingApproval takes each reviewer's latest review, so a later CHANGES_REQUESTED supersedes that reviewer's approval (decision 0007).
+// standingApproval takes each reviewer's latest review, so a later CHANGES_REQUESTED supersedes that reviewer's approval, and a bot never counts (decision 0007).
 func standingApproval(all []Review) string {
 	approved := map[string]bool{}
 	var order []string
 	for _, r := range all {
+		if botReviewer(r) {
+			continue
+		}
 		switch r.State {
 		case "APPROVED":
 			approved[r.Login] = true
@@ -221,6 +225,10 @@ func standingApproval(all []Review) string {
 	}
 
 	return ""
+}
+
+func botReviewer(r Review) bool {
+	return r.Type == "Bot" || strings.HasSuffix(r.Login, "[bot]")
 }
 
 func permitted(ctx context.Context, repo Repository, login, role string) (string, error) {

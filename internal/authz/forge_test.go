@@ -81,6 +81,22 @@ func TestForgeAuthorizeAdmitsAnApplyAnApproverWithWriteStandsBehind(t *testing.T
 	}
 }
 
+func TestForgeAuthorizeAdmitsAnApplyAPersonStandsBehindABot(t *testing.T) {
+	t.Parallel()
+
+	repo, c := newRepo(), command()
+	c.Name = "apply"
+	repo.reviews = []Review{
+		{Login: "ff-pr-reviewer[bot]", State: "APPROVED"},
+		{Login: "reviewbot", Type: "Bot", State: "APPROVED"},
+		{Login: "bob", State: "APPROVED"},
+		{Login: "ff-pr-reviewer[bot]", State: "CHANGES_REQUESTED"},
+	}
+	if _, ref, err := newForge(t).Authorize(context.Background(), opens(repo), c); ref != "" || err != nil {
+		t.Fatalf("authorize = %+v %v", ref, err)
+	}
+}
+
 func TestForgeAuthorizeAdmitsARevertAnApproverStandsBehind(t *testing.T) {
 	t.Parallel()
 
@@ -143,6 +159,23 @@ func TestForgeAuthorizeRefuses(t *testing.T) {
 				c.Name, r.reviews = "apply", []Review{{Login: "a b", State: "APPROVED"}}
 			},
 			"is not a github login",
+		},
+		{
+			"an apply only a bot approved",
+			func(r *fakeRepo, c *Command) {
+				c.Name = "apply"
+				r.reviews = []Review{{Login: "ff-pr-reviewer[bot]", State: "APPROVED"}}
+			},
+			"no approving review standing",
+		},
+		{
+			"an apply only a bot account approved",
+			func(r *fakeRepo, c *Command) {
+				c.Name = "apply"
+				r.perm["reviewbot"] = "write"
+				r.reviews = []Review{{Login: "reviewbot", Type: "Bot", State: "APPROVED"}}
+			},
+			"no approving review standing",
 		},
 		{
 			"an approver without write",
