@@ -87,7 +87,11 @@ spec:
             {{- end }}
             - --github-webhook-max-age={{ .Values.serve.githubApp.maxAge }}
             - --github-webhook-max-bytes={{ int64 .Values.serve.githubApp.maxBytes }}
+            {{- if .Values.serve.githubApp.allowAnyCommander }}
+            - --github-allow-any-commander
+            {{- else }}
             - --github-allowed-associations={{ join "," .Values.serve.githubApp.allowedAssociations }}
+            {{- end }}
             - --github-emoji-reaction={{ .Values.serve.githubApp.emojiReaction }}
             {{- end }}
             {{- range .Values.serve.extraArgs }}

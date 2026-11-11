@@ -30,6 +30,7 @@ func newServeCmd() *cobra.Command {
 	var githubMaxAge time.Duration
 	var githubMaxBodyBytes, githubWorkers int
 	var githubAssociations []string
+	var githubAllowAny bool
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the godwit control-plane service",
@@ -67,21 +68,29 @@ func newServeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if githubAllowAny {
+				if cmd.Flags().Changed("github-allowed-associations") {
+					return errors.New("--github-allow-any-commander and --github-allowed-associations are both set: " +
+						"a comment is allowed either by association or by anyone, not both")
+				}
+				githubAssociations = nil
+			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
 			return server.Run(ctx, server.Config{
 				GitHub: server.GitHubApp{
-					Addr:          githubAddr,
-					Secret:        os.Getenv("GODWIT_GITHUB_WEBHOOK_SECRET"),
-					AppID:         os.Getenv("GODWIT_GITHUB_APP_ID"),
-					PrivateKeyPEM: privateKey,
-					APIBaseURL:    os.Getenv("GODWIT_GITHUB_API_URL"),
-					MaxBodyBytes:  githubMaxBodyBytes,
-					MaxAge:        githubMaxAge,
-					Associations:  githubAssociations,
-					Reaction:      githubReaction,
-					Workers:       githubWorkers,
+					Addr:              githubAddr,
+					Secret:            os.Getenv("GODWIT_GITHUB_WEBHOOK_SECRET"),
+					AppID:             os.Getenv("GODWIT_GITHUB_APP_ID"),
+					PrivateKeyPEM:     privateKey,
+					APIBaseURL:        os.Getenv("GODWIT_GITHUB_API_URL"),
+					MaxBodyBytes:      githubMaxBodyBytes,
+					MaxAge:            githubMaxAge,
+					Associations:      githubAssociations,
+					AllowAnyCommander: githubAllowAny,
+					Reaction:          githubReaction,
+					Workers:           githubWorkers,
 				},
 				Listen:          listen,
 				StoreDSN:        storeDSN,
@@ -182,6 +191,8 @@ func newServeCmd() *cobra.Command {
 			"the scratch server's budget alongside --max-concurrent-diffs rather than within it")
 	cmd.Flags().StringSliceVar(&githubAssociations, "github-allowed-associations", []string{"OWNER", "MEMBER", "COLLABORATOR"},
 		"author associations that may command godwit from a comment: OWNER, MEMBER or COLLABORATOR")
+	cmd.Flags().BoolVar(&githubAllowAny, "github-allow-any-commander", false,
+		"any comment may command godwit, including a contributor or a bot; apply, confirm and revert still need a standing approval from a person with write or admin")
 	cmd.Flags().StringSliceVar(&uiOrigins, "ui-origin", envList("GODWIT_UI_ORIGIN"),
 		"scheme://host[:port] origins /ui is reached at; a form post from anywhere else and a request for another host are refused (or GODWIT_UI_ORIGIN)")
 

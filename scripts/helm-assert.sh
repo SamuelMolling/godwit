@@ -48,6 +48,11 @@ present "${noauto}" 'audience: godwit$' 'turning the automount off took the proj
 app=(-f "${chart}/ci/platform-github-app-values.yaml")
 on="$(helm template godwit "${chart}" "${app[@]}")"
 present "${on}" '- --github-webhook-addr=:8475' 'the App render does not open the webhook listener'
+present "${on}" '- --github-allowed-associations=OWNER,MEMBER' 'the App render drops the association list'
+absent "${on}" 'github-allow-any-commander' 'the App render lets anyone command by default'
+any="$(helm template godwit "${chart}" "${app[@]}" --set serve.githubApp.allowAnyCommander=true)"
+present "${any}" '- --github-allow-any-commander' 'allowAnyCommander does not reach the process'
+absent "${any}" 'github-allowed-associations' 'allowAnyCommander still passes an association list'
 present "${on}" 'containerPort: 8475' 'the App render has no webhook container port'
 present "${on}" 'name: godwit-webhook' 'the App render has no webhook Service'
 absent "${on}" 'github-private-key-file' 'the App render reads a key file the chart projects no entry into'

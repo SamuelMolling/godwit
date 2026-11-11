@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+func TestServeRefusesAnyoneTogetherWithAnAssociationList(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x",
+		"--github-allow-any-commander", "--github-allowed-associations", "OWNER")
+	if code != 1 || !strings.Contains(errOut, "both set") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
+func TestServeAllowAnyCommanderReachesTheStore(t *testing.T) {
+	t.Setenv("GODWIT_MASTER_KEY", strings.Repeat("ab", 32))
+	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://bad:bad@127.0.0.1:1/x",
+		"--listen", "127.0.0.1:0", "--github-allow-any-commander")
+	if code != 1 || strings.Contains(errOut, "both set") {
+		t.Fatalf("code = %d, stderr = %s", code, errOut)
+	}
+}
+
 func TestServeBadMasterKey(t *testing.T) {
 	t.Setenv("GODWIT_MASTER_KEY", "not-hex")
 	code, _, errOut := runCLI("serve", "--store-dsn", "postgres://x")

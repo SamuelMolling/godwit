@@ -69,3 +69,7 @@ Everything else in the record stands. `pull_request_target` is still refused for
 A bot is not an approver. A review whose login ends in `[bot]`, or whose GitHub user type is `Bot`, is left out of the walk, including a later `CHANGES_REQUESTED` from that same bot. The standing approval is the earliest remaining person, and the permission check is unchanged: that person still needs write or admin. A pull request only a bot has approved has no standing approval.
 
 **A bot account that holds write still cannot be the approver.** That is the point of skipping it rather than looking up its permission. The person's approval has to exist on its own.
+
+## Amendment — who posts the comment can be anyone
+
+The refusal of `CONTRIBUTOR` as a configuration value still stands: putting it in `--github-allowed-associations` is not a policy, because everyone who opened the pull request carries it. A deployment that wants a bot or a contributor to post `godwit apply` sets `--github-allow-any-commander` instead. That flag skips the commander's association and the commander's write lookup. It does not skip the standing approval, and the approver is still a person with write or admin. The two flags together are a start-up error, so the list and "anyone" cannot disagree. The default is unchanged.

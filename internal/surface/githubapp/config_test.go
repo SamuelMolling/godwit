@@ -31,6 +31,11 @@ func TestNewRefusesAConfigurationThatCouldNotBeSafe(t *testing.T) {
 		},
 		{"an association that is not one", func(cfg *Config) { cfg.Associations = []string{"WRITER"} }, "unknown author association"},
 		{"an empty association list", func(cfg *Config) { cfg.Associations = []string{" ", ""} }, "no comment could ever command"},
+		{
+			"anyone and an association list",
+			func(cfg *Config) { cfg.AllowAnyCommander = true },
+			"--github-allow-any-commander and --github-allowed-associations are both set",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -75,6 +80,18 @@ func TestShortAndOrNone(t *testing.T) {
 	}
 }
 
+func TestNewAllowsAnyCommander(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(Config{
+		Secret: testSecret, Store: newStore(nil), API: &fakeAPI{}, Runner: &fakeRunner{},
+		Log: testLog, AllowAnyCommander: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoginAndNameShapes(t *testing.T) {
 	t.Parallel()
 
@@ -84,6 +101,8 @@ func TestLoginAndNameShapes(t *testing.T) {
 		got  bool
 	}{
 		{"empty login", false, validLogin("")},
+		{"a bot login", true, commandLogin("ff-pr-reviewer[bot]")},
+		{"a bare bot suffix", false, commandLogin("[bot]")},
 		{"empty name", false, validName("")},
 		{"a dotted repository name", true, validName("orders.git")},
 		{"a repository name with a slash", false, validName("orders/db")},

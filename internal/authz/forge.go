@@ -83,7 +83,10 @@ func (Forge) AutoPlan(ev Event) string {
 }
 
 // Forge is the policy for commands arriving through a forge: who may post them and on what.
-type Forge struct{ associations map[string]bool }
+type Forge struct {
+	associations map[string]bool
+	anyCommander bool
+}
 
 // NewForge returns the policy allowing those author associations; an empty list takes the default set.
 func NewForge(associations []string) (Forge, error) {
@@ -111,11 +114,14 @@ func NewForge(associations []string) (Forge, error) {
 	return Forge{associations: allowed}, nil
 }
 
-// Authorize decides c against the pull request open reaches; open runs only after the association narrows, so an idle comment spends no forge budget.
+// AllowAnyCommander returns a policy that does not care who posted the comment; apply, confirm and revert still need a standing approval from a person with write or admin.
+func AllowAnyCommander() Forge { return Forge{anyCommander: true} }
+
+// Authorize decides c against the pull request open reaches; a disallowed association is refused before open, so that comment spends no forge budget.
 func (f Forge) Authorize(ctx context.Context, open func(context.Context) (Repository, error),
 	c Command,
 ) (PullRequest, string, error) {
-	if !f.associations[c.Association] {
+	if !f.anyCommander && !f.associations[c.Association] {
 		return PullRequest{}, refuse("godwit %s by %s refused: author association %s is not allowed",
 			c.Name, c.Commander, orNone(c.Association)), nil
 	}
@@ -128,8 +134,10 @@ func (f Forge) Authorize(ctx context.Context, open func(context.Context) (Reposi
 	if err != nil {
 		return PullRequest{}, "", err
 	}
-	if ref, err := permitted(ctx, repo, c.Commander, "commander"); ref != "" || err != nil {
-		return PullRequest{}, ref, err
+	if !f.anyCommander {
+		if ref, err := permitted(ctx, repo, c.Commander, "commander"); ref != "" || err != nil {
+			return PullRequest{}, ref, err
+		}
 	}
 	pr, err := repo.PullRequest(ctx, c.Number)
 	if err != nil {

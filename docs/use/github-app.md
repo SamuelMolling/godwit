@@ -200,8 +200,10 @@ Three things are checked, in this order, before anything runs:
    `--github-allowed-associations`. `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `MANNEQUIN` and
    `NONE` are refused outright as values — anyone who opened a pull request carries one, so they are not access
    to anything. This check runs before godwit spends a single API call, so an idle comment costs nothing.
-2. **Repository permission.** The commander must hold `write` or `admin`. An association is a label GitHub puts
-   on a comment; the permission is the thing that means something.
+   `--github-allow-any-commander` turns the check off, and the commander's permission check with it, so a
+   contributor or a bot may post the comment. It cannot be set together with `--github-allowed-associations`.
+2. **Repository permission.** Unless `--github-allow-any-commander` is set, the commander must hold `write` or
+   `admin`. An association is a label GitHub puts on a comment; the permission is the thing that means something.
 3. **A standing approval**, for `apply`, `confirm` and `revert`. GitHub must report an approving review by
    someone who *also* holds write or admin. Each reviewer's latest review counts, so a later
    `CHANGES_REQUESTED` or a dismissal supersedes that reviewer's earlier approval. A bot does not count:

@@ -226,7 +226,7 @@ func commanded(req *request, body, what string) (*request, *outcome) {
 	if cmd == nil {
 		return nil, ignored("the %s names no godwit command", what)
 	}
-	if !validLogin(req.commander) {
+	if !commandLogin(req.commander) {
 		return req, refused("%q is not a github login", req.commander)
 	}
 	req.name, req.cmd = cmd.Name, cmd
@@ -248,6 +248,14 @@ func validLogin(login string) bool {
 	}
 
 	return strings.Trim(login, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") == ""
+}
+
+func commandLogin(login string) bool {
+	if name, ok := strings.CutSuffix(login, "[bot]"); ok {
+		return validLogin(name)
+	}
+
+	return validLogin(login)
 }
 
 func validRepository(full string) bool {
