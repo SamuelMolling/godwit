@@ -81,6 +81,52 @@ func TestForgeAuthorizeAdmitsAnApplyAnApproverWithWriteStandsBehind(t *testing.T
 	}
 }
 
+func TestAllowAnyCommanderAdmitsAnApplyAContributorPostedAndAPersonApproved(t *testing.T) {
+	t.Parallel()
+
+	repo, c := newRepo(), command()
+	c.Name, c.Commander, c.Association = "apply", "sudotong", "CONTRIBUTOR"
+	delete(repo.perm, "alice")
+	repo.reviews = []Review{
+		{Login: "ff-pr-reviewer[bot]", State: "APPROVED"},
+		{Login: "bob", State: "APPROVED"},
+	}
+	if _, ref, err := AllowAnyCommander().Authorize(context.Background(), opens(repo), c); ref != "" || err != nil {
+		t.Fatalf("authorize = %+v %v", ref, err)
+	}
+}
+
+func TestAllowAnyCommanderStillRefuses(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		with func(*fakeRepo, *Command)
+		want string
+	}{
+		{"an apply nobody approved", func(_ *fakeRepo, c *Command) { c.Name, c.Association = "apply", "NONE" }, "no approving review standing"},
+		{
+			"a revert a comment asked to force",
+			func(r *fakeRepo, c *Command) {
+				c.Name, c.Overrides, r.reviews = "revert", []string{"--force"}, []Review{{Login: "bob", State: "APPROVED"}}
+			},
+			"a comment may not remove a gate",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo, c := newRepo(), command()
+			c.Commander = "devin[bot]"
+			tc.with(repo, &c)
+			_, ref, err := AllowAnyCommander().Authorize(context.Background(), opens(repo), c)
+			if err != nil || !strings.Contains(ref, tc.want) {
+				t.Fatalf("authorize = %q %v, want a refusal carrying %q", ref, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestForgeAuthorizeAdmitsAnApplyAPersonStandsBehindABot(t *testing.T) {
 	t.Parallel()
 

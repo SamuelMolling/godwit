@@ -94,7 +94,10 @@ serve:
     # --github-webhook-max-bytes: largest delivery body read before the signature is verified.
     maxBytes: 1048576
     # --github-allowed-associations: narrows, does not authorise; the commander also needs write access.
+    # Ignored when allowAnyCommander is true.
     allowedAssociations: [OWNER, MEMBER, COLLABORATOR]
+    # --github-allow-any-commander: a contributor or a bot may comment a command. apply, confirm and revert still need a person's approval with write.
+    allowAnyCommander: false
     # --github-emoji-reaction: what godwit adds to a comment it read as a command; `none` adds none.
     emojiReaction: eyes
     # Its own Service, carrying this port alone, so a route pointed at it cannot reach the API.

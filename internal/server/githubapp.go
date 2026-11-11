@@ -20,17 +20,18 @@ import (
 
 // GitHubApp configures the App webhook listener, which is its own listener rather than a path on the API's.
 type GitHubApp struct {
-	Addr          string
-	Secret        string
-	AppID         string
-	PrivateKeyPEM string
-	APIBaseURL    string
-	MaxBodyBytes  int
-	MaxAge        time.Duration
-	Associations  []string
-	Reaction      string
-	Workers       int
-	OnReady       func(addr net.Addr)
+	Addr              string
+	Secret            string
+	AppID             string
+	PrivateKeyPEM     string
+	APIBaseURL        string
+	MaxBodyBytes      int
+	MaxAge            time.Duration
+	Associations      []string
+	AllowAnyCommander bool
+	Reaction          string
+	Workers           int
+	OnReady           func(addr net.Addr)
 }
 
 const (
@@ -79,16 +80,17 @@ func (g GitHubApp) receiver(cfg Config, key crypto.Signer, store *controlplane.S
 		Log:       log,
 	})
 	r, err := githubapp.New(githubapp.Config{
-		Secret:       g.Secret,
-		MaxBodyBytes: g.MaxBodyBytes,
-		MaxAge:       g.MaxAge,
-		Associations: g.Associations,
-		Reaction:     g.Reaction,
-		Store:        githubapp.Adapt(store),
-		API:          client,
-		Runner:       worker,
-		Record:       m.WebhookDelivered,
-		Log:          log,
+		Secret:            g.Secret,
+		MaxBodyBytes:      g.MaxBodyBytes,
+		MaxAge:            g.MaxAge,
+		Associations:      g.Associations,
+		AllowAnyCommander: g.AllowAnyCommander,
+		Reaction:          g.Reaction,
+		Store:             githubapp.Adapt(store),
+		API:               client,
+		Runner:            worker,
+		Record:            m.WebhookDelivered,
+		Log:               log,
 	})
 	if err != nil {
 		return nil, nil, err

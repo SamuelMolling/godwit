@@ -68,17 +68,18 @@ func Adapt(s *controlplane.Store) store { return storeAdapter{s} }
 
 // Config is everything the receiver needs to answer a delivery; New fills in what is left zero.
 type Config struct {
-	Secret       string
-	MaxBodyBytes int
-	MaxAge       time.Duration
-	Associations []string
-	Reaction     string
-	Store        store
-	API          forge
-	Runner       runner
-	Record       func(event, result string)
-	Log          *slog.Logger
-	Now          func() time.Time
+	Secret            string
+	MaxBodyBytes      int
+	MaxAge            time.Duration
+	Associations      []string
+	AllowAnyCommander bool
+	Reaction          string
+	Store             store
+	API               forge
+	Runner            runner
+	Record            func(event, result string)
+	Log               *slog.Logger
+	Now               func() time.Time
 }
 
 const unsetReaction = ""
@@ -88,6 +89,18 @@ const noReaction = "none"
 type configError struct{ msg string }
 
 func (e *configError) Error() string { return e.msg }
+
+func forgeOf(cfg Config) (authz.Forge, error) {
+	if cfg.AllowAnyCommander {
+		if len(cfg.Associations) > 0 {
+			return authz.Forge{}, &configError{"--github-allow-any-commander and --github-allowed-associations are both set: a comment is allowed either by association or by anyone, not both"}
+		}
+
+		return authz.AllowAnyCommander(), nil
+	}
+
+	return authz.NewForge(cfg.Associations)
+}
 
 // Receiver is the GitHub App webhook endpoint.
 type Receiver struct {
@@ -103,7 +116,7 @@ func New(cfg Config) (*Receiver, error) {
 	if cfg.Store == nil || cfg.API == nil || cfg.Runner == nil || cfg.Log == nil {
 		return nil, &configError{"the github receiver needs a store, an api client, a runner and a logger"}
 	}
-	forge, err := authz.NewForge(cfg.Associations)
+	forge, err := forgeOf(cfg)
 	if err != nil {
 		return nil, err
 	}
